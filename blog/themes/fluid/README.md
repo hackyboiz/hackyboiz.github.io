@@ -52,9 +52,9 @@
 如下修改 Hexo 博客目录中的 `_config.yml`：
 
 ```yaml
-theme: fluid  # 指定主题
+theme: fluid # 指定主题
 
-language: zh-CN  # 指定语言，可不改
+language: zh-CN # 指定语言，可不改
 ```
 
 #### 4. 创建「关于页」
@@ -75,7 +75,6 @@ title: about
 date: 2020-02-23 19:20:33
 layout: about
 ---
-
 这里写关于页的正文，支持 Markdown, HTML
 ```
 

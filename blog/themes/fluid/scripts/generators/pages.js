@@ -25,6 +25,15 @@ hexo.extend.generator.register("_tags", function (locals) {
   };
 });
 
+// generate about Page
+hexo.extend.generator.register("_about", function (locals) {
+  return {
+    path: "about/index.html",
+    data: locals.theme,
+    layout: "about",
+  };
+});
+
 // generate categories Page
 hexo.extend.generator.register("_categories", function (locals) {
   return {
