@@ -55,7 +55,6 @@ hexo.extend.generator.register('_hexo_generator_search', function(locals) {
 
   const xml = searchTmpl.render({
     config : config,
-    author : author,
     posts  : posts,
     pages  : pages,
     content: content,
