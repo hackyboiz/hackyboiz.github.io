@@ -44,10 +44,10 @@ hexo.extend.generator.register("_categories", function (locals) {
 });
 
 // generate author page
-hexo.extend.generator.register("_list", function (locals) {
+hexo.extend.generator.register("_author", function (locals) {
   return {
-    path: "list/index.html",
+    path: "author/index.html",
     data: locals.theme,
-    layout: "list",
+    layout: "author",
   };
 });
