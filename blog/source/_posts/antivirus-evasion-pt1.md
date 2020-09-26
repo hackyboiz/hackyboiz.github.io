@@ -1,6 +1,7 @@
 ---
 title: "[번역]Engineering Antivirus Evasion Part 1"
-tags: [antivirus, evasion, string, obfuscation, libtools, clang, av-bypass]
+author: y2sman
+tags: [y2sman, antivirus, evasion, string, obfuscation, libtools, clang, av-bypass]
 date: 2020-09-07 19:00:00
 ---
 
