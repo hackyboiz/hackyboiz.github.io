@@ -2,17 +2,19 @@
 title: "[번역]Engineering Antivirus Evasion Part 1"
 author: idioth
 tags: [idioth, antivirus, evasion, string, obfuscation, libtools, clang, av-bypass]
+categories: [Translation]
 date: 2020-09-07 19:00:00
-cc: true
+cc: false
+index_img: /2020/09/07/idioth/antivirus-evasion-pt1/image1.png
 ---
 
 
 
-# [번역]Engineering Antivirus Evasion Part 1
+# [번역] Engineering Antivirus Evasion Part 1
 
 [https://blog.scrt.ch/2020/06/19/engineering-antivirus-evasion/](https://blog.scrt.ch/2020/06/19/engineering-antivirus-evasion/)
 
-tl;dr : 이 블로그 게시물은 안티바이러스 소프트웨어에 대한 우리 연구의 몇 가지 관점과 우리가 마주한 모든 AV/EDR을 우회하기 위해 자동적으로 Meterpreter를 리팩터링하는 것에 대해서 설명할 것이다.
+이 블로그 게시물은 안티바이러스 소프트웨어에 대한 우리 연구의 몇 가지 관점과 우리가 마주한 모든 AV/EDR을 우회하기 위해 자동적으로 Meterpreter를 리팩터링하는 것에 대해서 설명할 것이다.
 
 모든 기술에 대한 아이디어와 문자열 난독화 패스의 구현은 아래에 자세히 설명되어 있지만, 블로그 게시글을 가능한 짧게 유지하기 위해 API imports hiding/syscalls에 대한 상세한 것은 나중에 작성하기로 결정했다. 소스코드는 [https://github.com/scrt/avcleaner](https://github.com/scrt/avcleaner)에서 확인할 수 있다.
 
@@ -52,7 +54,7 @@ Meterpreter는 수천개의 문자열을 가지고 있고, API imports는 어떠
 
 후자가 선호되는 방식이고, 많은 유명한 연구들에서 같은 결론에 도달했다. 주요한 이유는 transformation pass를 한 번 작성해서 소프트웨어의 프로그래밍 언어나 타겟 아키텍처에 대해 독립적으로 재사용할 수 있다는 것이다.
 
-![](img/Untitled.png)
+![](antivirus-evasion-pt1/image.png)
 
 이미지 출처: [http://www.aosabook.org/en/llvm.html](http://www.aosabook.org/en/llvm.html)
 
@@ -62,7 +64,7 @@ Meterpreter는 수천개의 문자열을 가지고 있고, API imports는 어떠
 
 Note: 코드베이스는 Visual Studio 의존성이 강하기 때문에 Clang은 Metepreter의 많은 부분의 구문 분석에 실패할 것이다. 그러나 타겟 안티바이러스를 절반의 성공으로 우회하는 것은 여전히 가능했다. 그리고 여기서 컴파일 시간 변환에 비해 source-to-source 변환이 얻는 이득이 있을 것이다. 후자는 어떤 에러 없이 전체 프로젝트를 컴파일하는 것을 요구한다. 전자는 수천개의 컴파일 에러에 탄력적이다; 완벽히 좋은 불완전한 추상 구문 트리로 끝이 난다.
 
-![](img/Untitled%201.png)
+![](antivirus-evasion-pt1/image1.png)
 
 LLVM passes vs libTooling
 
@@ -225,7 +227,7 @@ return a
 
 작은 프로그램의 일반적인 AST는 다음과 같다:
 
-![](antivirus-evasion-pt1/Untitled%202.png)
+![](antivirus-evasion-pt1/image2.png)
 
 추상 구문 트리 예시(https://en.wikipedia.org/wiki/Abstract_syntax_tree)
 
@@ -282,7 +284,7 @@ clang -cc1 -ast-dump "$1" -D "_WIN64" -D "_UNICODE" -D "UNICODE" -D "_WINSOCK_DE
 
 *WIN_INCLUDE*는 Win32 API와 상호 작용하기 위해 필요한 모든 헤더들이 포함된 폴더를 가리킨다. 이것들은 표준 윈도우 10 설치로부터 그대로 가져왔고 여러분의 두통을 덜어주기 위해 우리는 MinGW의 것을 선택하는 것 대신에 같은 것을 하는 것을 추천한다. 그 후 테스트 C 파일을 인수로 스크립트를 호출해라. 이렇게 하면 18MB 파일이 생성되지만 *"NtMapViewOfSection"* 같은 우리가 선언한 문자열 리터럴 중 하나를 검색해서 AST의 흥미로운 부분으로 이동할 수 있다:
 
-![](antivirus-evasion-pt1/Untitled%203.png)
+![](antivirus-evasion-pt1/image3.png)
 
 이제 AST를 시각화하는 방법을 얻었으므로 결과 소스 코드의 구문 오류 도입 없이 결과를 얻기 위해 노드들이 어떻게 업데이트해야 하는 지 이해하기 쉽다. 후속 섹션은 *libTooling*을 사용한 AST 조작에 관련된 구현 세부사항이 포함되어 있다.
 
@@ -707,7 +709,7 @@ cd ..
 bash run_example.sh test/string_simplest.c
 ```
 
-![](img/Untitled%204.png)
+![](antivirus-evasion-pt1/image4.png)
 
 보다시피 이것은 꽤 효과있다. 지금 이 예제는 regex와 훨씬 더 적은 코드 라인으로 해결할 수 있을 정도로 충분히 간단하다.
 
