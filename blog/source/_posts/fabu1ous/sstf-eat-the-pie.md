@@ -30,7 +30,7 @@ CTF를 처음 경험하는 친구들이라 최대한 풀어서 설명을 적었�
 
 ---
 
-![](sstf-eat-the-pie/Untitled.png)
+![](sstf-eat-the-pie/image1.png)
 
 pwnme()라는 이름의 함수가 있다. ~~"동네 사람들!!! 취약점 여기 있어요!!!"~~
 
@@ -57,7 +57,7 @@ CTF 문제들은 의도적으로 취약점을 만들어 놨기 때문에 짱구�
 
 ---
 
-![](sstf-eat-the-pie/Untitled%201.png)
+![](sstf-eat-the-pie/image2.png)
 
 1. 입력을 굳이 int가 아닌 string형으로 16 byte나 받는다.
 
@@ -78,15 +78,15 @@ index를 이용해 참조하는 코드가 있다면 가장 먼저 확인해야 �
 
 ---
 
-![](sstf-eat-the-pie/Untitled%202.png)
+![](sstf-eat-the-pie/image3.png)
 
 PIE를 우회하는 법은 간단합니다. binary의 base address를 leak하면 되니까요.
 
 예를 들어 func1의 주소인 `0x5655574d`를 leak했다면 `0x5655574d`에서 func1의 offset인 `0x74d`를 빼서 binary base address를 구할 수 있습니다.
 
-![](sstf-eat-the-pie/Untitled%203.png)
+![](sstf-eat-the-pie/image4.png)
 
-![](sstf-eat-the-pie/Untitled%204.png)
+![](sstf-eat-the-pie/image5.png)
 
 16 byte 길이의 string을 입력하면 vtable 바로 위에 저장되는 것을 확인 할 수 있습니다. 이 상태로 printf() 실행을 트리거하면 func1 ~ func4의 주소도 같이 출력됩니다. printf()는 NULL terminated string을 다루는 함수이기 때문에 NULL을 만나기 전까진 멈추지 않고 계속 출력한 결과입니다.
 
@@ -94,13 +94,13 @@ PIE를 우회하는 법은 간단합니다. binary의 base address를 leak하면
 
 ---
 
-![](sstf-eat-the-pie/Untitled%205.png)
+![](sstf-eat-the-pie/image6.png)
 
 Indirect call에 사용될 인덱스에 따라 스택상황을 출력한 사진에 번호를 세겨봤습니다. 좀 전에 indirect call에서 음수에 대한 예외처리를 하지 않아 out-of-bound가 가능하다고 설명했습니다. 만약 현 상황에서 -3을 입력한다면 eip에 `0x42424242` 가 들어가겠죠?
 
-![](sstf-eat-the-pie/Untitled%206.png)
+![](sstf-eat-the-pie/image7.png)
 
-![](sstf-eat-the-pie/Untitled%207.png)
+![](sstf-eat-the-pie/image8.png)
 
 예상대로 취약점은 정말 간단합니다. 이제 exploit을 해봅시다.
 
@@ -125,18 +125,18 @@ Arbitrary Write할 방법을 찾자.
 
 ---
 
-![](sstf-eat-the-pie/Untitled%208.png)
+![](sstf-eat-the-pie/image9.png)
 
 Arbitrary Write( Write anything anywhere )를 하려면 당연히 쓰기 함수가 있어야 하겠죠?. 사용 가능한 쓰기 함수는 read()가 유일합니다.
 
-![](sstf-eat-the-pie/Untitled%209.png)
+![](sstf-eat-the-pie/image10.png)
 
 out-of-bound로 read()를 AW에 사용하려는 지금 상황에서 넘어야할 장애물이 2가지가 있습니다.
 
 1. call로 eip를 잡는다는 점
 2. read()는 인자를 3개나 받는다는 점
 
-![](sstf-eat-the-pie/Untitled%2010.png)
+![](sstf-eat-the-pie/image11.png)
 
 일단 첫번째, call로 함수를 호출하기 전에 충족돼야하는 조건이 있는데,
 
@@ -147,7 +147,7 @@ out-of-bound로 read()를 AW에 사용하려는 지금 상황에서 넘어야할
 
 [ ! ] indexVar + gadget + parameter1 + parameter2 + parameter3 + &read() = 24 byte
 
-![](sstf-eat-the-pie/Untitled%2011.png)
+![](sstf-eat-the-pie/image12.png)
 
 한참 고민하다가 한가지 생각이 머리를 스치고 갔습니다.
 
@@ -155,11 +155,11 @@ out-of-bound로 read()를 AW에 사용하려는 지금 상황에서 넘어야할
 
 결론부터 적자면 위 사진에서 하이라이트된 부분을 gadget으로 사용하면됩니다.
 
-![](sstf-eat-the-pie/Untitled%2012.png)
+![](sstf-eat-the-pie/image13.png)
 
 위 사진은 pwnme()에서 read( 0, &v0, 0x10 )에 해당하는 어셈 코드입니다. 3번째 인자부터 역순으로 stack에 push하는게 보이시나요? 만약 3번째 인자를 push하는 코드를 건너뛰고 <pwnme+198> 부터 실행된다면 read()가 호출될 때 stack에 있던 쓰래기값( ~~사실 ret addr~~ )을 read()의 3번째 인자로 인식하게 됩니다.
 
-![](sstf-eat-the-pie/Untitled%2013.png)
+![](sstf-eat-the-pie/image14.png)
 
 테스트 해보면 예상과 같이 read( 0, &v0, 0x566109bc )가 실행됩니다. 이 가젯을 사용한다면 16 byte 입력 제한으로 불가능 했던 AW가 가능해집니다.
 
@@ -207,6 +207,6 @@ p.sendline(payload) # 0xa99 == pop pop pop ret
 p.interactive()
 ```
 
-![](sstf-eat-the-pie/Untitled%2014.png)
+![](sstf-eat-the-pie/image15.png)
 
 Q.E.D
