@@ -54,7 +54,7 @@
 ```yaml
 theme: fluid # 指定主题
 
-language: zh-CN # 指定语言，可不改
+language: ko-KR # 指定语言，可不改
 ```
 
 #### 4. 创建「关于页」

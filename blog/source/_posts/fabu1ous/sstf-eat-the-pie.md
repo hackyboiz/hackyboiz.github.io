@@ -5,7 +5,7 @@ tags: [Fabu1ous, samsung, ctf, out-of-bound, printf-vuln, calling convention]
 categories: [Write-Up]
 date: 2020-10-02 19:00:00
 cc: false
-index_img: /2020/10/02/fabu1ous/sstf-eat-the-pie/Untitled.png
+index_img: /2020/10/02/fabu1ous/sstf-eat-the-pie/image1.png
 ---
 
 
