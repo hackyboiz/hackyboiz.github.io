@@ -54,7 +54,7 @@ Meterpreter는 수천개의 문자열을 가지고 있고, API imports는 어떠
 
 후자가 선호되는 방식이고, 많은 유명한 연구들에서 같은 결론에 도달했다. 주요한 이유는 transformation pass를 한 번 작성해서 소프트웨어의 프로그래밍 언어나 타겟 아키텍처에 대해 독립적으로 재사용할 수 있다는 것이다.
 
-![](antivirus-evasion-pt1/image.png)
+![df](antivirus-evasion-pt1/image.png)
 
 이미지 출처: [http://www.aosabook.org/en/llvm.html](http://www.aosabook.org/en/llvm.html)
 
