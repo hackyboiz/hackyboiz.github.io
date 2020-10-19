@@ -8,11 +8,9 @@ cc: true
 index_img: /2020/10/18/idioth/sstf-rc-four/image.png
 ---
 
+# Intro
 
-
-# [Wirte-Up] SSTF RC_four
-
-## Intro
+---
 
 ![](sstf-rc-four/image.png)
 
@@ -24,7 +22,9 @@ output.txt 파일에는 암호화된 것으로 추측되는 문자열이 2줄 �
 
 
 
-## challenge.py 분석
+# challenge.py 분석
+
+---
 
 ```python
 from Crypto.Cipher import ARC4
@@ -54,7 +54,7 @@ print (hexlify(encrypt(flag)).decode())
 
 challenge 파일을 해보면 arc4를 사용하여 암호화를 진행한 것을 알 수 있습니다.
 
-output.txt의 첫번째 줄은 msg를 암호화한 부분이고 두번째 줄은 flag임을 알 수 있습니다.
+output.txt의 첫 번째 줄은 msg를 암호화한 부분이고 두 번째 줄은 flag임을 알 수 있습니다.
 
 [rc4 알고리즘](https://en.wikipedia.org/wiki/RC4)은 스트림 암호로 key 값을 사용하여 셔플링을 통해 키 스트림 바이트를 생성한 후 해당 키 스트림과 xor 연산을 통해 암호화를 진행합니다.
 
@@ -64,7 +64,9 @@ key stream ^ 문자열 = 암호문이므로 암호문 ^ 문자열을 수행하�
 
 
 
-## Decrypt Code
+# Decrypt Code
+
+---
 
 ```python
 text = "RC4 is a Stream Cipher, which is very simple and fast."

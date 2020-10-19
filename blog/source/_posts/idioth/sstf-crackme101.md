@@ -8,11 +8,9 @@ cc: true
 index_img: /2020/10/18/idioth/sstf-crackme101/image.png
 ---
 
+# Intro
 
-
-# [Write-Up] SSTF CrackMe101
-
-## Intro
+---
 
 ![](sstf-crackme101/image.png)
 
@@ -26,7 +24,9 @@ Ghidra를 사용하여 crackme101이 어떤 식으로 구동되는지 확인해�
 
 
 
-## crackme101 분석
+# crackme101 분석
+
+---
 
 ```cpp
 undefined8 main(void)
@@ -69,7 +69,7 @@ undefined8 main(void)
 
 `getMaskedStr` 함수에서 인자를 모두 `local_78`로 받아서 어떠한 작업을 수행한 후 "Dtd>=mhpNCqz?N!j(Z?B644[.$~96b6zjS*2t&" 문자열과 `ocal_78` 문자열을 뒷부분의 배열부터 `iVar1`의 크기만큼 비교합니다.
 
-`local_88`과 `iVar1`이 같아야하려면 while 문의 조건인 각 문자열이 동일해야하므로 `getMaskedStr` 함수를 통과한 `local_78`의 값이 어떠한 값인지 먼저 알아야합니다.
+`local_88`과 `iVar1`이 같아야 하려면 while 문의 조건인 각 문자열이 동일해야 하므로 `getMaskedStr` 함수를 통과한 `local_78`의 값이 어떠한 값인지 먼저 알아야 합니다.
 
 ```cpp
 void getMaskedStr(char *param_1,long param_2)
@@ -90,7 +90,7 @@ void getMaskedStr(char *param_1,long param_2)
 }
 ```
 
-인자로 받은 param은 입력 받은 패스워드 값이 될 것입니다.
+인자로 받은 param은 입력받은 패스워드 값이 될 것입니다.
 
 문자열의 길이만큼 "u7fl(3JC=UkJGEhPk{q`/X5UzTI.t&A]2[rPM9"문자열과 동일한 index끼리 xor 연산을 수행하는 것을 볼 수 있습니다.
 
@@ -104,10 +104,17 @@ void getMaskedStr(char *param_1,long param_2)
 그러면 저희가 복호화할 시나리오는
 
 1. 최종적으로 나올 값은 "Dtd>=mhpNCqz?N!j(Z?B644[.$~96b6zjS*2t&"이므로 해당 문자열과 "u7fl(3JC=UkJGEhPk{q`/X5UzTI.t&A]2[rPM9"를 뒤집은 문자열을 xor 연산
+
 2. 나온 문자열을 다시 뒤집음
+
 3. Get Flag!!
 
-## Decode Code
+
+
+
+# Decode Code
+
+---
 
 ```python
 key1 = "u7fl(3JC=UkJGEhPk{q`/X5UzTI.t&A]2[rPM9"
