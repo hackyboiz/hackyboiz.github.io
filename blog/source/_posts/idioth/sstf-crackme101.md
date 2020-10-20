@@ -10,7 +10,6 @@ index_img: /2020/10/18/idioth/sstf-crackme101/image.png
 
 # Intro
 
----
 
 ![](sstf-crackme101/image.png)
 
@@ -26,7 +25,6 @@ Ghidra를 사용하여 crackme101이 어떤 식으로 구동되는지 확인해�
 
 # crackme101 분석
 
----
 
 ```cpp
 undefined8 main(void)
@@ -114,7 +112,6 @@ void getMaskedStr(char *param_1,long param_2)
 
 # Decode Code
 
----
 
 ```python
 key1 = "u7fl(3JC=UkJGEhPk{q`/X5UzTI.t&A]2[rPM9"

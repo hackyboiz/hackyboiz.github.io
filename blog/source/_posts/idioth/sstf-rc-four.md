@@ -10,7 +10,6 @@ index_img: /2020/10/18/idioth/sstf-rc-four/image.png
 
 # Intro
 
----
 
 ![](sstf-rc-four/image.png)
 
@@ -24,7 +23,6 @@ output.txt 파일에는 암호화된 것으로 추측되는 문자열이 2줄 �
 
 # challenge.py 분석
 
----
 
 ```python
 from Crypto.Cipher import ARC4
@@ -66,7 +64,6 @@ key stream ^ 문자열 = 암호문이므로 암호문 ^ 문자열을 수행하�
 
 # Decrypt Code
 
----
 
 ```python
 text = "RC4 is a Stream Cipher, which is very simple and fast."

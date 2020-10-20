@@ -1,7 +1,7 @@
 ---
 title: "[Write-Up] SSTF eat-the-pie"
 author: Fabu1ous
-tags: [Fabu1ous, samsung, ctf, sstf, out-of-bound, printf-vuln, calling convention]
+tags: [Fabu1ous, samsung, ctf, sstf, out of bound, printf vuln, calling convention]
 categories: [Write-Up]
 date: 2020-10-18 15:00:00
 cc: true
@@ -10,7 +10,6 @@ index_img: /2020/10/18/fabu1ous/sstf-eat-the-pie/image1.png
 
 # 머릿말
 
----
 
 뉴비부터 고수까지 모두 즐길 수 있는 CTF라는 소개글을 보고 대학 동아리 신입생들을 데리고 SSTF에 출전했습니다. 아쉽게도 좋은 성적을 내진 못했네요. 사실 이 write-up은 같이 출전한 신입생 친구들에게 보여주려고 작성했는데 몇 명이나 읽었을지...
 
@@ -26,7 +25,6 @@ CTF를 처음 경험하는 친구들이라 최대한 풀어서 설명을 적었�
 
 # 훑어보기
 
----
 
 ![](sstf-eat-the-pie/image1.png)
 
@@ -55,7 +53,6 @@ CTF 문제들은 의도적으로 취약점을 만들어 놨기 때문에 짱구�
 
 # 취약점 예상 ( 정적 분석 )
 
----
 
 ![](sstf-eat-the-pie/image2.png)
 
@@ -78,7 +75,6 @@ index를 이용해 참조하는 코드가 있다면 가장 먼저 확인해야 �
 
 # Memory Leak with printf
 
----
 
 ![](sstf-eat-the-pie/image3.png)
 
@@ -96,7 +92,6 @@ PIE를 우회하는 법은 간단합니다. binary의 base address를 leak 하�
 
 # Out-Of-Bound
 
----
 
 ![](sstf-eat-the-pie/image6.png)
 
@@ -112,7 +107,6 @@ Indirect call에 사용될 인덱스에 따라 스택 상황을 출력한 사진
 
 # Exploit Plan
 
----
 
 주어진 정보와 제약 상황 등을 고려하며 추가로 필요한 정보가 있는지 체크해봅시다.
 
@@ -131,7 +125,6 @@ Arbitrary Write 할 방법을 찾자.
 
 # Arbitrary Write
 
----
 
 ![](sstf-eat-the-pie/image9.png)
 
@@ -175,7 +168,6 @@ out-of-bound로 `read()`를 AW에 사용하려는 지금 상황에서 넘어야 
 
 # Exploit
 
----
 
 ```python
 from pwn import*

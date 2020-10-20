@@ -10,7 +10,6 @@ index_img: /2020/10/18/fabu1ous/sstf-t-express/image1.png
 
 # 머릿말
 
----
 
 ![](sstf-t-express/image.png)
 
@@ -32,7 +31,6 @@ T-express 바이너리는 glibc-2.31와 함께 주어진 Heap문제입니다. gl
 
 # 훑어보기
 
----
 
 ![](sstf-t-express/image2.png)
 
@@ -54,7 +52,6 @@ T-express 바이너리는 glibc-2.31와 함께 주어진 Heap문제입니다. gl
 
 # Off-By-One
 
----
 
 ![](sstf-t-express/image3.png)
 
@@ -92,7 +89,6 @@ One Ride Ticket의 `ticket_type`을 NULL( 0x00 )로 오염시킨 모습입니다
 
 # Double Free
 
----
 
 glibc-2.31 버전의 tcache는 double free를 검증하는 코드가 추가 됐습니다. 여기서 재밌는 점은 크기가 같은 tcache 끼리만 검증한다는 겁니다. 만약 청크의 size를 임의로 조작할 수 있는 방법이 있다면 같은 청크를 두 번 해제할 수 있습니다.
 
@@ -116,7 +112,6 @@ One Ride Ticket의 `ticket_type`을 `0x00`으로 바꿔 함수 `use_ticket()`에
 
 # Out-Of-Bound
 
----
 
 ![](sstf-t-express/image14.png)
 
@@ -134,7 +129,6 @@ One Ride Ticket의 `ticket_type`을 `0x00`으로 바꿔 함수 `use_ticket()`에
 
 # Exploit
 
----
 
 ```python
 from pwn import*
