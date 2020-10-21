@@ -5,6 +5,7 @@ tags: [L0ch, context isolation, javascript, xss, cve, rce, discord, electron]
 categories: [1day1line]
 date: 2020-10-20 18:00:00
 cc: true
+index_img: /img/1day1line.png
 ---
 
 ## URL
