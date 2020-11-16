@@ -5,10 +5,10 @@ tags: [L0ch, diffing, patch tuesday, windows, patch extract]
 categories: [Research]
 date: 2020-11-15 18:00:00
 cc: true
-index_img: /img/1day1line.png
+index_img: 2020/11/15/l0ch/windows-patch-diffing-part1/8.png
 ---
 
-안녕하세요! L0ch입니다. 저번 GlueBall 취약점 글 썼을 때 디핑 할 버전별 바이너리를 구하다가 멘탈이 파쇄기에 갈린 종이마냥 갈릴 뻔했죠?
+안녕하세요! L0ch입니다. 저번 [GlueBall](https://hackyboiz.github.io/2020/11/01/l0ch/cve-2020-1464/) 취약점 글 썼을 때 디핑 할 버전별 바이너리를 구하다가 멘탈이 파쇄기에 갈린 종이마냥 갈릴 뻔했죠?
 
 생각해보니까 괜히 Diffing 하겠다고 건드렸다가 X고생했는데 이대로 가만히 있으면 왠지 억울하자나여. 그래서 이 참에 좀 쉽게 쉽게 갈 수 있는 방법을 찾느라 방황하던 중 엄청난 글을 발견하게 되는데..
 
