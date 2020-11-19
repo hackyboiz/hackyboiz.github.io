@@ -1,7 +1,7 @@
 ---
-title: "[하루한줄] Exploiting a textbook use-after-free in Chrome"
+title: "[하루한줄] CVE-2020-6449: Exploiting a textbook use-after-free in Chrome"
 author: L0ch
-tags: [L0ch, cve-2020-6449, uaf, use after free, rce, chrome, chromium]
+tags: [L0ch, cve, use after free, rce, chrome, chromium]
 categories: [1day1line]
 date: 2020-10-30 18:00:00
 cc: true

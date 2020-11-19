@@ -19,7 +19,7 @@ index_img: /2020/10/18/fabu1ous/sstf-t-express/image1.png
 
 T-express 바이너리는 glibc-2.31와 함께 주어진 Heap문제입니다. glibc-2.31는 2020년 2월에 릴리즈 된 버전인데,  저는 T-express를 풀면서 이 버전의 tcache를 처음 접해봤습니다. 이런 저조차 어렵지 않게 풀만큼 크게 어렵지 않고 재밌게 풀 수 있는 문제입니다.
 
-[ 취약점 ]
+[취약점]
 
 1. Off-By-One
 
@@ -55,7 +55,7 @@ T-express 바이너리는 glibc-2.31와 함께 주어진 Heap문제입니다. gl
 
 ![](sstf-t-express/image3.png)
 
-구매할 수 있는 티켓의 종류는 두 가지로 나뉩니다( One Ride Ticket / One Day Ticket ). 두 티켓은 3가지 차이점이 있습니다.
+구매할 수 있는 티켓의 종류는 두 가지로 나뉩니다(One Ride Ticket / One Day Ticket). 두 티켓은 3가지 차이점이 있습니다.
 
 1. 할당 크기
     - One Ride → 0x18
@@ -79,7 +79,7 @@ T-express 바이너리는 glibc-2.31와 함께 주어진 Heap문제입니다. gl
 
 ![](sstf-t-express/image7.png)
 
-One Ride Ticket의 `ticket_type`을 NULL( 0x00 )로 오염시킨 모습입니다. 그래서 이걸로 무얼 할 수 있느냐? `ticket_type`을 오염시켜 0으로 바꾸면 One Ride Ticket을 One Day Ticket인 것처럼 속일 수 있습니다.
+One Ride Ticket의 `ticket_type`을 NULL(0x00)로 오염시킨 모습입니다. 그래서 이걸로 무얼 할 수 있느냐? `ticket_type`을 오염시켜 0으로 바꾸면 One Ride Ticket을 One Day Ticket인 것처럼 속일 수 있습니다.
 
 ![](sstf-t-express/image8.png)
 

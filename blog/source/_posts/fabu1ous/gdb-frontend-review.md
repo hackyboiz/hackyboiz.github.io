@@ -1,7 +1,7 @@
 ---
 title: "[Research] gdb-frontend 포너블에 적합한가?"
 author: Fabu1ous
-tags: [Fabu1ous, gdb-frontend, pwndbg,]
+tags: [Fabu1ous, gdb-frontend, pwndbg]
 categories: [Research]
 date: 2020-11-08 15:00:00
 cc: true
@@ -79,7 +79,7 @@ Open this address in web browser: <http://127.0.0.1:5551/terminal/>
 
 ![](gdb-frontend-review/6.png)
 
-함수 별로 assembly 코드로 출력해주며 다음에 실행될 인스트럭션은 연한 색으로 하이라이트 됩니다. 그중에서도 Call Stack 0번에 나타나는 함수의 하이라이트 된 부분은 eip ( 혹은 rip )입니다. 현재 프로그램 흐름의 위치를 대단히 직관적으로 알 수 있습니다. 글재주가 없어서 이렇게밖에 설명을 못 하겠네요. ㅎㅎ
+함수 별로 assembly 코드로 출력해주며 다음에 실행될 인스트럭션은 연한 색으로 하이라이트 됩니다. 그중에서도 Call Stack 0번에 나타나는 함수의 하이라이트 된 부분은 eip (혹은 rip)입니다. 현재 프로그램 흐름의 위치를 대단히 직관적으로 알 수 있습니다. 글재주가 없어서 이렇게밖에 설명을 못 하겠네요. ㅎㅎ
 
 
 
