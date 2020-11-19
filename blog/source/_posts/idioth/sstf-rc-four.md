@@ -1,7 +1,7 @@
 ---
 title: "[Write-Up] SSTF RC_four"
 author: idioth
-tags: [idioth, samsung, ctf, sstf, rc4, crypto, decrypt]
+tags: [idioth, crypto, samsung, ctf, sstf, rc4, decrypt]
 categories: [Write-Up]
 date: 2020-10-18 15:00:00
 cc: true

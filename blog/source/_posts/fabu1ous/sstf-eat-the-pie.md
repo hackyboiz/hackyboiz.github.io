@@ -1,7 +1,7 @@
 ---
 title: "[Write-Up] SSTF eat-the-pie"
 author: Fabu1ous
-tags: [Fabu1ous, samsung, ctf, sstf, out of bound, printf vuln, calling convention]
+tags: [Fabu1ous, samsung, ctf, sstf, out of bound, calling convention]
 categories: [Write-Up]
 date: 2020-10-18 15:00:00
 cc: true
@@ -111,7 +111,7 @@ Indirect call에 사용될 인덱스에 따라 스택 상황을 출력한 사진
 주어진 정보와 제약 상황 등을 고려하며 추가로 필요한 정보가 있는지 체크해봅시다.
 
 1. `system()`을 바이너리에서 사용함.
-    - Arbitrary Write( AW )가 가능하다면 bss에 "/bin/sh"을 넣어주기만 하면 됨
+    - Arbitrary Write(AW)가 가능하다면 bss에 "/bin/sh"을 넣어주기만 하면 됨
 2. Libc 주소를 leak 하기 번거로움 
 3. PIE가 있는 상황에서 stack 주소를 leak 하기 번거로움
 
@@ -158,11 +158,11 @@ out-of-bound로 `read()`를 AW에 사용하려는 지금 상황에서 넘어야 
 
 ![](sstf-eat-the-pie/image13.png)
 
-위 사진은 `pwnme()`에서 `read( 0, &v0, 0x10 )`에 해당하는 어셈 코드입니다. 3번째 인자부터 역순으로 stack에 push 하는 게 보이시나요? 만약 3번째 인자를 push 하는 코드를 건너뛰고 `<pwnme+198>`부터 실행된다면 `read()`가 호출될 때 stack에 있던 쓰레기 값( ~~사실 ret addr~~ )을 `read()`의 3번째 인자로 인식하게 됩니다.
+위 사진은 `pwnme()`에서 `read(0, &v0, 0x10)`에 해당하는 어셈 코드입니다. 3번째 인자부터 역순으로 stack에 push 하는 게 보이시나요? 만약 3번째 인자를 push 하는 코드를 건너뛰고 `<pwnme+198>`부터 실행된다면 `read()`가 호출될 때 stack에 있던 쓰레기 값( ~~사실 ret addr~~ )을 `read()`의 3번째 인자로 인식하게 됩니다.
 
 ![](sstf-eat-the-pie/image14.png)
 
-테스트해보면 예상과 같이 `read( 0, &v0, 0x566109bc )`가 실행됩니다. 이 가젯을 사용한다면 16 byte 입력 제한으로 불가능했던 AW가 가능해집니다.
+테스트해보면 예상과 같이 `read(0, &v0, 0x566109bc)`가 실행됩니다. 이 가젯을 사용한다면 16 byte 입력 제한으로 불가능했던 AW가 가능해집니다.
 
 
 

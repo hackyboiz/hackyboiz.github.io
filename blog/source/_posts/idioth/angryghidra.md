@@ -1,7 +1,7 @@
 ---
 title: "[Research] AngryGhidra를 사용해보자!"
 author: idioth
-tags: [idioth, angr, ghidra, angryghidra, symbolic execution, reversing]
+tags: [idioth, reversing, angr, ghidra, angryghidra, symbolic execution]
 categories: [Research]
 date: 2020-10-25 14:00:00
 cc: true

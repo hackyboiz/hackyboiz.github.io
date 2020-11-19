@@ -1,7 +1,7 @@
 ---
 title: "[Write-Up] SSTF CrackMe101"
 author: idioth
-tags: [idioth, samsung, ctf, sstf, reversing]
+tags: [idioth, reversing, samsung, ctf, sstf]
 categories: [Write-Up]
 date: 2020-10-18 15:00:00
 cc: true
