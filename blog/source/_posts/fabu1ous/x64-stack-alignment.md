@@ -3,7 +3,7 @@ title: "[Research] gdb-frontend 포너블에 적합한가?"
 author: Fabu1ous
 tags: [Fabu1ous, gdb-frontend, pwndbg]
 categories: [Research]
-date: 2020-11-08 15:00:00
+date: 2020-12-06 13:00:00
 cc: true
 index_img: /2020/11/08/fabu1ous/gdb-frontend-review/4.png
 ---
@@ -28,7 +28,7 @@ index_img: /2020/11/08/fabu1ous/gdb-frontend-review/4.png
 
 *故 Fabu1ous의 네이버 블로그 (2018.10 ~ 2019.12)*
 
-지금까지 푼 포너블 문제만 백 몇개쯤 되고 수없이 많은 system("/bin/sh")을 호출해 봤는데 어째서 이 사실을 이제서야 알게 된거지?
+지금까지 푼 포너블 문제만 백몇 개쯤 되고 수없이 많은 system("/bin/sh")을 호출해 봤는데 어째서 이 사실을 이제야 알게 된 거지?
 
 
 
@@ -185,7 +185,7 @@ pop rip
 jmp rip
 ```
 
-call을 설명할 때 sub routine에 잠시 들렀다 돌아간다고 했습니다. 물론 이 모든 동작을 call이 다 하진 않고, 원래의 인스트럭션 스트림으로 다시 돌아가는 동작은  ret이 대신 해줍니다.
+call을 설명할 때 sub routine에 잠시 들렀다 돌아간다고 했습니다. 물론 이 모든 동작을 call이 다 하진 않고, 원래의 인스트럭션 스트림으로 다시 돌아가는 동작은  ret이 대신해줍니다.
 
 ret은 두 인스트럭션을 하나로 합쳐 놨다고 생각하시면 되는데, call이 저장해놓은 리턴 정보를 스택에서 빼내어 jmp 합니다. 즉, RSP값이 8만큼 증가한다는 뜻입니다.
 
@@ -280,7 +280,7 @@ ret으로 함수 win()의 entry point에 도달하면
 
 ![](x64-stack-alignment/19.png)
 
-컴퓨터는 stack이 항상 align 돼있다고 가정하고 그 상태를 유지하려고 합니다. 즉, win()에서 깨져버린 alignment를 깨진 상태로 유지하게 되고, win() 이후에 호출되는 함수들의 stack alignment는 깨진 상태가 됍니다.
+컴퓨터는 stack이 항상 align 돼있다고 가정하고 그 상태를 유지하려고 합니다. 즉, win()에서 깨져버린 alignment를 깨진 상태로 유지하게 되고, win() 이후에 호출되는 함수들의 stack alignment는 깨진 상태가 됩니다.
 
 ![](x64-stack-alignment/20.png)
 
@@ -288,7 +288,7 @@ ret으로 함수 win()의 entry point에 도달하면
 
 # RET sled
 
-지금까지 설명한 내용을 이해하셨다면 앞으로 공격 코드를 짜실 때 아무 문제없을 거라 생각합니다. 그래도 여기서 글을 마무지 짓긴 애매하니 해결 방법을 알아보죠.
+지금까지 설명한 내용을 이해하셨다면 앞으로 공격 코드를 짜실 때 아무 문제없을 거라 생각합니다. 그래도 여기서 글을 마무리 짓긴 애매하니 해결 방법을 알아보죠.
 
 ```python
 #bof2.py
