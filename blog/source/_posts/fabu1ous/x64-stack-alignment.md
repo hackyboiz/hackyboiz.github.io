@@ -5,7 +5,7 @@ tags: [Fabu1ous, bof, pwnable, stack alignment, rtl, rop]
 categories: [Research]
 date: 2020-12-06 13:00:00
 cc: true
-index_img: /2020/11/08/fabu1ous/gdb-frontend-review/4.png
+index_img: /2020/12/06/fabu1ous/gdb-frontend-review/4.png
 ---
 
 # 머릿말
