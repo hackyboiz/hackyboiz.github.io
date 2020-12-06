@@ -1,7 +1,7 @@
 ---
-title: "[Research] gdb-frontend 포너블에 적합한가?"
+title: "[Research] x64 stack alignment"
 author: Fabu1ous
-tags: [Fabu1ous, gdb-frontend, pwndbg]
+tags: [Fabu1ous, bof, pwnable, stack alignment, rtl, rop]
 categories: [Research]
 date: 2020-12-06 13:00:00
 cc: true
