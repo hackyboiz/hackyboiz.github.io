@@ -28,7 +28,7 @@ index_img: /2020/12/06/fabu1ous/x64-stack-alignment/7.png
 
 *故 Fabu1ous의 네이버 블로그 (2018.10 ~ 2019.12)*
 
-지금까지 푼 포너블 문제만 백몇 개쯤 되고 수없이 많은 system("/bin/sh")을 호출해 봤는데 어째서 이 사실을 이제야 알게 된 거지?
+지금까지 푼 포너블 문제만 백몇 개쯤 되고 수없이 많은 `system("/bin/sh")`을 호출해 봤는데 어째서 이 사실을 이제야 알게 된 거지?
 
 
 
@@ -58,7 +58,7 @@ Linux 64 [ABI](https://software.intel.com/sites/default/files/article/402129/mpx
 
 방금 전엔 RSP를 16의 배수로 유지하는 게 stack alignment라 해놓고 갑자기 RSP+8이 16의 배수라니, 뭐라는 거야?
 
-무슨 소린지 모르겠죠? 사실 설명이 뭐 같이 쓰여있어서 그렇지 사실 아주 간단합니다.
+무슨 소린지 모르겠죠? 설명이 뭐 같이 쓰여있어서 그렇지 사실 아주 간단합니다.
 
 
 
@@ -101,7 +101,7 @@ pwndbg> bp main
 pwndbg> r
 ```
 
-정상적으로 호출된 main() 함수의 entry point입니다. 아직 프롤로그를 실행하기 전이니 RSP+8은 16의 배수겠죠?
+정상적으로 호출된 `main()` 함수의 entry point입니다. 아직 프롤로그를 실행하기 전이니 RSP+8은 16의 배수겠죠?
 
 RSP : `0x7fffffffe038`
 
@@ -140,7 +140,7 @@ RSP : `0x7ffffffffdfe0`
 
 ![](x64-stack-alignment/11.png)
 
-이 규칙을 꼭 지켜야 하는가? 물론 아닙니다. 방금 전에도 설명했듯이 유연하게 어겼다가 지켰다가 할 수 있습니다. 그리고 stack alignment는 효율을 높이기 위해 유지한다고도 설명했다시피 지키지 않아도 프로그램이 동작하는데 아무 문제없습니다. 다만 효율이 좀 떨어질 뿐... 물론 예외가 존재하는데 몇몇 intel/AMD cpu에서 [SSE instruction](https://docs.oracle.com/cd/E26502_01/html/E28388/eojde.html#:~:text=SSE instructions are an extension,MXSCR state management instructions)을 실행할 때  stack alignment가 깨져있으면 segmentation fault가 발생합니다.
+이 규칙을 꼭 지켜야 하는가? 물론 아닙니다. 방금 전에도 설명했듯이 유연하게 어겼다가 지켰다가 할 수 있습니다. 그리고 stack alignment는 효율을 높이기 위해 유지한다고도 설명했다시피 지키지 않아도 프로그램이 동작하는데 아무 문제없습니다. 다만 효율이 좀 떨어질 뿐... 물론 예외가 존재하는데 몇몇 intel/AMD cpu에서 SSE instruction을 실행할 때  stack alignment가 깨져있으면 segmentation fault가 발생합니다.
 
 ![](x64-stack-alignment/12.png)
 
@@ -150,7 +150,7 @@ RSP : `0x7ffffffffdfe0`
 <do_system+364> movaps xmmword ptr [rsp + 0x50], xmm0
 ```
 
-XMM 레지스터와 메모리 사이에서 데이터를 옮길 때, 메모리의 align이 깨져있으면 general protection( #GP / SIGSEGV ) fault를 발생시킵니다. 그리고 Ubuntu 18.04부터 이 movaps 인스트럭션이 do_system()을 포함한 여러 멀티미디어 오퍼레이션에 추가되어 exploit을 작성할 때 stack alignment를 신경 써야 합니다.
+XMM 레지스터와 메모리 사이에서 데이터를 옮길 때, 메모리의 align이 깨져있으면 general protection( #GP / SIGSEGV ) fault를 발생시킵니다. 그리고 Ubuntu 18.04부터 이 movaps 인스트럭션이 `do_system()`을 포함한 여러 멀티미디어 오퍼레이션에 추가되어 exploit을 작성할 때 stack alignment를 신경 써야 합니다.
 
 # JMP vs CALL vs RET
 
@@ -255,7 +255,7 @@ p.interactive()
 $ python3 bof.py
 ```
 
-main()의 return 주소를 win() 함수의 entry point로 덮어쓰는 공격 코드입니다.
+`main()`의 return 주소를 `win()` 함수의 entry point로 덮어쓰는 공격 코드입니다.
 
 ## Debug
 
@@ -266,7 +266,7 @@ pwndbg> bp main+45
 pwndbg> c
 ```
 
-main()의 ret에 break point를 걸고 win() 함수가 호출된 후의 stack 상황을 봅시다.
+`main()`의 ret에 break point를 걸고 `win()` 함수가 호출된 후의 stack 상황을 봅시다.
 
 ![](x64-stack-alignment/18.png)
 
@@ -274,17 +274,17 @@ main()의 ret에 break point를 걸고 win() 함수가 호출된 후의 stack �
 pwndbg> ni
 ```
 
-ret으로 함수 win()의 entry point에 도달하면
+ret으로 함수 `win()`의 entry point에 도달하면
 
 프롤로그를 실행하고 나면 stack alignment가 깨지게 됩니다.
 
 ![](x64-stack-alignment/19.png)
 
-컴퓨터는 stack이 항상 align 돼있다고 가정하고 그 상태를 유지하려고 합니다. 즉, win()에서 깨져버린 alignment를 깨진 상태로 유지하게 되고, win() 이후에 호출되는 함수들의 stack alignment는 깨진 상태가 됩니다.
+컴퓨터는 stack이 항상 align 돼있다고 가정하고 그 상태를 유지하려고 합니다. 즉, `win()`에서 깨져버린 alignment를 깨진 상태로 유지하게 되고, `win()` 이후에 호출되는 함수들의 stack alignment는 깨진 상태가 됩니다.
 
 ![](x64-stack-alignment/20.png)
 
-그리고 결국 do_system()을 실행하다 movaps에 걸려 segmentation fault를 띄우고 exploit은 실패하게 됩니다.
+그리고 결국 `do_system()`을 실행하다 movaps에 걸려 segmentation fault를 띄우고 exploit은 실패하게 됩니다.
 
 # RET sled
 
