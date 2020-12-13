@@ -1,7 +1,7 @@
 ---
 title: "[Translation] Engineering Antivirus evasion Part.1"
 author: idioth
-tags: [idioth, bypass, evasion, meterpreter, opfuscation]
+tags: [idioth, bypass, evasion, meterpreter, obfuscation]
 categories: [Translation]
 date: 2020-11-22 18:00:00
 cc: false
