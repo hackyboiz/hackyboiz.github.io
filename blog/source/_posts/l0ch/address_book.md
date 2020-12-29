@@ -5,7 +5,7 @@ tags: [L0ch, ctf, write-up, christmas ctf]
 categories: [Write-Up]
 date: 2020-12-29 21:00:00
 cc: true
-index_img: 2020/11/29/l0ch/address_book/1.png
+index_img: 2020/12/29/l0ch/address_book/1.png
 ---
 
 

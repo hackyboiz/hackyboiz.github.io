@@ -5,7 +5,7 @@ tags: [L0ch, ctf, write-up, christmas ctf]
 categories: [Write-Up]
 date: 2020-12-29 21:00:00
 cc: true
-index_img: 2020/11/29/l0ch/picky_eater/1.png
+index_img: 2020/12/29/l0ch/picky_eater/1.png
 ---
 
 picky_eater는 snake game을 윈도우 콘솔로 구현한 미스크 문제입니다.
