@@ -1,5 +1,5 @@
 ---
-title: "[Write-Up] Christmas CTF 2020 - Picky Eater"
+title: "[Write-Up] Christmas CTF 2020 - baby-RudOlPh"
 author: L0ch
 tags: [L0ch, ctf, write-up, christmas ctf]
 categories: [Write-Up]
