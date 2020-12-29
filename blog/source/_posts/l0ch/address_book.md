@@ -128,8 +128,6 @@ UAF 이후 leak은 Address Info를 출력할 때 `head` 포인터 값에서부�
 
 ![](address_book/9.png)
 
-![https://s3-us-west-2.amazonaws.com/secure.notion-static.com/a911dc27-9eb4-468b-8ba8-df4fcc9d778e/Untitled.png](https://s3-us-west-2.amazonaws.com/secure.notion-static.com/a911dc27-9eb4-468b-8ba8-df4fcc9d778e/Untitled.png)
-
 `Recycle Bin`의 vtable offset은 0x6960이니 leak한 vtable에 offset만큼 빼면 imagebase가 나오겠군요!
 
 이제 imagebase를 구했으니 dll 주소를 구하는건 쉽습니다!
