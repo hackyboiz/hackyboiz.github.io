@@ -96,7 +96,7 @@ tomcat-8.5.54 버전에서 동작하고 있습니다. 해당 버전은 CVE-2020-
 
 현재 arbitrary file upload가 가능하며 파일이 업로드되는 위치도 알 수 있으므로 `conf/context.xml`을 통해 PersistenceManager를 사용 중인지, 사용 중이라면 FileStore로 Directory를 지정해서 저장하는지, 저장한다면 session이 저장되는 경로는 어딘지 확인합시다.(아까 위에서 sessions 폴더를 본 것 같긴 한데)
 
-`detail.jsp?file=..././..././..././conf/context.xml`로 접근하면 `conf/context.xml`의 내용을 확인할 수 있다.
+`detail.jsp?file=..././..././..././conf/context.xml`로 접근하면 `conf/context.xml`의 내용을 확인할 수 있습니다.
 
 ![](christmasctf2020-gift/image13.png)
 
