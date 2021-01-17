@@ -14,7 +14,7 @@ index_img: 2020/11/15/l0ch/windows-patch-diffing-part1/8.png
 
 첫 번역글이라 오역과 오타가 난무할 수 있습니다.. ㅠㅠ 발견하신다면 가차 없이 지적해주시면 감사하겠습니다.
 
-원문 : [R.I.P ROP: CET Internals in Windows 20H1](https://windows-internals.com/cet-on-windows/) 
+>  원문 글 : [R.I.P ROP: CET Internals in Windows 20H1](https://windows-internals.com/cet-on-windows/) 
 
 
 
@@ -30,7 +30,7 @@ forward-edge 구현은 새롭지 않지만 (기본적으로 Microsoft의 [Contro
 
 운영 체제 및 컴파일러는 CALL과 RET 이외의 제어 흐름 시퀀스(예 : 예외 해제 및 [longjmp](https://en.cppreference.com/w/cpp/utility/program/longjmp))를 지원해야 하기 때문에 시스템 수준에서 필요한 동작과 일치하도록 `Shadow Stack Pointer(SSP)` 를 조작해야 하며, 이 조작 자체가 잠재적인 우회가 되지 않도록 검증해야 한다. 이 게시물에서는 Windows가 이를 달성하는 방법에 대해 설명한다.
 
-Windows가 스레드에 대한 shadow stack을 조작하고 유효성을 검사하는 방법에 대해 자세히 알아보기 전에 먼저 두 가지를 이해해야 한다. 첫 번째는 SSP의 실제 위치 및 권한이고 두 번째는 SSP스레드 간 컨텍스트 전환 시 저장/복원하는 데 사용되는 메커니즘과 필요한 경우 (예 : 예외 해제 중)  SSP 수정이 수행되는 방법이다.
+Windows가 스레드에 대한 shadow stack을 조작하고 유효성을 검사하는 방법에 대해 자세히 알아보기 전에 먼저 두 가지를 이해해야 한다. 첫 번째는 SSP의 실제 위치 및 권한이고 두 번째는 SSP스레드 간 콘텍스트 전환 시 저장/복원하는 데 사용되는 메커니즘과 필요한 경우 (예 : 예외 해제 중)  SSP 수정이 수행되는 방법이다.
 
 이러한 메커니즘을 설명하려면 [AVX(Advanced Vector eXtensions)](https://en.wikipedia.org/wiki/Advanced_Vector_Extensions) 명령을 지원하기 위해 Intel에서 도입하고 Windows 7부터 Microsoft가 지원한 Intel CPU 기능을 알아봐야 한다. 또한 이 기능을 사용하기 위해 기존 CONTEXT구조를 문서화되지 않은 CONTEXT_EX구조로 재구성하고 이를 처리하기 위한 native API를 추가하는 것에 대해서도 이야기해야 한다!
 
@@ -40,9 +40,9 @@ Windows가 스레드에 대한 shadow stack을 조작하고 유효성을 검사�
 
 # XState 내부
 
-x86-x64 아키텍처 클래스 프로세서는 범용 레지스터(RAX, RCX), 제어 레지스터 (RIP, RSP...), 부동 소수점 레지스터 (XMM, YMM, ZMM)와 일부 제어, 디버그 및 테스트 레지스터 등 대부분의 보안 연구자들에게 익숙한 레지스터 세트로 구성되었다. 그러나 더 많은 프로세서 기능이 추가됨에 따라 새 레지스터 및 이러한 기능과 관련된 특정 프로세서 상태를 정의해야 했다. 그리고 이러한 기능 중 많은 부분이 스레드 내부에서 사용하므로 컨텍스트 전환 중에 저장하고 복원해야 한다.
+x86-x64 아키텍처 클래스 프로세서는 범용 레지스터(RAX, RCX), 제어 레지스터 (RIP, RSP...), 부동 소수점 레지스터 (XMM, YMM, ZMM)와 일부 제어, 디버그 및 테스트 레지스터 등 대부분의 보안 연구자들에게 익숙한 레지스터 세트로 구성되었다. 그러나 더 많은 프로세서 기능이 추가됨에 따라 새 레지스터 및 이러한 기능과 관련된 특정 프로세서 상태를 정의해야 했다. 그리고 이러한 기능 중 많은 부분이 스레드 내부에서 사용하므로 콘텍스트 전환 중에 저장하고 복원해야 한다.
 
-이에 대한 해결책으로 인텔은 다양한 프로세서 상태를 `상태 마스크`의 비트와 연결하고 `XSAVE` 영역에서 요청된 상태를 읽고 쓰기 위한 `XSAVE` 및 `XRSTOR`와 같은 명령어를 도입하는 `XState(eXtended State)` [표준](https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developers-manual.pdf)을 정의했다. 이 영역은 각 스레드에 대한 CET 레지스터 저장소의 중요한 부분이지만 대부분의 사람들은 기존 부동 소수점, AVX 및 [메모리 보호 확장(Memory Protection eXtensions, MPX)](https://software.intel.com/en-us/articles/introduction-to-intel-memory-protection-extensions)기능에 초점을 두었기 때문에 XSAVE 지원을 대부분 무시하고 있다. 기능 및 메모리 레이아웃에 대한 개요는 독자에게 도움이 될 것이다.
+이에 대한 해결책으로 인텔은 다양한 프로세서 상태를 `상태 마스크`의 비트와 연결하고 `XSAVE` 영역에서 요청된 상태를 읽고 쓰기 위한 `XSAVE` 및 `XRSTOR`와 같은 명령어를 도입하는 `XState(eXtended State)` [표준](https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developers-manual.pdf)을 정의했다. 이 영역은 각 스레드에 대한 CET 레지스터 저장소의 중요한 부분이지만 대부분의 사람들은 기존 부동 소수점, AVX 및 [메모리 보호 확장(Memory Protection eXtensions, MPX)](https://software.intel.com/en-us/articles/introduction-to-intel-memory-protection-extensions) 기능에 초점을 두었기 때문에 XSAVE 지원을 대부분 무시하고 있다. 기능 및 메모리 레이아웃에 대한 개요는 독자에게 도움이 될 것이다.
 
 
 
@@ -57,11 +57,11 @@ x86-x64 아키텍처 클래스 프로세서는 범용 레지스터(RAX, RCX), �
 ![](cet-on-windows/1.png)
 
 > optimized XSAVE 영역 vs not optimized XSAVE 영역 
-> (VX 및 CET_U가 노트 활성화되고 IPT 및 PKRU가 활성화되었지만 마지막 컨텍스트 전환 이후에 사용되지 않은 스레드)
+> (VX 및 CET_U가 노트 활성화되고 IPT 및 PKRU가 활성화되었지만 마지막 콘텍스트 전환 이후에 사용되지 않은 스레드)
 
-`Optimized XSAVE` 메커니즘은 마지막 컨텍스트 스위치 (있는 경우) 이후 다른 스레드에 의해 실제로 수정된 프로세서 상태만 XSAVE영역에 기록할 수 있게 해 주며 내부 프로세서 레지스터는 `XINUSE`이 정보를 추적할 수 있게 해 준다. `XSAVEOPT`를 사용할 때 `XSTATE_BV` 마스크는 요청된 모든 상태가 아니라 실제로 저장된 상태에 해당하는 비트만 포함된다.
+`Optimized XSAVE` 메커니즘은 마지막 콘텍스트 스위치 (있는 경우) 이후 다른 스레드에 의해 실제로 수정된 프로세서 상태만 XSAVE영역에 기록할 수 있게 해 주며 내부 프로세서 레지스터는 `XINUSE`이 정보를 추적할 수 있게 해 준다. `XSAVEOPT`를 사용할 때 `XSTATE_BV` 마스크는 요청된 모든 상태가 아니라 실제로 저장된 상태에 해당하는 비트만 포함된다.
 
-반면 `Compacted XSAVE` 메커니즘은 기존 XState 디자인의 결함을 수정했다. `AVX512` 및 [IPT(Intel Processor Trace)](https://software.intel.com/content/www/us/en/develop/blogs/processor-tracing.html) 와 같은 더 많은 확장 기능이 추가됨에 따라 이러한 기능을 사용하지 않으면 큰 XSAVE영역을 할당하고 0으로 기록해야 한다. `Optimized XSAVE`는 이러한 낭비를 피할 수 있지만 여전히 사용되지 않는 확장 기능은 기본 XSAVE 영역 버퍼로부터 큰 오프셋에 있음을 의미한다 .
+반면 `Compacted XSAVE` 메커니즘은 기존 XState 디자인의 결함을 수정했다. `AVX512` 및 [IPT(Intel Processor Trace)](https://software.intel.com/content/www/us/en/develop/blogs/processor-tracing.html)와 같은 더 많은 확장 기능이 추가됨에 따라 이러한 기능을 사용하지 않으면 큰 XSAVE영역을 할당하고 0으로 기록해야 한다. `Optimized XSAVE`는 이러한 낭비를 피할 수 있지만 여전히 사용되지 않는 확장 기능은 기본 XSAVE 영역 버퍼로부터 큰 오프셋에 있음을 의미한다.
 
 `XSAVEC`를 사용하면 현재 스레드에 의해 실제로 활성화된 XState 기능을 저장하기 위한 공간만 사용하고 저장된 각 상태를 순차적으로 메모리에 배치함으로써 문제를 해결할 수 있다. (CPUID를 통해 `정렬 마스크`의 일부로 제공되는 고정 64-byte 정렬을 사용할 수 있다.)
 
@@ -92,7 +92,7 @@ x86-x64 아키텍처 클래스 프로세서는 범용 레지스터(RAX, RCX), �
 
 ## XState 구성
 
-각 프로세서에는 자체적인 XState 활성화 기능, 예상되는 크기, 기능 및 메커니즘 세트를 가지고 있어 Intel은 운영 체제가 XState를 처리 할 때 쿼리해야하는 다양한 CPUID 클래스를 통해 정보를 노출한다 . Windows는 부팅시 이러한 쿼리를 수행하고 `XSTATE_CONFIGURATION` 아래에 표시된 구조에 정보를 저장한다. (Winnt.h에 문서화 됨)
+각 프로세서에는 자체적인 XState 활성화 기능, 예상되는 크기, 기능 및 메커니즘 세트를 가지고 있어 Intel은 운영 체제가 XState를 처리할 때 쿼리 해야 하는 다양한 CPUID 클래스를 통해 정보를 노출한다. Windows는 부팅 시 이러한 쿼리를 수행하고 `XSTATE_CONFIGURATION` 아래에 표시된 구조에 정보를 저장한다. (Winnt.h에 문서화됨)
 
 ```c
 typedef struct _XSTATE_CONFIGURATION
@@ -276,7 +276,7 @@ CET 레지스터는 기본적으로 커널 코드로만 수정 가능한 MSR이�
 
 # CONTEXT_EX 내부
 
-컨텍스트 스위치를 할 때 저장해야 하는 레지스터의 수가 점점 늘어나고, 이를 지원하기 위해 새로운 버전의 Windows는 레거시 CONTEXT 구조 외에도 CONTEXT_EX 구조를 도입했다. CONTEXT_EX는 레거시 CONTEXT가 고정 크기인 반면 XSAVE는 스레드, 프로세서 및 시스템 구성 정책에 따라 동적으로 크기가 조정되는 프로세서 상태 구조가 필요하기 때문에 도입되었다.
+콘텍스트 스위치를 할 때 저장해야 하는 레지스터의 수가 점점 늘어나고, 이를 지원하기 위해 새로운 버전의 Windows는 레거시 CONTEXT 구조 외에도 CONTEXT_EX 구조를 도입했다. CONTEXT_EX는 레거시 CONTEXT가 고정 크기인 반면 XSAVE는 스레드, 프로세서 및 시스템 구성 정책에 따라 동적으로 크기가 조정되는 프로세서 상태 구조가 필요하기 때문에 도입되었다.
 
 
 
@@ -295,8 +295,8 @@ typedef struct _CONTEXT_CHUNK
     DWORD Length;
 } CONTEXT_CHUNK, *PCONTEXT_CHUNK;
 
-// CONTEXT_EX 구조체는 는 CONTEXT 구조체의의 확장이다. 
-// 컨텍스트 레코드를 프로세서 상태의 일부를 포함하는 분리된 가변크기 버퍼(청크) 세트로 
+// CONTEXT_EX 구조체는 는 CONTEXT 구조체의 확장이다. 
+// 콘텍스트 레코드를 프로세서 상태의 일부를 포함하는 분리된 가변크기 버퍼(청크) 세트로 
 // 정의한다. 현재 두 개의 버퍼(청크)만 정의된다:
 //
 // - 기존 CONTEXT 구조를 저장하는 레거시
@@ -323,12 +323,12 @@ typedef struct _CONTEXT_EX
 
     // 
     // 기존의 CONTEXT 구조 wrapper
-    // N.B. 청크의 크기는 sizeof(CONTEXT)보다 작을 수 있다.
+    // N.B. 청크의 크기는 sizeof(CONTEXT) 보다 작을 수 있다.
     // (CONTEXT_EXTENDED_REGISTERS가 x86에 설정되지 않은 경우).    
 		// CONTEXT_CHUNK Legacy;
     //
 
-	  // CONTEXT_XSTATE : 확장 된 프로세서 상태 청크. 상태 저장은 동일한 형식 
+	  // CONTEXT_XSTATE : 확장된 프로세서 상태 청크. 상태 저장은 동일한 형식 
 	  // XSAVE 작업은 처음 512 바이트를 제외하고 XSAVE_AREA_HEADER에서 시작한다. 
 		// FP 및 SSE 상태에 해당하는 하위 2 비트는 0이어야 한다.
     // CONTEXT_CHUNK XState;
@@ -337,13 +337,13 @@ typedef struct _CONTEXT_EX
 #define CONTEXT_EX_LENGTH ALIGN_UP_BY(sizeof(CONTEXT_EX), STACK_ALIGN)
 
 //
-// 이 매크로를 사용해 컨텍스트 청크를 더 쉽게 조작 가능
+// 이 매크로를 사용해 콘텍스트 청크를 더 쉽게 조작 가능
 //
 ```
 
 
 
-따라서 이 헤더로 CONTEXT_EX 구조의 레이아웃을 이해하고 시각화 할 수있을 때까지 여러 차례 시도를 했고 다음 다이어그램이 도움이 될 수 있다고 느꼈다.
+따라서 이 헤더로 CONTEXT_EX 구조의 레이아웃을 이해하고 시각화할 수 있을 때까지 여러 차례 시도를 했고 다음 다이어그램이 도움이 될 수 있다고 느꼈다.
 
 ![](cet-on-windows/4.png)
 
@@ -409,7 +409,7 @@ RtlInitializeExtendedContext2 (
 );
 ```
 
-이전과 마찬가지로 최신 API에서는 압축된 형식으로 저장할 XState 상태를 수동으로 지정할 수 있다. 지정하지 않으면 사용 가능한 모든 기능 (`SharedUserData` 기반)이 있는 것으로 간주된다.  호출자는 `RtlGetExtendedContextLength(2)`에 대한 호출과 동일한 `ContextFlags`를 지정해 컨텍스트 구조가 올바른 크기로 할당되었는지 확인해야 한다. 이후 호출자는 입력 CONTEXT 버퍼를 따라갈 것으로 예상되는 CONTEXT_EX 구조의 포인터를 받는다.
+이전과 마찬가지로 최신 API에서는 압축된 형식으로 저장할 XState 상태를 수동으로 지정할 수 있다. 지정하지 않으면 사용 가능한 모든 기능 (`SharedUserData` 기반)이 있는 것으로 간주된다.  호출자는 `RtlGetExtendedContextLength(2)`에 대한 호출과 동일한 `ContextFlags`를 지정해 콘텍스트 구조가 올바른 크기로 할당되었는지 확인해야 한다. 이후 호출자는 입력 CONTEXT 버퍼를 따라갈 것으로 예상되는 CONTEXT_EX 구조의 포인터를 받는다.
 
 CONTEXT_EX가 존재하면 호출자는 먼저 레거시 CONTEXT 구조를 가져올 수 있다. (크기에 대한 가정 없이). 다음 API로 수행할 수 있다.
 
@@ -528,7 +528,7 @@ RtlLocateExtendedFeature2 (
 );
 ```
 
-두 함수 모두 CONTEXT_EX 구조와 요청 된 기능의 ID를 수신하고 기능이 XSAVE 영역에 저장된 위치에 대한 포인터를 반환하기 위해 XState 구성 데이터를 구문 분석한다. 지정된 기능에 대한 실제 값을 확인하거나 반환하지 않으며 이는 호출자에게 달려 있다.
+두 함수 모두 CONTEXT_EX 구조와 요청된 기능의 ID를 수신하고 기능이 XSAVE 영역에 저장된 위치에 대한 포인터를 반환하기 위해 XState 구성 데이터를 구문 분석한다. 지정된 기능에 대한 실제 값을 확인하거나 반환하지 않으며 이는 호출자에게 달려 있다.
 
 포인터를 찾기 위해 `RtlLocateExtendedFeature2`는 다음을 수행한다:
 
@@ -540,10 +540,10 @@ RtlLocateExtendedFeature2 (
 - 압축된 형식을 사용하는 경우 :
   - `XSAVE_AREA_HEADER` (`XCOMP_BV`에 해당)에서 `CompactionMask`를 읽고 요청된 기능이 포함되어 있는지 확인한다.
   - `Configuration`-> `AllFeatures`를 읽고 상태 비트가 요청된 기능 ID 앞에 오는 모든 활성화된 상태의 크기를 저장하고 이러한 크기를 더하여 요청된 형식의 오프셋을 계산한 뒤 각 이전 상태 영역의 시작 부분을 64byte로 정렬한다. 해당 비트가 `Configuration`-> `AlignedFeatures`에 설정된 경우 마지막으로 필요한 경우 지정된 기능 ID에 대한 영역의 시작을 정렬한다.
-  - `Configuration.AllFeatures[n]`에서 요청 된 기능의 크기를 읽는다.
+  - `Configuration.AllFeatures[n]`에서 요청된 기능의 크기를 읽는다.
 - 위에서 계산된 오프셋을 기반으로 XSAVE 영역에서 기능을 찾고 선택적으로 출력 길이 변수의 해당 크기와 함께 해당 크기에 대한 포인터를 반환한다.
 
-즉, 압축되지 않은 형식으로 특정 기능의 주소를 찾으려면 `SharedUserData`에서 프로세서에서 지원하는 기능을 확인하는 것으로 충분하다. 그러나 압축 된 형식에서는 `SharedUserData`의 오프셋에 의존할 수 없으므로 스레드에서 활성화된 기능을 확인하고 이전 기능의 모든 크기를 기반으로 오프셋을 계산해야 한다.
+즉, 압축되지 않은 형식으로 특정 기능의 주소를 찾으려면 `SharedUserData`에서 프로세서에서 지원하는 기능을 확인하는 것으로 충분하다. 그러나 압축된 형식에서는 `SharedUserData`의 오프셋에 의존할 수 없으므로 스레드에서 활성화된 기능을 확인하고 이전 기능의 모든 크기를 기반으로 오프셋을 계산해야 한다.
 
 일반적인 Win32 응용 프로그램에서는 내부적으로 위의 기본 API를 호출하지만 일부 사전 처리가 있는 다른 API가 사용되기도 한다. 상태 비트 0과 1은 CONTEXT_EX에서 XSAVE 영역의 일부로 저장되지 않으므로 Win32 API는 적절한 레거시 CONTEXT 필드 (즉, `XSTATE_LEGACY_FLOATING_POINT`의 경우 FltSave, `XSTATE_LEGACY_SSE`의 경우 Xmm0)에서 이러한 두 기능 비트를 가져와 처리한다.
 
@@ -566,7 +566,7 @@ CONTEXT_EX 데이터 구조와 결합된 경우 XState 내부를 이해하기 �
 
 ![](cet-on-windows/5.png)
 
-무엇보다도 레거시 CONTEXT가 음수인 오프셋에 있는 경우 예상대로 시스템이 x87 FPU 상태(1) 및 GSE 상태(2)를 지원하더라도 `XSAVEBV`에는 이러한 비트가 포함되어 있지 않으므로 레거시 컨텍스트 영역에 저장된다. (따라서 관련 상태 데이터의 음수 오프셋에 유의해야 함) `0x40` 바이트 크기인 XSAVE 헤더 (오프셋 `0x30`에서 시작) 다음에 AVX 상태(2)는 오프셋 `0x70`에서 시작한다.
+무엇보다도 레거시 CONTEXT가 음수인 오프셋에 있는 경우 예상대로 시스템이 x87 FPU 상태(1) 및 GSE 상태(2)를 지원하더라도 `XSAVEBV`에는 이러한 비트가 포함되어 있지 않으므로 레거시 콘텍스트 영역에 저장된다. (따라서 관련 상태 데이터의 음수 오프셋에 유의해야 함) `0x40` 바이트 크기인 XSAVE 헤더 (오프셋 `0x30`에서 시작) 다음에 AVX 상태(2)는 오프셋 `0x70`에서 시작한다.
 
 
 
@@ -604,12 +604,12 @@ CONTEXT_EX 데이터 구조와 결합된 경우 XState 내부를 이해하기 �
 
 ## SSP(Shadow Stack Pointer) 유효성 검사
 
-앞서 언급했듯이 예외 해제, APC, longjmp 등과 같이 유저 모드 코드가 SSP를 변경해야 하는 경우가 있다. 그러나 운영 체제는 CET 우회 방지를 위해 SSP에 요청된 새 값을 검증해야 한다. 이는 `19H1`에서 새로운 [KeVerifyContextXStateCetU](https://github.com/yardenshafir/cet-research/blob/master/src/KeVerifyContextXStateCetU.c) 함수에 의해 구현되었다. 이 함수는 컨텍스트가 수정되는 스레드와 스레드의 새 컨텍스트를 수신하고 다음을 수행한다.
+앞서 언급했듯이 예외 해제, APC, longjmp 등과 같이 유저 모드 코드가 SSP를 변경해야 하는 경우가 있다. 그러나 운영 체제는 CET 우회 방지를 위해 SSP에 요청된 새 값을 검증해야 한다. 이는 `19H1`에서 새로운 [KeVerifyContextXStateCetU](https://github.com/yardenshafir/cet-research/blob/master/src/KeVerifyContextXStateCetU.c) 함수에 의해 구현되었다. 이 함수는 콘텍스트가 수정되는 스레드와 스레드의 새 콘텍스트를 수신하고 다음을 수행한다.
 
 - CONTEXT_EX에 XState 데이터가 포함되어 있지 않거나 XState 데이터에 CET 레지스터가 포함되지 않은 경우 (`XSTATE_CET_U` 상태 비트로 `RtlLocateExtendedFeature2`를 호출하여 확인) 유효성 검사가 필요하지 않다.
 - 대상 스레드에서 CET가 활성화된 경우 :
   - 호출자가 `XSAVEBV`에서 `XSTATE_MASK_CET_U`를 마스킹하여 이 스레드에서 CET를 비활성화하는지 확인한다. 이 경우 함수는 상태 비트를 다시 활성화하고 `MSR_IA32_CET_SHSTK_EN` (CET의 섀도우 스택 기능을 활성화하는 플래그)을 `Ia32CetUMsr`에 설정하고 현재 섀도우 스택을 `Ia32Pl3SspMsr`로 설정한다.
-  - 반면에 [KiVerifyContextXStateCetUEnabled](https://github.com/yardenshafir/cet-research/blob/master/src/KiVerifyContextXStateCetUEnabled.c)를 호출하면 CET 섀도우 스택이 활성화되었는지, (`MSR_IA32_CET_SHSTK_EN` 활성화 여부) 새 SSP가 8byte로 정렬되었는지, 현재 SSP 값과 섀도우 스택 영역의 VAD 끝 사이에 있는지 확인한다. 스택이 거꾸로 성장하기 때문에 영역의 "끝"이 실제로 스택의 시작 주소이다. 따라서 스레드에 대한 새 컨텍스트를 설정할 때 모든 SSP 값은 스레드에서 지금까지 사용된 섀도우 스택 내에 있는 한 유효하다. 또한 스레드가 섀도우 스택 내부로 이동할 수 있는 범위에는 제한이 없다.
+  - 반면에 [KiVerifyContextXStateCetUEnabled](https://github.com/yardenshafir/cet-research/blob/master/src/KiVerifyContextXStateCetUEnabled.c)를 호출하면 CET 섀도우 스택이 활성화되었는지, (`MSR_IA32_CET_SHSTK_EN` 활성화 여부) 새 SSP가 8byte로 정렬되었는지, 현재 SSP 값과 섀도우 스택 영역의 VAD 끝 사이에 있는지 확인한다. 스택이 거꾸로 성장하기 때문에 영역의 "끝"이 실제로 스택의 시작 주소이다. 따라서 스레드에 대한 새 콘텍스트를 설정할 때 모든 SSP 값은 스레드에서 지금까지 사용된 섀도우 스택 내에 있는 한 유효하다. 또한 스레드가 섀도우 스택 내부로 이동할 수 있는 범위에는 제한이 없다.
 - CET가 대상 스레드에서 비활성화되고 호출자가 CONTEXT_EX의 `XSAVEBV`에 `XSTATE_CET_U` 마스크를 포함하여 활성화를 시도하는 경우 두 MSR 값이 모두 0으로 설정되도록 허용한다. (섀도우 스택 X, SSP X)
 
 위 유효성 검사에 실패하면 `STATUS_SET_CONTEXT_DENIED`가 반환되고 성공하면 `STATUS_SUCCESS`가 반환된다.
@@ -628,7 +628,7 @@ CET를 활성화하면 기존 Windows 8.1에서 CFG와 함께 구현된 Check St
 
 그러나 흥미롭게도 새로운 mitigation 옵션인 `PS_MITIGATION_OPTION_USER_CET_SET_CONTEXT_IP_VALIDATION (32)` 이 mitigation map에 추가되었다. 문서화되지 않은 이 mitigation을 토글 하면 `MitigationFlags2Values` 필드에서 `AuditUserCetSetContextIpValidation` 비트를 활성화한다. 또한 이것은 이제 32 번째 mitigation 옵션 (각각 DEFERRED / OFF / ON / RESERVED에 대해 4 비트를 차지함)이므로 132개의 mitigation 비트가 필요하며 `PS_MITIGATION_OPTIONS_MAP`는 Map 필드의 3개의 64 비트 배열 요소로 확장되었다.  (`PS_SYSTEM_DLL_INIT_BLOCK`의 크기에 대한 후속 효과가 있음)
 
-새로운 [KeVerifyContextIpForUserCet](https://github.com/yardenshafir/cet-research/blob/master/src/KeVerifyContextIpForUserCet.c) 함수는 스레드의 컨텍스트가 변경될 때마다 호출된다. 스레드에 대해 CET 및 RIP mitigation이 모두 활성화되어 있는지 확인하고 컨텍스트 매개 변수에 `CONTEXT_CONTROL` 플래그가 설정되어 있는지 확인한다. 즉, 이 새 컨텍스트에 의해 RIP가 변경됨을 의미한다. 모든 검사가 통과되면 내부 [KiVerifyContextIpForUserCet](https://github.com/yardenshafir/cet-research/blob/master/src/KiVerifyContextIpForUserCet.c) 함수를 호출한다. 이 함수의 목적은 대상 RIP가 유효한 값이고 익스플로잇이 임의 코드를 실행하는 데 사용하는 값이 아닌지 확인하는 것이다.
+새로운 [KeVerifyContextIpForUserCet](https://github.com/yardenshafir/cet-research/blob/master/src/KeVerifyContextIpForUserCet.c) 함수는 스레드의 콘텍스트가 변경될 때마다 호출된다. 스레드에 대해 CET 및 RIP mitigation이 모두 활성화되어 있는지 확인하고 콘텍스트 매개 변수에 `CONTEXT_CONTROL` 플래그가 설정되어 있는지 확인한다. 즉, 이 새 콘텍스트에 의해 RIP가 변경됨을 의미한다. 모든 검사가 통과되면 내부 [KiVerifyContextIpForUserCet](https://github.com/yardenshafir/cet-research/blob/master/src/KiVerifyContextIpForUserCet.c) 함수를 호출한다. 이 함수의 목적은 대상 RIP가 유효한 값이고 익스플로잇이 임의 코드를 실행하는 데 사용하는 값이 아닌지 확인하는 것이다.
 
 먼저 대상 RIP 주소가 커널 주소가 아니며 매핑되어서는 안 되는 하위 0x10000 바이트의 주소가 아닌지 확인한다. 그런 다음 대상 RIP가 유저 모드의 이전 주소인 경우를 허용하기 위해서 해당 기본 트랩 프레임을 검색하고 대상 RIP가 해당 트랩 프레임의 RIP인지 확인한다. 일반적으로 스레드에 대해 `NtSetThreadContext`가 처음 호출되고 RIP가 스레드의 초기 시작 주소로 설정될 때 발생하지만 일반적이지 않은 다른 경우에도 발생할 수 있다.
 
@@ -719,7 +719,7 @@ dx -g @$table->TableEntry.Take(@$table->CurrentSize)
 
 `KCONTINUE_UNWIND` 요청을 처리하는데 마지막 장애물이 하나 있다. 정규 프로세스에는 코드의 `__try /__except /__finally` 절을 기반으로 하는 연속된 대상에 대한 정적 예외 핸들러가 있지만 Windows에서는 JIT 엔진이 실행 가능한 코드를 동적으로 즉시 생성할 수 있을 뿐만 아니라 `RtlAddFunctionTable` API 등을 통해 런타임에 예외 핸들러를 등록하고 opcode를 해제할 수 있다. 이러한 예외 핸들러는 이전에는 사용자 모드 stack walking 및 예외 해제에만 필요했지만 이제는 연속 핸들러가 커널이 RIP에 대해 잠재적으로 유효한 값으로 처리해야 하는 제어 흐름 대상이 된다. `RtlpFindDynamicEHContinuationTarget`이 처리하는 것이 마지막 가능성이다.
 
-CET 지원 및 `NtContinueEx` 도입의 일부로 EPROCESS 구조는 `DynamicEHContinuationTargetsLock` 및 `DynamicEHContinuationTargetsTree`라는 두 개의 새로운 필드로 향상되었다. 첫 번째는 `EX_PUSH_LOCK`이고 두 번째는 모든 유효한 예외 핸들러 주소를 포함하는 `RTL_RB_TREE`입니다. 이 트리는 `PROCESS_DYNAMIC_EH_CONTINUATION_TARGETS_INFORMATION` 유형의 데이터 구조와 함께 새로운 프로세스 정보 클래스 인 `ProcessDynamicEHContinuationTargets`를 사용하여 `NtSetInformationProcess`에 대한 호출을 통해 관리된다. 더 쉽게 이해하려면 이러한 구조 및 플래그에 대한 아래 정의를 참조하면 된다.
+CET 지원 및 `NtContinueEx` 도입의 일부로 EPROCESS 구조는 `DynamicEHContinuationTargetsLock` 및 `DynamicEHContinuationTargetsTree`라는 두 개의 새로운 필드로 향상되었다. 첫 번째는 `EX_PUSH_LOCK`이고 두 번째는 모든 유효한 예외 핸들러 주소를 포함하는 `RTL_RB_TREE`이다. 이 트리는 `PROCESS_DYNAMIC_EH_CONTINUATION_TARGETS_INFORMATION` 유형의 데이터 구조와 함께 새로운 프로세스 정보 클래스 인 `ProcessDynamicEHContinuationTargets`를 사용하여 `NtSetInformationProcess`에 대한 호출을 통해 관리된다. 더 쉽게 이해하려면 이러한 구조 및 플래그에 대한 아래 정의를 참조하면 된다.
 
 ```c
 #define DYNAMIC_EH_CONTINUATION_TARGET_ADD          0x01
