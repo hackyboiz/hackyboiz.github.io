@@ -5,7 +5,7 @@ tags: [L0ch, cet, windows, rop, mitigation, translation]
 categories: [Translation]
 date: 2021-01-17 15:00:00
 cc: false
-index_img: 2020/11/15/l0ch/windows-patch-diffing-part1/8.png
+index_img: 2021/01/17/l0ch/cet-on-windows/5.png
 ---
 
 안녕하세요 L0ch입니다! 지난번 Windows Patch Diffing에 이어 이번엔 번역글로 돌아왔습니다.
