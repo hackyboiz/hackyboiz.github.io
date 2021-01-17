@@ -1,7 +1,7 @@
 ---
 title: "[Translation] R.I.P ROP: CET Internals in Windows 20H1"
 author: L0ch
-tags: [L0ch, cet, windows, rop,]
+tags: [L0ch, cet, windows, rop, mitigation, translation]
 categories: [Translation]
 date: 2021-01-17 15:00:00
 cc: false
