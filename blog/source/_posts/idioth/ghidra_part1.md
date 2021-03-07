@@ -1,5 +1,5 @@
 ---
-title: "[Research] Re:versing으로 시작하는 ghidra 생활 Part 1"
+title: "[Research] Re:versing으로 시작하는 ghidra 생활 Part 1 - Overview"
 author: idioth
 tags: [idioth, reversing, ghidra, crackme]
 categories: [Research]
@@ -7,6 +7,12 @@ date: 2021-02-07 14:00:00
 cc: true
 index_img: /2021/02/07/idioth/ghidra_part1/thumbnail.png
 ---
+**다른 파트 보러가기**
+
+[Re:versing으로 시작하는 ghidra 생활 Part 2 - Data, Functions, Scripts](https://hackyboiz.github.io/2021/03/07/idioth/ghidra_part2)
+
+---
+
 안녕하세요! idioth입니다. 제가 좋아하는 애니메이션의 이름을 빌려 시리즈의 제목을 정했습니다 하하하! 제 기억이 맞다면 저희 블로그의 첫 research 글은 Ghidra의 플러그인인 AngryGhidra였죠?
 
 사실 저는 ghidra가 처음 공개되었을 때 관심이 많았습니다. 그때는 국가의 요원(?)으로 복무 중이었는데, NSA에서 IDA와 같은 리버스 엔지니어링을 위한 툴을 발표한다! 했을 때 신기했었죠.
