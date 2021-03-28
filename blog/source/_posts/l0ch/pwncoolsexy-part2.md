@@ -278,7 +278,7 @@ Front-End는 Low Fragmentation Heap 과정이며 메모리 할당 및 해제에 
 
 ### _HEAP_USERDATA_HEADER
 
-UserBlock의 header 역할을 하는 구조체이며 XOR 연산으로 인코딩 되어 있습니다. LFH chunk는  `_HEAP_ENTRY` 의 **`SubSegmentCode` 필드에 인코딩 결괏값을 저장합니다. 
+UserBlock의 header 역할을 하는 구조체이며 XOR 연산으로 인코딩 되어 있습니다. LFH chunk는  `_HEAP_ENTRY` 의 `SubSegmentCode` 필드에 인코딩 결괏값을 저장합니다. 
 
 ![](pwncoolsexy-part2/Untitled%2013.png)
 
@@ -411,7 +411,7 @@ LFH로 할당한 chunk들을 크기별로 관리할 때 사용하는 구조체�
 - 0x008 UserBlock : 현재 SubSegment의 UserBlock(`_HEAP_USERDATA_HEADER`)를 가리킴
 - 0x020 AggregateExchg : `_INTERLOCK_SEQ` 구조체를 참조하며 UserBlock의 해제된 chunk 개수를 나타냄. LFH는 이를 사용하여 Userblock에서 할당해야 하는지 결정함
 - 0x024 BlockSize : UserBlock의 각 chunk 크기 >> 4
-- 0x028 BlockCount : UserBlock에 할당된 cunk의 개수
+- 0x028 BlockCount : UserBlock에 할당된 chunk의 개수
 - 0x02a SizeIndex : UserBlock에 해당하는 SizeIndex(`_HEAP_LOCAL_SEGMENT_INFO`의 `BucketIndex`와 같은 값)
 
 ### _INTERLOCK_SEQ
