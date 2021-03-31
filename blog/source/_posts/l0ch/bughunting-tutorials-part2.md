@@ -8,7 +8,7 @@ cc: true
 index_img: 2021/03/17/l0ch/bughunting-tutorials-part2/image0.jpg
 ---
 
-[버그헌팅 튜토리얼 Part 1 보러가기](https://hackyboiz.github.io/2021/03/07/l0ch/bughunting-tutorial/)
+[버그헌팅 튜토리얼 Part 1](https://hackyboiz.github.io/2021/03/07/l0ch/bughunting-tutorial/)
 
 
 
