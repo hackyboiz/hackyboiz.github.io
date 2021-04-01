@@ -10,9 +10,9 @@ index_img: 2021/03/24/l0ch/bughunting-tutorials-part3/image--028.png
 
 
 
-[버그헌팅 튜토리얼 Part 1 보러가기](https://hackyboiz.github.io/2021/03/07/l0ch/bughunting-tutorial/) 
+[버그헌팅 튜토리얼 Part 1](https://hackyboiz.github.io/2021/03/07/l0ch/bughunting-tutorial/) 
 
-[버그헌팅 튜토리얼 Part 2 보러가기](https://hackyboiz.github.io/2021/03/17/l0ch/bughunting-tutorials-part2/)
+[버그헌팅 튜토리얼 Part 2](https://hackyboiz.github.io/2021/03/17/l0ch/bughunting-tutorials-part2/)
 
 저번 글에서 예고했던 대로, 본격적인 분석을 시작해보겠습니다! 이번 글은 삽질에서 시작해 삽질로 끝나는 글이므로 멘탈 나감에 유의하시기 바랍니다... 뭐 어쨌든 익스 하기만 하면 되니까요! 그럼 Part 3 시작하겠습니다.
 
