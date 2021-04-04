@@ -9,7 +9,11 @@ index_img: /2021/02/07/idioth/ghidra_part1/thumbnail.png
 ---
 **다른 파트 보러가기**
 
-[Re:versing으로 시작하는 ghidra 생활 Part 2 - Data, Functions, Scripts](https://hackyboiz.github.io/2021/03/07/idioth/ghidra_part2)
+Re:versing으로 시작하는 ghidra 생활 Part 1 - Overview (Here!)
+
+[Re:versing으로 시작하는 ghidra 생활 Part 2 - Data, Functions, Scripts](https://hackyboiz.github.io/2021/03/07/idioth/ghidra_part2/)
+
+[Re:versing으로 시작하는 ghidra 생활 Part 3 - tips for IDA User](https://hackyboiz.github.io/2021/04/04/ghidra_part3)
 
 ---
 
