@@ -118,7 +118,7 @@ Free 할 때는 chunk 크기에 따라 두 가지로 나뉩니다.
 1. 해제할 chunk를 [_HEAP->VirtualAllocdBlocks](https://hackyboiz.github.io/2021/02/28/l0ch/pwncoolsexy-part2/#HEAP) 에서 제거합니다.
 2. `RtlSecMemFreeVirtualMemory` 함수를 사용해 할당 해제합니다.
 
-복잡한 것처럼 보이지만, 사용하는 구조체 필드 설명을 part 1을 보면서 이해하면 ~~그래도 복잡하지만~~ Heap 메모리를 어떻게 관리하는지 보입니다!
+복잡한 것처럼 보이지만, 사용하는 구조체 필드 설명을 보면서 이해하면 ~~그래도 복잡하지만~~ Heap 메모리를 어떻게 관리하는지 보입니다!
 
 # NT Heap Exploitation
 
