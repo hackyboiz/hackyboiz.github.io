@@ -5,7 +5,7 @@ tags: [Fabu1ous, cfg, cve, bypass, rpc]
 categories: [Translation]
 date: 2021-04-14 14:00:00
 cc: true
-index_img: /2021/04/14/fabu1ous/ttd-3/10.png
+index_img: /2021/04/14/fabu1ous/cfg-bypass/10.png
 ---
 
 
