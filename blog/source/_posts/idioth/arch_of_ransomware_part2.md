@@ -1,5 +1,5 @@
 ---
-title: "[Translation] Architecture of Ransomware Part 1"
+title: "[Translation] Architecture of Ransomware Part 2"
 author: idioth
 tags: [idioth, malware, ransomware, crypto]
 categories: [Translation]
