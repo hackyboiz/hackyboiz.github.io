@@ -1,7 +1,7 @@
 ---
 title: "[Research] Pwn하고 Cool하고 Sexy한 Windows 탐방기 Part 5 - HITCON 2019 dadadb(2)"
 author: L0ch
-tags: [L0ch, lfh, windows, heap, nt heap, research, ctf, hicon]
+tags: [L0ch, lfh, windows, heap, nt heap, research, ctf, hitcon]
 categories: [Research]
 date: 2021-05-09 14:00:00
 cc: true
