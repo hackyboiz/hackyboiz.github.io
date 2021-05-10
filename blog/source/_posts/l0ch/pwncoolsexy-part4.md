@@ -1,7 +1,7 @@
 ---
 title: "[Research] Pwn하고 Cool하고 Sexy한 Windows 탐방기 Part 4 - HITCON 2019 dadadb"
 author: L0ch
-tags: [L0ch, lfh, windows, heap, nt heap, research, ctf, hicon]
+tags: [L0ch, lfh, windows, heap, nt heap, research, ctf, hitcon]
 categories: [Research]
 date: 2021-04-18 14:00:00
 cc: true
@@ -95,11 +95,11 @@ struct node* list[256];
 
 ![pwncoolsexy-part4/Untitled%205.png](pwncoolsexy-part4/Untitled%205.png)
 
-이중 새로운 node를 추가하는 `add_sub_140001340()` 함수를 자세히 보겠습니다.
+이중 새로운 node를 추가하는 `add_sub_1340()` 함수를 자세히 보겠습니다.
 
 ![pwncoolsexy-part4/Untitled%206.png](pwncoolsexy-part4/Untitled%206.png)
 
-`add_sub_140001340()`의 node를 추가하는 부분의 코드입니다.
+`add_sub_1340()`의 node를 추가하는 부분의 코드입니다.
 
 - `Key`를 입력받고 빨간 박스에서 현재 node list에 입력받은 `Key`값이 존재하는지 검색합니다.
 - 만약 못 찾았다면 `LABEL_13`으로 점프해 새 node를 생성하고 찾았다면 아래 코드를 진행합니다.
