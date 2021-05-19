@@ -1,7 +1,7 @@
 ---
 title: "[Research] Re:versing으로 시작하는 ghidra 생활 Part 1 - Overview"
 author: idioth
-tags: [idioth, reversing, ghidra, crackme]
+tags: [idioth, reversing, ghidra, ghidra tutorials, crackme]
 categories: [Research]
 date: 2021-02-07 14:00:00
 cc: true
@@ -14,6 +14,8 @@ Re:versing으로 시작하는 ghidra 생활 Part 1 - Overview (Here!)
 [Re:versing으로 시작하는 ghidra 생활 Part 2 - Data, Functions, Scripts](https://hackyboiz.github.io/2021/03/07/idioth/ghidra_part2/)
 
 [Re:versing으로 시작하는 ghidra 생활 Part 3 - tips for IDA User](https://hackyboiz.github.io/2021/04/04/ghidra_part3)
+
+[Re:versing으로 시작하는 ghidra 생활 Part 4 - Malware Analysis (1)](https://hackyboiz.github.io/2021/05/19/idioth/ghidra_part4/)
 
 ---
 
