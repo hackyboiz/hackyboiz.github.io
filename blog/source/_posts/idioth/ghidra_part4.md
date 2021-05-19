@@ -55,6 +55,8 @@ MinGW로 컴파일되었으며, 32비트 바이너리네요.
 
 ![](ghidra_part4/Untitled%203.png)
 
+## UAC Bypass 함수
+
 Aggressive Instruction Finder는 체크가 풀려있으니 체크를 하고 Analyze를 합니다.
 
 ![](ghidra_part4/Untitled%204.png)
@@ -290,6 +292,8 @@ void uac_bypass_download_file(void)
   return;
 }
 ```
+
+## ATAPIConfiguration 다운로드 함수
 
 이제 아까 지나쳤던 `download_ATAPIConfiguration()`을 분석을 해봅시다.
 
