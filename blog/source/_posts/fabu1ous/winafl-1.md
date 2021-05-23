@@ -5,7 +5,7 @@ tags: [Fabu1ous, winafl, fuzzing, harness, bug bounty]
 categories: [Research]
 date: 2021-05-23 14:00:00
 cc: true
-index_img: /2021/05/23/fabu1ous/winafl-1/1.png
+index_img: /2021/05/23/fabu1ous/winafl-1/thumb.png
 ---
 
 
