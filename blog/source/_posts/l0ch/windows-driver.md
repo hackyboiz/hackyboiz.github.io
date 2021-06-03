@@ -1,7 +1,7 @@
 ---
 title: "[Research] 공대오빠가 알려주는 Windows Driver Part 1 - Setting Up Kernel Debugging"
 author: L0ch
-tags: [L0ch, cet, windows, rop, mitigation, translation]
+tags: [L0ch, research, windows, windows driver, debugging, kernel debugging, kernel, third-party driver exploitation]
 categories: [Research]
 date: 2021-05-30 18:00:00
 cc: true
