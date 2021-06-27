@@ -5,7 +5,7 @@ tags: [L0ch, boot security, windows, malware, cve, kernel]
 categories: [Translation]
 date: 2021-06-27 18:00:00
 cc: false
-index_img: 2021/06/27/l0ch/measured-boot-vuln/Untitled 6.png
+index_img: 2021/06/27/l0ch/measured-boot-vuln/thumbnail.png
 ---
 
 안녕하세요 L0ch입니다!
