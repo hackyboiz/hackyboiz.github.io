@@ -2,7 +2,7 @@
 title: "[Translation] 50 CVEs in 50 Days: Fuzzing Adobe Reader"
 author: Fabu1ous
 tags: [Fabu1ous, winafl, fuzzing, harness, bug bounty, cve]
-categories: [Research]
+categories: [Translation]
 date: 2021-07-04 14:00:00
 cc: true
 index_img: /2021/07/04/fabu1ous/50cve/1.png
