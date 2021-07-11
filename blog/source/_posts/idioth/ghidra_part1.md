@@ -17,6 +17,8 @@ Re:versing으로 시작하는 ghidra 생활 Part 1 - Overview (Here!)
 
 [Re:versing으로 시작하는 ghidra 생활 Part 4 - Malware Analysis (1)](https://hackyboiz.github.io/2021/05/19/idioth/ghidra_part4/)
 
+[Re:versing으로 시작하는 ghidra 생활 Part 5 - Malware Analysis (2)](https://hackyboiz.github.io/2021/07/11/idioth/ghidra_part5/)
+
 ---
 
 안녕하세요! idioth입니다. 제가 좋아하는 애니메이션의 이름을 빌려 시리즈의 제목을 정했습니다 하하하! 제 기억이 맞다면 저희 블로그의 첫 research 글은 Ghidra의 플러그인인 AngryGhidra였죠?

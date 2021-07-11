@@ -17,6 +17,8 @@ index_img: /2021/05/19/idioth/ghidra_part4/thumbnail.jpg
 
 Re:versing으로 시작하는 ghidra 생활 Part 4 - Malware Analysis (1) (Here!)
 
+[Re:versing으로 시작하는 ghidra 생활 Part 5 - Malware Analysis (2)](https://hackyboiz.github.io/2021/07/11/idioth/ghidra_part5/)
+
 ---
 
 반갑습니다. 3일 만에 뵙는군요. 일요일 번역 글에서 말씀 드렸다시피 ghidra 글을 빠르게(?) 작성을 해왔습니다.
