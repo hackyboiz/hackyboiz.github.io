@@ -18,6 +18,8 @@ Re:versing으로 시작하는 ghidra 생활 Part 3 - tips for IDA User (Here!)
 
 [Re:versing으로 시작하는 ghidra 생활 Part 4 - Malware Analysis (1)](https://hackyboiz.github.io/2021/05/19/idioth/ghidra_part4/)
 
+[Re:versing으로 시작하는 ghidra 생활 Part 5 - Malware Analysis (2)](https://hackyboiz.github.io/2021/07/11/idioth/ghidra_part5/)
+
 ---
 
 안녕하세요! 오랜만에 찾아뵙습니다. 갑자기 날씨가 엄청나게 더워졌습니다. 봄 옷을 꺼낼 겨를도 없이 갑자기 여름이 찾아온 것만 같은 느낌입니다.
