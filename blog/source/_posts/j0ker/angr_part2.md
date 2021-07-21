@@ -246,7 +246,6 @@ $\pi = (\alpha_a \neq 0) \wedge (\alpha_b = 0) \wedge 2*(\alpha_a + \alpha_b) + 
 
 1. [A Survey of Symbolic Execution Techniques](https://arxiv.org/pdf/1610.00502.pdf)
 2. [[HACKING] Symbolic Execution(symbolic evaluation)을 이용한 취약점 분석](https://www.hahwul.com/2017/06/19/hacking-symbolic-executionsymbolic/)
-3. [2017 CodeEngn Conference 14, 솔버가 너희를 자유롭게 하리라(feat. Symbolic Execution) [강정진]](https://github.com/codeengn/codeengn-conference/blob/master/14/2017%20CodeEngn%20Conference%2014%2C%20%EC%86%94%EB%B2%84%EA%B0%80%20%EB%84%88%ED%9D%AC%EB%A5%BC%20%EC%9E%90%EC%9C%A0%EB%A1%AD%EA%B2%8C%20%ED%95%98%EB%A6%AC%EB%9D%BC(feat.%20Symbolic%20Execution)%20%5B%EA%B0%95%EC%A0%95%EC%A7%84%5D.pdf)
-4. [Awesome Symbolic Execution](https://github.com/pwnbatman-joker/awesome-symbolic-execution)
-5. [03.Symbolic execution(feat.Concrete execution)](http://www.lazenca.net/pages/viewpage.action?pageId=6324534)
-6. [SAT/SMT tutorial SMT 해결기 내부](http://rosaec.snu.ac.kr/meet/file/20110626o2.pdf)
+3. [Awesome Symbolic Execution](https://github.com/pwnbatman-joker/awesome-symbolic-execution)
+4. [03.Symbolic execution(feat.Concrete execution)](http://www.lazenca.net/pages/viewpage.action?pageId=6324534)
+5. [SAT/SMT tutorial SMT 해결기 내부](http://rosaec.snu.ac.kr/meet/file/20110626o2.pdf)
