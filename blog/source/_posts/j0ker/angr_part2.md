@@ -10,7 +10,7 @@ index_img: /2021/07/21/j0ker/angr_part2/5gxdyj.jpg
 
 # 핵린이의 angr 정복기 - (2) Symbolic Execution
 
-![./angr_part2/5gxdyj.jpg](C:/Users/fandu/Desktop/Hackyboiz/github-page/blog/source/_posts/j0ker/angr_part2/5gxdyj.jpg)
+![./angr_part2/5gxdyj.jpg](./angr_part2/5gxdyj.jpg)
 
 
 
@@ -18,7 +18,7 @@ index_img: /2021/07/21/j0ker/angr_part2/5gxdyj.jpg
 
 안녕하세요. j0ker 입니다... 저번주부터 날씨가 좋네요... 하지만 저는 집에만 쳐박혀서 일이랑 공부만 했습니다 하하 왜냐고요? 쓸데없이 주제를 어렵게 잡았기 때문이죠! 
 
-![./angr_part2/joker_sad_by_darknight7_d1hjnno-fullview.jpeg](C:/Users/fandu/Desktop/Hackyboiz/github-page/blog/source/_posts/j0ker/angr_part2/joker_sad_by_darknight7_d1hjnno-fullview.jpeg)
+![./angr_part2/joker_sad_by_darknight7_d1hjnno-fullview.jpeg](./angr_part2/joker_sad_by_darknight7_d1hjnno-fullview.jpeg)
 
 > 쭈굴...
 
@@ -42,7 +42,7 @@ Symbolic Execution은 자동 소프트웨어 분석 기법 중 하나입니다. 
 
 위에서 얘기한 기법들의 공통점은 무엇일까요? 모두 동적 분석 기법이라는 겁니다. 반면에 Symbolic Execution은 정적 분석 기법입니다.
 
-![./angr_part2/5gy87e.jpg](C:/Users/fandu/Desktop/Hackyboiz/github-page/blog/source/_posts/j0ker/angr_part2/5gy87e.jpg)
+![./angr_part2/5gy87e.jpg](./angr_part2/5gy87e.jpg)
 
 아니... 이름에서부터 "Execution"이 들어가있고, 메모리랑 레지스터가 어떻게 바뀌는지 알아가면서 하는거 아냐? 라고 저는 생각했습니다... 그럼 이제 Symbolic Execution의 개념에 대해 알아보면서 왜 정적 분석인지도 보도록 하겠습니다.
 
@@ -80,7 +80,7 @@ $$a\ne0 \wedge 0=2*(a+b)-4 \wedge b=0$$
 
 이게 이걸 풀면 원하는 값을 얻을 수 있습니다! 근데 이거는 또 어떻게 풀어... 허허 안그래도 수학도 못하는데... 하지만... 
 
-![./angr_part2/zzal.jpeg](C:/Users/fandu/Desktop/Hackyboiz/github-page/blog/source/_posts/j0ker/angr_part2/zzal.jpeg)
+![./angr_part2/zzal.jpeg](./angr_part2/zzal.jpeg)
 
 > 솔버쨩 도와줘!!!
 
@@ -204,7 +204,7 @@ $\pi = (\alpha_a \neq 0) \wedge (\alpha_b = 0) \wedge 2*(\alpha_a + \alpha_b) + 
 
    메모리 문제가 해결이 됐다고 쳐도 분석해야할 실행 경로가 너무 많습니다. 상용 프로그램에서는 그냥 분석해야 할 코드도 이미 많은데, 이 안에서 조건분기문, 루프문도 많이 존재하고 이에 따라 같은 취약점이더라도 다른 실행 경로를 통해 트리거될 수도 있습니다. 모든 실행 경로를 분석해야 취약점을 제일 exploit하기 좋은 실행 경로를 찾을 수 있는 것이죠. 심지어 특정 실행 경로에서는 취약점을 트리거할 수 있어도 exploit하지는 못할 수도 있습니다. 근데 이런 실행 경로를 fork까지 해가면서 모든 state를 다 저장하고 계산하고... 일단 CPU의 코어 개수도 많아야할 것이고 심지어 빨라야할 것입니다. 하지만... 우리에게는 리사수느님이 있다!!! 킹갓스레드리퍼로 돌리면 되지 않겠느냐!!! 예... 누가 함 구해주신다면 어떻게든 온몸을 바쳐 돌려보도록 하겠습니다 ㅎ허헣ㅎ(생각만 해도 좋네)
 
-   ![./angr_part2/22HD9O4TZ2_4.jpeg](C:/Users/fandu/Desktop/Hackyboiz/github-page/blog/source/_posts/j0ker/angr_part2/22HD9O4TZ2_4.jpeg)
+   ![./angr_part2/22HD9O4TZ2_4.jpeg](./angr_part2/22HD9O4TZ2_4.jpeg)
 
    > 이쯤에서 영접해보는 리사수느님
 
@@ -238,7 +238,7 @@ $\pi = (\alpha_a \neq 0) \wedge (\alpha_b = 0) \wedge 2*(\alpha_a + \alpha_b) + 
 
 그럼 이제 다음 편을 쓰기 위해 또 공부하러 가야겠네요... 근데 나 다음 글 올릴 수 있겠지...?
 
-![./angr_part2/5h1k8f.jpg](C:/Users/fandu/Desktop/Hackyboiz/github-page/blog/source/_posts/j0ker/angr_part2/5h1k8f.jpg)
+![./angr_part2/5h1k8f.jpg](./angr_part2/5h1k8f.jpg)
 
 
 
