@@ -1,5 +1,5 @@
 ---
-title: "[Research] "
+title: "[Research] Harness 짜기 싫어 쓰는 Winnie 연구글 Part1"
 author: Fabu1ous
 tags: [Fabu1ous, winnie, fuzzing, harness, bug bounty, windows]
 categories: [Research]
