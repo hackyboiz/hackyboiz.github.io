@@ -14,7 +14,7 @@ index_img: /2021/07/25/fabu1ous/winnie-1/thumb.png
 
 안녕하세요. Fabu1ous 입니다. 제가 가장 최근에 올린 연구글 시리즈 "WinAFL로 마구 퍼징 하기"에서 의미 있는 퍼징 속도가 나오는 Harness를 작성하기 위해 고통받는 모습을 보여드렸죠.
 
-![](/winnie-1/1.png)
+![](winnie-1/1.png)
 
 시리즈 막바지엔 이게 정녕 "자동" 취약점 탐색이 맞냐면서 징징 거리기까지 했습니다. 그만큼 잘 작동하는 Harness를 제작하기 위해선 큰 노력이 필요한데 이 사실을 불편하게 느낀 게 저만은 아니더라고요. 최근에 Georgia Tech과 PennState Univ에서 Winnie라는 새로운 솔루션을 공개했습니다. Harness를 자동 생성한다는 점과 많은 퍼저들이 빠른 속도를 내기 위해 채택한 Persistent mode(프로세스를 종료하지 않는 퍼징 방식)와는 다른 방식을 사용하는 것이 흥미로웠습니다. 그래서, 새로운 시리즈로 찾아왔습니다.
 
@@ -22,7 +22,7 @@ index_img: /2021/07/25/fabu1ous/winnie-1/thumb.png
 
 # Windows 환경의 Fuzzing 문제점
 
-![](/winnie-1/2.png)
+![](winnie-1/2.png)
 
 운영 체제의 종류는 정말 다양합니다. Windows, Mac, Linux, Android, 붉은별... 그 중 Windows가 약 73%라는 압도적인 시장 점유율을 갖고 있습니다. 그만큼 Windows 환경에서의 Product security가 중요하다고 할 수 있습니다. 하지만 Windows 환경에서의 Fuzzing은 몇 가지 장애물이 있습니다.
 
@@ -42,7 +42,7 @@ index_img: /2021/07/25/fabu1ous/winnie-1/thumb.png
 
 # 기존 해결법
 
-![](/winnie-1/3.png)
+![](winnie-1/3.png)
 
 - Harness 작성
 
@@ -56,7 +56,7 @@ index_img: /2021/07/25/fabu1ous/winnie-1/thumb.png
 
 # 그래서 Winnie는
 
-![](/winnie-1/4.png)
+![](winnie-1/4.png)
 
 - Semi-automated harness generation
 
@@ -74,7 +74,7 @@ index_img: /2021/07/25/fabu1ous/winnie-1/thumb.png
 
 # Semi-automated harness generator
 
-![](/winnie-1/5.png)
+![](winnie-1/5.png)
 
 <s>반자동 소총 아니구요. 반자동 하네스 생성기 입니다.</s>
 
@@ -98,7 +98,7 @@ Winnie는 크게 Harness generator와 Fuzzer로 구성되어 있습니다. 그�
 
 논문에선 코드 커버리지 수집을 위한 Fullspeed fuzzing 기능을 소개하고 있습니다. Basic block 단위로 s/w break point를 설정하고 input이 새로운 basic block에 도달하면 break point 인터럽트를 통해 커버리지를 기록합니다.
 
-![](/winnie-1/6.png)
+![](winnie-1/6.png)
 
 책을 보면서 컴파일러 공부를 잠시 했었는데 여기서 굉장히 의아했습니다.
 
@@ -110,7 +110,7 @@ Winnie는 크게 Harness generator와 Fuzzer로 구성되어 있습니다. 그�
 
 또한 `fork()`를 사용해 프로세스를 복제하기 때문에 break point를 삽입과 비활성화 작업을 새로운 프로세스에 적용할 필요가 없어집니다.
 
-![](/winnie-1/7.png)
+![](winnie-1/7.png)
 
 Winnie야 너는 `fork()`가 있구나!
 
