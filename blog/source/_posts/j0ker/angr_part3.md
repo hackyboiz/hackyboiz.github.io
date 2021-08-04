@@ -1,20 +1,26 @@
+---
+title: "[Research] 핵린이의 angr 정복기 - (3) angr_ctf part.1"
+author: j0ker
+tags: [j0ker, angr, symbolic_execution, exploit, newbie]
+categories: [Research]
+date: 2021-08-04 18:00:00
+cc: true
+index_img: ./anrgr_part3/5ij3uc.jpg
+---
+
 # 핵린이의 angr 정복기 - (3) angr_ctf part.1
 
-검수 날짜: August 4, 2021
-검수 여부: No
-업로드 날짜: August 4, 2021
-업로드 여부: No
-작성자: 최광준
-진행 상황: 진행중
-카테고리: Research
-
 ![./anrgr_part3/5ij3uc.jpg](./anrgr_part3/5ij3uc.jpg)
+
+
 
 # 이전 글 바로가기
 
 [[Research] 핵린이의 angr 정복기 - (1) 시작](https://hackyboiz.github.io/2021/07/10/j0ker/angr_part1/)
 
 [[Research] 핵린이의 angr 정복기 - (2) Symbolic Execution](https://hackyboiz.github.io/2021/07/21/j0ker/angr_part2/)
+
+
 
 # 인사말
 
