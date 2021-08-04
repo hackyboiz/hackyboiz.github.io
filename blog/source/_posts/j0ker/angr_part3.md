@@ -5,12 +5,12 @@ tags: [j0ker, angr, symbolic_execution, exploit, newbie]
 categories: [Research]
 date: 2021-08-04 18:00:00
 cc: true
-index_img: ./anrgr_part3/5ij3uc.jpg
+index_img: anrgr_part3/5ij3uc.jpg
 ---
 
 # 핵린이의 angr 정복기 - (3) angr_ctf part.1
 
-![./anrgr_part3/5ij3uc.jpg](./anrgr_part3/5ij3uc.jpg)
+![angr_part3/5ij3uc.jpg](./angr_part3/5ij3uc.jpg)
 
 
 
@@ -30,7 +30,7 @@ index_img: ./anrgr_part3/5ij3uc.jpg
 
 하지만 이번주에는 힐링하면서 공부했습니다! 왜냐면 내용이 쉬웠거든요!! 킼킼킼ㅋ
 
-![./anrgr_part3/1628050255.gif](./anrgr_part3/1628050255.gif)
+![angr_part3/1628050255.gif](angr_part3/1628050255.gif)
 
 이번주는 [angr_ctf](https://github.com/jakespringer/angr_ctf)에 있는 문제들을 풀어봤습니다! 간단히 설명하면 CTF에 나온 문제들을 풀기 전에 angr에 좀 더 익숙해지기 위한 튜토리얼 같은 문제들이라 생각하시면 됩니다. 아무래도 제 1편이나 2편을 보셨더라도 angr를 바로 써서 CTF 문제를 풀 수 있겠다는 생각이 드시진 않으셨을텐데요. 이 문제들만 푼다면 이제 CTF 문제 푸는 것도 무리가 없어 보입니다!(아마도...) 여러분도 풀어보시면서 저와 같이 핵린이를 탈출해보시죠!(방금 제 머릿속에 해킹으로 세계 정복하는 장면이 지나갔... 읍읍)
 
@@ -42,11 +42,11 @@ index_img: ./anrgr_part3/5ij3uc.jpg
 
 0 번째 문제입니다! 바로 IDA로 까보죠.
 
-![./anrgr_part3/Untitled.png](./anrgr_part3/Untitled.png)
+![anrgr_part3/Untitled.png](./angr_part3/Untitled.png)
 
 호호 별거 없네요. 대충 보면 패스워드를 입력으로 8글자를 받고 `complex_function`이라는 함수에서 이러쿵저러쿵 작업을 한 다음에, "JACEJGCS" 문자열과 비교를 합니다. 그럼 `complex_function`이 뭘 하는지 살펴봅시다.
 
-![./anrgr_part3/Untitled%201.png](./anrgr_part3/Untitled%201.png)
+![anrgr_part3/Untitled%201.png](./angr_part3/1.png)
 
 여기서도 별게 없네요! 파라미터로 전달된 두 값으로 연산을 하고 끝납니다. 근데 이거는 어차피 angr가 알아서 분석해줄테니까 그냥 넘어갑시다!(댕꿀)
 
@@ -183,7 +183,7 @@ simulation.explore(find=print_good_address)
 
 다시 IDA로 넘어가서 보면 "Good Job"을 출력해주는 부분은 아래와 같습니다.
 
-![./anrgr_part3/Untitled%202.png](./anrgr_part3/Untitled%202.png)
+![./angr_part3/Untitled%202.png](./angr_part3/2.png)
 
 뭐 이 부분은 어디든 설정하기만 하면 되겠죠. 저는 `puts`가 실행되는 `0x0804867d`로 설정해보겠습니다.
 
@@ -250,11 +250,11 @@ Good Job.
 
 근데 IDA에 넣어봤더니 헥스레이가 정상적으로 동작하지 않네요. 그래서 함수 목록을 봤더니 `avoid_me`라는 함수를 찾을 수 있었습니다.
 
-![./anrgr_part3/Untitled%203.png](./anrgr_part3/Untitled%203.png)
+![./anrgr_part3/Untitled%203.png](./angr_part3/3.png)
 
 사실 안에는 내용이 별로 없습니다. `should_succeed`라는 전역 변수에 0으로 세팅하는데, 이 변수의 크로스 레퍼런스를 확인하면 `maybe_good` 함수에서 이를 사용하는 것을 알 수 있습니다.
 
-![./anrgr_part3/Untitled%204.png](./anrgr_part3/Untitled%204.png)
+![./anrgr_part3/Untitled%204.png](./angr_part3/4.png)
 
 보면 `should_succeed`가 0이 아니어야 "Good Job"이 출력되게 되어있네요. 그러면 `avoid_me`를 거치지 않는 실행 경로가 필요하겠습니다.
 
@@ -337,7 +337,7 @@ Good Job.
 
 # 02_angr_find_condition
 
-![./anrgr_part3/Untitled%205.png](./anrgr_part3/Untitled%205.png)
+![./angr_part3/Untitled%205.png](./angr_part3/5.png)
 
 음.... 뭐지... 의도가 뭐지... 문제만 보고 모르겠어서 그냥 1번 문제에 주소만 바꿔 풀어 봤습니다 ㅋㅋㅋ 근데... 풀림!!!
 
@@ -445,11 +445,11 @@ Good Job.
 
 # 03_angr_symbolic_registers
 
-![./anrgr_part3/Untitled%206.png](./anrgr_part3/Untitled%206.png)
+![./anrgr_part3/Untitled%206.png](./angr_part3/6.png)
 
 음... 이번에는 특이하게 레지스터들이 변수로 사용되는게 눈에 띄네요. 그리고 인풋도 좀 다르게 받는거 같은데... `get_user_input()`을 함 보겠습니다.
 
-![./anrgr_part3/Untitled%207.png](./anrgr_part3/Untitled%207.png)
+![./anrgr_part3/Untitled%207.png](./angr_part3/7.png)
 
 이번에는 앞에와는 달리 인풋을 3개를 받습니다. 하지만 angr에서는 `scanf`를 통해 인풋 여러개 받는것을 인식하지 못한다고? 합니다.
 
@@ -610,7 +610,7 @@ Good Job.
 
 # 04_angr_symbolic_stack
 
-![./anrgr_part3/Untitled%208.png](./anrgr_part3/Untitled%208.png)
+![./anrgr_part3/Untitled%208.png](./angr_part3/8.png)
 
 자 이번에는 입력값들이 스택에 저장되네요. 그럼 위와 비슷하게 심볼릭 변수들을 initial state에 스택에 넣어주면 되겠습니다. 근데 state에는 프로그램이 실행하는 것 처럼 스택 주소를 가지고 있지 않을텐데... 이게 문제네요!
 
@@ -667,7 +667,7 @@ if __name__ == '__main__':
 
 일단 먼저 시작 주소를 지정해보겠습니다. 근데 이전까지는 그냥 `scanf` 이후 어디든 상관없겠지라는 마인드로 대충 지정했지만 이번에는 좀만 자세히 보겠습니다.
 
-![./anrgr_part3/Untitled%209.png](./anrgr_part3/Untitled%209.png)
+![./angr_part3/Untitled%209.png](./angr_part3/9.png)
 
 `scanf` 바로 뒤의 인스트럭션을 보면 esp에서 0x10을 더해줍니다. 일단 initial state에 스택 변수를 설정해야할 것을 알았고, 스택 변수는 대부분 esp나 ebp로 조작하기 때문에 일단 이 부분은 찜찜하니 `add esp, 0x10` 이부분은 제외하고 바로 뒤부터 시뮬레이션을 시작하도록 설정을 해줍니다.
 
@@ -682,7 +682,7 @@ if __name__ == '__main__':
 
 그런 다음 IDA로 스택의 크기와 변수의 위치들을 파악합니다.
 
-![./anrgr_part3/Untitled%2010.png](./anrgr_part3/Untitled%2010.png)
+![./anrgr_part3/Untitled%2010.png](./angr_part3/10.png)
 
 일단 스택 프레임의 크기는 0x18입니다. 그리고 변수들이 `ebp-0xC`, `ebp-0x10`에 위치하는 것을 볼 수 있죠. 그렇다면 변수 하나당 4바이트이기 때문에 ebp에서 ebp-0x8까지는 추적할 필요가 없는 스택 변수들이네요! 그럼 이제 스택을 만들어보죠!
 
@@ -760,7 +760,7 @@ Good Job.
 
 # 05_angr_symbolic_memory
 
-![./anrgr_part3/Untitled%2011.png](./anrgr_part3/Untitled%2011.png)
+![./angr_part3/Untitled%2011.png](./angr_part3/11.png)
 
 후... 이번에는 딱 봐도 전역변수에다 심볼릭 변수를 설정하는게 문제겠네요. 코드에 있는 설명을 볼 필요도 없을거 같습니다 ㅋㅋㅋㅋㅋ(이쯤되면 눈감고도 풀 수 있을듯 ㅇㅈㄹ)
 
@@ -908,6 +908,6 @@ Good Job.
 
 조-바!(조커 바이라는 뜻)
 
-![./anrgr_part3/1628066515.gif](./anrgr_part3/1628066515.gif)
+![./angr_part3/1628066515.gif](./angr_part3/1628066515.gif)
 
 > 퇴근길에 담배 한대 ㅆㅅㅌㅊ
