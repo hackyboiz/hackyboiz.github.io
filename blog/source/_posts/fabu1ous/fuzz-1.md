@@ -5,7 +5,7 @@ tags: [Fabu1ous, fuzzer, fuzzing, servey]
 categories: [Research]
 date: 2021-08-08 14:00:00
 cc: true
-index_img: /2021/07/25/fabu1ous/fuzz-1/1.png
+index_img: /2021/08/08/fabu1ous/fuzz-1/1.png
 ---
 
 
@@ -38,7 +38,7 @@ https://arxiv.org/pdf/1812.00140.pdf
 
 # 2. Systemization, Taxonomy, Test Programs
 
-<img src="fuzz-1/3.png" style="zoom:30%;" />
+![](fuzz-1/3.png)
 
 > generates a stream of random characters to be consumed by a target program
 >
