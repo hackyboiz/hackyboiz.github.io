@@ -8,6 +8,20 @@ cc: true
 index_img: 2021/05/30/l0ch/windows-driver/Untitled.png
 ---
 
+# 시리즈 바로가기
+
+공대오빠가 알려주는 Windows Driver Part 1 - Setting Up Kernel Debugging                            ← Now!
+
+[공대오빠가 알려주는 Windows Driver Part 2 - CVE-2020-12928: AMD Ryzen Master 분석(1)](https://hackyboiz.github.io/2021/07/14/l0ch/windows-driver-part2/)
+
+[공대오빠가 알려주는 Windows Driver Part 3 - CVE-2020-12928: AMD Ryzen Master 분석(2)](http://localhost:4000/2021/07/28/l0ch/windows-driver-part3/)
+
+[공대오빠가 알려주는 Windows Driver Part 4 - CVE-2020-12928: AMD Ryzen Master 분석(3)](http://hackyboiz.github.io/2021/08/11/l0ch/windows-driver-part4/)
+
+------
+
+
+
 # 서론
 
 안녕하세요! L0ch입니다. 지난번 pwn cool sexy 시리즈에 이어 새로운 시리즈로 돌아왔습니다!  그 사이에 기말고사 기간이 된 건 덤.. 

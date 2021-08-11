@@ -8,6 +8,18 @@ cc: true
 index_img: 2021/07/14/l0ch/windows-driver-part2/Untitled.jpg
 ---
 
+# 시리즈 바로가기
+
+[공대오빠가 알려주는 Windows Driver Part 1 - Setting Up Kernel Debugging](https://hackyboiz.github.io/2021/05/30/l0ch/windows-driver/)
+
+공대오빠가 알려주는 Windows Driver Part 2 - CVE-2020-12928: AMD Ryzen Master 분석(1) ← Now!
+
+[공대오빠가 알려주는 Windows Driver Part 3 - CVE-2020-12928: AMD Ryzen Master 분석(2)](http://localhost:4000/2021/07/28/l0ch/windows-driver-part3/)
+
+[공대오빠가 알려주는 Windows Driver Part 4 - CVE-2020-12928: AMD Ryzen Master 분석(3)](http://hackyboiz.github.io/2021/08/11/l0ch/windows-driver-part4/)
+
+------
+
 
 
 안녕하세요! 한 달 만에 돌아온 윈도우 드라이버 시리즈입니다. 지난번 커널 디버깅 세팅에 이어 본격적으로 윈도우 third-party 드라이버 원데이를 분석해볼 건데요, 이제 보니까 시리즈 제목을 뭐같이 짓긴 했네요. 내가 왜 저랬을까..? 
@@ -65,7 +77,7 @@ Windows Kernel은 모듈화가 되어 있으며 Core Kernel(Microkernel)과 Devi
 
 Windows에서 드라이버는 특정 이벤트가 발생할 때 커널 컨텍스트에서 실행되는 코드를 포함하는 모듈로 정의할 수 있습니다. 정리하면 커널 권한이 필요한 작업이 필요할 때 실행되는 코드를 모듈화 한 것입니다.  
 
-위 사진에서 볼 수 있듯이 Windows는 User mode와 Kernel mode로 권한이 나뉘어 있습니다. User mode에서 실행되는 어플리케이션이 커널 권한이 필요한 작업을 요구할 때 커널 권한에 직접적으로 접근하는 것이 아닌 커널 권한으로 실행되는 드라이버에게 요청을 보내 간접적으로 수행하는 것이죠. 이때 User mode 어플리케이션은 I/O Manger를 통해 드라이버에게 요청을 보내는데, IOCTL(I/O Control) 코드로 드라이버가 어떤 기능을 수행할지를 결정합니다.
+위 사진에서 볼 수 있듯이 Windows는 User mode와 Kernel mode로 권한이 나뉘어 있습니다. User mode에서 실행되는 어플리케이션이 커널 권한이 필요한 작업을 요구할 때 커널 권한에 직접적으로 접근하는 것이 아닌 커널 권한으로 실행되는 드라이버에게 요청을 보내 간접적으로 수행하는 것이죠. 이때 User mode 어플리케이션은 I/O Manager를 통해 드라이버에게 요청을 보내는데, IOCTL(I/O Control) 코드로 드라이버가 어떤 기능을 수행할지를 결정합니다.
 
 그렇다면, 이런 드라이버에서 찾을 수 있는 취약점은 어떤 것이 있을지 감이 오지 않나요?
 
