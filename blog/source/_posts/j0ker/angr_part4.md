@@ -1,12 +1,14 @@
-# 핵린이의 angr 정복기 - (4) angr_ctf part.2
+---
+title: "[Research] 핵린이의 angr 정복기 - (4) angr_ctf part.2"
+author: j0ker
+tags: [j0ker, angr, symbolic_execution, exploit, newbie]
+categories: [Research]
+date: 2021-08-15 18:00:00
+cc: true
+index_img: /2021/08/15/j0ker/angr_part4/5jnh8a.jpg
+---
 
-검수 날짜: August 15, 2021
-검수 여부: No
-업로드 날짜: August 15, 2021
-업로드 여부: No
-작성자: 최광준
-진행 상황: 진행중
-카테고리: Research
+# 핵린이의 angr 정복기 - (4) angr_ctf part.2
 
 ![5jnh8a.jpg](angr_part4/5jnh8a.jpg)
 
@@ -126,7 +128,7 @@ j0ker@angr:~/angr_ctf/dist$
 
 이제 다들 눈치 채시겠죠? 너무 뻔하게 파일을 심볼로 지정하는 문제겠네요 ㅋㅋ 하하 이쯤되면 눈감고도 문제 유형은 맞추실 수 있으실 겁니다.
 
-![angr_part4/Untitled%201.png](angr_part4/Untitled%201.png)
+![angr_part4/Untitled%201.png](angr_part4/Untitled 1.png)
 
 일단 먼저 64바이트 입력값을 받고 파일에 씁니다. 중간에 `ignore_me`라는 함수가 있는 걸 보니 저 함수 뒤부터 분석하도록 만들면 될거 같네요. 그리고 파일을 쓰고 지운 다음 그 값으로 뭔가 한 다음에 문자열과 비교합니다. 처음에 생각했던거는 메모리 문제처럼 `buffer` 주소를 메모리 심볼로 지정하고 풀까했는데, 문제 스크립트를 보니 그렇게 풀 수 있지만 제발 문제 의도에 따라 달라고 합니다 ㅋㅋㅋ 그럼 스크립트에 따라 문제를 풀어보도록 합시다. 일단 파일 이름과 사이즈를 설정합니다. 이거는 바이너리를 까면 다 확인할 수 있죠?
 
@@ -258,11 +260,11 @@ Good Job.
 
 이번에는 경로제약조건에 대한 문제일듯 싶습니다. 프로그램을 까보면 그냥 일반적인 문제입니다.
 
-![Untitled](angr_part4/Untitled%202.png)
+![Untitled](angr_part4/Untitled 2.png)
 
 `password`에 문자열이 있고 16바이트 입력값을 받은 뒤 입력값과 `password`를 짬짜미하여 특정 문자열과 같은지 비교하는 거겠죠. 근데 연산 결과값을 비교하는 부분이 함수로 되어 있네요. 이 함수도 봅시다.
 
-![Untitled](angr_part4/Untitled%203.png)
+![Untitled](angr_part4/Untitled 3.png)
 
 함수를 보면 두 문자열을 비교하는 건 맞지만 틀리는 즉시 리턴하는게 아니라 문자 몇개가 맞는지 센다음 몇개가 맞는지 16바이트가 맞는지를 비교하고 리턴하네요. angr에서 이런 함수를 분석하게 되면 무수히 많은 state가 생성될게 뻔합니다. 중간에 멈출수가 없으니 말이죠. 거기에다가 16바이트짜리 문자열이면 엄청난 경우의 수(branch)가 있으니 이 함수는 애초에 분석하면 안될듯 싶습니다. 따라서 이 함수에 들어가기 전에 연산 결과값을 우리가 직접 비교하는게 좀 더 효율적일듯 싶네요.
 
@@ -354,7 +356,7 @@ Good Job.
 
 제목만 보면 뭔갈 후킹해야하는거 같네요. 뭘 후킹해야할 지 봅시다.
 
-![Untitled](angr_part4/Untitled%204.png)
+![Untitled](angr_part4/Untitled 4.png)
 
 보면 입력을 두번 받는데, 일단 첫번째 받는걸 아까와 같은 함수로 체크를 하네요. 이 부분을 후킹해서 뛰어넘어야할듯 보입니다. 뒤에는 뭐 그냥 비교하는거니 별거 없구요. 후킹은 해본적이 없으니 문제 스크립트를 보면서 풀어보죠!
 
