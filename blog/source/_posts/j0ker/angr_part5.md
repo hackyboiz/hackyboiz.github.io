@@ -141,7 +141,7 @@ Good Job.
 
 # 11_angr_sim_scanf
 
-![Untitled](angr_part5/Untitled 1.png)
+![Untitled](angr_part5/1.png)
 
 이번에는 `scanf`를 시뮬레이션하는 문제입니다. 앞에 문제를 비슷하게 활용할 수 있는거 같네요. 이번 문제에서는 `check_equals_` 함수가 나오지 않으니 딱 `scanf`만 시뮬레이션하면 될듯 합니다.(근데 이거 그냥 심볼릭 변수 두개 선언하고 `scanf` 뒤에서 분석 시작하면 되는거 아닌가...?라는 문제 출제자에 의도에 반하는 생각을 해봤습니다 ㅎ) 그래도 앞에서 한번 해봤으니 좀 쉽겠네요!
 
@@ -256,11 +256,11 @@ Good Job.
 
 `veritesting`이 뭐지... 몰라서 일단 검색을 해봤습니다.
 
-![Untitled](angr_part5/Untitled 2.png)
+![Untitled](angr_part5/2.png)
 
 논문이라니... 끄겠습니다. 바이너리를 봅시다.
 
-![Untitled](angr_part5/Untitled 3.png)
+![Untitled](angr_part5/3.png)
 
 흠 뭔가 변수가 많고 `scanf`에 인자가 많은게 좀 이상하군요. 근데 `scanf`로는 32바이트 문자열 밖에 안 받는데 말이지... 크게 뭐가 없는거 같아서 옛날코드를 살짝만 바꿔서 해봤습니다.
 
@@ -285,7 +285,7 @@ WARNING | 2021-08-17 13:35:56,776 | angr.storage.memory_mixins.default_filler_mi
 
 하... 코드도 없고 달랑 세 줄이라니... 암튼 앞에 문제들에 있는 코드에 인자하나만 바꿔주면 되는듯 합니다. 아니 그래서 `veritesting`이 뭔데?? 역시 일단 공식 문서부터 찾아봤습니다.
 
-![Untitled](angr_part5/Untitled 4.png)
+![Untitled](angr_part5/4.png)
 
 하... 결국 그 논문이군요... ㅠㅠ 논문은 피하려고 했는데...
 
@@ -397,7 +397,7 @@ Good Job.
 
 # 13_angr_static_binary
 
-![Untitled](angr_part5/Untitled 5.png)
+![Untitled](angr_part5/5.png)
 
 이번 문제는 얼핏 보기에는 특별한게 없어보이지만 static하게 컴파일되어 있습니다. 이 말은 무엇이냐? 그냥 분석을 돌렸다가는 메모리가 터져버린다는 얘기죠. 사실 제가 지금 사용하는 서버는 fandu님이 빌려주신 서버라 터지든 말든 크게 상관은 안하지만 터지면 처맞을거란 거는 확실히 알고 있죠. 그러니까 사리겠습니다.
 
@@ -405,7 +405,7 @@ Good Job.
 
 angr 레포에서 procedure로 들어가면 엄청 많은 함수들이 구현되어 있습니다.
 
-![Untitled](angr_part5/Untitled 6.png)
+![Untitled](angr_part5/6.png)
 
 몰랐는데 angr가 자바도 지원하나 보네요? 제 평생 자바 어플리케이션을 분석할 일이 없으니 보지 않겠습니다.(제발 자바는 보지 않게 해주세요 ㅠㅠ) 암튼 윈도우도 지원하니 나중에 요긴하게 써먹을 수 있을거 같습니다.
 
@@ -479,11 +479,11 @@ Good Job.
 
 # 14_angr_shared_library
 
-![Untitled](angr_part5/Untitled 7.png)
+![Untitled](angr_part5/7.png)
 
 이번 문제는 뭔가 받은 인풋으로 뭘 하는 부분이 없네요. `validate` 함수를 보면 다른 곳에서 import를 해오는 함수인데, 어디에서 import를 해오는지 알 수 없습니다.
 
-![Untitled](angr_part5/Untitled 8.png)
+![Untitled](angr_part5/8.png)
 
 그럼 문제 스크립트를 봐야죠. 일단 먼저 이 문제는 `lib14_angr_shared_library.so`를 사용한다고 합니다. 네. 문제 이름이 `shared_library`인 만큼 이 라이브러리를 분석하는 문제 입니다. 일단 실행을 해봐야하는데, 일단 실행하기 전에 환경변수를 아래와 같이 설정하고 실행해야 합니다.
 
@@ -493,7 +493,7 @@ export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/home/j0ker/angr_ctf/dist
 
 잘 실행되는 것을 확인했으면 `validate` 함수를 분석해봅시다.
 
-![Untitled](angr_part5/Untitled 9.png)
+![Untitled](angr_part5/9.png)
 
 내용은 다른 문제들과 비슷합니다. 이제 angr로 이 함수를 분석해보죠.
 
