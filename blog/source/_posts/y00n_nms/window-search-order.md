@@ -4,7 +4,7 @@ author: y00n_nms
 tags: [y00n_nms, window, window search order]
 categories: [Hackypedia]
 date: 2021-08-26 14:00:00
-cc: false
+cc: true
 index_img: /img/hackypedia.png
 ---
 
@@ -12,7 +12,7 @@ Windows에서 파일을 찾아 실행할 때 가장 먼저 찾는 곳은 현재 
 
 현재 디렉터리가 `C:\\Users\\Photo`라면 `C:\\Users\\School` 위치에 있는 `SejongUniv.exe` 파일을 찾아 `SejongUniv.exe` 명령으로 실행할 수 없지만, 기본적으로 절대경로와 상대경로를 사용하여 실행할 수는 있습니다. 예를 들면, 절대경로는 `C:/Users/School/SejongUniv.exe`, 상대 경로는 `../School/SejongUniv.exe`로 실행할 수 있습니다.
 
-하지만 절대경로와 상대경로도 아닌 파일 이름을 입력했을 때, 현재 디렉터리에서 찾을 수 없다면 Windows는 `%PATH%` 환경 변수에서 해당 파일을 찾게 됩니다. `%PATH%` 환경 변수는 어떤 디렉토리에서도 실행할 수 있는 파일들을 찾기 위한 경로가 저장되어 있습니다. python의 경로를 설정해 놓으면 아래 사진처럼 어디서는 python을 입력하여 실행할 수 있습니다.
+하지만 절대경로와 상대경로도 아닌 파일 이름을 입력했을 때, 현재 디렉터리에서 찾을 수 없다면 Windows는 `%PATH%` 환경 변수에서 해당 파일을 찾게 됩니다. `%PATH%` 환경 변수는 어떤 디렉토리에서도 실행할 수 있는 파일들을 찾기 위한 경로가 저장되어 있습니다. python의 경로를 설정해 놓으면 아래 사진처럼 어디서든 python을 입력하여 실행할 수 있습니다.
 
 ![](window-search-order/image.png)
 
