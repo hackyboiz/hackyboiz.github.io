@@ -8,7 +8,7 @@ cc: true
 index_img: /2021/09/08/fabu1ous/crazy-wall/1.png
 ---
 
-# 머릿말
+
 
 ![](crazy-wall/1.png)
 
