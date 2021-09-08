@@ -5,7 +5,7 @@ tags: [j0ker, angr, symbolic_execution, exploit, newbie]
 categories: [Research]
 date: 2021-08-25 18:00:00
 cc: true
-index_img: /2021/08/25/j0ker/angr_part5/thumbnail.jpg
+index_img: /2021/08/25/j0ker/angr_part5/thumbnail.png
 ---
 
 # 핵린이의 angr 정복기 - (5) angr_ctf part.3
