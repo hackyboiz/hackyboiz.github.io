@@ -8,11 +8,17 @@ cc: true
 index_img: 2021/03/28/l0ch/pwncoolsexy-part3/thumbnail.png
 ---
 
-# 이전 시리즈 바로가기
+# 시리즈 바로가기
 
 [Pwn하고 Cool하고 Sexy한 Windows 탐방기 Part 1 - pwntools for windows](https://hackyboiz.github.io/2021/01/31/l0ch/pwncoolsexy-part1/)
 
-[Pwn하고 Cool하고 Sexy한 Windows 탐방기 Part 2 - NT Heap](https://hackyboiz.github.io/2021/02/28/l0ch/pwncoolsexy-part2/)
+Pwn하고 Cool하고 Sexy한 Windows 탐방기 Part 2 - NT Heap
+
+[Pwn하고 Cool하고 Sexy한 Windows 탐방기 Part 3 - NT Heap(2)](https://hackyboiz.github.io/2021/03/28/l0ch/pwncoolsexy-part3/)
+
+[Pwn하고 Cool하고 Sexy한 Windows 탐방기 Part 4 - HITCON 2019 dadadb](https://hackyboiz.github.io/2021/04/18/l0ch/pwncoolsexy-part4/)
+
+[Pwn하고 Cool하고 Sexy한 Windows 탐방기 Part 5 - HitCON 2019 dadadb(2)](https://hackyboiz.github.io/2021/05/09/l0ch/pwncoolsexy-part5/)
 
 ---
 
