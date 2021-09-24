@@ -10,6 +10,20 @@ index_img: 2021/01/31/l0ch/pwncoolsexy-part1/2.png
 
 
 
+# 시리즈 바로가기
+Pwn하고 Cool하고 Sexy한 Windows 탐방기 Part 1 - pwntools for windows
+
+[Pwn하고 Cool하고 Sexy한 Windows 탐방기 Part 2 - NT Heap](https://hackyboiz.github.io/2021/02/28/l0ch/pwncoolsexy-part2/)
+
+[Pwn하고 Cool하고 Sexy한 Windows 탐방기 Part 3 - NT Heap(2)](https://hackyboiz.github.io/2021/03/28/l0ch/pwncoolsexy-part3/)
+
+[Pwn하고 Cool하고 Sexy한 Windows 탐방기 Part 4 - HITCON 2019 dadadb](https://hackyboiz.github.io/2021/04/18/l0ch/pwncoolsexy-part4/)
+
+[Pwn하고 Cool하고 Sexy한 Windows 탐방기 Part 5 - HitCON 2019 dadadb(2)](https://hackyboiz.github.io/2021/05/09/l0ch/pwncoolsexy-part5/)
+
+
+---
+
 안녕하세요 L0ch입니다! 오늘은 새로 연재할 시리즈물을 주섬주섬 챙겨 왔습니다. 제목부터 정상이 아닌 느낌이 슬슬 오시죠..?
 
 때는 시리즈물 기획 회의 중 아무 생각 없이 "펀(pwn)쿨섹좌 컨셉 어떰?"이라고 말했는데 팀원들 반응이 격하더라구요.

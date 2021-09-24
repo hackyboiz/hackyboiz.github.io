@@ -8,6 +8,20 @@ cc: true
 index_img: 2021/02/28/l0ch/pwncoolsexy-part2/Untitled.png
 ---
 
+# 시리즈 바로가기
+
+[Pwn하고 Cool하고 Sexy한 Windows 탐방기 Part 1 - pwntools for windows](https://hackyboiz.github.io/2021/01/31/l0ch/pwncoolsexy-part1/)
+
+Pwn하고 Cool하고 Sexy한 Windows 탐방기 Part 2 - NT Heap
+
+[Pwn하고 Cool하고 Sexy한 Windows 탐방기 Part 3 - NT Heap(2)](https://hackyboiz.github.io/2021/03/28/l0ch/pwncoolsexy-part3/)
+
+[Pwn하고 Cool하고 Sexy한 Windows 탐방기 Part 4 - HITCON 2019 dadadb](https://hackyboiz.github.io/2021/04/18/l0ch/pwncoolsexy-part4/)
+
+[Pwn하고 Cool하고 Sexy한 Windows 탐방기 Part 5 - HitCON 2019 dadadb(2)](https://hackyboiz.github.io/2021/05/09/l0ch/pwncoolsexy-part5/)
+
+---
+
 안녕하세요! L0ch입니다. 오늘은 이전 글에서 예고한 대로 NT heap의 Low Fragmentation Heap에 대해 쓰려고 했지만..  Windows Heap에 대한 전반적인 정리와 같이 쓰는 것이 좋을 것 같아 Windows Heap으로 주제를 확장해봤습니다. 그래서! 오늘은 WIndows가 Heap을 어떻게 관리하는지 하나씩 뜯어보면서 살펴보도록 할게요!
 
 # Windows Heap
