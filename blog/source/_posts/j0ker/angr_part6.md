@@ -1,5 +1,5 @@
 ---
-title: "[Research] 핵린이의 angr 정복기 - (6) angr_ctf part.5"
+title: "[Research] 핵린이의 angr 정복기 - (6) angr_ctf part.4"
 author: j0ker
 tags: [j0ker, angr, symbolic_execution, exploit, newbie]
 categories: [Research]
