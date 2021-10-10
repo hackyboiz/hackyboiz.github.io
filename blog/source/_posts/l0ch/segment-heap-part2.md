@@ -8,7 +8,7 @@ cc: true
 index_img: 2021/10/10/l0ch/segment-heap-part2/thumbnail.jpg
 ---
 
-안녕하세요, 백신 2차 맞고 온 L0ch입니다..ㅠㅠㅠ 
+안녕하세요, 백신 2차 맞고 온 L0ch입니다...ㅠㅠㅠ 
 
 ![Untitled](segment-heap-part2/Untitled.png)
 
