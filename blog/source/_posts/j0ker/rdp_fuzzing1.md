@@ -2,8 +2,8 @@
 title: "[Research] 핵린이의 angr 정복기 - (6) angr_ctf part.4"
 author: j0ker
 tags: [j0ker, angr, symbolic_execution, exploit, newbie]
-categories: [Research]
-date: 2021-10-17 18:00:00
+categories: [Translation]
+date: 2021-10-17 14:00:00
 cc: true
 index_img: /2021/10/17/j0ker/rdp_fuzzing1/3.png
 ---
