@@ -24,7 +24,7 @@ index_img: /2021/10/17/j0ker/rdp_fuzzing1/3.png
 
 사실 저희가 프로젝트를 처음 시작할 때에는 VM에 관련된 내용에 관심을 가지고 있었습니다. 하지만 Azure의 Windows 머신 혹은 Hyper-V 가상머신에 접속할 때 RDP를 주로 사용하기 때문에, RDP에 눈을 돌리게 되었습니다.
 
-저희는 다른 성공적인 프로젝트들과 똑같이 처음에는 구글링을 하다가 [박천성님, 장진영님, 김승주님, 이기택님의 RDP fuzzing에 관련된 BlackHat Europe 2019 발표](https://www.youtube.com/watch?v=dGLrK8tUAFs)를 접하게 되었습니다. 발표자들은 그렇게 빠르지 않은 퍼저를 활용했음에도 불구하고 몇 시간만에 여러 취약점들을 찾았습니다. 따라서 우리는 그들의 연구를 기반으로 퍼징 기능을 확장하고 퍼포먼스를 개선하여 RDP에서 Remote Code Execution(RCE) 취약점을 찾기로 결정하였습니다. 
+저희는 다른 성공적인 프로젝트들과 똑같이 처음에는 구글링을 하다가 [박천성님, 장영진님, 김승주님, 이기택님의 RDP fuzzing에 관련된 BlackHat Europe 2019 발표](https://www.youtube.com/watch?v=dGLrK8tUAFs)를 접하게 되었습니다. 발표자들은 그렇게 빠르지 않은 퍼저를 활용했음에도 불구하고 몇 시간만에 여러 취약점들을 찾았습니다. 따라서 우리는 그들의 연구를 기반으로 퍼징 기능을 확장하고 퍼포먼스를 개선하여 RDP에서 Remote Code Execution(RCE) 취약점을 찾기로 결정하였습니다. 
 
 불행히도(혹은 운이 좋게도, 보는 시각에 따라 다를 수 있음), 모든 퍼징 프로젝트의 결과물들이 크리티컬한 것은 아닙니다([Survivorship Bias](https://en.wikipedia.org/wiki/Survivorship_bias) 참고). 아직 RDP RCE를 찾지 못했지만 여러 버그들을 찾았고 프로토콜과 구성 그리고 퍼징 프로세스 및 툴을 이해하게 되었습니다. 우리가 만든 퍼징 인프라는 다른 타겟들을 퍼징할 수 있을 정도록 제네럴하게 만들어졌습니다.
 
