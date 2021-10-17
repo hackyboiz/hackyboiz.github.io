@@ -1,5 +1,5 @@
 ---
-title: "[Research] 핵린이의 angr 정복기 - (6) angr_ctf part.4"
+title: "[Translation] Fuzzing RDP: Holding the Stick at Both Ends (1)"
 author: j0ker
 tags: [j0ker, angr, symbolic_execution, exploit, newbie]
 categories: [Translation]
@@ -9,6 +9,8 @@ index_img: /2021/10/17/j0ker/rdp_fuzzing1/3.png
 ---
 
 원문 링크 : [https://www.cyberark.com/resources/threat-research-blog/fuzzing-rdp-holding-the-stick-at-both-ends](https://www.cyberark.com/resources/threat-research-blog/fuzzing-rdp-holding-the-stick-at-both-ends)
+
+
 
 안녕하세요. j0ker입니다! 오늘은 오랜만에 번역글을 가져와봤습니다. 평소에 퍼징에 대해서도 관심이 많았고 파일 퍼징만 해봤지 네트워크 퍼징은 안해봤었는데 괜찮은 글이 있어서 번역해봅니다. 의역을 많이 했는데 오타나 번역이 어색한 부분은 댓글로 지적해주세요. 혹시나 번역해줬으면 하는 글이 있다면 추천 부탁드립니다! 최대한 빨리 해볼게요!
 
