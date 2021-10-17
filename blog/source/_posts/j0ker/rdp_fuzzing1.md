@@ -1,7 +1,7 @@
 ---
 title: "[Translation] Fuzzing RDP: Holding the Stick at Both Ends (1)"
 author: j0ker
-tags: [j0ker, angr, symbolic_execution, exploit, newbie]
+tags: [j0ker, rdp, fuzzing, network, instrumentation, winafl, dynamorio, client, server]
 categories: [Translation]
 date: 2021-10-17 14:00:00
 cc: true
