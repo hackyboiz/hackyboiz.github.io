@@ -10,6 +10,8 @@ index_img: 2021/10/31/l0ch/teamh4c-conference-review/Untitled.png
 
 
 
+# 들어가며
+
 안녕하세요! 오늘은 10월 31일 어제 개최된 TeamH4C의 학생용 해킹노트 온라인 컨퍼런스에 참여한 후기를 들고 왔습니다! 
 
 ![Untitled](teamh4c-conference-review/Untitled.png)
@@ -382,7 +384,7 @@ Windows Artifacts 분석, **엔드포인트 침해사고 분석**, 파일 시스
 - 침해사고 대응 7단계
 **데이터 수집, 데이터 분석, 보고서 작성은 여러분들이 해봤으면 좋겠다.**
   
-    ![스크린샷 2021-10-31 오전 3.00.41.png](teamh4c-conference-review/%E1%84%89%E1%85%B3%E1%84%8F%E1%85%B3%E1%84%85%E1%85%B5%E1%86%AB%E1%84%89%E1%85%A3%E1%86%BA_2021-10-31_%E1%84%8B%E1%85%A9%E1%84%8C%E1%85%A5%E1%86%AB_3.00.41.png)
+    ![스크린샷 2021-10-31 오전 3.00.41.png](teamh4c-conference-review/image3.png)
   
 - 어떻게 공부할까? (방법론)
     - Challenge(CTF 등..)
