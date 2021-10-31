@@ -12,7 +12,7 @@ index_img: 2021/10/31/l0ch/teamh4c-conference-review/Untitled.png
 
 # 들어가며
 
-안녕하세요! 오늘은 10월 31일 어제 개최된 TeamH4C의 학생용 해킹노트 온라인 컨퍼런스에 참여한 후기를 들고 왔습니다! 
+안녕하세요! 오늘은 10월 30일 어제 개최된 TeamH4C의 학생용 해킹노트 온라인 컨퍼런스에 참여한 후기를 들고 왔습니다! 
 
 ![Untitled](teamh4c-conference-review/Untitled.png)
 
