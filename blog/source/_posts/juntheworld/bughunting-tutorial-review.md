@@ -1,7 +1,7 @@
 ---
 title: "[Research] 버그헌팅 튜토리얼 리뷰"
 author: juntheworld
-tags: [junthworld, pwnable, windows, bughunting, review]
+tags: [juntheworld, pwnable, windows, bughunting, review]
 categories: [Research]
 date: 2021-11-07 18:00:00
 cc: true
