@@ -26,7 +26,7 @@ index_img: 2021/11/07/juntheworld/bughunting-tutorial-review/image-2021091522232
 
 [버그헌팅 튜토리얼 Part 3](https://hackyboiz.github.io/2021/03/24/l0ch/bughunting-tutorials-part3/)
 
-[버그헌팅 튜토리얼 Part 4](https://hackyboiz.github.io/2021/03/24/l0ch/bughunting-tutorials-part4/)
+[버그헌팅 튜토리얼 Part 4](https://hackyboiz.github.io/2021/03/31/l0ch/bughunting-tutorials-part4/)
 
 
 
