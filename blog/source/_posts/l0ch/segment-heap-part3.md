@@ -5,7 +5,7 @@ tags: [L0ch, research, windows, segment heap, heap, windows 10, hitcon, ctf]
 categories: [Research]
 date: 2021-11-21 18:00:00
 cc: true
-index_img: 2021/10/10/l0ch/segment-heap-part3/thumbnail.jpg
+index_img: 2021/11/21/l0ch/segment-heap-part3/thumbnail.jpg
 ---
 
 
