@@ -9,6 +9,8 @@ index_img: /img/hackypedia.png
 
 ---
 
+유닉스 시스템에서 chroot는 현재 실행중인 프로세스에서 root directory를 변경해 새로운 root directory로 자식 프로세스를 만드는 작업을 실행합니다. 해당 작업이 이루어져 root directory가 변경되면 지정된 directory tree외의 파일은 지정이 불가능 해집니다. 그리고 이렇게 실행된 프로그램들을 directory tree외의 파일에 대해 작업을 하지 못하는 것이 감옥에 갇혀있는 것과 비슷하다고 해서 chroot jail이라고 부릅니다.
+
 ## Root directory
 
 ![](chroot/1.png)
