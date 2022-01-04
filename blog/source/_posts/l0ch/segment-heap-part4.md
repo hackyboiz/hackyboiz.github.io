@@ -57,7 +57,7 @@ alloc(0, 0x3bd0) # int 4
 alloc(0,0x8000) # int 5
 ```
 
-![스크린샷 2021-12-19 14.48.59.png](segment-heap-part4/%E1%84%89%E1%85%B3%E1%84%8F%E1%85%B3%E1%84%85%E1%85%B5%E1%86%AB%E1%84%89%E1%85%A3%E1%86%BA_2021-12-19_14.48.59.png)
+![pic1.png](segment-heap-part4/pic1.png)
 
 `binary+0x5640` 에 위치한 전역변수 `Storage` 구조체에 할당한 6개의 청크의 주소를 확인할 수 있습니다. 문자열 포인터가 있는 네 번째 Storage를 보면?
 
@@ -83,7 +83,7 @@ alloc(0,0x8000) # int 5
 
 `_HEAP_PAGE_SEGMENT` 심볼로 보면 `DescArray`필드가  [_HEAP_PAGE_RANGE_DESCRIPTOR](https://hackyboiz.github.io/2021/10/10/l0ch/segment-heap-part2/#HEAP-PAGE-RANGE-DESCRIPTOR) 구조체 배열인 것을 확인할 수 있습니다.
 
-![스크린샷 2021-12-19 15.18.16.png](segment-heap-part4/%E1%84%89%E1%85%B3%E1%84%8F%E1%85%B3%E1%84%85%E1%85%B5%E1%86%AB%E1%84%89%E1%85%A3%E1%86%BA_2021-12-19_15.18.16.png)
+![스크린샷 2021-12-19 15.18.16.png](segment-heap-part4/pic3.png)
 
 각 구조체는 0x20 byte 크기고 필드는 위와 같습니다. 하나하나 보기 어려우니 메모리에서 한번에 살펴볼게요.
 
@@ -175,7 +175,7 @@ vs_segment = u64(p.recvuntil("\r\n")[:-2].ljust(8,"\x00")) - 0x80
 print("vs_segment:",hex(vs_segment))
 ```
 
-![스크린샷 2021-12-19 17.18.58.png](segment-heap-part4/%E1%84%89%E1%85%B3%E1%84%8F%E1%85%B3%E1%84%85%E1%85%B5%E1%86%AB%E1%84%89%E1%85%A3%E1%86%BA_2021-12-19_17.18.58.png)
+![스크린샷 2021-12-19 17.18.58.png](segment-heap-part4/pic2.png)
 
 그리고 네 번째 청크 문자열을 출력한 결과를 보면 힙 주소(VS 세그먼트) 주소를 leak한 것을 볼 수 있네요!
 
