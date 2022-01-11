@@ -9,6 +9,14 @@ index_img: 2021/12/19/l0ch/segment-heap-part4/thumbnail.png
 ---
 
 
+# 시리즈 바로가기
+[Hip하게 Heap 정복하기 Part 1 - Segment Heap(1)](https://hackyboiz.github.io/2021/09/19/l0ch/segment-heap-part1/)
+[Hip하게 Heap 정복하기 Part 2 - Segment Heap(2)](https://hackyboiz.github.io/2021/10/10/l0ch/segment-heap-part2/)
+[Hip하게 Heap 정복하기 Part 3 - HITCON 2020 Michael's Storage ](https://hackyboiz.github.io/2021/11/21/l0ch/segment-heap-part3/)
+Hip하게 Heap 정복하기 Part 4 - HITCON 2020 Michael's Storage(2) ← Now!
+[Hip하게 Heap 정복하기 Part 5 - HITCON 2020 Michael's Storage(3)](https://hackyboiz.github.io/2022/01/09/l0ch/segment-heap-part5/)
+
+
 # HITCON CTF 2020 - Archangel Michael's Storage
 
 저번 파트에서 문제의 OOB Write 취약점까지 확인했으니 익스플로잇 시나리오를 짜보도록 할게요! 먼저 주소를 leak 해보도록 하겠습니다.

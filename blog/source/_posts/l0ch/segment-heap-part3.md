@@ -8,6 +8,12 @@ cc: true
 index_img: 2021/11/21/l0ch/segment-heap-part3/thumbnail.jpg
 ---
 
+# 시리즈 바로가기
+[Hip하게 Heap 정복하기 Part 1 - Segment Heap(1)](https://hackyboiz.github.io/2021/09/19/l0ch/segment-heap-part1/)
+[Hip하게 Heap 정복하기 Part 2 - Segment Heap(2)](https://hackyboiz.github.io/2021/10/10/l0ch/segment-heap-part2/)
+Hip하게 Heap 정복하기 Part 3 - HITCON 2020 Michael's Storage ← Now!
+[Hip하게 Heap 정복하기 Part 4 - HITCON 2020 Michael's Storage(2)](https://hackyboiz.github.io/2021/12/19/l0ch/segment-heap-part4/)
+[Hip하게 Heap 정복하기 Part 5 - HITCON 2020 Michael's Storage(3)](https://hackyboiz.github.io/2022/01/09/l0ch/segment-heap-part5/)
 
 
 안녕하세요! L0ch입니다. 정말 오랜만에 올리는 연구글이네요 ㅠㅠ 연말에 일복터지는건 작년 크리스마스 CTF에 이어 올해도 똑같다니 ㅠㅠㅠㅠㅠㅠ 이번 크리스마스도 여유롭게 보내기는 틀린거겠죠,, 
