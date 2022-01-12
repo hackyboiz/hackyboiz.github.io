@@ -19,7 +19,7 @@ index_img: /img/hackypedia.png
 
 그 외에도 많은 사람들이 `printf(" Hello \n");`에서 `\n`으로 줄바꿈(개행)을 사용하는 것을 제일 익숙하게 사용합니다.
 
-`\n`과 `\"`을 포함하여 사용되고 있는 이스케이프 문자는 다음과 같습니다. [다음과 같](https://docs.microsoft.com/ko-kr/cpp/c-language/escape-sequences?view=msvc-160)습니다.
+`\n`과 `\"`을 포함하여 사용되고 있는 이스케이프 문자는 [다음과 같습니다.]((https://docs.microsoft.com/ko-kr/cpp/c-language/escape-sequences?view=msvc-160))
 
 `\a`: 경고
 
