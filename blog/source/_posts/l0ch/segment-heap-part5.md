@@ -125,7 +125,7 @@ print("stack:"+hex(stack))
 
 필요한 주소를 모두 구했으면 익스는 간단한 ROP입니다. 먼저 arbitrary read를 이용해 return address가 저장된 스택의 주소를 구합니다.
 
-![Untitled](/segment-heap-part5/Untitled%204.png)
+![Untitled](segment-heap-part5/Untitled%204.png)
 
 `binary + 0x1ca7` 은 바로 직전 호출된 `sub_1060` 함수의 return address에 저장되는 주소입니다. 스택 주소를 알고 있으니 스택에서 `binary + 0x1ca7` 값이 저장된 주소를 찾으면 그 주소가 return address 주소라고 볼 수 있겠네요. 
 
