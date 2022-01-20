@@ -38,7 +38,7 @@ Host, Cookie, User-Agent, Referer 등  **Header**는 상황에 따라 더 많은
 
 ## Response Message
 
-![](http-message-format/image1.png)
+![](http-message-format/image2.png)
 
 Response Message Format은 세 가지로 구분됩니다.
 
