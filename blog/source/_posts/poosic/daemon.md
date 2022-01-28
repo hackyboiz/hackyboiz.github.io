@@ -1,9 +1,9 @@
 ---
-title: "[해키피디아] IP주소&MAC 주소"
+title: "[해키피디아] Daemon"
 author: poosic
-tags: [poosic, ip, mac]
+tags: [poosic, daemon]
 categories: [Hackypedia]
-date: 2022-01-05 14:00:00
+date: 2022-01-28 14:00:00
 cc: true
 index_img: /img/hackypedia.png
 
@@ -11,7 +11,7 @@ index_img: /img/hackypedia.png
 
 ## Daemon
 
-Daemon은 사용자가 직접 제어하지 않고 백그라운드에서 여러 작업을 하는 프로그램을 말합니다. 즉, Daemon은 백그라운드에서 시스템과 관련된 활동을 하는 프로세스들을 말합니다. Window에서는 서비스라고 부르는 것들이 Daemon의 역할을 한다고 할 수 있습니다. 그렇다면 Daemon은 어떻게 만들어지고 수많은 프로세스중 Daemon을 어떻게 구분할 수 있을까요?
+Daemon은 사용자가 직접 제어하지 않고 백그라운드에서 여러 작업을 하는 프로그램을 말합니다. 즉, Daemon은 백그라운드에서 시스템과 관련된 활동을 하는 프로세스들을 말합니다. Windows에서는 서비스라고 부르는 것들이 Daemon의 역할을 한다고 할 수 있습니다. 그렇다면 Daemon은 어떻게 만들어지고 수많은 프로세스중 Daemon을 어떻게 구분할 수 있을까요?
 
 일반적으로 PPID가 1인 프로세스 트리에서 init의 자식 프로세스를 Daemon이라고 합니다. 이러한 특징을 가지는 이유는 Daemon이 만들어지는 과정과 관련이 있습니다.
 
