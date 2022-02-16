@@ -3,7 +3,7 @@ title: "[해키피디아] LFI(Local File Inclusion)"
 author: y00n_nms
 tags: [y00n_nms, LFI]
 categories: [Hackypedia]
-date: 2021-02-16 14:00:00
+date: 2022-02-16 14:00:00
 cc: true
 index_img: /img/hackypedia.png
 ---
