@@ -3,7 +3,7 @@ title: "[해키피디아] CAN 통신"
 author: hunjison
 tags: [hunjison, CAN, ECU]
 categories: [Hackypedia]
-date: 2022-03-10 17:00:00
+date: 2022-03-11 14:00:00
 cc: true
 index_img: /img/hackypedia.png
 ---
