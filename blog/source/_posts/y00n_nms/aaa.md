@@ -3,7 +3,7 @@ title: "[해키피디아] AAA(Authentication, Authorization, Accounting)"
 author: y00n_nms
 tags: [y00n_nms, authentication, authorization, accounting]
 categories: [Hackypedia]
-date: 2022-03-16 14:00:00
+date: 2022-03-18 14:00:00
 cc: true
 index_img: /img/hackypedia.png
 ---
