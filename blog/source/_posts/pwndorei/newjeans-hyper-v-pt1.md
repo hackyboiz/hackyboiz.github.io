@@ -1,7 +1,7 @@
 ---
 title: "[Research] NewJeans' Hyper-V Part 1 - Hyper-V Architecture"
 author: pwndorei
-tags: [pwndorei, Hyper-V, Hypervisor]
+tags: [pwndorei, hyper-v, hypervisor]
 categories: [Research]
 date: 2023-09-30 19:00:00
 cc: true
@@ -124,6 +124,7 @@ VSC는 자식 파티션의 커널 영역에 존재하고 다른 디바이스 드
 ![](newjeans-hyper-v-pt1/image4.png)
 
 > 출처: [MicrosoftDocs](https://github.com/MicrosoftDocs/Virtualization-Documentation/blob/main/tlfs/Hypervisor%20Top%20Level%20Functional%20Specification%20v6.0b.pdf)
+
 - Call Code: 호출될 하이퍼콜의 번호
 - Fast: 호출될 하이퍼콜이 레지스터 기반의 호출 규약을 사용함(1), 사용하지 않음(0)
 - Variabe Header Size: variable header의 크기
@@ -141,6 +142,7 @@ Fast 하이퍼콜을 위한 파라미터가 겨우 두 개밖에 없진 않겠�
 ![](newjeans-hyper-v-pt1/image5.png)
 
 > 출처: [MicrosoftDocs](https://github.com/MicrosoftDocs/Virtualization-Documentation/blob/main/tlfs/Hypervisor%20Top%20Level%20Functional%20Specification%20v6.0b.pdf)
+
 - Result: 하이퍼콜의 결과를 나타내는 HV_STATUS 코드(성공 혹은 실패)
 - Reps Complete: Repeat 방식의 하이퍼콜에서 완수된 반복 횟수
 - Rsvd: 사용되지 않는 값
