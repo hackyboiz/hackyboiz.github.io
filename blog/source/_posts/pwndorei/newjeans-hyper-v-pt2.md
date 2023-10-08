@@ -8,7 +8,7 @@ cc: true
 index_img: /2023/10/08/pwndorei/newjeans-hyper-v-pt2/index.png
 ---
 지난 파트 보러가기
-[[Research] NewJeans' Hyper-V Part 1 - Hyper-V Architecture]([Research] NewJeans' Hyper-V Part 1 - Hyper-V Architecture)
+[[Research] NewJeans' Hyper-V Part 1 - Hyper-V Architecture](https://hackyboiz.github.io/2023/10/08/pwndorei/newjeans-hyper-v-pt2/)
 **[Research] NewJeans' Hyper-V Part 2 - CVE-2018-0959 Analysis(1) (Here)**
 
 안녕하세요! 일주일 만에 돌아온 pwndorei입니다.
