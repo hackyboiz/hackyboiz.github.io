@@ -1,7 +1,7 @@
 ---
 title: "[Research] NewJeans' Hyper-V Part 2 - CVE-2018-0959 Analysis(1)"
 author: pwndorei
-tags: [hyper-V, hypervisor, vm escape, CVE-2018-0959]
+tags: [hyper-v, hypervisor, vm escape, CVE-2018-0959]
 categories: [Research]
 date: 2023-10-08 19:00:00
 cc: true
