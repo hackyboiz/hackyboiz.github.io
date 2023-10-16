@@ -416,7 +416,7 @@ vmwp가 생성될 때마다 메모리 레이아웃도 변해서 인접하지 않
 
 ### VRAM
 VRAM이란 Video RAM을 뜻합니다. Hyper-V에서는 Aperture라는 것을 통해 호스트에서 게스트의 물리 메모리에 매핑된 가상 메모리를 얻을 수 있는데 vmwp의 VRAM Buffer 또한 이 Aperture를 통해 가상머신의 Hyper-V 비디오 장치의 MMIO에 쓰이는 물리 메모리에 매핑된 것입니다. 전 처음에 당연히 Virtual RAM이겠거니 생각해서 꽤 오래 삽질을 했었죠 ㅋㅋㅋㅋㅋ 무튼 VRAM Buffer에 저장되는 데이터는 게스트에서 보여줄 화면의 픽셀 데이터입니다. 게스트의 화면이니까 당연히 게스트에서도도 접근할 수 있겠죠?
-![](HackyBoiz/newjeans-hyper-v-pt3/image2.png)
+![](./newjeans-hyper-v-pt3/image2.png)
 위처럼 게스트의 장치관리자에서 Hyper-V 비디오 장치를 찾을 수 있고 MMIO를 통해 접근할 수 있습니다. 게스트의 커널 드라이버에서 `MmMapIoSpace`함수로 해당 범위의 물리 메모리에 매핑된 가상 메모리를 얻을 수 있습니다. 이후 여기에 패턴을 가진 데이터를 8MB 만큼 씁니다. 처음엔 A~H까지 각 1MB씩 썼으나 정확성을 높히기 위해 마지막 1MB를 다시 128KB씩 쪼개고 또 마지막 128KB를 16KB씩 쪼개서 패턴의 마지막 16KB가 'V'가 되도록 만들었습니다.
 따라서 맨 처음 8MB만큼 DriveStateBufferOffset을 증가시키면 VRAM Buffer의 어딘가에 착지한 다음 읽은 데이터에 따라 오프셋을 조금씩 증가시켜서 최종적으로 읽은 데이터가 'V'일 때 대략 5MB 정도 오프셋을 증가시키면?...
 ![](newjeans-hyper-v-pt3/image3.png)
