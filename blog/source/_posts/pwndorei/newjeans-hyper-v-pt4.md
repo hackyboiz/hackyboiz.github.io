@@ -5,7 +5,7 @@ tags: [hyper-v, hypervisor, vm escape, CVE-2018-0959]
 categories: [Research]
 date: 2023-10-22 19:00:00
 cc: true
-index_img: /2023/10/15/pwndorei/newjeans-hyper-v-pt4/index.png
+index_img: /2023/10/22/pwndorei/newjeans-hyper-v-pt4/index.png
 ---
 지난 파트 보러가기
 [[Research] NewJeans’ Hyper-V Part 1 - Hyper-V Architecture](https://hackyboiz.github.io/2023/09/30/pwndorei/newjeans-hyper-v-pt1/)  
