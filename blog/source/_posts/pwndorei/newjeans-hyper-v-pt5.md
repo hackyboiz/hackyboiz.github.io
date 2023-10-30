@@ -1134,7 +1134,7 @@ Exploit을 실행하면 아래와 같이 노드들의 주소나 DLL 주소 등�
 
 # Exploit
 
-![](https://www.youtube.com/embed/LvtNtkAll84?si=oDm3h6uKKqEJKtlX)
+<iframe width="560" height="315" src="https://www.youtube.com/embed/LvtNtkAll84?si=VRM1u7HSuegWqPoW" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
 
 # Part 6 예고
 이로써 CVE-2018-0959의 분석부터 익스플로잇까지 모두 알아보았습니다! 프로젝트 초창기에 Hyper-V 아키텍처 공부하던게 엊그제 같은데... 정말 길고 긴 여정이었습니다. 하지만 여기서 끝이 아니죠! 다음 파트부턴 저 대신 L0ch님이 CVE-2020-0917 분석 글로 돌아올 예정이니 많은 관심 부탁드립니다!
