@@ -1050,7 +1050,7 @@ __int64 __fastcall GenericStreamBase<IStream,CoTaskMemAllocAllocator>::GetCopy(G
 ```
 
 ### Setting Arguments
-`DispatchTable`에 호출될 함수의 주소를 저장하고 노드 별로 버퍼에에 호출될 함수의 인자를 설정해줍니다.
+`DispatchTable`에 호출될 함수의 주소를 저장하고 노드 별로 버퍼에 호출될 함수의 인자를 설정해줍니다.
 ```C
 
 
