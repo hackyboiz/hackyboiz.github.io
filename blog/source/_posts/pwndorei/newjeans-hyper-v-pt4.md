@@ -1,7 +1,7 @@
 ---
 title: "[Research] NewJeans' Hyper-V Part 4 - CVE-2018-0959 Exploit(1)"
 author: pwndorei
-tags: [hyper-v, hypervisor, vm escape, CVE-2018-0959]
+tags: [hyper-v, hypervisor, vm escape, CVE-2018-0959, pwndorei]
 categories: [Research]
 date: 2023-10-22 19:00:00
 cc: true
