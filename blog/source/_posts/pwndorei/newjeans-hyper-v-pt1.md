@@ -48,7 +48,7 @@ Hyper-V는 Microsoft의 Type 1 Hypervisor기반의 가상화 플랫폼입니다.
 ![](newjeans-hyper-v-pt1/image2.png)
 > ~~빨간약 줄까 파란약 줄까~~
 
-Enlightened 게스트에서는 Enlightend I/O 라는 방식의 입출력이 가능해집니다. Unlightened에서 사용하는 완전 에뮬레이트된 가상 디바이스가 아닌 반 가상화(para-virtualized)된 디바이스를 사용하는 것으로 에뮬레이션을 건너뛰어 더 빠른 입출력이 가능해집니다. 
+Enlightened 게스트에서는 Enlightend I/O 라는 방식의 입출력이 가능해집니다. 이를 통해 반 가상화(para-virtualized)된 디바이스를 사용하는 것으로 에뮬레이션을 건너뛰어 더 빠른 입출력이 가능해집니다. 
 
 가상 디바이스에 대한 더 자세한 내용은 뒤에서 다루도록 하고 다음으로 VMMS에 대해 알아보시죠!
 
