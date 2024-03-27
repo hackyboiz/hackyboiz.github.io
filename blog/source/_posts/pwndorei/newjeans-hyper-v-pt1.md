@@ -48,7 +48,7 @@ Hyper-V는 Microsoft의 Type 1 Hypervisor기반의 가상화 플랫폼입니다.
 ![](newjeans-hyper-v-pt1/image2.png)
 > ~~빨간약 줄까 파란약 줄까~~
 
-Enlightened 게스트에서는 Enlightend I/O 라는 방식의 입출력이 가능해집니다. Unlightened에서 사용하는 완전 에뮬레이트된 가상 디바이스가 아닌 반 가상화(para-virtualized)된 디바이스를 사용하는 것으로 에뮬레이션을 건너뛰어 더 빠른 입출력이 가능해집니다. 
+Enlightened 게스트에서는 Enlightend I/O 라는 방식의 입출력이 가능해집니다. 이를 통해 반 가상화(para-virtualized)된 디바이스를 사용하는 것으로 에뮬레이션을 건너뛰어 더 빠른 입출력이 가능해집니다. 
 
 가상 디바이스에 대한 더 자세한 내용은 뒤에서 다루도록 하고 다음으로 VMMS에 대해 알아보시죠!
 
@@ -101,7 +101,7 @@ Emulated Device는 루트 파티션의 vmwp에 있고 가상머신들은 자식 
 
 # VMBus & VSP & VSC
 
-Emulated Device에 대해 알아봤으니 이번엔 Para-virtualized Device에 대해 알아보시죠. 위에서 파티션에 대해 말씀드릴 때 Enlightened Guest Partition에서 사용되며 Enlightened I/O를 통해 더 나은 성능을 발휘한다고 말씀 드렸는데요? Para-virtualized device stack에 사용되는 VMBus, VSP, VSC에 대해 알아보시죠!
+Emulated Device에 대해 알아봤으니 이번엔 Para-virtualized Device에 대해 알아보시죠. 위에서 파티션에 대해 말씀드릴 때 Enlightened Child Partition에서 사용되며 Enlightened I/O를 통해 더 나은 성능을 발휘한다고 말씀 드렸는데요? Para-virtualized device stack에 사용되는 VMBus, VSP, VSC에 대해 알아보시죠!
 ## VMBus
 가장 먼저 VMBus입니다. VMBus는 Hyper-V가 반가상화 지원을 위해 사용하는 메커니즘 중에 하나로 호스트와 게스트 사이에 가상의 채널을 만들어 이를 통해 VSP와 VSC가 통신할 수 있습니다. VMBus의 채널은 공유 메모리 방식의 ring buffer로 채널 당 upstream과 downstream가 하나씩 할당되고 이를 통해 데이터를 보내거나 받을 수  있고 채널에 읽을 수 있는 데이터가 있으면 하이퍼바이저가 가상 인터럽트를 통해 VSP나 VSC에 알려줍니다. 메시지를 받으면 공유 메모리에서 공유되지 않은 메모리로 데이터를 복사하고 추가적인 정보는 메시지에 GPADL(Guest Physical Address Descriptor List)를 첨부하는 것을 통해 데이터의 위치를 알려줍니다.
 ## VSC(Virtualization Service Consumer)
