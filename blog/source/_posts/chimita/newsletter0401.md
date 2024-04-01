@@ -1,7 +1,7 @@
 ---
 title: "[해킹짹짹🐣] 짹짹해킹 레터뉴스 ~"
-author: chimita
-tags: [chimita, newsletter]
+author: CHIMITA
+tags: [CHIMITA, newsletter]
 categories: [Newsletter]
 date: 2024-04-01 17:00:00
 cc: false
