@@ -18,12 +18,11 @@ index_img: /img/NewsletterBanner.png
 
 2024.04.08 | 보안뉴스 | [기사보기](https://www.boannews.com/media/view.asp?idx=128624&page=1&kind=1)
 
-<center><img src="newsletter0415/image1.png" width="400" height="200"></center>
+![기사사진](newsletter0415/image1.png)
 
 올해에만 벌써 11개 취약점이 나왔다고요~??!?? 
-<br/> <br/>
+
 전 세계에 4만 개 이상의 기업과 기관들이 이반티의 제품을 사용하고 있는 와중에 취약점들이 말 그대로 쏟아지는 바람에 고객들의 불만이 넘쳐나고 있다고 해요!! 🤯
-<br/>
 옴디아(Omdia)의 분석가 에릭 파리조(Eric Parizo)는 최근 이반티에서 나타나는 일들을 여러 ([M&A🏢](#짹짹이에게-물어봐))를 거치면서 축적됐던 문제들이 표출되는 것이라고 분석하고 있어요.
 
 보잉: 세계 최대 항공기 제작 회사로, 올해에만 몇 차례 사고가 발생해 세계적으로 이슈가 되고 있는 회사
@@ -33,7 +32,7 @@ index_img: /img/NewsletterBanner.png
 
 2024.04.09 | 보안뉴스 | [기사보기](https://www.boannews.com/media/view.asp?idx=128693&kind=1&search=title&find=%C3%EB%BE%E0%C1%A1)
 
-<center><img src="newsletter0415/image2.png"></center>
+![기사사진](newsletter0415/image2.png)
 
 허깅페이스🤗에서 취약점에 대한 보안 이슈가 발견됐습니다!
 
@@ -45,8 +44,7 @@ index_img: /img/NewsletterBanner.png
 
 2024-04-08 | 한국경제 | [기사보기](https://www.hankyung.com/article/2024040864161)
 
-<center><img src="newsletter0415/image3.png" width="500" height="300"></center>
-
+![기사사진](newsletter0415/image3.png)
 
 정부기관과 반도체, 금융권 기업을 대상으로 한 사이버 공격이 늘고 있어 근본적인 해결 방안으로 [제로트러스트](#짹짹이에게-물어봐) 모델 도입이 시급하다고 해요.
 
@@ -58,7 +56,7 @@ index_img: /img/NewsletterBanner.png
 2024.04.09 | zdnet Korea | [기사보기](https://zdnet.co.kr/view/?no=20240409080453)
 
 
-<center><img src="newsletter0415/image4.png" width="400" height="300"></center>
+![기사사진](newsletter0415/image4.png)
 
 일론 머스크가 2년 안에 인간보다 더 똑똑한 인공지능이 개발될 것으로 예측했어요. 🦾
 
@@ -71,7 +69,7 @@ AI 칩 선두 주자 젠슨 황 엔비디아 CEO는 “5년 이내에 인간과 
 
 2024.04.10 | 보안뉴스 | [기사보기](https://www.boannews.com/media/view.asp?idx=128723&direct=mobile)
 
-<center><img src="newsletter0415/image5.png" width="400" height="400"></center>
+![기사사진](newsletter0415/image5.png)
 
 얼마전, 제22대 국회의원 선거였죠. 경찰청은 [딥페이크](#짹짹이에게-물어봐) 선거법 위반사례를 적발했다고 합니다. 👥
 
@@ -94,7 +92,6 @@ AI 칩 선두 주자 젠슨 황 엔비디아 CEO는 “5년 이내에 인간과 
 **딥페이크**
 
 인공지능을 기반으로 인물의 얼굴 등을 활용한 이미지 합성 기술
-
 
 ### 지식 PLUS ➕
 
