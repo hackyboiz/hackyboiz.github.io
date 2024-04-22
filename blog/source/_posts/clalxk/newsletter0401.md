@@ -1,13 +1,13 @@
 ---
 title: "[해킹짹짹🐣] 짹짹해킹 레터뉴스 ~"
-author: CHIMITA
-tags: [CHIMITA, newsletter]
+author: clalxk
+tags: [clalxk, newsletter]
 categories: [Newsletter]
 date: 2024-04-01 17:00:00
 cc: false
 index_img: /img/Newsletter.png
 ---
-안녕하세요! CHIMITA 입니다 :D
+안녕하세요! clalxk 입니다 :D
 오늘은 4월 1일, 월요일이에요.
 1일과 월요일이라니 새로운 마음으로 무언가 시작하기 딱 좋은 날이죠~
 지금부터 해킹짹짹과 함께 공부하는건 어떤가요?!🐥
