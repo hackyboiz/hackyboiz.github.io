@@ -147,7 +147,7 @@ Python 스크립트, 파이썬 소스 코드 파일
 
 ## 4월 교육 🐥
 
-[Upside 아카데미](https://upside.center/) | teori, 두나무 | 2024.04.26 까지 접수
+[Upside 아카데미](https://upside.center/) | theori, 두나무 | 2024.04.26 까지 접수
 
 [K-Shield Jr. 12기](https://www.kshieldjr.org/) | KISA, 컬처메이커스 | 2024.04.25 까지 접수
 
