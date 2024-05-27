@@ -3,7 +3,7 @@ title: "[해킹짹짹🐣] 카카오톡 개인정보 유출, 과징금 역대 �
 author: hunjison
 tags: [hunjison, newsletter]
 categories: [Newsletter]
-date: 2024-05-28 15:00:00
+date: 2024-05-27 15:00:00
 cc: false
 index_img: /img/Newsletter.png
 ---
