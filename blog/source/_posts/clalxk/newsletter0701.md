@@ -16,10 +16,10 @@ index_img: /img/Newsletter.png
 
 >⚠️ KT, 조직적 해킹팀 꾸려 통신망 감청·악성코드 유포 의혹
 
-2024.06.24 | JTBC | [기사보기](https://www.youtube.com/watch?v=qaF0NSLZ4cU)
+2024.06.24 | JTBC | [기사보기](https://www.youtube.com/watch?v=qaF0NSLZ4cU) | [영상보기](https://www.youtube.com/watch?v=qaF0NSLZ4cU)
 
 
-[https://youtu.be/qaF0NSLZ4cU?si=iRE4ad0LTirJNFbG](https://youtu.be/qaF0NSLZ4cU?si=iRE4ad0LTirJNFbG)
+![기사영상](https://img.youtube.com/vi/qaF0NSLZ4cU/0.jpg)
 
 최근 화제가 되고있는 사건인데요. 
 
@@ -33,7 +33,7 @@ KT가 그리드 프로그램 사용자들의 통신에 고의로 장애를 일�
 
 그러나 KT 측은 웹하드 업체의 그리드 서비스 자체가 악성 프로그램이기 때문에 이를 제어하기 위해선 어쩔 수 없었다는 입장을 밝혔어요. 
 
-하지만 **KT 데이터센터**와 **본사**를 차례로 압수수색을 한 경기남부청은 **KT가 통신비밀보호법과 정보통신망법 등을 위반**했을 가능성이 있다고 수사를 이어가고 있어요 👮🏻‍♂️ 
+하지만 **KT 데이터센터**와 **본사**를 차례로 압수수색을 한 경기남부청은 **KT가 통신비밀보호법과 정보통신망법 등을 위반**했을 가능성이 있다고 수사를 이어가고 있어요 👮
 
 KT는 과거에도 그리드 프로그램 사용을 두고 웹하드 업체와 갈등을 빚었어요. 지난 2015년 가입자용 인터넷 회선의 상업용 이용을 금지한 이용약관에 위배된다는 이유로 웹하드 서비스용 그리드 서버의 IP만을 골라 차단했었다고 하네요.
 
