@@ -3,9 +3,9 @@ title: "Part1. 국내 보안 인증제도- 정보보호"
 author: romi0x
 tags: [romi0x, research, Certification]
 categories: [Research]
-date: 2024-07-04 17:00:00
+date: 2024-07-07 17:00:00
 cc: false
-index_img: /img/security_certification_index.png
+index_img: /2024/07/07/romi0x/certification_security/security_certification_index.png
 ---
 ![사진](certification_security/security_certification_index.png)
 
