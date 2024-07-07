@@ -47,7 +47,7 @@ index_img: /2024/07/07/romi0x/certification_security/security_certification_inde
 
 ## 정보보호
 
-### 1️⃣ 정보보호 관리체계 인증(ISMS, Information Security Management System)
+### 1️. 정보보호 관리체계 인증(ISMS, Information Security Management System)
 
 ![사진](certification_security/image3.png)
 
@@ -158,7 +158,7 @@ index_img: /2024/07/07/romi0x/certification_security/security_certification_inde
     ![사진](certification_security/004.png)
   
     
-##  2️⃣ 정보보호등급제
+##  2️. 정보보호등급제
 
 ![사진](certification_security/image6.png)
 
@@ -229,7 +229,7 @@ index_img: /2024/07/07/romi0x/certification_security/security_certification_inde
 ![사진](certification_security/009.png)
 
 
-##  3️⃣ **금융권 정보보호 상시평가제**
+##  3️. **금융권 정보보호 상시평가제**
 
 ![사진](certification_security/image8.png)
 
