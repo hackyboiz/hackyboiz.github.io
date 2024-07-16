@@ -3,9 +3,9 @@ title: "Part2. 국내 보안 인증제도- 개인정보보호 & 클라우드"
 author: romi0x
 tags: [romi0x, research, Certification]
 categories: [Research]
-date: 2024-07-04 17:00:00
+date: 2023-07-21 17:00:00
 cc: false
-index_img: /img/privacy_certification_index.png
+index_img: /2024/07/21/romi0x/certification_privacy/privacy_certification_index.png
 ---
 ![사진](certification_privacy/privacy_certification_index.png)
 
