@@ -15,7 +15,7 @@ index_img: /2024/07/21/romi0x/certification_privacy/privacy_certification_index.
 
 저번엔 정보보호와 관련된 인증제도에 대해 알아봤죠!
 
-[Part1. 국내 보안인증제도- 정보보호](https://hackyboiz.github.io/2024/07/04/romi0x/certification_security/)
+[Part1. 국내 보안인증제도- 정보보호](https://hackyboiz.github.io/2024/07/07/romi0x/certification_security/)
 
 이번엔 개인정보와 클라우드입니다~!!
 
@@ -41,7 +41,7 @@ index_img: /2024/07/21/romi0x/certification_privacy/privacy_certification_index.
 **ISMS-P는 기존의 ISMS와 개인정보 항목이 합쳐진 인증제도입니다.
 ISMS와 겹치는 내용은 제외하고 새롭게 추가된 내용만 다룹니다.**
 
-**ISMS에 대한 내용이 궁금하다면 [링크](https://hackyboiz.github.io/2024/07/04/romi0x/certification_security/)를 참고해주세요.**
+**ISMS에 대한 내용이 궁금하다면 [링크](https://hackyboiz.github.io/2024/07/07/romi0x/certification_security/)를 참고해주세요.**
 
 - 정의
     - **정보보호 및 개인정보보호 관리체계 인증**로, ISMS-P라고 불리는 인증제도입니다.
