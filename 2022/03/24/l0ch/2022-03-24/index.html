@@ -1,0 +1,789 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;h2 id=&#34;URL&#34;&gt;&lt;a href=&#34;#URL&#34; class=&#34;headerlink&#34; title=&#34;URL&#34;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;p&gt;&lt;a href=&#34;https://blog.quarkslab.com/heap-overflow-in-openbsds-slaacd-via-router-advertisement.html&#34;&gt;Heap Overflow in OpenBSD&amp;#x2019;s slaacd via Router Advertisement&lt;/a&gt;&lt;/p&gt;
+&lt;h2 id=&#34;Target&#34;&gt;&lt;a href=&#34;#Target&#34; class=&#34;headerlink&#34; title=&#34;Target&#34;&gt;&lt;/a&gt;Target&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;OpenBSD 6.9, 7.0&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;Explain&#34;&gt;&lt;a href=&#34;#Explain&#34; class=&#34;headerlink&#34; title=&#34;Explain&#34;&gt;&lt;/a&gt;Explain&lt;/h2&gt;&lt;p&gt;OpenBSD&amp;#xC758; IPv6 &amp;#xC2A4;&amp;#xD0DD; &amp;#xC911; &amp;#xB77C;&amp;#xC6B0;&amp;#xD130; &amp;#xC694;&amp;#xCCAD; &amp;#xBA54;&amp;#xC2DC;&amp;#xC9C0;&amp;#xB97C; &amp;#xBCF4;&amp;#xB0B4;&amp;#xACE0; &amp;#xC218;&amp;#xC2E0;&amp;#xB41C; &amp;#xB77C;&amp;#xC6B0;&amp;#xD130; &amp;#xC54C;&amp;#xB9BC; &amp;#xC751;&amp;#xB2F5;&amp;#xC744; &amp;#xD30C;&amp;#xC2F1;&amp;#xD558;&amp;#xB294;  SLAAC(Stateless Address Autoconfiguration) &amp;#xB370;&amp;#xBAAC;&amp;#xC778; slaacd &amp;#xC5D0;&amp;#xC11C; Heap Buffer Overflow &amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC774; &amp;#xBC1C;&amp;#xACAC;&amp;#xB418;&amp;#xC5C8;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;Router Advertisement(RA)&amp;#xB294; IPv6 &amp;#xD504;&amp;#xB85C;&amp;#xD1A0;&amp;#xCF5C; &amp;#xC2A4;&amp;#xD0DD; &amp;#xC911; Neighbeor Discovery(ND) &amp;#xD504;&amp;#xB85C;&amp;#xD1A0;&amp;#xCF5C;&amp;#xC758; &amp;#xBA54;&amp;#xC2DC;&amp;#xC9C0; &amp;#xD0C0;&amp;#xC785; &amp;#xC911; &amp;#xD558;&amp;#xB098;&amp;#xC774;&amp;#xBA70; &amp;#xB9C1;&amp;#xD06C; &amp;#xBC0F; &amp;#xC778;&amp;#xD130;&amp;#xB137; &amp;#xB9E4;&amp;#xAC1C;&amp;#xBCC0;&amp;#xC218;&amp;#xC640; &amp;#xD568;&amp;#xAED8; &amp;#xB77C;&amp;#xC6B0;&amp;#xD130;&amp;#xAC00; &amp;#xC788;&amp;#xC74C;&amp;#xC744; &amp;#xC54C;&amp;#xB9AC;&amp;#xB294; &amp;#xC5ED;&amp;#xD560;&amp;#xC744; &amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;. RA &amp;#xD328;&amp;#xD0B7;&amp;#xC5D0;&amp;#xB294; DNS &amp;#xAC80;&amp;#xC0C9; &amp;#xBAA9;&amp;#xB85D;(DNSSL)&amp;#xC774; &amp;#xD3EC;&amp;#xD568;&amp;#xB418;&amp;#xB294;&amp;#xB370;, &amp;#xC774; DNSSL&amp;#xC744; &amp;#xD30C;&amp;#xC2F1;&amp;#xD558;&amp;#xB294; &lt;code&gt;sbin/slaacd/engine.c&lt;/code&gt; &amp;#xC758; &lt;code&gt;parse_dnssl&lt;/code&gt; &amp;#xD568;&amp;#xC218;&amp;#xC5D0;&amp;#xC11C; &amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC774; &amp;#xBC1C;&amp;#xACAC;&amp;#xB418;&amp;#xC5C8;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt;* &lt;span class=&#34;hljs-title&#34;&gt;parse_dnssl&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt;* data, &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; datalen)&lt;/span&gt; &lt;/span&gt;{
+	&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; len, pos;     &lt;span class=&#34;hljs-comment&#34;&gt;// [1]&lt;/span&gt;
+	&lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *nssl, *nsslp;
+
+	&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt;((nssl = &lt;span class=&#34;hljs-built_in&#34;&gt;calloc&lt;/span&gt;(&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, datalen + &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;)) == &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;) {
+		log_warn(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;malloc&amp;quot;&lt;/span&gt;);
+		&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+  }
+	nsslp = nssl;
+
+	pos = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+
+	&lt;span class=&#34;hljs-keyword&#34;&gt;do&lt;/span&gt; {
+		len = data[pos];  &lt;span class=&#34;hljs-comment&#34;&gt;// [2]&lt;/span&gt;
+		&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (len &amp;gt; &lt;span class=&#34;hljs-number&#34;&gt;63&lt;/span&gt; || len + pos + &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; &amp;gt; datalen) {  &lt;span class=&#34;hljs-comment&#34;&gt;//[3]&lt;/span&gt;
+			&lt;span class=&#34;hljs-built_in&#34;&gt;free&lt;/span&gt;(nssl);
+			log_warnx(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;invalid label in DNSSL&amp;quot;&lt;/span&gt;);
+			&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+		}
+
+		&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (len == &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;) {
+			&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (pos &amp;lt; datalen &amp;amp;&amp;amp; data[pos + &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;] != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;)
+				*nsslp++ = &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos; &amp;apos;&lt;/span&gt;; &lt;span class=&#34;hljs-comment&#34;&gt;/* seperator for next domain */&lt;/span&gt;
+			&lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+				&lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;;
+		} &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+			&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (pos != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; &amp;amp;&amp;amp; data[pos - &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;] != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;) &lt;span class=&#34;hljs-comment&#34;&gt;/* no . at front */&lt;/span&gt;
+				*nsslp++ = &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;.&amp;apos;&lt;/span&gt;;
+				&lt;span class=&#34;hljs-built_in&#34;&gt;memcpy&lt;/span&gt;(nsslp, data + pos + &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, len);  &lt;span class=&#34;hljs-comment&#34;&gt;// [4]&lt;/span&gt;
+				nsslp += len;
+			}
+			pos += len + &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+    } &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt;(pos &amp;lt; datalen);
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (len != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;) {
+			&lt;span class=&#34;hljs-built_in&#34;&gt;free&lt;/span&gt;(nssl);
+			log_warnx(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;invalid label in DNSSL&amp;quot;&lt;/span&gt;);
+			&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+    }
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; nssl;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC740; &amp;#xB808;&amp;#xC774;&amp;#xBE14;&amp;#xC758; &amp;#xAE38;&amp;#xC774; &amp;#xD544;&amp;#xB4DC;&amp;#xB97C; &amp;#xC77D;&amp;#xC744; &amp;#xB54C; signed &amp;#xC815;&amp;#xC218;&amp;#xC778; &lt;code&gt;len&lt;/code&gt;&amp;#xC744; &amp;#xC0AC;&amp;#xC6A9;&amp;#xD574; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;[1] : signed &amp;#xC815;&amp;#xC218; &lt;code&gt;int len&lt;/code&gt;&amp;#xC744; &amp;#xC120;&amp;#xC5B8;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;[2]: &amp;#xB808;&amp;#xC774;&amp;#xBE14;&amp;#xC5D0; &amp;#xC74C;&amp;#xC218;&amp;#xAC00; &amp;#xD3EC;&amp;#xD568;&amp;#xB418;&amp;#xBA74; &lt;code&gt;len&lt;/code&gt;&amp;#xC774; &amp;#xC74C;&amp;#xC218;&amp;#xAC00; &amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;[3]: &amp;#xC74C;&amp;#xC218; &lt;code&gt;len&lt;/code&gt;&amp;#xC73C;&amp;#xB85C; &amp;#xC778;&amp;#xD574;  &amp;#xAE38;&amp;#xC774; &amp;#xAC80;&amp;#xC0AC;&amp;#xB97C; &amp;#xC6B0;&amp;#xD68C;&amp;#xD560; &amp;#xC218; &amp;#xC788;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;[4]:  &lt;code&gt;memcpy()&lt;/code&gt;&amp;#xC5D0; &amp;#xC804;&amp;#xB2EC;&amp;#xB418;&amp;#xB294; &amp;#xC138; &amp;#xBC88;&amp;#xC9F8; &amp;#xC778;&amp;#xC218; &amp;#xD3EC;&amp;#xB9F7;&amp;#xC740; unsigned&amp;#xC778; &lt;code&gt;size_t&lt;/code&gt;&amp;#xC774;&amp;#xAE30; &amp;#xB54C;&amp;#xBB38;&amp;#xC5D0; &amp;#xBB35;&amp;#xC2DC;&amp;#xC801; &amp;#xD615; &amp;#xBCC0;&amp;#xD658;&amp;#xC73C;&amp;#xB85C; &amp;#xC778;&amp;#xD574; &lt;code&gt;INT_MAX&lt;/code&gt; &amp;#xAC12;&amp;#xC774; &amp;#xC804;&amp;#xB2EC;&amp;#xB418;&amp;#xC5B4; &amp;#xC608;&amp;#xC0C1;&amp;#xBCF4;&amp;#xB2E4; &amp;#xD070; &amp;#xAE38;&amp;#xC774;&amp;#xB97C; &amp;#xBCF5;&amp;#xC0AC;&amp;#xD558;&amp;#xAC8C; &amp;#xB418;&amp;#xACE0;, &amp;#xC774;&amp;#xB294; &lt;code&gt;nsslp&lt;/code&gt; &amp;#xBC84;&amp;#xD37C;&amp;#xC758; heap buffer overflow&amp;#xB85C; &amp;#xC774;&amp;#xC5B4;&amp;#xC9D1;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[하루한줄] OpenBSD의 Heap Buffer Overflow 취약점 - hackyboiz">
+  <meta property="og:description" content="&lt;h2 id=&#34;URL&#34;&gt;&lt;a href=&#34;#URL&#34; class=&#34;headerlink&#34; title=&#34;URL&#34;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;p&gt;&lt;a href=&#34;https://blog.quarkslab.com/heap-overflow-in-openbsds-slaacd-via-router-advertisement.html&#34;&gt;Heap Overflow in OpenBSD&amp;#x2019;s slaacd via Router Advertisement&lt;/a&gt;&lt;/p&gt;
+&lt;h2 id=&#34;Target&#34;&gt;&lt;a href=&#34;#Target&#34; class=&#34;headerlink&#34; title=&#34;Target&#34;&gt;&lt;/a&gt;Target&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;OpenBSD 6.9, 7.0&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;Explain&#34;&gt;&lt;a href=&#34;#Explain&#34; class=&#34;headerlink&#34; title=&#34;Explain&#34;&gt;&lt;/a&gt;Explain&lt;/h2&gt;&lt;p&gt;OpenBSD&amp;#xC758; IPv6 &amp;#xC2A4;&amp;#xD0DD; &amp;#xC911; &amp;#xB77C;&amp;#xC6B0;&amp;#xD130; &amp;#xC694;&amp;#xCCAD; &amp;#xBA54;&amp;#xC2DC;&amp;#xC9C0;&amp;#xB97C; &amp;#xBCF4;&amp;#xB0B4;&amp;#xACE0; &amp;#xC218;&amp;#xC2E0;&amp;#xB41C; &amp;#xB77C;&amp;#xC6B0;&amp;#xD130; &amp;#xC54C;&amp;#xB9BC; &amp;#xC751;&amp;#xB2F5;&amp;#xC744; &amp;#xD30C;&amp;#xC2F1;&amp;#xD558;&amp;#xB294;  SLAAC(Stateless Address Autoconfiguration) &amp;#xB370;&amp;#xBAAC;&amp;#xC778; slaacd &amp;#xC5D0;&amp;#xC11C; Heap Buffer Overflow &amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC774; &amp;#xBC1C;&amp;#xACAC;&amp;#xB418;&amp;#xC5C8;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;Router Advertisement(RA)&amp;#xB294; IPv6 &amp;#xD504;&amp;#xB85C;&amp;#xD1A0;&amp;#xCF5C; &amp;#xC2A4;&amp;#xD0DD; &amp;#xC911; Neighbeor Discovery(ND) &amp;#xD504;&amp;#xB85C;&amp;#xD1A0;&amp;#xCF5C;&amp;#xC758; &amp;#xBA54;&amp;#xC2DC;&amp;#xC9C0; &amp;#xD0C0;&amp;#xC785; &amp;#xC911; &amp;#xD558;&amp;#xB098;&amp;#xC774;&amp;#xBA70; &amp;#xB9C1;&amp;#xD06C; &amp;#xBC0F; &amp;#xC778;&amp;#xD130;&amp;#xB137; &amp;#xB9E4;&amp;#xAC1C;&amp;#xBCC0;&amp;#xC218;&amp;#xC640; &amp;#xD568;&amp;#xAED8; &amp;#xB77C;&amp;#xC6B0;&amp;#xD130;&amp;#xAC00; &amp;#xC788;&amp;#xC74C;&amp;#xC744; &amp;#xC54C;&amp;#xB9AC;&amp;#xB294; &amp;#xC5ED;&amp;#xD560;&amp;#xC744; &amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;. RA &amp;#xD328;&amp;#xD0B7;&amp;#xC5D0;&amp;#xB294; DNS &amp;#xAC80;&amp;#xC0C9; &amp;#xBAA9;&amp;#xB85D;(DNSSL)&amp;#xC774; &amp;#xD3EC;&amp;#xD568;&amp;#xB418;&amp;#xB294;&amp;#xB370;, &amp;#xC774; DNSSL&amp;#xC744; &amp;#xD30C;&amp;#xC2F1;&amp;#xD558;&amp;#xB294; &lt;code&gt;sbin/slaacd/engine.c&lt;/code&gt; &amp;#xC758; &lt;code&gt;parse_dnssl&lt;/code&gt; &amp;#xD568;&amp;#xC218;&amp;#xC5D0;&amp;#xC11C; &amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC774; &amp;#xBC1C;&amp;#xACAC;&amp;#xB418;&amp;#xC5C8;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt;* &lt;span class=&#34;hljs-title&#34;&gt;parse_dnssl&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt;* data, &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; datalen)&lt;/span&gt; &lt;/span&gt;{
+	&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; len, pos;     &lt;span class=&#34;hljs-comment&#34;&gt;// [1]&lt;/span&gt;
+	&lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *nssl, *nsslp;
+
+	&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt;((nssl = &lt;span class=&#34;hljs-built_in&#34;&gt;calloc&lt;/span&gt;(&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, datalen + &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;)) == &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;) {
+		log_warn(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;malloc&amp;quot;&lt;/span&gt;);
+		&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+  }
+	nsslp = nssl;
+
+	pos = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+
+	&lt;span class=&#34;hljs-keyword&#34;&gt;do&lt;/span&gt; {
+		len = data[pos];  &lt;span class=&#34;hljs-comment&#34;&gt;// [2]&lt;/span&gt;
+		&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (len &amp;gt; &lt;span class=&#34;hljs-number&#34;&gt;63&lt;/span&gt; || len + pos + &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; &amp;gt; datalen) {  &lt;span class=&#34;hljs-comment&#34;&gt;//[3]&lt;/span&gt;
+			&lt;span class=&#34;hljs-built_in&#34;&gt;free&lt;/span&gt;(nssl);
+			log_warnx(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;invalid label in DNSSL&amp;quot;&lt;/span&gt;);
+			&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+		}
+
+		&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (len == &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;) {
+			&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (pos &amp;lt; datalen &amp;amp;&amp;amp; data[pos + &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;] != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;)
+				*nsslp++ = &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos; &amp;apos;&lt;/span&gt;; &lt;span class=&#34;hljs-comment&#34;&gt;/* seperator for next domain */&lt;/span&gt;
+			&lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+				&lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;;
+		} &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+			&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (pos != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; &amp;amp;&amp;amp; data[pos - &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;] != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;) &lt;span class=&#34;hljs-comment&#34;&gt;/* no . at front */&lt;/span&gt;
+				*nsslp++ = &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;.&amp;apos;&lt;/span&gt;;
+				&lt;span class=&#34;hljs-built_in&#34;&gt;memcpy&lt;/span&gt;(nsslp, data + pos + &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, len);  &lt;span class=&#34;hljs-comment&#34;&gt;// [4]&lt;/span&gt;
+				nsslp += len;
+			}
+			pos += len + &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+    } &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt;(pos &amp;lt; datalen);
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (len != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;) {
+			&lt;span class=&#34;hljs-built_in&#34;&gt;free&lt;/span&gt;(nssl);
+			log_warnx(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;invalid label in DNSSL&amp;quot;&lt;/span&gt;);
+			&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+    }
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; nssl;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC740; &amp;#xB808;&amp;#xC774;&amp;#xBE14;&amp;#xC758; &amp;#xAE38;&amp;#xC774; &amp;#xD544;&amp;#xB4DC;&amp;#xB97C; &amp;#xC77D;&amp;#xC744; &amp;#xB54C; signed &amp;#xC815;&amp;#xC218;&amp;#xC778; &lt;code&gt;len&lt;/code&gt;&amp;#xC744; &amp;#xC0AC;&amp;#xC6A9;&amp;#xD574; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;[1] : signed &amp;#xC815;&amp;#xC218; &lt;code&gt;int len&lt;/code&gt;&amp;#xC744; &amp;#xC120;&amp;#xC5B8;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;[2]: &amp;#xB808;&amp;#xC774;&amp;#xBE14;&amp;#xC5D0; &amp;#xC74C;&amp;#xC218;&amp;#xAC00; &amp;#xD3EC;&amp;#xD568;&amp;#xB418;&amp;#xBA74; &lt;code&gt;len&lt;/code&gt;&amp;#xC774; &amp;#xC74C;&amp;#xC218;&amp;#xAC00; &amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;[3]: &amp;#xC74C;&amp;#xC218; &lt;code&gt;len&lt;/code&gt;&amp;#xC73C;&amp;#xB85C; &amp;#xC778;&amp;#xD574;  &amp;#xAE38;&amp;#xC774; &amp;#xAC80;&amp;#xC0AC;&amp;#xB97C; &amp;#xC6B0;&amp;#xD68C;&amp;#xD560; &amp;#xC218; &amp;#xC788;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;[4]:  &lt;code&gt;memcpy()&lt;/code&gt;&amp;#xC5D0; &amp;#xC804;&amp;#xB2EC;&amp;#xB418;&amp;#xB294; &amp;#xC138; &amp;#xBC88;&amp;#xC9F8; &amp;#xC778;&amp;#xC218; &amp;#xD3EC;&amp;#xB9F7;&amp;#xC740; unsigned&amp;#xC778; &lt;code&gt;size_t&lt;/code&gt;&amp;#xC774;&amp;#xAE30; &amp;#xB54C;&amp;#xBB38;&amp;#xC5D0; &amp;#xBB35;&amp;#xC2DC;&amp;#xC801; &amp;#xD615; &amp;#xBCC0;&amp;#xD658;&amp;#xC73C;&amp;#xB85C; &amp;#xC778;&amp;#xD574; &lt;code&gt;INT_MAX&lt;/code&gt; &amp;#xAC12;&amp;#xC774; &amp;#xC804;&amp;#xB2EC;&amp;#xB418;&amp;#xC5B4; &amp;#xC608;&amp;#xC0C1;&amp;#xBCF4;&amp;#xB2E4; &amp;#xD070; &amp;#xAE38;&amp;#xC774;&amp;#xB97C; &amp;#xBCF5;&amp;#xC0AC;&amp;#xD558;&amp;#xAC8C; &amp;#xB418;&amp;#xACE0;, &amp;#xC774;&amp;#xB294; &lt;code&gt;nsslp&lt;/code&gt; &amp;#xBC84;&amp;#xD37C;&amp;#xC758; heap buffer overflow&amp;#xB85C; &amp;#xC774;&amp;#xC5B4;&amp;#xC9D1;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/img/1day1line.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2022/03/24/l0ch/2022-03-24/">
+
+  <title>[하루한줄] OpenBSD의 Heap Buffer Overflow 취약점 - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2022-03-24 14:00" pubdate>
+      2022년 3월 24일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      455 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      9
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[하루한줄] OpenBSD의 Heap Buffer Overflow 취약점</h1>
+            
+            <div class="markdown-body" id="post-body">
+              <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+              <!-- hackyboiz_horizen_index -->
+              <ins class="adsbygoogle" style="display:block" data-ad-client="ca-pub-3672652207808168" data-ad-slot="8887862313" data-ad-format="auto" data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              <h2 id="URL"><a href="#URL" class="headerlink" title="URL"></a>URL</h2><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://blog.quarkslab.com/heap-overflow-in-openbsds-slaacd-via-router-advertisement.html">Heap Overflow in OpenBSD&#x2019;s slaacd via Router Advertisement</a></p>
+<h2 id="Target"><a href="#Target" class="headerlink" title="Target"></a>Target</h2><ul>
+<li>OpenBSD 6.9, 7.0</li>
+</ul>
+<h2 id="Explain"><a href="#Explain" class="headerlink" title="Explain"></a>Explain</h2><p>OpenBSD&#xC758; IPv6 &#xC2A4;&#xD0DD; &#xC911; &#xB77C;&#xC6B0;&#xD130; &#xC694;&#xCCAD; &#xBA54;&#xC2DC;&#xC9C0;&#xB97C; &#xBCF4;&#xB0B4;&#xACE0; &#xC218;&#xC2E0;&#xB41C; &#xB77C;&#xC6B0;&#xD130; &#xC54C;&#xB9BC; &#xC751;&#xB2F5;&#xC744; &#xD30C;&#xC2F1;&#xD558;&#xB294;  SLAAC(Stateless Address Autoconfiguration) &#xB370;&#xBAAC;&#xC778; slaacd &#xC5D0;&#xC11C; Heap Buffer Overflow &#xCDE8;&#xC57D;&#xC810;&#xC774; &#xBC1C;&#xACAC;&#xB418;&#xC5C8;&#xC2B5;&#xB2C8;&#xB2E4;.</p>
+<p>Router Advertisement(RA)&#xB294; IPv6 &#xD504;&#xB85C;&#xD1A0;&#xCF5C; &#xC2A4;&#xD0DD; &#xC911; Neighbeor Discovery(ND) &#xD504;&#xB85C;&#xD1A0;&#xCF5C;&#xC758; &#xBA54;&#xC2DC;&#xC9C0; &#xD0C0;&#xC785; &#xC911; &#xD558;&#xB098;&#xC774;&#xBA70; &#xB9C1;&#xD06C; &#xBC0F; &#xC778;&#xD130;&#xB137; &#xB9E4;&#xAC1C;&#xBCC0;&#xC218;&#xC640; &#xD568;&#xAED8; &#xB77C;&#xC6B0;&#xD130;&#xAC00; &#xC788;&#xC74C;&#xC744; &#xC54C;&#xB9AC;&#xB294; &#xC5ED;&#xD560;&#xC744; &#xD569;&#xB2C8;&#xB2E4;. RA &#xD328;&#xD0B7;&#xC5D0;&#xB294; DNS &#xAC80;&#xC0C9; &#xBAA9;&#xB85D;(DNSSL)&#xC774; &#xD3EC;&#xD568;&#xB418;&#xB294;&#xB370;, &#xC774; DNSSL&#xC744; &#xD30C;&#xC2F1;&#xD558;&#xB294; <code>sbin/slaacd/engine.c</code> &#xC758; <code>parse_dnssl</code> &#xD568;&#xC218;&#xC5D0;&#xC11C; &#xCDE8;&#xC57D;&#xC810;&#xC774; &#xBC1C;&#xACAC;&#xB418;&#xC5C8;&#xC2B5;&#xB2C8;&#xB2E4;.</p>
+<pre><code class="hljs c"><span class="hljs-function"><span class="hljs-keyword">char</span>* <span class="hljs-title">parse_dnssl</span><span class="hljs-params">(<span class="hljs-keyword">char</span>* data, <span class="hljs-keyword">int</span> datalen)</span> </span>{
+	<span class="hljs-keyword">int</span> len, pos;     <span class="hljs-comment">// [1]</span>
+	<span class="hljs-keyword">char</span> *nssl, *nsslp;
+
+	<span class="hljs-keyword">if</span>((nssl = <span class="hljs-built_in">calloc</span>(<span class="hljs-number">1</span>, datalen + <span class="hljs-number">1</span>)) == <span class="hljs-literal">NULL</span>) {
+		log_warn(<span class="hljs-string">&quot;malloc&quot;</span>);
+		<span class="hljs-keyword">return</span> <span class="hljs-literal">NULL</span>;
+  }
+	nsslp = nssl;
+
+	pos = <span class="hljs-number">0</span>;
+
+	<span class="hljs-keyword">do</span> {
+		len = data[pos];  <span class="hljs-comment">// [2]</span>
+		<span class="hljs-keyword">if</span> (len &gt; <span class="hljs-number">63</span> || len + pos + <span class="hljs-number">1</span> &gt; datalen) {  <span class="hljs-comment">//[3]</span>
+			<span class="hljs-built_in">free</span>(nssl);
+			log_warnx(<span class="hljs-string">&quot;invalid label in DNSSL&quot;</span>);
+			<span class="hljs-keyword">return</span> <span class="hljs-literal">NULL</span>;
+		}
+
+		<span class="hljs-keyword">if</span> (len == <span class="hljs-number">0</span>) {
+			<span class="hljs-keyword">if</span> (pos &lt; datalen &amp;&amp; data[pos + <span class="hljs-number">1</span>] != <span class="hljs-number">0</span>)
+				*nsslp++ = <span class="hljs-string">&apos; &apos;</span>; <span class="hljs-comment">/* seperator for next domain */</span>
+			<span class="hljs-keyword">else</span>
+				<span class="hljs-keyword">break</span>;
+		} <span class="hljs-keyword">else</span> {
+			<span class="hljs-keyword">if</span> (pos != <span class="hljs-number">0</span> &amp;&amp; data[pos - <span class="hljs-number">1</span>] != <span class="hljs-number">0</span>) <span class="hljs-comment">/* no . at front */</span>
+				*nsslp++ = <span class="hljs-string">&apos;.&apos;</span>;
+				<span class="hljs-built_in">memcpy</span>(nsslp, data + pos + <span class="hljs-number">1</span>, len);  <span class="hljs-comment">// [4]</span>
+				nsslp += len;
+			}
+			pos += len + <span class="hljs-number">1</span>;
+    } <span class="hljs-keyword">while</span>(pos &lt; datalen);
+
+    <span class="hljs-keyword">if</span> (len != <span class="hljs-number">0</span>) {
+			<span class="hljs-built_in">free</span>(nssl);
+			log_warnx(<span class="hljs-string">&quot;invalid label in DNSSL&quot;</span>);
+			<span class="hljs-keyword">return</span> <span class="hljs-literal">NULL</span>;
+    }
+    <span class="hljs-keyword">return</span> nssl;
+}</code></pre>
+<p>&#xCDE8;&#xC57D;&#xC810;&#xC740; &#xB808;&#xC774;&#xBE14;&#xC758; &#xAE38;&#xC774; &#xD544;&#xB4DC;&#xB97C; &#xC77D;&#xC744; &#xB54C; signed &#xC815;&#xC218;&#xC778; <code>len</code>&#xC744; &#xC0AC;&#xC6A9;&#xD574; &#xBC1C;&#xC0DD;&#xD569;&#xB2C8;&#xB2E4;.</p>
+<p>[1] : signed &#xC815;&#xC218; <code>int len</code>&#xC744; &#xC120;&#xC5B8;&#xD569;&#xB2C8;&#xB2E4;.</p>
+<p>[2]: &#xB808;&#xC774;&#xBE14;&#xC5D0; &#xC74C;&#xC218;&#xAC00; &#xD3EC;&#xD568;&#xB418;&#xBA74; <code>len</code>&#xC774; &#xC74C;&#xC218;&#xAC00; &#xB429;&#xB2C8;&#xB2E4;.</p>
+<p>[3]: &#xC74C;&#xC218; <code>len</code>&#xC73C;&#xB85C; &#xC778;&#xD574;  &#xAE38;&#xC774; &#xAC80;&#xC0AC;&#xB97C; &#xC6B0;&#xD68C;&#xD560; &#xC218; &#xC788;&#xC2B5;&#xB2C8;&#xB2E4;.</p>
+<p>[4]:  <code>memcpy()</code>&#xC5D0; &#xC804;&#xB2EC;&#xB418;&#xB294; &#xC138; &#xBC88;&#xC9F8; &#xC778;&#xC218; &#xD3EC;&#xB9F7;&#xC740; unsigned&#xC778; <code>size_t</code>&#xC774;&#xAE30; &#xB54C;&#xBB38;&#xC5D0; &#xBB35;&#xC2DC;&#xC801; &#xD615; &#xBCC0;&#xD658;&#xC73C;&#xB85C; &#xC778;&#xD574; <code>INT_MAX</code> &#xAC12;&#xC774; &#xC804;&#xB2EC;&#xB418;&#xC5B4; &#xC608;&#xC0C1;&#xBCF4;&#xB2E4; &#xD070; &#xAE38;&#xC774;&#xB97C; &#xBCF5;&#xC0AC;&#xD558;&#xAC8C; &#xB418;&#xACE0;, &#xC774;&#xB294; <code>nsslp</code> &#xBC84;&#xD37C;&#xC758; heap buffer overflow&#xB85C; &#xC774;&#xC5B4;&#xC9D1;&#xB2C8;&#xB2E4;.</p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/1day1line/">1day1line</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/heap/">heap</a>
+                  
+                  <a class="hover-with-bg" href="/tags/L0ch/">L0ch</a>
+                  
+                  <a class="hover-with-bg" href="/tags/heap-buffer-overflow/">heap buffer overflow</a>
+                  
+                  <a class="hover-with-bg" href="/tags/implicit-type-conversion/">implicit type conversion</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_L0ch.jpg" srcset="/img/loading.gif" alt="L0ch">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">L0ch</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/L0ch">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+
+              <script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2022/03/29/fabu1ous/2022-03-29/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2022-27666: Exploit esp6 modules in Linux kernel</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2022/03/23/y00n_nms/dnstunneling/">
+                    <span class="hidden-mobile">[해키피디아] DNS Tunneling</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2022/03/24/l0ch/2022-03-24/';
+        this.page.identifier = '/2022/03/24/l0ch/2022-03-24/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[하루한줄] OpenBSD의 Heap Buffer Overflow 취약점&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>

@@ -1,0 +1,743 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;h2 id=&#34;URL&#34;&gt;&lt;a href=&#34;#URL&#34; class=&#34;headerlink&#34; title=&#34;URL&#34;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;p&gt;&lt;a href=&#34;https://jfrog.com/blog/critical-vulnerability-in-haproxy-cve-2021-40346-integer-overflow-enables-http-smuggling/&#34;&gt;Critical Vulnerability in HAProxy (CVE-2021-40346): Integer Overflow Enables HTTP Smuggling&lt;/a&gt;&lt;/p&gt;
+&lt;h2 id=&#34;Target&#34;&gt;&lt;a href=&#34;#Target&#34; class=&#34;headerlink&#34; title=&#34;Target&#34;&gt;&lt;/a&gt;Target&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;HAProxy 2.0.25, 2.2.17, 2.3.14, 2.4.4 &amp;#xC774;&amp;#xC804;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;Explain&#34;&gt;&lt;a href=&#34;#Explain&#34; class=&#34;headerlink&#34; title=&#34;Explain&#34;&gt;&lt;/a&gt;Explain&lt;/h2&gt;&lt;p&gt;HAProxy&amp;#xB294; &amp;#xAE30;&amp;#xC874; &amp;#xD558;&amp;#xB4DC;&amp;#xC6E8;&amp;#xC5B4; &amp;#xC2A4;&amp;#xC704;&amp;#xCE58;&amp;#xC5D0;&amp;#xC11C; &amp;#xC81C;&amp;#xACF5;&amp;#xD558;&amp;#xB294; &amp;#xAE30;&amp;#xB2A5;&amp;#xC744; &amp;#xC18C;&amp;#xD504;&amp;#xD2B8;&amp;#xC6E8;&amp;#xC5B4;&amp;#xB85C; &amp;#xAD6C;&amp;#xD604;&amp;#xD55C; &amp;#xC624;&amp;#xD508;&amp;#xC18C;&amp;#xC2A4; &amp;#xB85C;&amp;#xB4DC; &amp;#xBC38;&amp;#xB7F0;&amp;#xC11C;&amp;#xC785;&amp;#xB2C8;&amp;#xB2E4;. &amp;#xD574;&amp;#xB2F9; &amp;#xC18C;&amp;#xD504;&amp;#xD2B8;&amp;#xC6E8;&amp;#xC5B4;&amp;#xC5D0;&amp;#xC11C; HTTP Request Smuggling &amp;#xACF5;&amp;#xACA9;&amp;#xC744; &amp;#xAC00;&amp;#xB2A5;&amp;#xD558;&amp;#xAC8C; &amp;#xD558;&amp;#xB294; unsigned integer overflow &amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC758; &amp;#xC138;&amp;#xBD80; &amp;#xC815;&amp;#xBCF4;&amp;#xAC00; &amp;#xACF5;&amp;#xAC1C;&amp;#xB418;&amp;#xC5C8;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;&amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC740; HTX block&amp;#xC744; &amp;#xCD94;&amp;#xAC00;&amp;#xD558;&amp;#xB294; &lt;code&gt;htx_add_header&lt;/code&gt; &amp;#xD568;&amp;#xC218;&amp;#xC5D0;&amp;#xC11C; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;static&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;inline&lt;/span&gt; struct htx_blk *&lt;span class=&#34;hljs-title&#34;&gt;htx_add_header&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(struct htx *htx, &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; struct ist name,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;					     &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; struct ist value)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+	&lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;htx_blk&lt;/span&gt; *&lt;span class=&#34;hljs-title&#34;&gt;blk&lt;/span&gt;;&lt;/span&gt;
+
+	&lt;span class=&#34;hljs-comment&#34;&gt;/* &lt;span class=&#34;hljs-doctag&#34;&gt;FIXME:&lt;/span&gt; check name.len (&amp;lt; 256B) and value.len (&amp;lt; 1MB) */&lt;/span&gt;
+	blk = htx_add_blk(htx, HTX_BLK_HDR, name.len + value.len);
+	&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (!blk)
+		&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+
+	blk-&amp;gt;info += (value.len &amp;lt;&amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;) + name.len;  &lt;span class=&#34;hljs-comment&#34;&gt;//vuln!&lt;/span&gt;
+	ist2bin_lc(htx_get_blk_ptr(htx, blk), name);
+	&lt;span class=&#34;hljs-built_in&#34;&gt;memcpy&lt;/span&gt;(htx_get_blk_ptr(htx, blk)  + name.len, value.ptr, value.len);
+	&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; blk;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;htx_add_header&lt;/code&gt; &amp;#xD568;&amp;#xC218;&amp;#xB294; &amp;#xD5E4;&amp;#xB354; &amp;#xC774;&amp;#xB984; &lt;code&gt;name&lt;/code&gt;&amp;#xACFC; &amp;#xD5E4;&amp;#xB354; &amp;#xAC12; &lt;code&gt;value&lt;/code&gt;&amp;#xB97C; &amp;#xB9E4;&amp;#xAC1C;&amp;#xBCC0;&amp;#xC218;&amp;#xB85C; &amp;#xBC1B;&amp;#xC544; &amp;#xB2E4;&amp;#xC74C; &amp;#xC791;&amp;#xC5C5;&amp;#xC744; &amp;#xC218;&amp;#xD589;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;. &lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&amp;#xD5E4;&amp;#xB354; &amp;#xD0C0;&amp;#xC785;(&lt;code&gt;b0010&lt;/code&gt;)&amp;#xC758; &amp;#xC0C8; HTX block&amp;#xC744; &amp;#xCD94;&amp;#xAC00;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;. &lt;/li&gt;
+&lt;li&gt;&amp;#xC0DD;&amp;#xC131;&amp;#xB41C; block&amp;#xC758; &lt;code&gt;info&lt;/code&gt; &amp;#xD544;&amp;#xB4DC;&amp;#xC5D0; &lt;code&gt;name&lt;/code&gt;&amp;#xC758; &amp;#xAE38;&amp;#xC774;&amp;#xC640; &lt;code&gt;value&lt;/code&gt;&amp;#xC758; &amp;#xAE38;&amp;#xC774;&amp;#xB97C; &amp;#xC800;&amp;#xC7A5;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;ol&gt;
+&lt;li&gt;&amp;#xC774;&amp;#xB54C; &lt;code&gt;value&lt;/code&gt;&amp;#xC758; &amp;#xAE38;&amp;#xC774;&amp;#xB97C; 8 bit &amp;#xB9CC;&amp;#xD07C; left shift&amp;#xD574; &lt;code&gt;name&lt;/code&gt; &amp;#xAE38;&amp;#xC774;&amp;#xC640; &amp;#xB354;&amp;#xD574; &amp;#xC800;&amp;#xC7A5;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;name&lt;/code&gt;&amp;#xC774; &lt;code&gt;lowercase&lt;/code&gt;&amp;#xB85C; HTX block&amp;#xC73C;&amp;#xB85C; &amp;#xBCF5;&amp;#xC0AC;&amp;#xB418;&amp;#xACE0;, &amp;#xBC14;&amp;#xB85C; &amp;#xB4A4;&amp;#xC5D0; &lt;code&gt;value&lt;/code&gt;&amp;#xAC00; &amp;#xBCF5;&amp;#xC0AC;&amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&amp;#xC608;&amp;#xB97C; &amp;#xB4E4;&amp;#xC5B4; &amp;#xD5E4;&amp;#xB354; &amp;#xC774;&amp;#xB984;&amp;#xACFC; &amp;#xAC12;&amp;#xC774; &lt;code&gt;MyName:MyValue&lt;/code&gt;&amp;#xC778; &amp;#xACBD;&amp;#xC6B0; &lt;code&gt;info&lt;/code&gt; &amp;#xD544;&amp;#xB4DC;&amp;#xC5D0;&amp;#xB294; &amp;#xB2E4;&amp;#xC74C; &amp;#xAC12;&amp;#xC774; &amp;#xC800;&amp;#xC7A5;&amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// Type : b0010&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt;// MyName length : 0x6&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt;// MyValue Length : 0x7 &lt;/span&gt;
+block-&amp;gt;info = (&lt;span class=&#34;hljs-number&#34;&gt;0x2&lt;/span&gt; &amp;lt;&amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;28&lt;/span&gt;) + (&lt;span class=&#34;hljs-number&#34;&gt;0x7&lt;/span&gt; &amp;lt;&amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;) + &lt;span class=&#34;hljs-number&#34;&gt;0x06&lt;/span&gt; = &lt;span class=&#34;hljs-number&#34;&gt;0x20000706&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xC774; &amp;#xACFC;&amp;#xC815;&amp;#xC5D0;&amp;#xC11C; &amp;#xD5E4;&amp;#xB354; &amp;#xC774;&amp;#xB984; &lt;code&gt;name&lt;/code&gt;&amp;#xC758; &amp;#xAE38;&amp;#xC774;&amp;#xB97C; &amp;#xAC80;&amp;#xC99D;&amp;#xD558;&amp;#xC9C0; &amp;#xC54A;&amp;#xC544; 255 bytes&amp;#xBCF4;&amp;#xB2E4; &amp;#xAE34; &amp;#xC774;&amp;#xB984;&amp;#xC758; &amp;#xD5E4;&amp;#xB354;&amp;#xB97C; &amp;#xC804;&amp;#xB2EC;&amp;#xD574; &amp;#xC774;&amp;#xD6C4; &amp;#xD30C;&amp;#xC2F1; &amp;#xACFC;&amp;#xC815;&amp;#xC5D0;&amp;#xC11C; &amp;#xB2E4;&amp;#xB978; &amp;#xD5E4;&amp;#xB354; &amp;#xC774;&amp;#xB984;&amp;#xC73C;&amp;#xB85C; &amp;#xBCF4;&amp;#xC774;&amp;#xAC8C; &amp;#xD560; &amp;#xC218; &amp;#xC788;&amp;#xC5B4; HTTP Reuest Smuggling &amp;#xACF5;&amp;#xACA9;&amp;#xC774; &amp;#xAC00;&amp;#xB2A5;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[하루한줄] CVE-2021-40346: HAProxy에서 발견된 Integer Overflow를 통한 HTTP Smuggling - hackyboiz">
+  <meta property="og:description" content="&lt;h2 id=&#34;URL&#34;&gt;&lt;a href=&#34;#URL&#34; class=&#34;headerlink&#34; title=&#34;URL&#34;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;p&gt;&lt;a href=&#34;https://jfrog.com/blog/critical-vulnerability-in-haproxy-cve-2021-40346-integer-overflow-enables-http-smuggling/&#34;&gt;Critical Vulnerability in HAProxy (CVE-2021-40346): Integer Overflow Enables HTTP Smuggling&lt;/a&gt;&lt;/p&gt;
+&lt;h2 id=&#34;Target&#34;&gt;&lt;a href=&#34;#Target&#34; class=&#34;headerlink&#34; title=&#34;Target&#34;&gt;&lt;/a&gt;Target&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;HAProxy 2.0.25, 2.2.17, 2.3.14, 2.4.4 &amp;#xC774;&amp;#xC804;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;Explain&#34;&gt;&lt;a href=&#34;#Explain&#34; class=&#34;headerlink&#34; title=&#34;Explain&#34;&gt;&lt;/a&gt;Explain&lt;/h2&gt;&lt;p&gt;HAProxy&amp;#xB294; &amp;#xAE30;&amp;#xC874; &amp;#xD558;&amp;#xB4DC;&amp;#xC6E8;&amp;#xC5B4; &amp;#xC2A4;&amp;#xC704;&amp;#xCE58;&amp;#xC5D0;&amp;#xC11C; &amp;#xC81C;&amp;#xACF5;&amp;#xD558;&amp;#xB294; &amp;#xAE30;&amp;#xB2A5;&amp;#xC744; &amp;#xC18C;&amp;#xD504;&amp;#xD2B8;&amp;#xC6E8;&amp;#xC5B4;&amp;#xB85C; &amp;#xAD6C;&amp;#xD604;&amp;#xD55C; &amp;#xC624;&amp;#xD508;&amp;#xC18C;&amp;#xC2A4; &amp;#xB85C;&amp;#xB4DC; &amp;#xBC38;&amp;#xB7F0;&amp;#xC11C;&amp;#xC785;&amp;#xB2C8;&amp;#xB2E4;. &amp;#xD574;&amp;#xB2F9; &amp;#xC18C;&amp;#xD504;&amp;#xD2B8;&amp;#xC6E8;&amp;#xC5B4;&amp;#xC5D0;&amp;#xC11C; HTTP Request Smuggling &amp;#xACF5;&amp;#xACA9;&amp;#xC744; &amp;#xAC00;&amp;#xB2A5;&amp;#xD558;&amp;#xAC8C; &amp;#xD558;&amp;#xB294; unsigned integer overflow &amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC758; &amp;#xC138;&amp;#xBD80; &amp;#xC815;&amp;#xBCF4;&amp;#xAC00; &amp;#xACF5;&amp;#xAC1C;&amp;#xB418;&amp;#xC5C8;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;&amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC740; HTX block&amp;#xC744; &amp;#xCD94;&amp;#xAC00;&amp;#xD558;&amp;#xB294; &lt;code&gt;htx_add_header&lt;/code&gt; &amp;#xD568;&amp;#xC218;&amp;#xC5D0;&amp;#xC11C; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;static&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;inline&lt;/span&gt; struct htx_blk *&lt;span class=&#34;hljs-title&#34;&gt;htx_add_header&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(struct htx *htx, &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; struct ist name,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;					     &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; struct ist value)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+	&lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;htx_blk&lt;/span&gt; *&lt;span class=&#34;hljs-title&#34;&gt;blk&lt;/span&gt;;&lt;/span&gt;
+
+	&lt;span class=&#34;hljs-comment&#34;&gt;/* &lt;span class=&#34;hljs-doctag&#34;&gt;FIXME:&lt;/span&gt; check name.len (&amp;lt; 256B) and value.len (&amp;lt; 1MB) */&lt;/span&gt;
+	blk = htx_add_blk(htx, HTX_BLK_HDR, name.len + value.len);
+	&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (!blk)
+		&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+
+	blk-&amp;gt;info += (value.len &amp;lt;&amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;) + name.len;  &lt;span class=&#34;hljs-comment&#34;&gt;//vuln!&lt;/span&gt;
+	ist2bin_lc(htx_get_blk_ptr(htx, blk), name);
+	&lt;span class=&#34;hljs-built_in&#34;&gt;memcpy&lt;/span&gt;(htx_get_blk_ptr(htx, blk)  + name.len, value.ptr, value.len);
+	&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; blk;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;htx_add_header&lt;/code&gt; &amp;#xD568;&amp;#xC218;&amp;#xB294; &amp;#xD5E4;&amp;#xB354; &amp;#xC774;&amp;#xB984; &lt;code&gt;name&lt;/code&gt;&amp;#xACFC; &amp;#xD5E4;&amp;#xB354; &amp;#xAC12; &lt;code&gt;value&lt;/code&gt;&amp;#xB97C; &amp;#xB9E4;&amp;#xAC1C;&amp;#xBCC0;&amp;#xC218;&amp;#xB85C; &amp;#xBC1B;&amp;#xC544; &amp;#xB2E4;&amp;#xC74C; &amp;#xC791;&amp;#xC5C5;&amp;#xC744; &amp;#xC218;&amp;#xD589;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;. &lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&amp;#xD5E4;&amp;#xB354; &amp;#xD0C0;&amp;#xC785;(&lt;code&gt;b0010&lt;/code&gt;)&amp;#xC758; &amp;#xC0C8; HTX block&amp;#xC744; &amp;#xCD94;&amp;#xAC00;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;. &lt;/li&gt;
+&lt;li&gt;&amp;#xC0DD;&amp;#xC131;&amp;#xB41C; block&amp;#xC758; &lt;code&gt;info&lt;/code&gt; &amp;#xD544;&amp;#xB4DC;&amp;#xC5D0; &lt;code&gt;name&lt;/code&gt;&amp;#xC758; &amp;#xAE38;&amp;#xC774;&amp;#xC640; &lt;code&gt;value&lt;/code&gt;&amp;#xC758; &amp;#xAE38;&amp;#xC774;&amp;#xB97C; &amp;#xC800;&amp;#xC7A5;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;ol&gt;
+&lt;li&gt;&amp;#xC774;&amp;#xB54C; &lt;code&gt;value&lt;/code&gt;&amp;#xC758; &amp;#xAE38;&amp;#xC774;&amp;#xB97C; 8 bit &amp;#xB9CC;&amp;#xD07C; left shift&amp;#xD574; &lt;code&gt;name&lt;/code&gt; &amp;#xAE38;&amp;#xC774;&amp;#xC640; &amp;#xB354;&amp;#xD574; &amp;#xC800;&amp;#xC7A5;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;name&lt;/code&gt;&amp;#xC774; &lt;code&gt;lowercase&lt;/code&gt;&amp;#xB85C; HTX block&amp;#xC73C;&amp;#xB85C; &amp;#xBCF5;&amp;#xC0AC;&amp;#xB418;&amp;#xACE0;, &amp;#xBC14;&amp;#xB85C; &amp;#xB4A4;&amp;#xC5D0; &lt;code&gt;value&lt;/code&gt;&amp;#xAC00; &amp;#xBCF5;&amp;#xC0AC;&amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&amp;#xC608;&amp;#xB97C; &amp;#xB4E4;&amp;#xC5B4; &amp;#xD5E4;&amp;#xB354; &amp;#xC774;&amp;#xB984;&amp;#xACFC; &amp;#xAC12;&amp;#xC774; &lt;code&gt;MyName:MyValue&lt;/code&gt;&amp;#xC778; &amp;#xACBD;&amp;#xC6B0; &lt;code&gt;info&lt;/code&gt; &amp;#xD544;&amp;#xB4DC;&amp;#xC5D0;&amp;#xB294; &amp;#xB2E4;&amp;#xC74C; &amp;#xAC12;&amp;#xC774; &amp;#xC800;&amp;#xC7A5;&amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// Type : b0010&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt;// MyName length : 0x6&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt;// MyValue Length : 0x7 &lt;/span&gt;
+block-&amp;gt;info = (&lt;span class=&#34;hljs-number&#34;&gt;0x2&lt;/span&gt; &amp;lt;&amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;28&lt;/span&gt;) + (&lt;span class=&#34;hljs-number&#34;&gt;0x7&lt;/span&gt; &amp;lt;&amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;) + &lt;span class=&#34;hljs-number&#34;&gt;0x06&lt;/span&gt; = &lt;span class=&#34;hljs-number&#34;&gt;0x20000706&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xC774; &amp;#xACFC;&amp;#xC815;&amp;#xC5D0;&amp;#xC11C; &amp;#xD5E4;&amp;#xB354; &amp;#xC774;&amp;#xB984; &lt;code&gt;name&lt;/code&gt;&amp;#xC758; &amp;#xAE38;&amp;#xC774;&amp;#xB97C; &amp;#xAC80;&amp;#xC99D;&amp;#xD558;&amp;#xC9C0; &amp;#xC54A;&amp;#xC544; 255 bytes&amp;#xBCF4;&amp;#xB2E4; &amp;#xAE34; &amp;#xC774;&amp;#xB984;&amp;#xC758; &amp;#xD5E4;&amp;#xB354;&amp;#xB97C; &amp;#xC804;&amp;#xB2EC;&amp;#xD574; &amp;#xC774;&amp;#xD6C4; &amp;#xD30C;&amp;#xC2F1; &amp;#xACFC;&amp;#xC815;&amp;#xC5D0;&amp;#xC11C; &amp;#xB2E4;&amp;#xB978; &amp;#xD5E4;&amp;#xB354; &amp;#xC774;&amp;#xB984;&amp;#xC73C;&amp;#xB85C; &amp;#xBCF4;&amp;#xC774;&amp;#xAC8C; &amp;#xD560; &amp;#xC218; &amp;#xC788;&amp;#xC5B4; HTTP Reuest Smuggling &amp;#xACF5;&amp;#xACA9;&amp;#xC774; &amp;#xAC00;&amp;#xB2A5;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/img/1day1line.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2021/09/18/l0ch/2021-09-18/">
+
+  <title>[하루한줄] CVE-2021-40346: HAProxy에서 발견된 Integer Overflow를 통한 HTTP Smuggling - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2021-09-18 14:00" pubdate>
+      2021년 9월 18일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      438 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      8
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[하루한줄] CVE-2021-40346: HAProxy에서 발견된 Integer Overflow를 통한 HTTP Smuggling</h1>
+            
+            <div class="markdown-body" id="post-body">
+              <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+              <!-- hackyboiz_horizen_index -->
+              <ins class="adsbygoogle" style="display:block" data-ad-client="ca-pub-3672652207808168" data-ad-slot="8887862313" data-ad-format="auto" data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              <h2 id="URL"><a href="#URL" class="headerlink" title="URL"></a>URL</h2><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://jfrog.com/blog/critical-vulnerability-in-haproxy-cve-2021-40346-integer-overflow-enables-http-smuggling/">Critical Vulnerability in HAProxy (CVE-2021-40346): Integer Overflow Enables HTTP Smuggling</a></p>
+<h2 id="Target"><a href="#Target" class="headerlink" title="Target"></a>Target</h2><ul>
+<li>HAProxy 2.0.25, 2.2.17, 2.3.14, 2.4.4 &#xC774;&#xC804;</li>
+</ul>
+<h2 id="Explain"><a href="#Explain" class="headerlink" title="Explain"></a>Explain</h2><p>HAProxy&#xB294; &#xAE30;&#xC874; &#xD558;&#xB4DC;&#xC6E8;&#xC5B4; &#xC2A4;&#xC704;&#xCE58;&#xC5D0;&#xC11C; &#xC81C;&#xACF5;&#xD558;&#xB294; &#xAE30;&#xB2A5;&#xC744; &#xC18C;&#xD504;&#xD2B8;&#xC6E8;&#xC5B4;&#xB85C; &#xAD6C;&#xD604;&#xD55C; &#xC624;&#xD508;&#xC18C;&#xC2A4; &#xB85C;&#xB4DC; &#xBC38;&#xB7F0;&#xC11C;&#xC785;&#xB2C8;&#xB2E4;. &#xD574;&#xB2F9; &#xC18C;&#xD504;&#xD2B8;&#xC6E8;&#xC5B4;&#xC5D0;&#xC11C; HTTP Request Smuggling &#xACF5;&#xACA9;&#xC744; &#xAC00;&#xB2A5;&#xD558;&#xAC8C; &#xD558;&#xB294; unsigned integer overflow &#xCDE8;&#xC57D;&#xC810;&#xC758; &#xC138;&#xBD80; &#xC815;&#xBCF4;&#xAC00; &#xACF5;&#xAC1C;&#xB418;&#xC5C8;&#xC2B5;&#xB2C8;&#xB2E4;.</p>
+<p>&#xCDE8;&#xC57D;&#xC810;&#xC740; HTX block&#xC744; &#xCD94;&#xAC00;&#xD558;&#xB294; <code>htx_add_header</code> &#xD568;&#xC218;&#xC5D0;&#xC11C; &#xBC1C;&#xC0DD;&#xD569;&#xB2C8;&#xB2E4;.</p>
+<pre><code class="hljs c"><span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">inline</span> struct htx_blk *<span class="hljs-title">htx_add_header</span><span class="hljs-params">(struct htx *htx, <span class="hljs-keyword">const</span> struct ist name,</span></span>
+<span class="hljs-function"><span class="hljs-params">					     <span class="hljs-keyword">const</span> struct ist value)</span></span>
+<span class="hljs-function"></span>{
+	<span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">htx_blk</span> *<span class="hljs-title">blk</span>;</span>
+
+	<span class="hljs-comment">/* <span class="hljs-doctag">FIXME:</span> check name.len (&lt; 256B) and value.len (&lt; 1MB) */</span>
+	blk = htx_add_blk(htx, HTX_BLK_HDR, name.len + value.len);
+	<span class="hljs-keyword">if</span> (!blk)
+		<span class="hljs-keyword">return</span> <span class="hljs-literal">NULL</span>;
+
+	blk-&gt;info += (value.len &lt;&lt; <span class="hljs-number">8</span>) + name.len;  <span class="hljs-comment">//vuln!</span>
+	ist2bin_lc(htx_get_blk_ptr(htx, blk), name);
+	<span class="hljs-built_in">memcpy</span>(htx_get_blk_ptr(htx, blk)  + name.len, value.ptr, value.len);
+	<span class="hljs-keyword">return</span> blk;
+}</code></pre>
+<p><code>htx_add_header</code> &#xD568;&#xC218;&#xB294; &#xD5E4;&#xB354; &#xC774;&#xB984; <code>name</code>&#xACFC; &#xD5E4;&#xB354; &#xAC12; <code>value</code>&#xB97C; &#xB9E4;&#xAC1C;&#xBCC0;&#xC218;&#xB85C; &#xBC1B;&#xC544; &#xB2E4;&#xC74C; &#xC791;&#xC5C5;&#xC744; &#xC218;&#xD589;&#xD569;&#xB2C8;&#xB2E4;. </p>
+<ol>
+<li>&#xD5E4;&#xB354; &#xD0C0;&#xC785;(<code>b0010</code>)&#xC758; &#xC0C8; HTX block&#xC744; &#xCD94;&#xAC00;&#xD569;&#xB2C8;&#xB2E4;. </li>
+<li>&#xC0DD;&#xC131;&#xB41C; block&#xC758; <code>info</code> &#xD544;&#xB4DC;&#xC5D0; <code>name</code>&#xC758; &#xAE38;&#xC774;&#xC640; <code>value</code>&#xC758; &#xAE38;&#xC774;&#xB97C; &#xC800;&#xC7A5;&#xD569;&#xB2C8;&#xB2E4;.<ol>
+<li>&#xC774;&#xB54C; <code>value</code>&#xC758; &#xAE38;&#xC774;&#xB97C; 8 bit &#xB9CC;&#xD07C; left shift&#xD574; <code>name</code> &#xAE38;&#xC774;&#xC640; &#xB354;&#xD574; &#xC800;&#xC7A5;&#xD569;&#xB2C8;&#xB2E4;.</li>
+</ol>
+</li>
+<li><code>name</code>&#xC774; <code>lowercase</code>&#xB85C; HTX block&#xC73C;&#xB85C; &#xBCF5;&#xC0AC;&#xB418;&#xACE0;, &#xBC14;&#xB85C; &#xB4A4;&#xC5D0; <code>value</code>&#xAC00; &#xBCF5;&#xC0AC;&#xB429;&#xB2C8;&#xB2E4;.</li>
+</ol>
+<p>&#xC608;&#xB97C; &#xB4E4;&#xC5B4; &#xD5E4;&#xB354; &#xC774;&#xB984;&#xACFC; &#xAC12;&#xC774; <code>MyName:MyValue</code>&#xC778; &#xACBD;&#xC6B0; <code>info</code> &#xD544;&#xB4DC;&#xC5D0;&#xB294; &#xB2E4;&#xC74C; &#xAC12;&#xC774; &#xC800;&#xC7A5;&#xB429;&#xB2C8;&#xB2E4;.</p>
+<pre><code class="hljs c"><span class="hljs-comment">// Type : b0010</span>
+<span class="hljs-comment">// MyName length : 0x6</span>
+<span class="hljs-comment">// MyValue Length : 0x7 </span>
+block-&gt;info = (<span class="hljs-number">0x2</span> &lt;&lt; <span class="hljs-number">28</span>) + (<span class="hljs-number">0x7</span> &lt;&lt; <span class="hljs-number">8</span>) + <span class="hljs-number">0x06</span> = <span class="hljs-number">0x20000706</span></code></pre>
+<p>&#xC774; &#xACFC;&#xC815;&#xC5D0;&#xC11C; &#xD5E4;&#xB354; &#xC774;&#xB984; <code>name</code>&#xC758; &#xAE38;&#xC774;&#xB97C; &#xAC80;&#xC99D;&#xD558;&#xC9C0; &#xC54A;&#xC544; 255 bytes&#xBCF4;&#xB2E4; &#xAE34; &#xC774;&#xB984;&#xC758; &#xD5E4;&#xB354;&#xB97C; &#xC804;&#xB2EC;&#xD574; &#xC774;&#xD6C4; &#xD30C;&#xC2F1; &#xACFC;&#xC815;&#xC5D0;&#xC11C; &#xB2E4;&#xB978; &#xD5E4;&#xB354; &#xC774;&#xB984;&#xC73C;&#xB85C; &#xBCF4;&#xC774;&#xAC8C; &#xD560; &#xC218; &#xC788;&#xC5B4; HTTP Reuest Smuggling &#xACF5;&#xACA9;&#xC774; &#xAC00;&#xB2A5;&#xD569;&#xB2C8;&#xB2E4;.</p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/1day1line/">1day1line</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/cve/">cve</a>
+                  
+                  <a class="hover-with-bg" href="/tags/integer-overflow/">integer overflow</a>
+                  
+                  <a class="hover-with-bg" href="/tags/L0ch/">L0ch</a>
+                  
+                  <a class="hover-with-bg" href="/tags/http-smuggling/">http smuggling</a>
+                  
+                  <a class="hover-with-bg" href="/tags/cve-2021-40346/">cve-2021-40346</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_L0ch.jpg" srcset="/img/loading.gif" alt="L0ch">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">L0ch</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/L0ch">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+
+              <script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2021/09/19/l0ch/segment-heap-part1/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[Research] Hip하게 Heap 정복하기 Part 1 - Segment Heap(1)</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2021/09/17/poosic/Shell/">
+                    <span class="hidden-mobile">[해키피디아] Shell</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2021/09/18/l0ch/2021-09-18/';
+        this.page.identifier = '/2021/09/18/l0ch/2021-09-18/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[하루한줄] CVE-2021-40346: HAProxy에서 발견된 Integer Overflow를 통한 HTTP Smuggling&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>

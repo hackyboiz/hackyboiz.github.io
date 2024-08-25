@@ -1,0 +1,785 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;h2 id=&#34;URL&#34;&gt;&lt;a href=&#34;#URL&#34; class=&#34;headerlink&#34; title=&#34;URL&#34;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;p&gt;&lt;a href=&#34;https://alexplaskett.github.io/CVE-2021-30660/&#34;&gt;CVE-2021-30660 - XNU Kernel Memory Disclosure&lt;/a&gt;&lt;/p&gt;
+&lt;h2 id=&#34;Target&#34;&gt;&lt;a href=&#34;#Target&#34; class=&#34;headerlink&#34; title=&#34;Target&#34;&gt;&lt;/a&gt;Target&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://support.apple.com/en-us/HT212325&#34;&gt;macOS 11.3 &amp;#xC774;&amp;#xC804; release&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://support.apple.com/en-us/HT212317&#34;&gt;iOS 14.5 &amp;#xC774;&amp;#xC804; release&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;Explain&#34;&gt;&lt;a href=&#34;#Explain&#34; class=&#34;headerlink&#34; title=&#34;Explain&#34;&gt;&lt;/a&gt;Explain&lt;/h2&gt;&lt;p&gt;Apple&amp;#xC0AC;&amp;#xC758; macOS &amp;#xBC0F; iOS&amp;#xC758; XNU &amp;#xC2DC;&amp;#xC2A4;&amp;#xD15C;&amp;#xC5D0;&amp;#xC11C; &amp;#xCEE4;&amp;#xB110; &amp;#xBA54;&amp;#xBAA8;&amp;#xB9AC;&amp;#xB97C; &amp;#xC720;&amp;#xCD9C;&amp;#xD560; &amp;#xC218; &amp;#xC788;&amp;#xB294; &amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC774; &amp;#xBC1C;&amp;#xACAC;&amp;#xB418;&amp;#xC5B4; &amp;#xC138;&amp;#xBD80; &amp;#xC815;&amp;#xBCF4;&amp;#xAC00; &amp;#xACF5;&amp;#xAC1C;&amp;#xB418;&amp;#xC5C8;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;XNU&amp;#xC758; syscall &lt;code&gt;SYS_msgsnd_nocancel&lt;/code&gt; &amp;#xC758; &amp;#xD578;&amp;#xB4E4;&amp;#xB7EC;&amp;#xC778; &lt;a href=&#34;https://opensource.apple.com/source/xnu/xnu-1504.7.4/bsd/kern/sysv_msg.c.auto.html&#34;&gt;sysv_msg.c/msgrcv_nocancel()&lt;/a&gt; &amp;#xB294; &amp;#xC720;&amp;#xC800; &amp;#xACF5;&amp;#xAC04;&amp;#xC758; &amp;#xBA54;&amp;#xC2DC;&amp;#xC9C0; &amp;#xD06C;&amp;#xAE30;&amp;#xB97C; &lt;code&gt;msgsz&lt;/code&gt;&amp;#xB85C; &amp;#xBC1B;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;. &amp;#xB9CC;&amp;#xC57D; &amp;#xC720;&amp;#xC800; &amp;#xACF5;&amp;#xAC04;&amp;#xC5D0;&amp;#xC11C; &amp;#xC694;&amp;#xCCAD;&amp;#xB41C; &amp;#xD06C;&amp;#xAE30;&amp;#xAC00; &amp;#xCD08;&amp;#xAE30;&amp;#xC5D0; &amp;#xCEE4;&amp;#xB110;&amp;#xC5D0; &amp;#xC804;&amp;#xC1A1;&amp;#xB41C; &amp;#xD06C;&amp;#xAE30; &lt;code&gt;msghdr&amp;#x2192;msg_ts&lt;/code&gt;&amp;#xBCF4;&amp;#xB2E4; &amp;#xD06C;&amp;#xBA74; &amp;#xC544;&amp;#xB798;&amp;#xC640; &amp;#xAC19;&amp;#xC774; &lt;code&gt;msghdr&amp;#x2192;msg_ts&lt;/code&gt;&amp;#xB85C; &amp;#xC790;&amp;#xB985;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (msgsz &amp;gt; msghdr-&amp;gt;msg_ts) {
+		msgsz = msghdr-&amp;gt;msg_ts;
+	}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xC774;&amp;#xD6C4; &amp;#xC544;&amp;#xB798;&amp;#xC758; &amp;#xBC18;&amp;#xBCF5;&amp;#xBB38;&amp;#xC744; &amp;#xB3CC;&amp;#xBA70; &amp;#xCEE4;&amp;#xB110; &lt;code&gt;msgpool&lt;/code&gt;&amp;#xC758; &amp;#xB370;&amp;#xC774;&amp;#xD130;&amp;#xB97C; &amp;#xC720;&amp;#xC800; &amp;#xACF5;&amp;#xAC04;&amp;#xC73C;&amp;#xB85C; &amp;#xBCF5;&amp;#xC0AC;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;		&lt;span class=&#34;hljs-comment&#34;&gt;// msg.h&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;		&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;define&lt;/span&gt; MSGSSZ	8		&lt;span class=&#34;hljs-comment&#34;&gt;/* Each segment must be 2^N long */&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;	
+&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;		&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;static&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;msginit&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(__unused &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; *dummy)&lt;/span&gt;&lt;/span&gt;{
+&lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;			&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (i != msginfo.msgssz) {
+&lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;				&lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;msginfo.msgssz=%d (0x%x) not a small power of 2; resetting to %d\\n&amp;quot;&lt;/span&gt;, msginfo.msgssz, msginfo.msgssz, MSGSSZ); 
+&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;				msginfo.msgssz = MSGSSZ;
+&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;			}
+&lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;		...
+&lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;	
+&lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;	&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;msgsnd_nocancel&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(struct proc *p, struct msgsnd_nocancel_args *uap, &lt;span class=&#34;hljs-keyword&#34;&gt;int32_t&lt;/span&gt; *retval)&lt;/span&gt;&lt;/span&gt;{
+&lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt;	...
+&lt;span class=&#34;hljs-number&#34;&gt;13&lt;/span&gt;		&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (len = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; len &amp;lt; msgsz; len += msginfo.msgssz) {
+&lt;span class=&#34;hljs-number&#34;&gt;14&lt;/span&gt;			&lt;span class=&#34;hljs-keyword&#34;&gt;size_t&lt;/span&gt; tlen;
+&lt;span class=&#34;hljs-number&#34;&gt;15&lt;/span&gt;			&lt;span class=&#34;hljs-comment&#34;&gt;/* compare input (size_t) value against restrict (int) value */&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;			&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (msgsz &amp;gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;size_t&lt;/span&gt;)msginfo.msgssz) {
+&lt;span class=&#34;hljs-number&#34;&gt;17&lt;/span&gt;				tlen = msginfo.msgssz;
+&lt;span class=&#34;hljs-number&#34;&gt;18&lt;/span&gt;			} &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+&lt;span class=&#34;hljs-number&#34;&gt;19&lt;/span&gt;				tlen = msgsz;
+&lt;span class=&#34;hljs-number&#34;&gt;20&lt;/span&gt;			}
+&lt;span class=&#34;hljs-number&#34;&gt;21&lt;/span&gt;			&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (next &amp;lt;= &lt;span class=&#34;hljs-number&#34;&gt;-1&lt;/span&gt;) {
+&lt;span class=&#34;hljs-number&#34;&gt;22&lt;/span&gt;				panic(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;next too low #3&amp;quot;&lt;/span&gt;);
+&lt;span class=&#34;hljs-number&#34;&gt;23&lt;/span&gt;			}
+&lt;span class=&#34;hljs-number&#34;&gt;24&lt;/span&gt;			&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (next &amp;gt;= msginfo.msgseg) {
+&lt;span class=&#34;hljs-number&#34;&gt;25&lt;/span&gt;				panic(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;next out of range #3&amp;quot;&lt;/span&gt;);
+&lt;span class=&#34;hljs-number&#34;&gt;26&lt;/span&gt;			}
+&lt;span class=&#34;hljs-number&#34;&gt;27&lt;/span&gt;			SYSV_MSG_SUBSYS_UNLOCK();
+&lt;span class=&#34;hljs-number&#34;&gt;28&lt;/span&gt;			eval = copyout(&amp;amp;msgpool[next * msginfo.msgssz], user_msgp, tlen);
+&lt;span class=&#34;hljs-number&#34;&gt;29&lt;/span&gt;		...&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xBC18;&amp;#xBCF5;&amp;#xBB38;&amp;#xC758; &amp;#xC99D;&amp;#xAC00; &amp;#xAC12;&amp;#xC778; &lt;code&gt;msginfo.msgssz&lt;/code&gt;&amp;#xB294; &lt;code&gt;msginit()&lt;/code&gt;&amp;#xC5D0;&amp;#xC11C; &lt;code&gt;#define MSGSSZ 8&lt;/code&gt; &amp;#xB85C; &amp;#xC120;&amp;#xC5B8;&amp;#xB41C; &lt;code&gt;MSGSSZ&lt;/code&gt;&amp;#xB85C; &amp;#xCD08;&amp;#xAE30;&amp;#xD654;&amp;#xB418;&amp;#xC5B4; &amp;#xD2B9;&amp;#xC815; &amp;#xC870;&amp;#xAC74;&amp;#xC744; &amp;#xB9CC;&amp;#xC871;&amp;#xD558;&amp;#xBA74; &lt;code&gt;8 bytes&lt;/code&gt; &amp;#xB2E8;&amp;#xC704;&amp;#xB85C; &amp;#xCEE4;&amp;#xB110; &amp;#xBA54;&amp;#xBAA8;&amp;#xB9AC;&amp;#xB97C; &amp;#xC720;&amp;#xC800; &amp;#xACF5;&amp;#xAC04;&amp;#xC5D0; &amp;#xBCF5;&amp;#xC0AC;&amp;#xD558;&amp;#xB294;&amp;#xB370;, &amp;#xC774;&amp;#xB54C; &amp;#xC694;&amp;#xCCAD;&amp;#xB41C; &amp;#xD06C;&amp;#xAE30;&amp;#xAC00; 8&amp;#xC758; &amp;#xBC30;&amp;#xC218;&amp;#xAC00; &amp;#xC544;&amp;#xB2D0; &amp;#xACBD;&amp;#xC6B0; &amp;#xCD08;&amp;#xAE30;&amp;#xD654;&amp;#xB418;&amp;#xC9C0; &amp;#xC54A;&amp;#xC740; &lt;code&gt;1~7 bytes&lt;/code&gt; &amp;#xD06C;&amp;#xAE30;&amp;#xC758; &amp;#xCEE4;&amp;#xB110; &amp;#xBA54;&amp;#xBAA8;&amp;#xB9AC;&amp;#xAC00; &amp;#xC720;&amp;#xCD9C;&amp;#xB420; &amp;#xC218; &amp;#xC788;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;9 bytes&lt;/code&gt; &amp;#xD06C;&amp;#xAE30;&amp;#xC758; &lt;code&gt;SYS_msgsnd_nocancel&lt;/code&gt; syscall&amp;#xC744; &amp;#xBCF4;&amp;#xB0BC; &amp;#xACBD;&amp;#xC6B0; &amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC740; &amp;#xB2E4;&amp;#xC74C;&amp;#xACFC; &amp;#xAC19;&amp;#xC774; &amp;#xD2B8;&amp;#xB9AC;&amp;#xAC70; &amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;code&gt;msghdr&amp;#x2192;msg_ts&lt;/code&gt;&amp;#xC640; &lt;code&gt;msgsz&lt;/code&gt;&amp;#xAC00; 9&amp;#xB85C; &amp;#xC124;&amp;#xC815;&amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;.&lt;/li&gt;
+&lt;li&gt;line 16&amp;#xC758; &amp;#xC870;&amp;#xAC74;&amp;#xBB38;&amp;#xC5D0; &amp;#xC758;&amp;#xD574;  &lt;code&gt;tlen&lt;/code&gt;&amp;#xC774; 8&amp;#xC774; &amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;8 bytes&lt;/code&gt; &amp;#xB2E8;&amp;#xC704;&amp;#xB85C; &amp;#xBCF5;&amp;#xC0AC;&amp;#xD558;&amp;#xB294; &amp;#xBC18;&amp;#xBCF5;&amp;#xBB38;&amp;#xC744; &amp;#xB450; &amp;#xBC88; &amp;#xC218;&amp;#xD589;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;16 bytes&lt;/code&gt;&amp;#xC758; &amp;#xCEE4;&amp;#xB110; &amp;#xBA54;&amp;#xBAA8;&amp;#xB9AC;&amp;#xAC00; &amp;#xC720;&amp;#xC800; &amp;#xACF5;&amp;#xAC04;&amp;#xC73C;&amp;#xB85C; &amp;#xBCF5;&amp;#xC0AC;&amp;#xB418;&amp;#xC5B4; &amp;#xCD08;&amp;#xAE30;&amp;#xD654;&amp;#xB418;&amp;#xC9C0; &amp;#xC54A;&amp;#xC740; &lt;code&gt;7 bytes&lt;/code&gt; &amp;#xD06C;&amp;#xAE30;&amp;#xC758; &amp;#xCEE4;&amp;#xB110; &amp;#xBA54;&amp;#xBAA8;&amp;#xB9AC;&amp;#xAC00; &amp;#xC720;&amp;#xCD9C;&amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;.&lt;/li&gt;
+&lt;/ol&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[하루한줄] CVE-2021-30660: macOS 및 iOS의 커널 메모리 유출 취약점 - hackyboiz">
+  <meta property="og:description" content="&lt;h2 id=&#34;URL&#34;&gt;&lt;a href=&#34;#URL&#34; class=&#34;headerlink&#34; title=&#34;URL&#34;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;p&gt;&lt;a href=&#34;https://alexplaskett.github.io/CVE-2021-30660/&#34;&gt;CVE-2021-30660 - XNU Kernel Memory Disclosure&lt;/a&gt;&lt;/p&gt;
+&lt;h2 id=&#34;Target&#34;&gt;&lt;a href=&#34;#Target&#34; class=&#34;headerlink&#34; title=&#34;Target&#34;&gt;&lt;/a&gt;Target&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://support.apple.com/en-us/HT212325&#34;&gt;macOS 11.3 &amp;#xC774;&amp;#xC804; release&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://support.apple.com/en-us/HT212317&#34;&gt;iOS 14.5 &amp;#xC774;&amp;#xC804; release&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;Explain&#34;&gt;&lt;a href=&#34;#Explain&#34; class=&#34;headerlink&#34; title=&#34;Explain&#34;&gt;&lt;/a&gt;Explain&lt;/h2&gt;&lt;p&gt;Apple&amp;#xC0AC;&amp;#xC758; macOS &amp;#xBC0F; iOS&amp;#xC758; XNU &amp;#xC2DC;&amp;#xC2A4;&amp;#xD15C;&amp;#xC5D0;&amp;#xC11C; &amp;#xCEE4;&amp;#xB110; &amp;#xBA54;&amp;#xBAA8;&amp;#xB9AC;&amp;#xB97C; &amp;#xC720;&amp;#xCD9C;&amp;#xD560; &amp;#xC218; &amp;#xC788;&amp;#xB294; &amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC774; &amp;#xBC1C;&amp;#xACAC;&amp;#xB418;&amp;#xC5B4; &amp;#xC138;&amp;#xBD80; &amp;#xC815;&amp;#xBCF4;&amp;#xAC00; &amp;#xACF5;&amp;#xAC1C;&amp;#xB418;&amp;#xC5C8;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;XNU&amp;#xC758; syscall &lt;code&gt;SYS_msgsnd_nocancel&lt;/code&gt; &amp;#xC758; &amp;#xD578;&amp;#xB4E4;&amp;#xB7EC;&amp;#xC778; &lt;a href=&#34;https://opensource.apple.com/source/xnu/xnu-1504.7.4/bsd/kern/sysv_msg.c.auto.html&#34;&gt;sysv_msg.c/msgrcv_nocancel()&lt;/a&gt; &amp;#xB294; &amp;#xC720;&amp;#xC800; &amp;#xACF5;&amp;#xAC04;&amp;#xC758; &amp;#xBA54;&amp;#xC2DC;&amp;#xC9C0; &amp;#xD06C;&amp;#xAE30;&amp;#xB97C; &lt;code&gt;msgsz&lt;/code&gt;&amp;#xB85C; &amp;#xBC1B;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;. &amp;#xB9CC;&amp;#xC57D; &amp;#xC720;&amp;#xC800; &amp;#xACF5;&amp;#xAC04;&amp;#xC5D0;&amp;#xC11C; &amp;#xC694;&amp;#xCCAD;&amp;#xB41C; &amp;#xD06C;&amp;#xAE30;&amp;#xAC00; &amp;#xCD08;&amp;#xAE30;&amp;#xC5D0; &amp;#xCEE4;&amp;#xB110;&amp;#xC5D0; &amp;#xC804;&amp;#xC1A1;&amp;#xB41C; &amp;#xD06C;&amp;#xAE30; &lt;code&gt;msghdr&amp;#x2192;msg_ts&lt;/code&gt;&amp;#xBCF4;&amp;#xB2E4; &amp;#xD06C;&amp;#xBA74; &amp;#xC544;&amp;#xB798;&amp;#xC640; &amp;#xAC19;&amp;#xC774; &lt;code&gt;msghdr&amp;#x2192;msg_ts&lt;/code&gt;&amp;#xB85C; &amp;#xC790;&amp;#xB985;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (msgsz &amp;gt; msghdr-&amp;gt;msg_ts) {
+		msgsz = msghdr-&amp;gt;msg_ts;
+	}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xC774;&amp;#xD6C4; &amp;#xC544;&amp;#xB798;&amp;#xC758; &amp;#xBC18;&amp;#xBCF5;&amp;#xBB38;&amp;#xC744; &amp;#xB3CC;&amp;#xBA70; &amp;#xCEE4;&amp;#xB110; &lt;code&gt;msgpool&lt;/code&gt;&amp;#xC758; &amp;#xB370;&amp;#xC774;&amp;#xD130;&amp;#xB97C; &amp;#xC720;&amp;#xC800; &amp;#xACF5;&amp;#xAC04;&amp;#xC73C;&amp;#xB85C; &amp;#xBCF5;&amp;#xC0AC;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;		&lt;span class=&#34;hljs-comment&#34;&gt;// msg.h&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;		&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;define&lt;/span&gt; MSGSSZ	8		&lt;span class=&#34;hljs-comment&#34;&gt;/* Each segment must be 2^N long */&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;	
+&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;		&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;static&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;msginit&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(__unused &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; *dummy)&lt;/span&gt;&lt;/span&gt;{
+&lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;			&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (i != msginfo.msgssz) {
+&lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;				&lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;msginfo.msgssz=%d (0x%x) not a small power of 2; resetting to %d\\n&amp;quot;&lt;/span&gt;, msginfo.msgssz, msginfo.msgssz, MSGSSZ); 
+&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;				msginfo.msgssz = MSGSSZ;
+&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;			}
+&lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;		...
+&lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;	
+&lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;	&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;msgsnd_nocancel&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(struct proc *p, struct msgsnd_nocancel_args *uap, &lt;span class=&#34;hljs-keyword&#34;&gt;int32_t&lt;/span&gt; *retval)&lt;/span&gt;&lt;/span&gt;{
+&lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt;	...
+&lt;span class=&#34;hljs-number&#34;&gt;13&lt;/span&gt;		&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (len = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; len &amp;lt; msgsz; len += msginfo.msgssz) {
+&lt;span class=&#34;hljs-number&#34;&gt;14&lt;/span&gt;			&lt;span class=&#34;hljs-keyword&#34;&gt;size_t&lt;/span&gt; tlen;
+&lt;span class=&#34;hljs-number&#34;&gt;15&lt;/span&gt;			&lt;span class=&#34;hljs-comment&#34;&gt;/* compare input (size_t) value against restrict (int) value */&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;			&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (msgsz &amp;gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;size_t&lt;/span&gt;)msginfo.msgssz) {
+&lt;span class=&#34;hljs-number&#34;&gt;17&lt;/span&gt;				tlen = msginfo.msgssz;
+&lt;span class=&#34;hljs-number&#34;&gt;18&lt;/span&gt;			} &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+&lt;span class=&#34;hljs-number&#34;&gt;19&lt;/span&gt;				tlen = msgsz;
+&lt;span class=&#34;hljs-number&#34;&gt;20&lt;/span&gt;			}
+&lt;span class=&#34;hljs-number&#34;&gt;21&lt;/span&gt;			&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (next &amp;lt;= &lt;span class=&#34;hljs-number&#34;&gt;-1&lt;/span&gt;) {
+&lt;span class=&#34;hljs-number&#34;&gt;22&lt;/span&gt;				panic(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;next too low #3&amp;quot;&lt;/span&gt;);
+&lt;span class=&#34;hljs-number&#34;&gt;23&lt;/span&gt;			}
+&lt;span class=&#34;hljs-number&#34;&gt;24&lt;/span&gt;			&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (next &amp;gt;= msginfo.msgseg) {
+&lt;span class=&#34;hljs-number&#34;&gt;25&lt;/span&gt;				panic(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;next out of range #3&amp;quot;&lt;/span&gt;);
+&lt;span class=&#34;hljs-number&#34;&gt;26&lt;/span&gt;			}
+&lt;span class=&#34;hljs-number&#34;&gt;27&lt;/span&gt;			SYSV_MSG_SUBSYS_UNLOCK();
+&lt;span class=&#34;hljs-number&#34;&gt;28&lt;/span&gt;			eval = copyout(&amp;amp;msgpool[next * msginfo.msgssz], user_msgp, tlen);
+&lt;span class=&#34;hljs-number&#34;&gt;29&lt;/span&gt;		...&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xBC18;&amp;#xBCF5;&amp;#xBB38;&amp;#xC758; &amp;#xC99D;&amp;#xAC00; &amp;#xAC12;&amp;#xC778; &lt;code&gt;msginfo.msgssz&lt;/code&gt;&amp;#xB294; &lt;code&gt;msginit()&lt;/code&gt;&amp;#xC5D0;&amp;#xC11C; &lt;code&gt;#define MSGSSZ 8&lt;/code&gt; &amp;#xB85C; &amp;#xC120;&amp;#xC5B8;&amp;#xB41C; &lt;code&gt;MSGSSZ&lt;/code&gt;&amp;#xB85C; &amp;#xCD08;&amp;#xAE30;&amp;#xD654;&amp;#xB418;&amp;#xC5B4; &amp;#xD2B9;&amp;#xC815; &amp;#xC870;&amp;#xAC74;&amp;#xC744; &amp;#xB9CC;&amp;#xC871;&amp;#xD558;&amp;#xBA74; &lt;code&gt;8 bytes&lt;/code&gt; &amp;#xB2E8;&amp;#xC704;&amp;#xB85C; &amp;#xCEE4;&amp;#xB110; &amp;#xBA54;&amp;#xBAA8;&amp;#xB9AC;&amp;#xB97C; &amp;#xC720;&amp;#xC800; &amp;#xACF5;&amp;#xAC04;&amp;#xC5D0; &amp;#xBCF5;&amp;#xC0AC;&amp;#xD558;&amp;#xB294;&amp;#xB370;, &amp;#xC774;&amp;#xB54C; &amp;#xC694;&amp;#xCCAD;&amp;#xB41C; &amp;#xD06C;&amp;#xAE30;&amp;#xAC00; 8&amp;#xC758; &amp;#xBC30;&amp;#xC218;&amp;#xAC00; &amp;#xC544;&amp;#xB2D0; &amp;#xACBD;&amp;#xC6B0; &amp;#xCD08;&amp;#xAE30;&amp;#xD654;&amp;#xB418;&amp;#xC9C0; &amp;#xC54A;&amp;#xC740; &lt;code&gt;1~7 bytes&lt;/code&gt; &amp;#xD06C;&amp;#xAE30;&amp;#xC758; &amp;#xCEE4;&amp;#xB110; &amp;#xBA54;&amp;#xBAA8;&amp;#xB9AC;&amp;#xAC00; &amp;#xC720;&amp;#xCD9C;&amp;#xB420; &amp;#xC218; &amp;#xC788;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;9 bytes&lt;/code&gt; &amp;#xD06C;&amp;#xAE30;&amp;#xC758; &lt;code&gt;SYS_msgsnd_nocancel&lt;/code&gt; syscall&amp;#xC744; &amp;#xBCF4;&amp;#xB0BC; &amp;#xACBD;&amp;#xC6B0; &amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC740; &amp;#xB2E4;&amp;#xC74C;&amp;#xACFC; &amp;#xAC19;&amp;#xC774; &amp;#xD2B8;&amp;#xB9AC;&amp;#xAC70; &amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;code&gt;msghdr&amp;#x2192;msg_ts&lt;/code&gt;&amp;#xC640; &lt;code&gt;msgsz&lt;/code&gt;&amp;#xAC00; 9&amp;#xB85C; &amp;#xC124;&amp;#xC815;&amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;.&lt;/li&gt;
+&lt;li&gt;line 16&amp;#xC758; &amp;#xC870;&amp;#xAC74;&amp;#xBB38;&amp;#xC5D0; &amp;#xC758;&amp;#xD574;  &lt;code&gt;tlen&lt;/code&gt;&amp;#xC774; 8&amp;#xC774; &amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;8 bytes&lt;/code&gt; &amp;#xB2E8;&amp;#xC704;&amp;#xB85C; &amp;#xBCF5;&amp;#xC0AC;&amp;#xD558;&amp;#xB294; &amp;#xBC18;&amp;#xBCF5;&amp;#xBB38;&amp;#xC744; &amp;#xB450; &amp;#xBC88; &amp;#xC218;&amp;#xD589;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;16 bytes&lt;/code&gt;&amp;#xC758; &amp;#xCEE4;&amp;#xB110; &amp;#xBA54;&amp;#xBAA8;&amp;#xB9AC;&amp;#xAC00; &amp;#xC720;&amp;#xC800; &amp;#xACF5;&amp;#xAC04;&amp;#xC73C;&amp;#xB85C; &amp;#xBCF5;&amp;#xC0AC;&amp;#xB418;&amp;#xC5B4; &amp;#xCD08;&amp;#xAE30;&amp;#xD654;&amp;#xB418;&amp;#xC9C0; &amp;#xC54A;&amp;#xC740; &lt;code&gt;7 bytes&lt;/code&gt; &amp;#xD06C;&amp;#xAE30;&amp;#xC758; &amp;#xCEE4;&amp;#xB110; &amp;#xBA54;&amp;#xBAA8;&amp;#xB9AC;&amp;#xAC00; &amp;#xC720;&amp;#xCD9C;&amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;.&lt;/li&gt;
+&lt;/ol&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/img/1day1line.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2021/06/04/l0ch/2021-06-04/">
+
+  <title>[하루한줄] CVE-2021-30660: macOS 및 iOS의 커널 메모리 유출 취약점 - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2021-06-04 14:00" pubdate>
+      2021년 6월 4일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      552 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      11
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[하루한줄] CVE-2021-30660: macOS 및 iOS의 커널 메모리 유출 취약점</h1>
+            
+            <div class="markdown-body" id="post-body">
+              <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+              <!-- hackyboiz_horizen_index -->
+              <ins class="adsbygoogle" style="display:block" data-ad-client="ca-pub-3672652207808168" data-ad-slot="8887862313" data-ad-format="auto" data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              <h2 id="URL"><a href="#URL" class="headerlink" title="URL"></a>URL</h2><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://alexplaskett.github.io/CVE-2021-30660/">CVE-2021-30660 - XNU Kernel Memory Disclosure</a></p>
+<h2 id="Target"><a href="#Target" class="headerlink" title="Target"></a>Target</h2><ul>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://support.apple.com/en-us/HT212325">macOS 11.3 &#xC774;&#xC804; release</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://support.apple.com/en-us/HT212317">iOS 14.5 &#xC774;&#xC804; release</a></li>
+</ul>
+<h2 id="Explain"><a href="#Explain" class="headerlink" title="Explain"></a>Explain</h2><p>Apple&#xC0AC;&#xC758; macOS &#xBC0F; iOS&#xC758; XNU &#xC2DC;&#xC2A4;&#xD15C;&#xC5D0;&#xC11C; &#xCEE4;&#xB110; &#xBA54;&#xBAA8;&#xB9AC;&#xB97C; &#xC720;&#xCD9C;&#xD560; &#xC218; &#xC788;&#xB294; &#xCDE8;&#xC57D;&#xC810;&#xC774; &#xBC1C;&#xACAC;&#xB418;&#xC5B4; &#xC138;&#xBD80; &#xC815;&#xBCF4;&#xAC00; &#xACF5;&#xAC1C;&#xB418;&#xC5C8;&#xC2B5;&#xB2C8;&#xB2E4;.</p>
+<p>XNU&#xC758; syscall <code>SYS_msgsnd_nocancel</code> &#xC758; &#xD578;&#xB4E4;&#xB7EC;&#xC778; <a target="_blank" rel="external nofollow noopener noreferrer" href="https://opensource.apple.com/source/xnu/xnu-1504.7.4/bsd/kern/sysv_msg.c.auto.html">sysv_msg.c/msgrcv_nocancel()</a> &#xB294; &#xC720;&#xC800; &#xACF5;&#xAC04;&#xC758; &#xBA54;&#xC2DC;&#xC9C0; &#xD06C;&#xAE30;&#xB97C; <code>msgsz</code>&#xB85C; &#xBC1B;&#xC2B5;&#xB2C8;&#xB2E4;. &#xB9CC;&#xC57D; &#xC720;&#xC800; &#xACF5;&#xAC04;&#xC5D0;&#xC11C; &#xC694;&#xCCAD;&#xB41C; &#xD06C;&#xAE30;&#xAC00; &#xCD08;&#xAE30;&#xC5D0; &#xCEE4;&#xB110;&#xC5D0; &#xC804;&#xC1A1;&#xB41C; &#xD06C;&#xAE30; <code>msghdr&#x2192;msg_ts</code>&#xBCF4;&#xB2E4; &#xD06C;&#xBA74; &#xC544;&#xB798;&#xC640; &#xAC19;&#xC774; <code>msghdr&#x2192;msg_ts</code>&#xB85C; &#xC790;&#xB985;&#xB2C8;&#xB2E4;.</p>
+<pre><code class="hljs c"><span class="hljs-keyword">if</span> (msgsz &gt; msghdr-&gt;msg_ts) {
+		msgsz = msghdr-&gt;msg_ts;
+	}</code></pre>
+<p>&#xC774;&#xD6C4; &#xC544;&#xB798;&#xC758; &#xBC18;&#xBCF5;&#xBB38;&#xC744; &#xB3CC;&#xBA70; &#xCEE4;&#xB110; <code>msgpool</code>&#xC758; &#xB370;&#xC774;&#xD130;&#xB97C; &#xC720;&#xC800; &#xACF5;&#xAC04;&#xC73C;&#xB85C; &#xBCF5;&#xC0AC;&#xD569;&#xB2C8;&#xB2E4;.</p>
+<pre><code class="hljs c"><span class="hljs-number">1</span>		<span class="hljs-comment">// msg.h</span>
+<span class="hljs-number">2</span>		<span class="hljs-meta">#<span class="hljs-meta-keyword">define</span> MSGSSZ	8		<span class="hljs-comment">/* Each segment must be 2^N long */</span></span>
+<span class="hljs-number">3</span>	
+<span class="hljs-number">4</span>		<span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> <span class="hljs-title">msginit</span><span class="hljs-params">(__unused <span class="hljs-keyword">void</span> *dummy)</span></span>{
+<span class="hljs-number">5</span>			<span class="hljs-keyword">if</span> (i != msginfo.msgssz) {
+<span class="hljs-number">6</span>				<span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;msginfo.msgssz=%d (0x%x) not a small power of 2; resetting to %d\\n&quot;</span>, msginfo.msgssz, msginfo.msgssz, MSGSSZ); 
+<span class="hljs-number">7</span>				msginfo.msgssz = MSGSSZ;
+<span class="hljs-number">8</span>			}
+<span class="hljs-number">9</span>		...
+<span class="hljs-number">10</span>	
+<span class="hljs-number">11</span>	<span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">msgsnd_nocancel</span><span class="hljs-params">(struct proc *p, struct msgsnd_nocancel_args *uap, <span class="hljs-keyword">int32_t</span> *retval)</span></span>{
+<span class="hljs-number">12</span>	...
+<span class="hljs-number">13</span>		<span class="hljs-keyword">for</span> (len = <span class="hljs-number">0</span>; len &lt; msgsz; len += msginfo.msgssz) {
+<span class="hljs-number">14</span>			<span class="hljs-keyword">size_t</span> tlen;
+<span class="hljs-number">15</span>			<span class="hljs-comment">/* compare input (size_t) value against restrict (int) value */</span>
+<span class="hljs-number">16</span>			<span class="hljs-keyword">if</span> (msgsz &gt; (<span class="hljs-keyword">size_t</span>)msginfo.msgssz) {
+<span class="hljs-number">17</span>				tlen = msginfo.msgssz;
+<span class="hljs-number">18</span>			} <span class="hljs-keyword">else</span> {
+<span class="hljs-number">19</span>				tlen = msgsz;
+<span class="hljs-number">20</span>			}
+<span class="hljs-number">21</span>			<span class="hljs-keyword">if</span> (next &lt;= <span class="hljs-number">-1</span>) {
+<span class="hljs-number">22</span>				panic(<span class="hljs-string">&quot;next too low #3&quot;</span>);
+<span class="hljs-number">23</span>			}
+<span class="hljs-number">24</span>			<span class="hljs-keyword">if</span> (next &gt;= msginfo.msgseg) {
+<span class="hljs-number">25</span>				panic(<span class="hljs-string">&quot;next out of range #3&quot;</span>);
+<span class="hljs-number">26</span>			}
+<span class="hljs-number">27</span>			SYSV_MSG_SUBSYS_UNLOCK();
+<span class="hljs-number">28</span>			eval = copyout(&amp;msgpool[next * msginfo.msgssz], user_msgp, tlen);
+<span class="hljs-number">29</span>		...</code></pre>
+<p>&#xBC18;&#xBCF5;&#xBB38;&#xC758; &#xC99D;&#xAC00; &#xAC12;&#xC778; <code>msginfo.msgssz</code>&#xB294; <code>msginit()</code>&#xC5D0;&#xC11C; <code>#define MSGSSZ 8</code> &#xB85C; &#xC120;&#xC5B8;&#xB41C; <code>MSGSSZ</code>&#xB85C; &#xCD08;&#xAE30;&#xD654;&#xB418;&#xC5B4; &#xD2B9;&#xC815; &#xC870;&#xAC74;&#xC744; &#xB9CC;&#xC871;&#xD558;&#xBA74; <code>8 bytes</code> &#xB2E8;&#xC704;&#xB85C; &#xCEE4;&#xB110; &#xBA54;&#xBAA8;&#xB9AC;&#xB97C; &#xC720;&#xC800; &#xACF5;&#xAC04;&#xC5D0; &#xBCF5;&#xC0AC;&#xD558;&#xB294;&#xB370;, &#xC774;&#xB54C; &#xC694;&#xCCAD;&#xB41C; &#xD06C;&#xAE30;&#xAC00; 8&#xC758; &#xBC30;&#xC218;&#xAC00; &#xC544;&#xB2D0; &#xACBD;&#xC6B0; &#xCD08;&#xAE30;&#xD654;&#xB418;&#xC9C0; &#xC54A;&#xC740; <code>1~7 bytes</code> &#xD06C;&#xAE30;&#xC758; &#xCEE4;&#xB110; &#xBA54;&#xBAA8;&#xB9AC;&#xAC00; &#xC720;&#xCD9C;&#xB420; &#xC218; &#xC788;&#xC2B5;&#xB2C8;&#xB2E4;.</p>
+<p><code>9 bytes</code> &#xD06C;&#xAE30;&#xC758; <code>SYS_msgsnd_nocancel</code> syscall&#xC744; &#xBCF4;&#xB0BC; &#xACBD;&#xC6B0; &#xCDE8;&#xC57D;&#xC810;&#xC740; &#xB2E4;&#xC74C;&#xACFC; &#xAC19;&#xC774; &#xD2B8;&#xB9AC;&#xAC70; &#xB429;&#xB2C8;&#xB2E4;.</p>
+<ol>
+<li><code>msghdr&#x2192;msg_ts</code>&#xC640; <code>msgsz</code>&#xAC00; 9&#xB85C; &#xC124;&#xC815;&#xB429;&#xB2C8;&#xB2E4;.</li>
+<li>line 16&#xC758; &#xC870;&#xAC74;&#xBB38;&#xC5D0; &#xC758;&#xD574;  <code>tlen</code>&#xC774; 8&#xC774; &#xB429;&#xB2C8;&#xB2E4;.</li>
+<li><code>8 bytes</code> &#xB2E8;&#xC704;&#xB85C; &#xBCF5;&#xC0AC;&#xD558;&#xB294; &#xBC18;&#xBCF5;&#xBB38;&#xC744; &#xB450; &#xBC88; &#xC218;&#xD589;&#xD569;&#xB2C8;&#xB2E4;.</li>
+<li><code>16 bytes</code>&#xC758; &#xCEE4;&#xB110; &#xBA54;&#xBAA8;&#xB9AC;&#xAC00; &#xC720;&#xC800; &#xACF5;&#xAC04;&#xC73C;&#xB85C; &#xBCF5;&#xC0AC;&#xB418;&#xC5B4; &#xCD08;&#xAE30;&#xD654;&#xB418;&#xC9C0; &#xC54A;&#xC740; <code>7 bytes</code> &#xD06C;&#xAE30;&#xC758; &#xCEE4;&#xB110; &#xBA54;&#xBAA8;&#xB9AC;&#xAC00; &#xC720;&#xCD9C;&#xB429;&#xB2C8;&#xB2E4;.</li>
+</ol>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/1day1line/">1day1line</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/cve/">cve</a>
+                  
+                  <a class="hover-with-bg" href="/tags/kernel/">kernel</a>
+                  
+                  <a class="hover-with-bg" href="/tags/ios/">ios</a>
+                  
+                  <a class="hover-with-bg" href="/tags/information-disclosure/">information disclosure</a>
+                  
+                  <a class="hover-with-bg" href="/tags/apple/">apple</a>
+                  
+                  <a class="hover-with-bg" href="/tags/macos/">macos</a>
+                  
+                  <a class="hover-with-bg" href="/tags/L0ch/">L0ch</a>
+                  
+                  <a class="hover-with-bg" href="/tags/xnu/">xnu</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_L0ch.jpg" srcset="/img/loading.gif" alt="L0ch">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">L0ch</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/L0ch">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+
+              <script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2021/06/05/fabu1ous/2021-06-05/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2021-30734: Safari WebAssembly LLInt에서 발견된 Integer Overflow 취약점</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2021/06/03/idioth/2021-06-03/">
+                    <span class="hidden-mobile">[하루한줄] CVE-2021-31181: Microsoft SharePoint 원격 코드 실행 취약점</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2021/06/04/l0ch/2021-06-04/';
+        this.page.identifier = '/2021/06/04/l0ch/2021-06-04/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[하루한줄] CVE-2021-30660: macOS 및 iOS의 커널 메모리 유출 취약점&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
