@@ -1,0 +1,861 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;h2 id=&#34;URL&#34;&gt;&lt;a href=&#34;#URL&#34; class=&#34;headerlink&#34; title=&#34;URL&#34;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;p&gt;&lt;a href=&#34;https://www.synacktiv.com/publications/exploiting-a-blind-format-string-vulnerability-in-modern-binaries-a-case-study-from&#34;&gt;https://www.synacktiv.com/publications/exploiting-a-blind-format-string-vulnerability-in-modern-binaries-a-case-study-from&lt;/a&gt;&lt;/p&gt;
+&lt;h2 id=&#34;Target&#34;&gt;&lt;a href=&#34;#Target&#34; class=&#34;headerlink&#34; title=&#34;Target&#34;&gt;&lt;/a&gt;Target&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;TC500, BC500, CC400W Firmware &amp;lt; 1.1.3-0442&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;Explain&#34;&gt;&lt;a href=&#34;#Explain&#34; class=&#34;headerlink&#34; title=&#34;Explain&#34;&gt;&lt;/a&gt;Explain&lt;/h2&gt;&lt;p&gt;Synology&amp;#xC758; &amp;#xBCF4;&amp;#xC548; &amp;#xCE74;&amp;#xBA54;&amp;#xB77C; &amp;#xC81C;&amp;#xD488;&amp;#xC778; TC500, BC500, CC400W&amp;#xC758; &amp;#xD38C;&amp;#xC6E8;&amp;#xC5B4;&amp;#xC5D0;&amp;#xC11C; HTTP &amp;#xC694;&amp;#xCCAD;&amp;#xC744; &amp;#xCC98;&amp;#xB9AC;&amp;#xD558;&amp;#xB294; &amp;#xACFC;&amp;#xC815; &amp;#xC911; Format String Bug&amp;#xAC00; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD558;&amp;#xC5EC; &amp;#xC6D0;&amp;#xACA9; &amp;#xCF54;&amp;#xB4DC; &amp;#xC2E4;&amp;#xD589;&amp;#xC774; &amp;#xAC00;&amp;#xB2A5;&amp;#xD55C; &amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC774; &amp;#xBC1C;&amp;#xACAC;&amp;#xB418;&amp;#xC5C8;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;&amp;#xCDE8;&amp;#xC57D;&amp;#xD55C; &amp;#xCF54;&amp;#xB4DC;&amp;#xB294; &amp;#xC544;&amp;#xB798;&amp;#xC640; &amp;#xAC19;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;parse_http_request&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(struct mg_request_info *conn)&lt;/span&gt; &lt;/span&gt;{
+    &lt;span class=&#34;hljs-keyword&#34;&gt;pthread_t&lt;/span&gt; tid;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; buf[&lt;span class=&#34;hljs-number&#34;&gt;0x80&lt;/span&gt;];
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;/* [...] */&lt;/span&gt;
+    tid = pthread_self();
+    &lt;span class=&#34;hljs-comment&#34;&gt;/* [...] */&lt;/span&gt;
+    &lt;span class=&#34;hljs-built_in&#34;&gt;memset&lt;/span&gt;(buf, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(buf));
+    mg_snprintf(&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, buf, &lt;span class=&#34;hljs-number&#34;&gt;0x80&lt;/span&gt;u, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;%s%s&amp;quot;&lt;/span&gt;, hostname, conn-&amp;gt;request_uri);  &lt;span class=&#34;hljs-comment&#34;&gt;//[1]&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( debug_table ) {
+        print_debug_msg(tid, buf);  &lt;span class=&#34;hljs-comment&#34;&gt;//[2]&lt;/span&gt;
+    }
+    &lt;span class=&#34;hljs-comment&#34;&gt;/* [...] */&lt;/span&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC740; &amp;#xD3EC;&amp;#xB9F7; &amp;#xC2A4;&amp;#xD2B8;&amp;#xB9C1;&amp;#xC744; uri&amp;#xC5D0; &amp;#xD3EC;&amp;#xD568;&amp;#xC2DC;&amp;#xD0A8; HTTP &amp;#xC694;&amp;#xCCAD;&amp;#xC744; &amp;#xBCF4;&amp;#xB0B4;&amp;#xB294; &amp;#xAC83;&amp;#xC73C;&amp;#xB85C; &amp;#xD2B8;&amp;#xB9AC;&amp;#xAC70;&amp;#xD560; &amp;#xC218; &amp;#xC788;&amp;#xACE0; &amp;#xC774;&amp;#xB54C; &amp;#xC704;&amp;#xC758;  &lt;code&gt;parse_http_request&lt;/code&gt; &amp;#xD568;&amp;#xC218;&amp;#xAC00; &amp;#xD638;&amp;#xCD9C;&amp;#xB418;&amp;#xC5B4; HTTP &amp;#xC694;&amp;#xCCAD;&amp;#xC744; &amp;#xD30C;&amp;#xC2F1;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;. &lt;code&gt;[1]&lt;/code&gt;&amp;#xC5D0;&amp;#xC11C; &amp;#xD638;&amp;#xCD9C;&amp;#xB418;&amp;#xB294; &lt;code&gt;mg_snprintf&lt;/code&gt;&amp;#xB85C; &amp;#xC778;&amp;#xD574; &amp;#xD638;&amp;#xC2A4;&amp;#xD2B8; &amp;#xC774;&amp;#xB984;(&lt;code&gt;hostname&lt;/code&gt;)&amp;#xACFC; &amp;#xC694;&amp;#xCCAD; URI(&lt;code&gt;conn&amp;#x2192;request_uri&lt;/code&gt;)&amp;#xAC00; &amp;#xC5F0;&amp;#xACB0;&amp;#xB418;&amp;#xC5B4; &lt;code&gt;buf&lt;/code&gt;&amp;#xC5D0; &amp;#xC800;&amp;#xC7A5;&amp;#xB418;&amp;#xACE0; &lt;code&gt;[2]&lt;/code&gt;&amp;#xC5D0;&amp;#xC11C; &lt;code&gt;print_debug_msg&lt;/code&gt;&amp;#xC758; &amp;#xC778;&amp;#xC790;&amp;#xB85C; &amp;#xC0AC;&amp;#xC6A9;&amp;#xB418;&amp;#xB294; &amp;#xAC83;&amp;#xC744; &amp;#xBCFC; &amp;#xC218; &amp;#xC788;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;. &lt;/p&gt;
+&lt;p&gt;&amp;#xC774;&amp;#xD6C4; &lt;code&gt;print_debug_msg&lt;/code&gt;&amp;#xC5D0;&amp;#xC11C;&amp;#xB294; &amp;#xC544;&amp;#xB798;&amp;#xC640; &amp;#xAC19;&amp;#xC774; &amp;#xB450; &amp;#xBC88;&amp;#xC9F8; &amp;#xD30C;&amp;#xB77C;&amp;#xBBF8;&amp;#xD130;&amp;#xC778; &lt;code&gt;fmt&lt;/code&gt;&amp;#xB97C; &amp;#xC778;&amp;#xC790;&amp;#xB85C; &amp;#xC0AC;&amp;#xC6A9;&amp;#xD574;&amp;#xC11C; &lt;code&gt;mg_snprintf&lt;/code&gt;&amp;#xB97C; &amp;#xD638;&amp;#xCD9C;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;(&lt;code&gt;[3]&lt;/code&gt;).&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;mg_snprintf&lt;/code&gt;&amp;#xC5D0;&amp;#xC11C;&amp;#xB294; &amp;#xB2E4;&amp;#xC2DC; &lt;code&gt;mg_vsnprintf&lt;/code&gt;&amp;#xB97C; &amp;#xD638;&amp;#xCD9C;&amp;#xD558;&amp;#xACE0;(&lt;code&gt;[4]&lt;/code&gt;) &amp;#xC5EC;&amp;#xAE30;&amp;#xC11C; parse_http_request&amp;#xC5D0;&amp;#xC11C; &amp;#xD638;&amp;#xC2A4;&amp;#xD2B8;&amp;#xBA85;&amp;#xACFC; &amp;#xC694;&amp;#xCCAD; URI&amp;#xB97C; &amp;#xACB0;&amp;#xD569;&amp;#xD55C; &amp;#xBB38;&amp;#xC790;&amp;#xC5F4;&amp;#xC774; &lt;code&gt;vsnprintf&lt;/code&gt;&amp;#xC758; &amp;#xD3EC;&amp;#xB9F7; &amp;#xC2A4;&amp;#xD2B8;&amp;#xB9C1;&amp;#xC73C;&amp;#xB85C; &amp;#xC0AC;&amp;#xC6A9;&amp;#xB418;&amp;#xBA74;&amp;#xC11C;(&lt;code&gt;[5]&lt;/code&gt;) format string bug&amp;#xAC00; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;print_debug_msg&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;pthread_t&lt;/span&gt; thread_id, &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *fmt)&lt;/span&gt; &lt;/span&gt;{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; i;
+
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( workerthreadcount &amp;gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; ) {
+    i = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;do&lt;/span&gt; {
+      &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( debug_table[i].tid == thread_id ) {
+        mg_snprintf(&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, debug_table[i].buf, &lt;span class=&#34;hljs-number&#34;&gt;0x80&lt;/span&gt;u, fmt);  &lt;span class=&#34;hljs-comment&#34;&gt;//[3]&lt;/span&gt;
+        debug_table[i].buf[&lt;span class=&#34;hljs-built_in&#34;&gt;strlen&lt;/span&gt;(fmt)] = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+      }
+      ++i;
+    } &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; ( i &amp;lt; workerthreadcount );
+  }
+}
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;mg_snprintf&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; struct mg_connection *conn, &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *truncated, &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *buf, &lt;span class=&#34;hljs-keyword&#34;&gt;size_t&lt;/span&gt; buflen, &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *fmt, ...)&lt;/span&gt; &lt;/span&gt;{
+  va_list ap;
+
+  va_start(ap, fmt);
+  mg_vsnprintf(conn, truncated, buf, buflen, fmt, ap);&lt;span class=&#34;hljs-comment&#34;&gt;//[4]&lt;/span&gt;
+}
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;mg_vsnprintf&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; struct mg_connection *conn, &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *truncated, &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *buf, &lt;span class=&#34;hljs-keyword&#34;&gt;size_t&lt;/span&gt; buflen, &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *fmt, va_list ap)&lt;/span&gt; &lt;/span&gt;{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; n;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; ok;
+
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( buflen ) {
+    n = vsnprintf(buf, buflen, fmt, ap);&lt;span class=&#34;hljs-comment&#34;&gt;//[5]&lt;/span&gt;
+    ok = (n &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x80000000&lt;/span&gt;) == &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( n &amp;gt;= buflen ) {
+      ok = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+    }
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( ok ) {
+      &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( truncated ) {
+        *truncated = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+      }
+      buf[n] = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+    } &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+      &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( truncated ) {
+        *truncated = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+      }
+      mg_cry(conn, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;mg_vsnprintf&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;truncating vsnprintf buffer: [%.*s]&amp;quot;&lt;/span&gt;, (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;)((buflen &amp;gt; &lt;span class=&#34;hljs-number&#34;&gt;200&lt;/span&gt;) ? &lt;span class=&#34;hljs-number&#34;&gt;200&lt;/span&gt; : (buflen - &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;)), buf);
+      buf[n] = &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;\0&amp;apos;&lt;/span&gt;;
+    }
+  } &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( truncated ) {
+    *truncated = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+  }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;HTTP &amp;#xC694;&amp;#xCCAD;&amp;#xC744; &amp;#xCC98;&amp;#xB9AC;&amp;#xD558;&amp;#xB294; &amp;#xBC14;&amp;#xC774;&amp;#xB108;&amp;#xB9AC;&amp;#xC5D0;&amp;#xB294; PIE&amp;#xAC00; &amp;#xC801;&amp;#xC6A9;&amp;#xB418;&amp;#xC5B4; &amp;#xC788;&amp;#xACE0; ASLR&amp;#xC774; &amp;#xD65C;&amp;#xC131;&amp;#xD654;&amp;#xB418;&amp;#xC5B4; &amp;#xC788;&amp;#xB294; &amp;#xC0C1;&amp;#xD0DC;&amp;#xC774;&amp;#xBA70; &lt;code&gt;vsnprintf&lt;/code&gt;&amp;#xC758; &amp;#xCD9C;&amp;#xB825;&amp;#xC744; &amp;#xC9C1;&amp;#xC811; &amp;#xBCFC; &amp;#xC218; &amp;#xC5C6;&amp;#xB294; &amp;#xC0C1;&amp;#xD669;&amp;#xC5D0; &amp;#xB354;&amp;#xD574; &amp;#xD3EC;&amp;#xB9F7; &amp;#xC2A4;&amp;#xD2B8;&amp;#xB9C1;&amp;#xC758; &amp;#xCD5C;&amp;#xB300; &amp;#xAE38;&amp;#xC774;&amp;#xAC00; 0x80&amp;#xBC14;&amp;#xC774;&amp;#xD2B8;&amp;#xB85C; &amp;#xC81C;&amp;#xD55C;&amp;#xB418;&amp;#xACE0; &amp;#xD2B9;&amp;#xC815; &amp;#xBC94;&amp;#xC704;(0x00 ~ 0x1F)&amp;#xC758; &amp;#xBC14;&amp;#xC774;&amp;#xD2B8;&amp;#xB97C; &amp;#xD398;&amp;#xC774;&amp;#xB85C;&amp;#xB4DC;&amp;#xC5D0; &amp;#xD3EC;&amp;#xD568;&amp;#xC2DC;&amp;#xD0A4;&amp;#xC9C0; &amp;#xBABB;&amp;#xD558;&amp;#xB294; &amp;#xB4F1; &amp;#xB9CE;&amp;#xC740; &amp;#xC81C;&amp;#xC57D; &amp;#xC0AC;&amp;#xD56D;&amp;#xC774; &amp;#xC874;&amp;#xC7AC;&amp;#xD568;&amp;#xC5D0;&amp;#xB3C4; &amp;#xC544;&amp;#xB798;&amp;#xC640; &amp;#xAC19;&amp;#xC740; &amp;#xBC29;&amp;#xC2DD;&amp;#xC73C;&amp;#xB85C; RCE &amp;#xC775;&amp;#xC2A4;&amp;#xD50C;&amp;#xB85C;&amp;#xC787;&amp;#xC774; &amp;#xC774;&amp;#xB8E8;&amp;#xC5B4;&amp;#xC84C;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;&amp;#xBA3C;&amp;#xC800; &amp;#xC2A4;&amp;#xD0DD;&amp;#xC5D0; &amp;#xC874;&amp;#xC7AC;&amp;#xD558;&amp;#xB294; &amp;#xC2A4;&amp;#xC2A4;&amp;#xB85C;&amp;#xB97C; &amp;#xAC00;&amp;#xB9AC;&amp;#xD0A4;&amp;#xB294; &amp;#xD3EC;&amp;#xC778;&amp;#xD130;(looping pointer, &amp;#xC624;&amp;#xD504;&amp;#xC14B; 916)&amp;#xB97C; &lt;code&gt;%916$hhn&lt;/code&gt; &lt;em&gt;**&lt;/em&gt;&amp;#xACFC; &amp;#xAC19;&amp;#xC740; &amp;#xD3EC;&amp;#xB9F7;&amp;#xC2A4;&amp;#xD2B8;&amp;#xB9C1;&amp;#xC744; &amp;#xD1B5;&amp;#xD574; partial overwrite&amp;#xD574;&amp;#xC11C; &amp;#xB610;&amp;#xB2E4;&amp;#xB978; &amp;#xC2A4;&amp;#xD0DD; &amp;#xD3EC;&amp;#xC778;&amp;#xD130;(&amp;#xC624;&amp;#xD504;&amp;#xC14B; 924)&amp;#xB97C; &amp;#xAC00;&amp;#xB9AC;&amp;#xD0A4;&amp;#xAC8C; &amp;#xB9CC;&amp;#xB4ED;&amp;#xB2C8;&amp;#xB2E4;. &amp;#xC774;&amp;#xD6C4; &amp;#xBCC0;&amp;#xC870;&amp;#xB41C; &amp;#xC2A4;&amp;#xD0DD; &amp;#xD3EC;&amp;#xC778;&amp;#xD130;&amp;#xB97C; &amp;#xD1B5;&amp;#xD574; &amp;#xB2E4;&amp;#xC2DC; &amp;#xD55C;&amp;#xBC88; partial overwrite&amp;#xB97C; &amp;#xD558;&amp;#xB294; &amp;#xAC83;&amp;#xC73C;&amp;#xB85C; ASLR&amp;#xC744; &amp;#xC6B0;&amp;#xD68C;&amp;#xD558;&amp;#xACE0; &amp;#xB113;&amp;#xC740; &amp;#xC601;&amp;#xC5ED;&amp;#xC758; &amp;#xC2A4;&amp;#xD0DD; &amp;#xBA54;&amp;#xBAA8;&amp;#xB9AC;&amp;#xC5D0; FSB&amp;#xB97C; &amp;#xD1B5;&amp;#xD55C; &amp;#xB370;&amp;#xC774;&amp;#xD130; &amp;#xC77D;&amp;#xAE30; &amp;#xC4F0;&amp;#xAE30;&amp;#xAC00; &amp;#xAC00;&amp;#xB2A5;&amp;#xD574;&amp;#xC9D1;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2024/11/06/pwndorei/2024-11-06/image.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&amp;#xC774;&amp;#xD6C4; &lt;code&gt;%*111$c&lt;/code&gt;&amp;#xC640; &amp;#xAC19;&amp;#xC740; &amp;#xD3EC;&amp;#xB9F7; &amp;#xC2A4;&amp;#xD2B8;&amp;#xB9C1;&amp;#xC744; &amp;#xC0AC;&amp;#xC6A9;&amp;#xD574;&amp;#xC11C; &amp;#xC624;&amp;#xD504;&amp;#xC14B; 111&amp;#xC5D0; &amp;#xC704;&amp;#xCE58;&amp;#xD55C; &amp;#xB9AC;&amp;#xD134; &amp;#xC8FC;&amp;#xC18C;&amp;#xC758; &amp;#xAC12;&amp;#xB9CC;&amp;#xD07C;&amp;#xC758; &amp;#xBB38;&amp;#xC790;&amp;#xB97C; &amp;#xCD9C;&amp;#xB825;&amp;#xC2DC;&amp;#xD0A4;&amp;#xACE0; &amp;#xC774;&amp;#xB97C; &amp;#xC624;&amp;#xD504;&amp;#xC14B; 924&amp;#xC5D0; &amp;#xC704;&amp;#xCE58;&amp;#xD55C; &amp;#xC2A4;&amp;#xD0DD; &amp;#xD3EC;&amp;#xC778;&amp;#xD130;&amp;#xB97C; &amp;#xD1B5;&amp;#xD574; &amp;#xC2A4;&amp;#xD0DD;&amp;#xC5D0; &amp;#xB9AC;&amp;#xD134; &amp;#xC8FC;&amp;#xC18C; &amp;#xAC12;&amp;#xC744; &amp;#xC800;&amp;#xC7A5;&amp;#xD558;&amp;#xB294; &amp;#xAC83;&amp;#xC774; &amp;#xAC00;&amp;#xB2A5;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;. &amp;#xC774;&amp;#xB807;&amp;#xAC8C; &amp;#xC2A4;&amp;#xD0DD;&amp;#xC758; &amp;#xD2B9;&amp;#xC815; &amp;#xC704;&amp;#xCE58;&amp;#xC5D0; &amp;#xC800;&amp;#xC7A5;&amp;#xB41C; &amp;#xB9AC;&amp;#xD134; &amp;#xC8FC;&amp;#xC18C;&amp;#xB97C; &amp;#xB2E4;&amp;#xC2DC; FSB&amp;#xB97C; &amp;#xD1B5;&amp;#xD574; partial overwrite&amp;#xD574;&amp;#xC11C; PIE&amp;#xB97C; &amp;#xC6B0;&amp;#xD68C;&amp;#xD558;&amp;#xACE0; &amp;#xC774;&amp;#xB97C; &amp;#xBC18;&amp;#xBCF5;&amp;#xD558;&amp;#xC5EC; ROP chain&amp;#xC744; &amp;#xAD6C;&amp;#xC131;&amp;#xD558;&amp;#xB294; &amp;#xAC83;&amp;#xC774; &amp;#xAC00;&amp;#xB2A5;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;ROP chain&amp;#xC740; &amp;#xCD5C;&amp;#xC885;&amp;#xC801;&amp;#xC73C;&amp;#xB85C; &lt;code&gt;system&lt;/code&gt; &amp;#xD568;&amp;#xC218;&amp;#xB97C; &amp;#xD638;&amp;#xCD9C;&amp;#xD574;&amp;#xC11C; &lt;code&gt;sh${IFS}-c${IFS}&amp;apos;echo${IFS}synodebug:synodebug|chpasswd;telnetd&lt;/code&gt;&amp;#xB77C;&amp;#xB294; &amp;#xCEE4;&amp;#xB9E8;&amp;#xB4DC;&amp;#xB97C; &amp;#xC2E4;&amp;#xD589;&amp;#xD558;&amp;#xACE0; &amp;#xADF8; &amp;#xACB0;&amp;#xACFC; synodebug &amp;#xC720;&amp;#xC800;&amp;#xC758; &amp;#xD328;&amp;#xC2A4;&amp;#xC6CC;&amp;#xB4DC;&amp;#xB97C; synodebug&amp;#xB85C; &amp;#xC124;&amp;#xC815;&amp;#xD55C; &amp;#xB2E4;&amp;#xC74C; telnet &amp;#xB370;&amp;#xBAAC;&amp;#xC744; &amp;#xC2E4;&amp;#xD589;&amp;#xD558;&amp;#xACE0; &amp;#xACF5;&amp;#xACA9;&amp;#xC790;&amp;#xB294; &amp;#xC2E4;&amp;#xD589;&amp;#xB41C; telnet&amp;#xC5D0; &amp;#xC811;&amp;#xC18D;&amp;#xD574;&amp;#xC11C; &amp;#xB8E8;&amp;#xD2B8; &amp;#xAD8C;&amp;#xD55C;&amp;#xC758; &amp;#xC258;&amp;#xC744; &amp;#xD68D;&amp;#xB4DD;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[하루한줄] Synology-SA-24:17: Synology Camera의 Format String Bug로 인한 원격 코드 실행 취약점 - hackyboiz">
+  <meta property="og:description" content="&lt;h2 id=&#34;URL&#34;&gt;&lt;a href=&#34;#URL&#34; class=&#34;headerlink&#34; title=&#34;URL&#34;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;p&gt;&lt;a href=&#34;https://www.synacktiv.com/publications/exploiting-a-blind-format-string-vulnerability-in-modern-binaries-a-case-study-from&#34;&gt;https://www.synacktiv.com/publications/exploiting-a-blind-format-string-vulnerability-in-modern-binaries-a-case-study-from&lt;/a&gt;&lt;/p&gt;
+&lt;h2 id=&#34;Target&#34;&gt;&lt;a href=&#34;#Target&#34; class=&#34;headerlink&#34; title=&#34;Target&#34;&gt;&lt;/a&gt;Target&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;TC500, BC500, CC400W Firmware &amp;lt; 1.1.3-0442&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;Explain&#34;&gt;&lt;a href=&#34;#Explain&#34; class=&#34;headerlink&#34; title=&#34;Explain&#34;&gt;&lt;/a&gt;Explain&lt;/h2&gt;&lt;p&gt;Synology&amp;#xC758; &amp;#xBCF4;&amp;#xC548; &amp;#xCE74;&amp;#xBA54;&amp;#xB77C; &amp;#xC81C;&amp;#xD488;&amp;#xC778; TC500, BC500, CC400W&amp;#xC758; &amp;#xD38C;&amp;#xC6E8;&amp;#xC5B4;&amp;#xC5D0;&amp;#xC11C; HTTP &amp;#xC694;&amp;#xCCAD;&amp;#xC744; &amp;#xCC98;&amp;#xB9AC;&amp;#xD558;&amp;#xB294; &amp;#xACFC;&amp;#xC815; &amp;#xC911; Format String Bug&amp;#xAC00; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD558;&amp;#xC5EC; &amp;#xC6D0;&amp;#xACA9; &amp;#xCF54;&amp;#xB4DC; &amp;#xC2E4;&amp;#xD589;&amp;#xC774; &amp;#xAC00;&amp;#xB2A5;&amp;#xD55C; &amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC774; &amp;#xBC1C;&amp;#xACAC;&amp;#xB418;&amp;#xC5C8;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;&amp;#xCDE8;&amp;#xC57D;&amp;#xD55C; &amp;#xCF54;&amp;#xB4DC;&amp;#xB294; &amp;#xC544;&amp;#xB798;&amp;#xC640; &amp;#xAC19;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;parse_http_request&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(struct mg_request_info *conn)&lt;/span&gt; &lt;/span&gt;{
+    &lt;span class=&#34;hljs-keyword&#34;&gt;pthread_t&lt;/span&gt; tid;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; buf[&lt;span class=&#34;hljs-number&#34;&gt;0x80&lt;/span&gt;];
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;/* [...] */&lt;/span&gt;
+    tid = pthread_self();
+    &lt;span class=&#34;hljs-comment&#34;&gt;/* [...] */&lt;/span&gt;
+    &lt;span class=&#34;hljs-built_in&#34;&gt;memset&lt;/span&gt;(buf, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(buf));
+    mg_snprintf(&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, buf, &lt;span class=&#34;hljs-number&#34;&gt;0x80&lt;/span&gt;u, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;%s%s&amp;quot;&lt;/span&gt;, hostname, conn-&amp;gt;request_uri);  &lt;span class=&#34;hljs-comment&#34;&gt;//[1]&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( debug_table ) {
+        print_debug_msg(tid, buf);  &lt;span class=&#34;hljs-comment&#34;&gt;//[2]&lt;/span&gt;
+    }
+    &lt;span class=&#34;hljs-comment&#34;&gt;/* [...] */&lt;/span&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC740; &amp;#xD3EC;&amp;#xB9F7; &amp;#xC2A4;&amp;#xD2B8;&amp;#xB9C1;&amp;#xC744; uri&amp;#xC5D0; &amp;#xD3EC;&amp;#xD568;&amp;#xC2DC;&amp;#xD0A8; HTTP &amp;#xC694;&amp;#xCCAD;&amp;#xC744; &amp;#xBCF4;&amp;#xB0B4;&amp;#xB294; &amp;#xAC83;&amp;#xC73C;&amp;#xB85C; &amp;#xD2B8;&amp;#xB9AC;&amp;#xAC70;&amp;#xD560; &amp;#xC218; &amp;#xC788;&amp;#xACE0; &amp;#xC774;&amp;#xB54C; &amp;#xC704;&amp;#xC758;  &lt;code&gt;parse_http_request&lt;/code&gt; &amp;#xD568;&amp;#xC218;&amp;#xAC00; &amp;#xD638;&amp;#xCD9C;&amp;#xB418;&amp;#xC5B4; HTTP &amp;#xC694;&amp;#xCCAD;&amp;#xC744; &amp;#xD30C;&amp;#xC2F1;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;. &lt;code&gt;[1]&lt;/code&gt;&amp;#xC5D0;&amp;#xC11C; &amp;#xD638;&amp;#xCD9C;&amp;#xB418;&amp;#xB294; &lt;code&gt;mg_snprintf&lt;/code&gt;&amp;#xB85C; &amp;#xC778;&amp;#xD574; &amp;#xD638;&amp;#xC2A4;&amp;#xD2B8; &amp;#xC774;&amp;#xB984;(&lt;code&gt;hostname&lt;/code&gt;)&amp;#xACFC; &amp;#xC694;&amp;#xCCAD; URI(&lt;code&gt;conn&amp;#x2192;request_uri&lt;/code&gt;)&amp;#xAC00; &amp;#xC5F0;&amp;#xACB0;&amp;#xB418;&amp;#xC5B4; &lt;code&gt;buf&lt;/code&gt;&amp;#xC5D0; &amp;#xC800;&amp;#xC7A5;&amp;#xB418;&amp;#xACE0; &lt;code&gt;[2]&lt;/code&gt;&amp;#xC5D0;&amp;#xC11C; &lt;code&gt;print_debug_msg&lt;/code&gt;&amp;#xC758; &amp;#xC778;&amp;#xC790;&amp;#xB85C; &amp;#xC0AC;&amp;#xC6A9;&amp;#xB418;&amp;#xB294; &amp;#xAC83;&amp;#xC744; &amp;#xBCFC; &amp;#xC218; &amp;#xC788;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;. &lt;/p&gt;
+&lt;p&gt;&amp;#xC774;&amp;#xD6C4; &lt;code&gt;print_debug_msg&lt;/code&gt;&amp;#xC5D0;&amp;#xC11C;&amp;#xB294; &amp;#xC544;&amp;#xB798;&amp;#xC640; &amp;#xAC19;&amp;#xC774; &amp;#xB450; &amp;#xBC88;&amp;#xC9F8; &amp;#xD30C;&amp;#xB77C;&amp;#xBBF8;&amp;#xD130;&amp;#xC778; &lt;code&gt;fmt&lt;/code&gt;&amp;#xB97C; &amp;#xC778;&amp;#xC790;&amp;#xB85C; &amp;#xC0AC;&amp;#xC6A9;&amp;#xD574;&amp;#xC11C; &lt;code&gt;mg_snprintf&lt;/code&gt;&amp;#xB97C; &amp;#xD638;&amp;#xCD9C;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;(&lt;code&gt;[3]&lt;/code&gt;).&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;mg_snprintf&lt;/code&gt;&amp;#xC5D0;&amp;#xC11C;&amp;#xB294; &amp;#xB2E4;&amp;#xC2DC; &lt;code&gt;mg_vsnprintf&lt;/code&gt;&amp;#xB97C; &amp;#xD638;&amp;#xCD9C;&amp;#xD558;&amp;#xACE0;(&lt;code&gt;[4]&lt;/code&gt;) &amp;#xC5EC;&amp;#xAE30;&amp;#xC11C; parse_http_request&amp;#xC5D0;&amp;#xC11C; &amp;#xD638;&amp;#xC2A4;&amp;#xD2B8;&amp;#xBA85;&amp;#xACFC; &amp;#xC694;&amp;#xCCAD; URI&amp;#xB97C; &amp;#xACB0;&amp;#xD569;&amp;#xD55C; &amp;#xBB38;&amp;#xC790;&amp;#xC5F4;&amp;#xC774; &lt;code&gt;vsnprintf&lt;/code&gt;&amp;#xC758; &amp;#xD3EC;&amp;#xB9F7; &amp;#xC2A4;&amp;#xD2B8;&amp;#xB9C1;&amp;#xC73C;&amp;#xB85C; &amp;#xC0AC;&amp;#xC6A9;&amp;#xB418;&amp;#xBA74;&amp;#xC11C;(&lt;code&gt;[5]&lt;/code&gt;) format string bug&amp;#xAC00; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;print_debug_msg&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;pthread_t&lt;/span&gt; thread_id, &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *fmt)&lt;/span&gt; &lt;/span&gt;{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; i;
+
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( workerthreadcount &amp;gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; ) {
+    i = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;do&lt;/span&gt; {
+      &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( debug_table[i].tid == thread_id ) {
+        mg_snprintf(&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, debug_table[i].buf, &lt;span class=&#34;hljs-number&#34;&gt;0x80&lt;/span&gt;u, fmt);  &lt;span class=&#34;hljs-comment&#34;&gt;//[3]&lt;/span&gt;
+        debug_table[i].buf[&lt;span class=&#34;hljs-built_in&#34;&gt;strlen&lt;/span&gt;(fmt)] = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+      }
+      ++i;
+    } &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; ( i &amp;lt; workerthreadcount );
+  }
+}
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;mg_snprintf&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; struct mg_connection *conn, &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *truncated, &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *buf, &lt;span class=&#34;hljs-keyword&#34;&gt;size_t&lt;/span&gt; buflen, &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *fmt, ...)&lt;/span&gt; &lt;/span&gt;{
+  va_list ap;
+
+  va_start(ap, fmt);
+  mg_vsnprintf(conn, truncated, buf, buflen, fmt, ap);&lt;span class=&#34;hljs-comment&#34;&gt;//[4]&lt;/span&gt;
+}
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;mg_vsnprintf&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; struct mg_connection *conn, &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *truncated, &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *buf, &lt;span class=&#34;hljs-keyword&#34;&gt;size_t&lt;/span&gt; buflen, &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *fmt, va_list ap)&lt;/span&gt; &lt;/span&gt;{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; n;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; ok;
+
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( buflen ) {
+    n = vsnprintf(buf, buflen, fmt, ap);&lt;span class=&#34;hljs-comment&#34;&gt;//[5]&lt;/span&gt;
+    ok = (n &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x80000000&lt;/span&gt;) == &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( n &amp;gt;= buflen ) {
+      ok = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+    }
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( ok ) {
+      &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( truncated ) {
+        *truncated = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+      }
+      buf[n] = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+    } &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+      &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( truncated ) {
+        *truncated = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+      }
+      mg_cry(conn, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;mg_vsnprintf&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;truncating vsnprintf buffer: [%.*s]&amp;quot;&lt;/span&gt;, (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;)((buflen &amp;gt; &lt;span class=&#34;hljs-number&#34;&gt;200&lt;/span&gt;) ? &lt;span class=&#34;hljs-number&#34;&gt;200&lt;/span&gt; : (buflen - &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;)), buf);
+      buf[n] = &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;\0&amp;apos;&lt;/span&gt;;
+    }
+  } &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( truncated ) {
+    *truncated = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+  }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;HTTP &amp;#xC694;&amp;#xCCAD;&amp;#xC744; &amp;#xCC98;&amp;#xB9AC;&amp;#xD558;&amp;#xB294; &amp;#xBC14;&amp;#xC774;&amp;#xB108;&amp;#xB9AC;&amp;#xC5D0;&amp;#xB294; PIE&amp;#xAC00; &amp;#xC801;&amp;#xC6A9;&amp;#xB418;&amp;#xC5B4; &amp;#xC788;&amp;#xACE0; ASLR&amp;#xC774; &amp;#xD65C;&amp;#xC131;&amp;#xD654;&amp;#xB418;&amp;#xC5B4; &amp;#xC788;&amp;#xB294; &amp;#xC0C1;&amp;#xD0DC;&amp;#xC774;&amp;#xBA70; &lt;code&gt;vsnprintf&lt;/code&gt;&amp;#xC758; &amp;#xCD9C;&amp;#xB825;&amp;#xC744; &amp;#xC9C1;&amp;#xC811; &amp;#xBCFC; &amp;#xC218; &amp;#xC5C6;&amp;#xB294; &amp;#xC0C1;&amp;#xD669;&amp;#xC5D0; &amp;#xB354;&amp;#xD574; &amp;#xD3EC;&amp;#xB9F7; &amp;#xC2A4;&amp;#xD2B8;&amp;#xB9C1;&amp;#xC758; &amp;#xCD5C;&amp;#xB300; &amp;#xAE38;&amp;#xC774;&amp;#xAC00; 0x80&amp;#xBC14;&amp;#xC774;&amp;#xD2B8;&amp;#xB85C; &amp;#xC81C;&amp;#xD55C;&amp;#xB418;&amp;#xACE0; &amp;#xD2B9;&amp;#xC815; &amp;#xBC94;&amp;#xC704;(0x00 ~ 0x1F)&amp;#xC758; &amp;#xBC14;&amp;#xC774;&amp;#xD2B8;&amp;#xB97C; &amp;#xD398;&amp;#xC774;&amp;#xB85C;&amp;#xB4DC;&amp;#xC5D0; &amp;#xD3EC;&amp;#xD568;&amp;#xC2DC;&amp;#xD0A4;&amp;#xC9C0; &amp;#xBABB;&amp;#xD558;&amp;#xB294; &amp;#xB4F1; &amp;#xB9CE;&amp;#xC740; &amp;#xC81C;&amp;#xC57D; &amp;#xC0AC;&amp;#xD56D;&amp;#xC774; &amp;#xC874;&amp;#xC7AC;&amp;#xD568;&amp;#xC5D0;&amp;#xB3C4; &amp;#xC544;&amp;#xB798;&amp;#xC640; &amp;#xAC19;&amp;#xC740; &amp;#xBC29;&amp;#xC2DD;&amp;#xC73C;&amp;#xB85C; RCE &amp;#xC775;&amp;#xC2A4;&amp;#xD50C;&amp;#xB85C;&amp;#xC787;&amp;#xC774; &amp;#xC774;&amp;#xB8E8;&amp;#xC5B4;&amp;#xC84C;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;&amp;#xBA3C;&amp;#xC800; &amp;#xC2A4;&amp;#xD0DD;&amp;#xC5D0; &amp;#xC874;&amp;#xC7AC;&amp;#xD558;&amp;#xB294; &amp;#xC2A4;&amp;#xC2A4;&amp;#xB85C;&amp;#xB97C; &amp;#xAC00;&amp;#xB9AC;&amp;#xD0A4;&amp;#xB294; &amp;#xD3EC;&amp;#xC778;&amp;#xD130;(looping pointer, &amp;#xC624;&amp;#xD504;&amp;#xC14B; 916)&amp;#xB97C; &lt;code&gt;%916$hhn&lt;/code&gt; &lt;em&gt;**&lt;/em&gt;&amp;#xACFC; &amp;#xAC19;&amp;#xC740; &amp;#xD3EC;&amp;#xB9F7;&amp;#xC2A4;&amp;#xD2B8;&amp;#xB9C1;&amp;#xC744; &amp;#xD1B5;&amp;#xD574; partial overwrite&amp;#xD574;&amp;#xC11C; &amp;#xB610;&amp;#xB2E4;&amp;#xB978; &amp;#xC2A4;&amp;#xD0DD; &amp;#xD3EC;&amp;#xC778;&amp;#xD130;(&amp;#xC624;&amp;#xD504;&amp;#xC14B; 924)&amp;#xB97C; &amp;#xAC00;&amp;#xB9AC;&amp;#xD0A4;&amp;#xAC8C; &amp;#xB9CC;&amp;#xB4ED;&amp;#xB2C8;&amp;#xB2E4;. &amp;#xC774;&amp;#xD6C4; &amp;#xBCC0;&amp;#xC870;&amp;#xB41C; &amp;#xC2A4;&amp;#xD0DD; &amp;#xD3EC;&amp;#xC778;&amp;#xD130;&amp;#xB97C; &amp;#xD1B5;&amp;#xD574; &amp;#xB2E4;&amp;#xC2DC; &amp;#xD55C;&amp;#xBC88; partial overwrite&amp;#xB97C; &amp;#xD558;&amp;#xB294; &amp;#xAC83;&amp;#xC73C;&amp;#xB85C; ASLR&amp;#xC744; &amp;#xC6B0;&amp;#xD68C;&amp;#xD558;&amp;#xACE0; &amp;#xB113;&amp;#xC740; &amp;#xC601;&amp;#xC5ED;&amp;#xC758; &amp;#xC2A4;&amp;#xD0DD; &amp;#xBA54;&amp;#xBAA8;&amp;#xB9AC;&amp;#xC5D0; FSB&amp;#xB97C; &amp;#xD1B5;&amp;#xD55C; &amp;#xB370;&amp;#xC774;&amp;#xD130; &amp;#xC77D;&amp;#xAE30; &amp;#xC4F0;&amp;#xAE30;&amp;#xAC00; &amp;#xAC00;&amp;#xB2A5;&amp;#xD574;&amp;#xC9D1;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2024/11/06/pwndorei/2024-11-06/image.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&amp;#xC774;&amp;#xD6C4; &lt;code&gt;%*111$c&lt;/code&gt;&amp;#xC640; &amp;#xAC19;&amp;#xC740; &amp;#xD3EC;&amp;#xB9F7; &amp;#xC2A4;&amp;#xD2B8;&amp;#xB9C1;&amp;#xC744; &amp;#xC0AC;&amp;#xC6A9;&amp;#xD574;&amp;#xC11C; &amp;#xC624;&amp;#xD504;&amp;#xC14B; 111&amp;#xC5D0; &amp;#xC704;&amp;#xCE58;&amp;#xD55C; &amp;#xB9AC;&amp;#xD134; &amp;#xC8FC;&amp;#xC18C;&amp;#xC758; &amp;#xAC12;&amp;#xB9CC;&amp;#xD07C;&amp;#xC758; &amp;#xBB38;&amp;#xC790;&amp;#xB97C; &amp;#xCD9C;&amp;#xB825;&amp;#xC2DC;&amp;#xD0A4;&amp;#xACE0; &amp;#xC774;&amp;#xB97C; &amp;#xC624;&amp;#xD504;&amp;#xC14B; 924&amp;#xC5D0; &amp;#xC704;&amp;#xCE58;&amp;#xD55C; &amp;#xC2A4;&amp;#xD0DD; &amp;#xD3EC;&amp;#xC778;&amp;#xD130;&amp;#xB97C; &amp;#xD1B5;&amp;#xD574; &amp;#xC2A4;&amp;#xD0DD;&amp;#xC5D0; &amp;#xB9AC;&amp;#xD134; &amp;#xC8FC;&amp;#xC18C; &amp;#xAC12;&amp;#xC744; &amp;#xC800;&amp;#xC7A5;&amp;#xD558;&amp;#xB294; &amp;#xAC83;&amp;#xC774; &amp;#xAC00;&amp;#xB2A5;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;. &amp;#xC774;&amp;#xB807;&amp;#xAC8C; &amp;#xC2A4;&amp;#xD0DD;&amp;#xC758; &amp;#xD2B9;&amp;#xC815; &amp;#xC704;&amp;#xCE58;&amp;#xC5D0; &amp;#xC800;&amp;#xC7A5;&amp;#xB41C; &amp;#xB9AC;&amp;#xD134; &amp;#xC8FC;&amp;#xC18C;&amp;#xB97C; &amp;#xB2E4;&amp;#xC2DC; FSB&amp;#xB97C; &amp;#xD1B5;&amp;#xD574; partial overwrite&amp;#xD574;&amp;#xC11C; PIE&amp;#xB97C; &amp;#xC6B0;&amp;#xD68C;&amp;#xD558;&amp;#xACE0; &amp;#xC774;&amp;#xB97C; &amp;#xBC18;&amp;#xBCF5;&amp;#xD558;&amp;#xC5EC; ROP chain&amp;#xC744; &amp;#xAD6C;&amp;#xC131;&amp;#xD558;&amp;#xB294; &amp;#xAC83;&amp;#xC774; &amp;#xAC00;&amp;#xB2A5;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;ROP chain&amp;#xC740; &amp;#xCD5C;&amp;#xC885;&amp;#xC801;&amp;#xC73C;&amp;#xB85C; &lt;code&gt;system&lt;/code&gt; &amp;#xD568;&amp;#xC218;&amp;#xB97C; &amp;#xD638;&amp;#xCD9C;&amp;#xD574;&amp;#xC11C; &lt;code&gt;sh${IFS}-c${IFS}&amp;apos;echo${IFS}synodebug:synodebug|chpasswd;telnetd&lt;/code&gt;&amp;#xB77C;&amp;#xB294; &amp;#xCEE4;&amp;#xB9E8;&amp;#xB4DC;&amp;#xB97C; &amp;#xC2E4;&amp;#xD589;&amp;#xD558;&amp;#xACE0; &amp;#xADF8; &amp;#xACB0;&amp;#xACFC; synodebug &amp;#xC720;&amp;#xC800;&amp;#xC758; &amp;#xD328;&amp;#xC2A4;&amp;#xC6CC;&amp;#xB4DC;&amp;#xB97C; synodebug&amp;#xB85C; &amp;#xC124;&amp;#xC815;&amp;#xD55C; &amp;#xB2E4;&amp;#xC74C; telnet &amp;#xB370;&amp;#xBAAC;&amp;#xC744; &amp;#xC2E4;&amp;#xD589;&amp;#xD558;&amp;#xACE0; &amp;#xACF5;&amp;#xACA9;&amp;#xC790;&amp;#xB294; &amp;#xC2E4;&amp;#xD589;&amp;#xB41C; telnet&amp;#xC5D0; &amp;#xC811;&amp;#xC18D;&amp;#xD574;&amp;#xC11C; &amp;#xB8E8;&amp;#xD2B8; &amp;#xAD8C;&amp;#xD55C;&amp;#xC758; &amp;#xC258;&amp;#xC744; &amp;#xD68D;&amp;#xB4DD;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/img/1day1line.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2024/11/06/pwndorei/2024-11-06/">
+
+  <title>[하루한줄] Synology-SA-24:17: Synology Camera의 Format String Bug로 인한 원격 코드 실행 취약점 - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2024-11-06 22:00" pubdate>
+      2024년 11월 6일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      974 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      19
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[하루한줄] Synology-SA-24:17: Synology Camera의 Format String Bug로 인한 원격 코드 실행 취약점</h1>
+            
+            <div class="markdown-body" id="post-body">
+              <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+              <!-- hackyboiz_horizen_index -->
+              <ins class="adsbygoogle" style="display:block" data-ad-client="ca-pub-3672652207808168" data-ad-slot="8887862313" data-ad-format="auto" data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              <h2 id="URL"><a href="#URL" class="headerlink" title="URL"></a>URL</h2><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.synacktiv.com/publications/exploiting-a-blind-format-string-vulnerability-in-modern-binaries-a-case-study-from">https://www.synacktiv.com/publications/exploiting-a-blind-format-string-vulnerability-in-modern-binaries-a-case-study-from</a></p>
+<h2 id="Target"><a href="#Target" class="headerlink" title="Target"></a>Target</h2><ul>
+<li>TC500, BC500, CC400W Firmware &lt; 1.1.3-0442</li>
+</ul>
+<h2 id="Explain"><a href="#Explain" class="headerlink" title="Explain"></a>Explain</h2><p>Synology&#xC758; &#xBCF4;&#xC548; &#xCE74;&#xBA54;&#xB77C; &#xC81C;&#xD488;&#xC778; TC500, BC500, CC400W&#xC758; &#xD38C;&#xC6E8;&#xC5B4;&#xC5D0;&#xC11C; HTTP &#xC694;&#xCCAD;&#xC744; &#xCC98;&#xB9AC;&#xD558;&#xB294; &#xACFC;&#xC815; &#xC911; Format String Bug&#xAC00; &#xBC1C;&#xC0DD;&#xD558;&#xC5EC; &#xC6D0;&#xACA9; &#xCF54;&#xB4DC; &#xC2E4;&#xD589;&#xC774; &#xAC00;&#xB2A5;&#xD55C; &#xCDE8;&#xC57D;&#xC810;&#xC774; &#xBC1C;&#xACAC;&#xB418;&#xC5C8;&#xC2B5;&#xB2C8;&#xB2E4;.</p>
+<p>&#xCDE8;&#xC57D;&#xD55C; &#xCF54;&#xB4DC;&#xB294; &#xC544;&#xB798;&#xC640; &#xAC19;&#xC2B5;&#xB2C8;&#xB2E4;.</p>
+<pre><code class="hljs c"><span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">parse_http_request</span><span class="hljs-params">(struct mg_request_info *conn)</span> </span>{
+    <span class="hljs-keyword">pthread_t</span> tid;
+    <span class="hljs-keyword">char</span> buf[<span class="hljs-number">0x80</span>];
+
+    <span class="hljs-comment">/* [...] */</span>
+    tid = pthread_self();
+    <span class="hljs-comment">/* [...] */</span>
+    <span class="hljs-built_in">memset</span>(buf, <span class="hljs-number">0</span>, <span class="hljs-keyword">sizeof</span>(buf));
+    mg_snprintf(<span class="hljs-number">0</span>, <span class="hljs-number">0</span>, buf, <span class="hljs-number">0x80</span>u, <span class="hljs-string">&quot;%s%s&quot;</span>, hostname, conn-&gt;request_uri);  <span class="hljs-comment">//[1]</span>
+    <span class="hljs-keyword">if</span> ( debug_table ) {
+        print_debug_msg(tid, buf);  <span class="hljs-comment">//[2]</span>
+    }
+    <span class="hljs-comment">/* [...] */</span>
+}</code></pre>
+<p>&#xCDE8;&#xC57D;&#xC810;&#xC740; &#xD3EC;&#xB9F7; &#xC2A4;&#xD2B8;&#xB9C1;&#xC744; uri&#xC5D0; &#xD3EC;&#xD568;&#xC2DC;&#xD0A8; HTTP &#xC694;&#xCCAD;&#xC744; &#xBCF4;&#xB0B4;&#xB294; &#xAC83;&#xC73C;&#xB85C; &#xD2B8;&#xB9AC;&#xAC70;&#xD560; &#xC218; &#xC788;&#xACE0; &#xC774;&#xB54C; &#xC704;&#xC758;  <code>parse_http_request</code> &#xD568;&#xC218;&#xAC00; &#xD638;&#xCD9C;&#xB418;&#xC5B4; HTTP &#xC694;&#xCCAD;&#xC744; &#xD30C;&#xC2F1;&#xD569;&#xB2C8;&#xB2E4;. <code>[1]</code>&#xC5D0;&#xC11C; &#xD638;&#xCD9C;&#xB418;&#xB294; <code>mg_snprintf</code>&#xB85C; &#xC778;&#xD574; &#xD638;&#xC2A4;&#xD2B8; &#xC774;&#xB984;(<code>hostname</code>)&#xACFC; &#xC694;&#xCCAD; URI(<code>conn&#x2192;request_uri</code>)&#xAC00; &#xC5F0;&#xACB0;&#xB418;&#xC5B4; <code>buf</code>&#xC5D0; &#xC800;&#xC7A5;&#xB418;&#xACE0; <code>[2]</code>&#xC5D0;&#xC11C; <code>print_debug_msg</code>&#xC758; &#xC778;&#xC790;&#xB85C; &#xC0AC;&#xC6A9;&#xB418;&#xB294; &#xAC83;&#xC744; &#xBCFC; &#xC218; &#xC788;&#xC2B5;&#xB2C8;&#xB2E4;. </p>
+<p>&#xC774;&#xD6C4; <code>print_debug_msg</code>&#xC5D0;&#xC11C;&#xB294; &#xC544;&#xB798;&#xC640; &#xAC19;&#xC774; &#xB450; &#xBC88;&#xC9F8; &#xD30C;&#xB77C;&#xBBF8;&#xD130;&#xC778; <code>fmt</code>&#xB97C; &#xC778;&#xC790;&#xB85C; &#xC0AC;&#xC6A9;&#xD574;&#xC11C; <code>mg_snprintf</code>&#xB97C; &#xD638;&#xCD9C;&#xD569;&#xB2C8;&#xB2E4;(<code>[3]</code>).</p>
+<p><code>mg_snprintf</code>&#xC5D0;&#xC11C;&#xB294; &#xB2E4;&#xC2DC; <code>mg_vsnprintf</code>&#xB97C; &#xD638;&#xCD9C;&#xD558;&#xACE0;(<code>[4]</code>) &#xC5EC;&#xAE30;&#xC11C; parse_http_request&#xC5D0;&#xC11C; &#xD638;&#xC2A4;&#xD2B8;&#xBA85;&#xACFC; &#xC694;&#xCCAD; URI&#xB97C; &#xACB0;&#xD569;&#xD55C; &#xBB38;&#xC790;&#xC5F4;&#xC774; <code>vsnprintf</code>&#xC758; &#xD3EC;&#xB9F7; &#xC2A4;&#xD2B8;&#xB9C1;&#xC73C;&#xB85C; &#xC0AC;&#xC6A9;&#xB418;&#xBA74;&#xC11C;(<code>[5]</code>) format string bug&#xAC00; &#xBC1C;&#xC0DD;&#xD569;&#xB2C8;&#xB2E4;.</p>
+<pre><code class="hljs c"><span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">print_debug_msg</span><span class="hljs-params">(<span class="hljs-keyword">pthread_t</span> thread_id, <span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span> *fmt)</span> </span>{
+  <span class="hljs-keyword">int</span> i;
+
+  <span class="hljs-keyword">if</span> ( workerthreadcount &gt; <span class="hljs-number">0</span> ) {
+    i = <span class="hljs-number">0</span>;
+    <span class="hljs-keyword">do</span> {
+      <span class="hljs-keyword">if</span> ( debug_table[i].tid == thread_id ) {
+        mg_snprintf(<span class="hljs-number">0</span>, <span class="hljs-number">0</span>, debug_table[i].buf, <span class="hljs-number">0x80</span>u, fmt);  <span class="hljs-comment">//[3]</span>
+        debug_table[i].buf[<span class="hljs-built_in">strlen</span>(fmt)] = <span class="hljs-number">0</span>;
+      }
+      ++i;
+    } <span class="hljs-keyword">while</span> ( i &lt; workerthreadcount );
+  }
+}
+
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">mg_snprintf</span><span class="hljs-params">(<span class="hljs-keyword">const</span> struct mg_connection *conn, <span class="hljs-keyword">int</span> *truncated, <span class="hljs-keyword">char</span> *buf, <span class="hljs-keyword">size_t</span> buflen, <span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span> *fmt, ...)</span> </span>{
+  va_list ap;
+
+  va_start(ap, fmt);
+  mg_vsnprintf(conn, truncated, buf, buflen, fmt, ap);<span class="hljs-comment">//[4]</span>
+}
+
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">mg_vsnprintf</span><span class="hljs-params">(<span class="hljs-keyword">const</span> struct mg_connection *conn, <span class="hljs-keyword">int</span> *truncated, <span class="hljs-keyword">char</span> *buf, <span class="hljs-keyword">size_t</span> buflen, <span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span> *fmt, va_list ap)</span> </span>{
+  <span class="hljs-keyword">int</span> n;
+  <span class="hljs-keyword">int</span> ok;
+
+  <span class="hljs-keyword">if</span> ( buflen ) {
+    n = vsnprintf(buf, buflen, fmt, ap);<span class="hljs-comment">//[5]</span>
+    ok = (n &amp; <span class="hljs-number">0x80000000</span>) == <span class="hljs-number">0</span>;
+    <span class="hljs-keyword">if</span> ( n &gt;= buflen ) {
+      ok = <span class="hljs-number">0</span>;
+    }
+    <span class="hljs-keyword">if</span> ( ok ) {
+      <span class="hljs-keyword">if</span> ( truncated ) {
+        *truncated = <span class="hljs-number">0</span>;
+      }
+      buf[n] = <span class="hljs-number">0</span>;
+    } <span class="hljs-keyword">else</span> {
+      <span class="hljs-keyword">if</span> ( truncated ) {
+        *truncated = <span class="hljs-number">1</span>;
+      }
+      mg_cry(conn, <span class="hljs-string">&quot;mg_vsnprintf&quot;</span>, <span class="hljs-string">&quot;truncating vsnprintf buffer: [%.*s]&quot;</span>, (<span class="hljs-keyword">int</span>)((buflen &gt; <span class="hljs-number">200</span>) ? <span class="hljs-number">200</span> : (buflen - <span class="hljs-number">1</span>)), buf);
+      buf[n] = <span class="hljs-string">&apos;\0&apos;</span>;
+    }
+  } <span class="hljs-keyword">else</span> <span class="hljs-keyword">if</span> ( truncated ) {
+    *truncated = <span class="hljs-number">1</span>;
+  }
+}</code></pre>
+<p>HTTP &#xC694;&#xCCAD;&#xC744; &#xCC98;&#xB9AC;&#xD558;&#xB294; &#xBC14;&#xC774;&#xB108;&#xB9AC;&#xC5D0;&#xB294; PIE&#xAC00; &#xC801;&#xC6A9;&#xB418;&#xC5B4; &#xC788;&#xACE0; ASLR&#xC774; &#xD65C;&#xC131;&#xD654;&#xB418;&#xC5B4; &#xC788;&#xB294; &#xC0C1;&#xD0DC;&#xC774;&#xBA70; <code>vsnprintf</code>&#xC758; &#xCD9C;&#xB825;&#xC744; &#xC9C1;&#xC811; &#xBCFC; &#xC218; &#xC5C6;&#xB294; &#xC0C1;&#xD669;&#xC5D0; &#xB354;&#xD574; &#xD3EC;&#xB9F7; &#xC2A4;&#xD2B8;&#xB9C1;&#xC758; &#xCD5C;&#xB300; &#xAE38;&#xC774;&#xAC00; 0x80&#xBC14;&#xC774;&#xD2B8;&#xB85C; &#xC81C;&#xD55C;&#xB418;&#xACE0; &#xD2B9;&#xC815; &#xBC94;&#xC704;(0x00 ~ 0x1F)&#xC758; &#xBC14;&#xC774;&#xD2B8;&#xB97C; &#xD398;&#xC774;&#xB85C;&#xB4DC;&#xC5D0; &#xD3EC;&#xD568;&#xC2DC;&#xD0A4;&#xC9C0; &#xBABB;&#xD558;&#xB294; &#xB4F1; &#xB9CE;&#xC740; &#xC81C;&#xC57D; &#xC0AC;&#xD56D;&#xC774; &#xC874;&#xC7AC;&#xD568;&#xC5D0;&#xB3C4; &#xC544;&#xB798;&#xC640; &#xAC19;&#xC740; &#xBC29;&#xC2DD;&#xC73C;&#xB85C; RCE &#xC775;&#xC2A4;&#xD50C;&#xB85C;&#xC787;&#xC774; &#xC774;&#xB8E8;&#xC5B4;&#xC84C;&#xC2B5;&#xB2C8;&#xB2E4;.</p>
+<p>&#xBA3C;&#xC800; &#xC2A4;&#xD0DD;&#xC5D0; &#xC874;&#xC7AC;&#xD558;&#xB294; &#xC2A4;&#xC2A4;&#xB85C;&#xB97C; &#xAC00;&#xB9AC;&#xD0A4;&#xB294; &#xD3EC;&#xC778;&#xD130;(looping pointer, &#xC624;&#xD504;&#xC14B; 916)&#xB97C; <code>%916$hhn</code> <em>**</em>&#xACFC; &#xAC19;&#xC740; &#xD3EC;&#xB9F7;&#xC2A4;&#xD2B8;&#xB9C1;&#xC744; &#xD1B5;&#xD574; partial overwrite&#xD574;&#xC11C; &#xB610;&#xB2E4;&#xB978; &#xC2A4;&#xD0DD; &#xD3EC;&#xC778;&#xD130;(&#xC624;&#xD504;&#xC14B; 924)&#xB97C; &#xAC00;&#xB9AC;&#xD0A4;&#xAC8C; &#xB9CC;&#xB4ED;&#xB2C8;&#xB2E4;. &#xC774;&#xD6C4; &#xBCC0;&#xC870;&#xB41C; &#xC2A4;&#xD0DD; &#xD3EC;&#xC778;&#xD130;&#xB97C; &#xD1B5;&#xD574; &#xB2E4;&#xC2DC; &#xD55C;&#xBC88; partial overwrite&#xB97C; &#xD558;&#xB294; &#xAC83;&#xC73C;&#xB85C; ASLR&#xC744; &#xC6B0;&#xD68C;&#xD558;&#xACE0; &#xB113;&#xC740; &#xC601;&#xC5ED;&#xC758; &#xC2A4;&#xD0DD; &#xBA54;&#xBAA8;&#xB9AC;&#xC5D0; FSB&#xB97C; &#xD1B5;&#xD55C; &#xB370;&#xC774;&#xD130; &#xC77D;&#xAE30; &#xC4F0;&#xAE30;&#xAC00; &#xAC00;&#xB2A5;&#xD574;&#xC9D1;&#xB2C8;&#xB2E4;.</p>
+<p><img src="/2024/11/06/pwndorei/2024-11-06/image.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>&#xC774;&#xD6C4; <code>%*111$c</code>&#xC640; &#xAC19;&#xC740; &#xD3EC;&#xB9F7; &#xC2A4;&#xD2B8;&#xB9C1;&#xC744; &#xC0AC;&#xC6A9;&#xD574;&#xC11C; &#xC624;&#xD504;&#xC14B; 111&#xC5D0; &#xC704;&#xCE58;&#xD55C; &#xB9AC;&#xD134; &#xC8FC;&#xC18C;&#xC758; &#xAC12;&#xB9CC;&#xD07C;&#xC758; &#xBB38;&#xC790;&#xB97C; &#xCD9C;&#xB825;&#xC2DC;&#xD0A4;&#xACE0; &#xC774;&#xB97C; &#xC624;&#xD504;&#xC14B; 924&#xC5D0; &#xC704;&#xCE58;&#xD55C; &#xC2A4;&#xD0DD; &#xD3EC;&#xC778;&#xD130;&#xB97C; &#xD1B5;&#xD574; &#xC2A4;&#xD0DD;&#xC5D0; &#xB9AC;&#xD134; &#xC8FC;&#xC18C; &#xAC12;&#xC744; &#xC800;&#xC7A5;&#xD558;&#xB294; &#xAC83;&#xC774; &#xAC00;&#xB2A5;&#xD569;&#xB2C8;&#xB2E4;. &#xC774;&#xB807;&#xAC8C; &#xC2A4;&#xD0DD;&#xC758; &#xD2B9;&#xC815; &#xC704;&#xCE58;&#xC5D0; &#xC800;&#xC7A5;&#xB41C; &#xB9AC;&#xD134; &#xC8FC;&#xC18C;&#xB97C; &#xB2E4;&#xC2DC; FSB&#xB97C; &#xD1B5;&#xD574; partial overwrite&#xD574;&#xC11C; PIE&#xB97C; &#xC6B0;&#xD68C;&#xD558;&#xACE0; &#xC774;&#xB97C; &#xBC18;&#xBCF5;&#xD558;&#xC5EC; ROP chain&#xC744; &#xAD6C;&#xC131;&#xD558;&#xB294; &#xAC83;&#xC774; &#xAC00;&#xB2A5;&#xD569;&#xB2C8;&#xB2E4;.</p>
+<p>ROP chain&#xC740; &#xCD5C;&#xC885;&#xC801;&#xC73C;&#xB85C; <code>system</code> &#xD568;&#xC218;&#xB97C; &#xD638;&#xCD9C;&#xD574;&#xC11C; <code>sh${IFS}-c${IFS}&apos;echo${IFS}synodebug:synodebug|chpasswd;telnetd</code>&#xB77C;&#xB294; &#xCEE4;&#xB9E8;&#xB4DC;&#xB97C; &#xC2E4;&#xD589;&#xD558;&#xACE0; &#xADF8; &#xACB0;&#xACFC; synodebug &#xC720;&#xC800;&#xC758; &#xD328;&#xC2A4;&#xC6CC;&#xB4DC;&#xB97C; synodebug&#xB85C; &#xC124;&#xC815;&#xD55C; &#xB2E4;&#xC74C; telnet &#xB370;&#xBAAC;&#xC744; &#xC2E4;&#xD589;&#xD558;&#xACE0; &#xACF5;&#xACA9;&#xC790;&#xB294; &#xC2E4;&#xD589;&#xB41C; telnet&#xC5D0; &#xC811;&#xC18D;&#xD574;&#xC11C; &#xB8E8;&#xD2B8; &#xAD8C;&#xD55C;&#xC758; &#xC258;&#xC744; &#xD68D;&#xB4DD;&#xD569;&#xB2C8;&#xB2E4;.</p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/1day1line/">1day1line</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/pwndorei/">pwndorei</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Synology/">Synology</a>
+                  
+                  <a class="hover-with-bg" href="/tags/FSB/">FSB</a>
+                  
+                  <a class="hover-with-bg" href="/tags/TC500/">TC500</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_pwndorei.jpg" srcset="/img/loading.gif" alt="pwndorei">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">pwndorei</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/pwndorei">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+
+              <script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2024/11/10/l0ch/2024-11-10/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2024-9681: curl hsts cache overwrite 취약점</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2024/11/03/j0ker/2024-11-03/">
+                    <span class="hidden-mobile">[하루한줄] AMD atdcm64a.sys의 arbitrary pointer dereference으로 인한 LPE 취약점</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2024/11/06/pwndorei/2024-11-06/';
+        this.page.identifier = '/2024/11/06/pwndorei/2024-11-06/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[하루한줄] Synology-SA-24:17: Synology Camera의 Format String Bug로 인한 원격 코드 실행 취약점&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
