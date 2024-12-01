@@ -57,7 +57,7 @@ NTLM 인증 과정은 다음과 같습니다.
 2. 서버가 클라이언트에게 NTLM_CHALLENGE 전달 (challenge 값 제공)
 3. 클라이언트에서 response 연산 후 서버로 NTLM_AUTHENTICATE 전달
 
-![](NTLM/image1.png)
+![ttt](NTLM_Part1/image1.png)
 
 
 위 그림의 과정 (NEGOTIATE, CHALLENGE, AUTHENTICATE) 을 수행할 때 메시지라는 형태로 데이터를 주고 받으며 각각 NEGOTIATE_MESSAGE, CHALLENGE_MESSAGE, AUTHENTICATE_MESSAGE 라고 칭합니다.
@@ -157,17 +157,18 @@ NTLMv1 은 나름 구조가 간단한데요. v2 부터 머리가 좀 아파집�
 예시를 들어봅시다. 다음은 RPC 패킷에서 캡처된 NTLMv2 Response 값입니다. 저희가 위에서 다룬 필드들이 보이고 있는데요. wireshark 에서 잘 파싱해서 보여주고 있기 때문에 개별 설명은 생략하도록 하겠습니다.
 
 
-![](NTLM/image2.png)
-![](NTLM/image3.png)
+![](NTLM_Part1/image2.png)
+![](NTLM_Part1/image3.png)
 
 
+NTLM(Part1)
 # NTLM과 타 프로토콜과의 관계
 
 NTLM은 SMB, HTTP 등 다양한 어플리케이션 계층 프로토콜에 붙여져서 사용될 수 있습니다. 신기하죠? 뿐만 아니라 Windows 내 여러 애플리케이션들이 NTLM 을 사용할 수 있게 기능을 제공하고 있습니다. 이게 어떻게 가능할까요?
 
 GSSAPI (Generic Security Service API) 라는 인증, 보안 서비스를 응용 프로그램에 제공하는 인터페이스가 있습니다. Windows 에서는 GSSAPI를 구현한 SSPI (Security Support Provider Interface) 라는게 있는데요. 이 SSPI 에 NTLM Security Support Provider 가 구현되어 있어서 다양한 애플리케이션들이 결합되어서 NTLM 인증을 사용할 수 있습니다.
 
-![](NTLM/image4.png)
+![](NTLM_Part1/image4.png)
 
 번외이지만 이 Security Support Provider 도 벡터 중에 하나로 쓰일 수 있어보이네요. 🙂
 
@@ -182,7 +183,7 @@ NTLM 인증을 사용하는 제일 흔한 네트워크 프로토콜이 SMB가 �
 아래 그림 상에서는 SMB NEGOTIATE 가 먼저 이뤄지고 그 뒤에 SMB_COM_SESSION_SETUP_ANDX 를 통해 NTLM NEGOTIATE, CHALLENGE, AUTHENTICATE 가 이뤄집니다.
 
 
-![](NTLM/image5.png)
+![](NTLM_Part1/image5.png)
 
 특히, Windows 는 UNC PATH (`\\[IP]\path\to\file`) 를 사용해서 네트워크에 공유된 파일이나 폴더에 접근할 수 있습니다. 이 때 SMB 프로토콜이 사용되는데요. 만약 기본 인증 방식이 NTLM 이고 네트워크 너머로 UNC PATH를 삽입하여 강제로 공격자의 서버로 요청하게 만든다면 NTLMv2 Response 를 탈취할 수도 있습니다. 탈취된 NTLMv2 Response 는 주로 Relay 공격에 사용됩니다.
 
@@ -229,7 +230,7 @@ the credentials required.</p>
 
 위에서 잠시 SSPI에 대해 언급할 때 그림에서 보셨을 것 같은데요. RPC 에서도 NTLM 인증을 사용할 수 있습니다. RPC UUID 매핑 이후 Bind request, Bind response 를 통하여 NEGOTIATE, CHALLENGE, AUTHENTICATE 를 수행합니다.
 
-![](NTLM/image6.png)
+![](NTLM_Part1/image6.png)
 
 RPC 를 사용하기 전에 적절하게 인증이나 권한제어가 되어 있다면 괜찮겠지만, 임의로 RPC가 사용가능하면서도 RPC 함수에 경로가 들어가는 경우 UNC Path 를 전달해서 서버가 클라이언트 쪽으로 NTLM AUTH 를 시도하게끔 하는 강제 인증 공격도 존재합니다.
 
@@ -239,7 +240,7 @@ NTLM 관련 공격과 취약점은 이 글 한 편에 다 정리할 수가 없�
 
 NTLM 를 획득한 경우에는 PTH (pass-the-hash) 를 써서 마치 패스워드를 알고 있는 듯이 사용할 수 있습니다만 NTLMv2 hash (a.k.a Net-NTLM hash) 를 얻어낸 경우에는 PTH가 불가능하고 Relay 를 해야 합니다. (또는 크랙을 시도 하는 방법이 있긴 합니다.)
 
-![](NTLM/image7.png)
+![](NTLM_Part1/image7.png)
 
 
 NTLM Relay 를 할 때 사용되는 도구는 Responder, impacket 의 ntlmrelayx 가 있습니다.
