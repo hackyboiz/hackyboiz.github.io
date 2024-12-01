@@ -5,7 +5,7 @@ tags: [mungsul, NTLM, Windows, Authentication]
 categories: [Research]
 date: 2024-12-01 17:00:00
 cc: true
-index_img: /2024/08/18/pwndorei/1day1document_CVE-2022-24834/1day1document.jpg
+index_img: /2024/12/01/mungsul/NTLM_Part1/1.jpg
 ---
 
 # Introduction
@@ -161,7 +161,7 @@ NTLMv1 은 나름 구조가 간단한데요. v2 부터 머리가 좀 아파집�
 ![](NTLM_Part1/image3.png)
 
 
-NTLM(Part1)
+
 # NTLM과 타 프로토콜과의 관계
 
 NTLM은 SMB, HTTP 등 다양한 어플리케이션 계층 프로토콜에 붙여져서 사용될 수 있습니다. 신기하죠? 뿐만 아니라 Windows 내 여러 애플리케이션들이 NTLM 을 사용할 수 있게 기능을 제공하고 있습니다. 이게 어떻게 가능할까요?
