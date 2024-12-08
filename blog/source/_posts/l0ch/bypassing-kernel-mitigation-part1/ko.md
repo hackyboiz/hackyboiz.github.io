@@ -176,7 +176,7 @@ kCFG는 커널의 Indirect Call 인스트럭션에 적용되는 forward-edge CFI
 
 kCFG는 비트맵에 등록된 정상적인 커널 함수의 주소가 아닌 예외를 throw해 `KERNEL_SECURITY_CHECK_FAILURE` 를 발생시킵니다. kCFG는 [CWE-822: Untrusted Pointer Dereference](https://cwe.mitre.org/data/definitions/822.html) 임의의 callback 포인터 역참조 취약점을 방지하기 위해 사용되는데, 이런 kCFG를 우회하기 위해서는 검사를 통과하는 정상적인 커널 함수를 호출하면 됩니다. callback 포인터를 제어하는 취약점을 이용해 제한적인 Arbitrary Read/Write가 가능한 커널 함수를 사용하고, data corruption을 통해 Full Arbitrary Read/Write 프리미티브를 얻어 Token Swapping까지 이어질 수 있죠.
 
-다음 파트부터는 PreviousMode, SedebugPrivilege, IoRing을 이용한 기본적인 data corruption exploit 기법과 kCFG 우회하며 이를 달성할 수 있는 방법에 대해 조금 더 들어가보겠습니다! 
+다음 파트부터는 Windows built-in 커널 드라이버 취약점을 분석하면서 PreviousMode, SedebugPrivilege, IoRing을 이용한 기본적인 data corruption exploit 기법과 kCFG 우회하며 이를 달성할 수 있는 방법에 대해 조금 더 들어가보겠습니다! 
 
 # Reference
 
