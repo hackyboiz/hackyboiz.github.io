@@ -167,7 +167,7 @@ kCFG is a forward-edge CFI (Control Flow Integrity) mitigation applied to the In
 
 kCFG throws an exception that is not the address of a normal kernel function registered in the bitmap, causing `KERNEL_SECURITY_CHECK_FAILURE` to occur. kCFG is used to prevent the [CWE-822: Untrusted Pointer Dereference](https://cwe.mitre.org/data/definitions/822.html) arbitrary callback pointer dereference vulnerability. To bypass kCFG, simply call a normal kernel function that passes the check. Using a kernel function that allows limited Arbitrary Read/Write using a vulnerability that controls the callback pointer, and obtaining a Full Arbitrary Read/Write primitive through data corruption can lead to Token Swapping.
 
-In the next part, we will go into more detail about the basic data corruption exploit technique using PreviousMode, SedebugPrivilege, and IoRing, and how to achieve this while bypassing kCFG!
+In the next part, we will analyze the vulnerabilities of the Windows built-in kernel driver and go into more detail on the basic data corruption exploit techniques using PreviousMode, SedebugPrivilege, and IoRing, and how to achieve this while bypassing kCFG!
 
 # Reference
 
