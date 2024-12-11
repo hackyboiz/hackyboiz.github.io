@@ -1,0 +1,997 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;Finally&amp;#x2026; I&amp;#x2019;m back with a research paper after three years! Actually, I tried to write a research paper a year ago, but I had a mental breakdown due to graduation and job hunting, so I ended up abandoning it. So I&amp;#x2019;ve brought back some of the drafts I wrote.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image1.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;A year ago, I was looking at dummy data of research papers that had been published&amp;#x2026;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;I graduated and got a job, and now I&amp;#x2019;m in my second year as a researcher, so I&amp;#x2019;ll try to upload it from time to time :)&lt;/p&gt;
+&lt;h1 id=&#34;Introduction&#34;&gt;&lt;a href=&#34;#Introduction&#34; class=&#34;headerlink&#34; title=&#34;Introduction&#34;&gt;&lt;/a&gt;Introduction&lt;/h1&gt;&lt;p&gt;To summarize the previous series, it was a privilege escalation vulnerability using Arbitrary Physical Address R/W caused by insufficient verification when calling the &lt;code&gt;MmMapIoSpace&lt;/code&gt; function of the AMD Ryzen Master driver. For more information, please refer to &lt;a href=&#34;https://hackyboiz.github.io/2021/05/30/l0ch/windows-driver/&#34;&gt;https://hackyboiz.github.io/2021/05/30/l0ch/windows-driver/&lt;/a&gt;. In fact, the previous series was a physical memory RW caused by the incorrect use of the &lt;code&gt;MmMapIoSpace&lt;/code&gt; function, so there was no need to bypass the mitigation and it was possible to find the mapped memory page with the token and overwrite the entire page! So, let&amp;#x2019;s take a look at the mitigation bypass techniques used in more common kernel exploits.&lt;/p&gt;
+&lt;h1 id=&#34;Windows-Kernel-Mitigations&#34;&gt;&lt;a href=&#34;#Windows-Kernel-Mitigations&#34; class=&#34;headerlink&#34; title=&#34;Windows Kernel Mitigations&#34;&gt;&lt;/a&gt;Windows Kernel Mitigations&lt;/h1&gt;&lt;p&gt;There are so many mitigations for Windows, and new ones are emerging all the time, making it increasingly difficult to exploit vulnerabilities.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image3.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;You can briefly check the Exploit Protection applied in the Windows Security app.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Among the mitigations, I will briefly summarize the mitigations applied to the Windows kernel, especially DEP, kASLR, SMEP, and kCFG, which are designed to prevent exploits caused by memory corruption.&lt;/p&gt;
+&lt;p&gt;For mitigations not mentioned in this article, such as CET (Control-flow Enforcement Technology) or the relatively recently applied VBS-based KDP/HVCI/DSE, and for the version history information, please refer to the &lt;a href=&#34;https://github.com/nccgroup/exploit_mitigations/blob/main/windows_mitigations.md&#34;&gt;github&lt;/a&gt; link!&lt;/p&gt;
+&lt;h3 id=&#34;DEP-Data-Execution-Protection&#34;&gt;&lt;a href=&#34;#DEP-Data-Execution-Protection&#34; class=&#34;headerlink&#34; title=&#34;DEP (Data Execution Protection)&#34;&gt;&lt;/a&gt;DEP (Data Execution Protection)&lt;/h3&gt;&lt;p&gt;The kernel&amp;#x2019;s DEP is the same concept as Userland&amp;#x2019;s DEP, which is a technique that prevents shellcode execution by restricting the execution permissions of the stack/heap. The bypass method is also the same as ROP! However, the kernel has one more mitigation that extends from DEP, which will be discussed in detail in SMEP, which will be explained later.&lt;/p&gt;
+&lt;h3 id=&#34;kASLR-Kernel-Address-Layout-Randomization&#34;&gt;&lt;a href=&#34;#kASLR-Kernel-Address-Layout-Randomization&#34; class=&#34;headerlink&#34; title=&#34;kASLR (Kernel Address Layout Randomization)&#34;&gt;&lt;/a&gt;kASLR (Kernel Address Layout Randomization)&lt;/h3&gt;&lt;p&gt;kASLR is also the same concept as ASLR in userland, but in the case of the Windows kernel, there is a very useful function called &lt;code&gt;NtQuerySystemInformation&lt;/code&gt;, which is available at the Medium Integrity level, making it easy to prevent memory leaks. a piece of cake!&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;NtQuerySystemInformation&lt;/code&gt;is a function that returns various information about the current OS system, and is defined as follows.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;typedef&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;NTSTATUS&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(WINAPI* PNtQuerySystemInformation)&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;( &lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;	__in SYSTEM_INFORMATION_CLASS SystemInformationClass, &lt;span class=&#34;hljs-comment&#34;&gt;// 1. Specify the type of system information to be imported&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;	__inout PVOID SystemInformaton,                       &lt;span class=&#34;hljs-comment&#34;&gt;// 2. Buffer to store the returned system information&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;	__in ULONG SystemInformationLength,                   &lt;span class=&#34;hljs-comment&#34;&gt;// 3. Buffer size delivered to 2&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;	__out_opt PULONG ReturnLength                         &lt;span class=&#34;hljs-comment&#34;&gt;// 4. The buffer size actually returned&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;)&lt;/span&gt;	&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The first argument, &lt;code&gt;SystemInformationClass&lt;/code&gt;, is one of the values of the enumerated class &lt;code&gt;SYSYTEM_INFORMATION_CLASS&lt;/code&gt;, and you can give an enumerated value depending on the information to be queried.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs awk&#34;&gt;typedef enum _SYSTEM_INFORMATION_CLASS {
+
+&amp;#xA0;&amp;#xA0; SystemBasicInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemProcessorInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemPerformanceInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemTimeOfDayInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemNotImplemented1,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemProcessesAndThreadsInformation,&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemCallCounts,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemConfigurationInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemProcessorTimes,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemGlobalFlag,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemNotImplemented2,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemModuleInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt; 
+&amp;#xA0;&amp;#xA0; SystemLockInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemNotImplemented3,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;13&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemNotImplemented4,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;14&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemNotImplemented5,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;15&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemHandleInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemObjectInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;17&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemPagefileInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;18&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemInstructionEmulationCounts,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;19&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemInvalidInfoClass1,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;20&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemCacheInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;21&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemPoolTagInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;22&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemProcessorStatistics,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;23&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemDpcInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;24&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemNotImplemented6,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;25&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemLoadImage,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;26&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemUnloadImage,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;27&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemTimeAdjustment,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;28&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemNotImplemented7,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;29&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemNotImplemented8,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;30&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemNotImplemented9,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;31&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemCrashDumpInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;32&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemExceptionInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;33&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemCrashDumpStateInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;34&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemKernelDebuggerInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;35&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemContextSwitchInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;36&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemRegistryQuotaInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;37&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemLoadAndCallImage,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;38&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemPrioritySeparation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;39&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemNotImplemented10,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;40&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemNotImplemented11,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;41&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemInvalidInfoClass2,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;42&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemInvalidInfoClass3,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;43&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemTimeZoneInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;44&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemLookasideInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;45&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemSetTimeSlipEvent,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;46&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemCreateSession,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;47&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemDeleteSession,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;48&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemInvalidInfoClass4,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;49&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemRangeStartInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;50&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemVerifierInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;51&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemAddVerifier,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;52&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemSessionProcessesInformation&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;53&lt;/span&gt;
+} SYSTEM_INFORMATION_CLASS;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.geoffchappell.com/studies/windows/km/ntoskrnl/api/ex/sysinfo/class.htm&#34;&gt;SYSTEM_INFORMATION_CLASS&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Among the enumerated values above, &lt;code&gt;SystemModuleInformation&lt;/code&gt; can be used to obtain the system image base address such as ntoskrnl, and &lt;code&gt;SystemHandleInformation&lt;/code&gt; can be used to obtain the &lt;code&gt;EPROCESS&lt;/code&gt; address, which is a structure containing process information such as Privilege Token and ImageName. &lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image4.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;In this way, &lt;code&gt;NtQuerySystemInformation&lt;/code&gt;can be used to easily obtain the address required for EXE, so kASLR is not very effective except for kernel components such as &lt;code&gt;http.sys&lt;/code&gt;or &lt;code&gt;tcpip.sys&lt;/code&gt;where a remote surface exists.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;thumbnail.jpg&#34; alt=&#34;image2&#34;&gt;&lt;/p&gt;
+&lt;p&gt;However, starting with Windows 24H2, which was officially released a while ago, the &lt;a href=&#34;https://windows-internals.com/kaslr-leaks-restriction/&#34;&gt;NtQuerySystemInformation function can only be called by processes with the SeDebugPrivilege debug privilege flag enabled.&lt;/a&gt; In the future, when we exploit memory corruption vulnerabilities, we may have to find additional leak vulnerabilities&amp;#x2026;? &lt;del&gt;No, MS, Are you kidding me?&lt;/del&gt;&lt;/p&gt;
+&lt;p&gt;However, a &lt;a href=&#34;https://github.com/exploits-forsale/prefetch-tool&#34;&gt;pre-patching leak&lt;/a&gt; technique inspired by the EntryBleed vulnerability (CVE-2022-4543) in Linux has also been discovered, so it remains to be seen whether kASLR will become completely impossible to bypass. For more information, please refer to &lt;a href=&#34;https://exploits.forsale/24h2-nt-exploit/&#34;&gt;Exploiting the NT Kernel in 24H2: New Bugs in Old Code &amp;amp; Side Channels Against KASLR&lt;/a&gt;!&lt;/p&gt;
+&lt;h3 id=&#34;SMEP-Supervisor-Mode-Execution-Protection&#34;&gt;&lt;a href=&#34;#SMEP-Supervisor-Mode-Execution-Protection&#34; class=&#34;headerlink&#34; title=&#34;SMEP (Supervisor Mode Execution Protection)&#34;&gt;&lt;/a&gt;SMEP (Supervisor Mode Execution Protection)&lt;/h3&gt;&lt;p&gt;SMEP prevents the CPU from executing code in memory, including code segments in Userland (ring 3), while in Supervisor Mode (ring 0). The SMEP flag is located in the 20th bit of the cr4 register.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image5.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;source: &lt;a href=&#34;https://ctf-wiki.mahaloz.re/pwn/linux/kernel/bypass_smep/&#34;&gt;https://ctf-wiki.mahaloz.re/pwn/linux/kernel/bypass_smep/&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The reason why such mitigation is added to DEP is that local privilege escalation that exploits kernel vulnerabilities is based on the premise that the attacker can execute arbitrary code at the minimum Medium Integrity level. (This is also why kASLR is not very effective as a kernel mitigation!) Without SMEP, an attacker can allocate executable memory in userland to load and execute shellcode.&lt;/p&gt;
+&lt;p&gt;In fact, since SMEP is a mitigation that extends from DEP to &lt;code&gt;kernel &amp;#x2194; user&lt;/code&gt;, it is easy to approach the bypass using the ROP concept. By patching the cr4 register with a random value using a gadget in a kernel code segment, SMEP can be disabled and shellcode in userland can be executed.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;pop rcx; ret
+mov cr4, rcx; ret&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;image6.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image7.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;h3 id=&#34;kCFG-Kernel-Control-Flow-Guard&#34;&gt;&lt;a href=&#34;#kCFG-Kernel-Control-Flow-Guard&#34; class=&#34;headerlink&#34; title=&#34;kCFG (Kernel Control Flow Guard)&#34;&gt;&lt;/a&gt;kCFG (Kernel Control Flow Guard)&lt;/h3&gt;&lt;p&gt;kCFG is a forward-edge CFI (Control Flow Integrity) mitigation applied to the Indirect Call instruction in the kernel. There is also a backward-edge CFI, CET, but we will not be covering CET in this series, so we will skip it!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image8.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;__guard_disaptch_icall_fptr&lt;/code&gt; is a runtime address sanitizer added with cfg activation during the compilation process, which checks the function pointer before calling it. The figure below shows a simple graph of the CFG operation.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image9.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;source: &lt;a href=&#34;https://learn.microsoft.com/en-us/windows/win32/secbp/control-flow-guard&#34;&gt;https://learn.microsoft.com/en-us/windows/win32/secbp/control-flow-guard&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;kCFG throws an exception that is not the address of a normal kernel function registered in the bitmap, causing &lt;code&gt;KERNEL_SECURITY_CHECK_FAILURE&lt;/code&gt; to occur. kCFG is used to prevent the &lt;a href=&#34;https://cwe.mitre.org/data/definitions/822.html&#34;&gt;CWE-822: Untrusted Pointer Dereference&lt;/a&gt; arbitrary callback pointer dereference vulnerability. To bypass kCFG, simply call a normal kernel function that passes the check. Using a kernel function that allows limited Arbitrary Read/Write using a vulnerability that controls the callback pointer, and obtaining a Full Arbitrary Read/Write primitive through data corruption can lead to Token Swapping.&lt;/p&gt;
+&lt;p&gt;In the next part, we will analyze the vulnerabilities of the Windows built-in kernel driver and go into more detail on the basic data corruption exploit techniques using PreviousMode, SedebugPrivilege, and IoRing, and how to achieve this while bypassing kCFG!&lt;/p&gt;
+&lt;h1 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h1&gt;&lt;p&gt;&lt;a href=&#34;https://ctf-wiki.mahaloz.re/pwn/linux/kernel/bypass_smep/&#34;&gt;https://ctf-wiki.mahaloz.re/pwn/linux/kernel/bypass_smep/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.willsroot.io/2022/12/entrybleed.html&#34;&gt;https://www.willsroot.io/2022/12/entrybleed.html&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/exploits-forsale/prefetch-tool&#34;&gt;https://github.com/exploits-forsale/prefetch-tool&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://windows-internals.com/kaslr-leaks-restriction/&#34;&gt;https://windows-internals.com/kaslr-leaks-restriction/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://exploits.forsale/24h2-nt-exploit/&#34;&gt;https://exploits.forsale/24h2-nt-exploit/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/nccgroup/exploit_mitigations/blob/main/windows_mitigations.md&#34;&gt;https://github.com/nccgroup/exploit_mitigations/blob/main/windows_mitigations.md&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.crowdstrike.com/en-us/blog/state-of-exploit-development-part-1/&#34;&gt;https://www.crowdstrike.com/en-us/blog/state-of-exploit-development-part-1/&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] Bypassing Windows Kernel Mitigations: Part1 - Overview (En) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;Finally&amp;#x2026; I&amp;#x2019;m back with a research paper after three years! Actually, I tried to write a research paper a year ago, but I had a mental breakdown due to graduation and job hunting, so I ended up abandoning it. So I&amp;#x2019;ve brought back some of the drafts I wrote.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image1.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;A year ago, I was looking at dummy data of research papers that had been published&amp;#x2026;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;I graduated and got a job, and now I&amp;#x2019;m in my second year as a researcher, so I&amp;#x2019;ll try to upload it from time to time :)&lt;/p&gt;
+&lt;h1 id=&#34;Introduction&#34;&gt;&lt;a href=&#34;#Introduction&#34; class=&#34;headerlink&#34; title=&#34;Introduction&#34;&gt;&lt;/a&gt;Introduction&lt;/h1&gt;&lt;p&gt;To summarize the previous series, it was a privilege escalation vulnerability using Arbitrary Physical Address R/W caused by insufficient verification when calling the &lt;code&gt;MmMapIoSpace&lt;/code&gt; function of the AMD Ryzen Master driver. For more information, please refer to &lt;a href=&#34;https://hackyboiz.github.io/2021/05/30/l0ch/windows-driver/&#34;&gt;https://hackyboiz.github.io/2021/05/30/l0ch/windows-driver/&lt;/a&gt;. In fact, the previous series was a physical memory RW caused by the incorrect use of the &lt;code&gt;MmMapIoSpace&lt;/code&gt; function, so there was no need to bypass the mitigation and it was possible to find the mapped memory page with the token and overwrite the entire page! So, let&amp;#x2019;s take a look at the mitigation bypass techniques used in more common kernel exploits.&lt;/p&gt;
+&lt;h1 id=&#34;Windows-Kernel-Mitigations&#34;&gt;&lt;a href=&#34;#Windows-Kernel-Mitigations&#34; class=&#34;headerlink&#34; title=&#34;Windows Kernel Mitigations&#34;&gt;&lt;/a&gt;Windows Kernel Mitigations&lt;/h1&gt;&lt;p&gt;There are so many mitigations for Windows, and new ones are emerging all the time, making it increasingly difficult to exploit vulnerabilities.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image3.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;You can briefly check the Exploit Protection applied in the Windows Security app.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Among the mitigations, I will briefly summarize the mitigations applied to the Windows kernel, especially DEP, kASLR, SMEP, and kCFG, which are designed to prevent exploits caused by memory corruption.&lt;/p&gt;
+&lt;p&gt;For mitigations not mentioned in this article, such as CET (Control-flow Enforcement Technology) or the relatively recently applied VBS-based KDP/HVCI/DSE, and for the version history information, please refer to the &lt;a href=&#34;https://github.com/nccgroup/exploit_mitigations/blob/main/windows_mitigations.md&#34;&gt;github&lt;/a&gt; link!&lt;/p&gt;
+&lt;h3 id=&#34;DEP-Data-Execution-Protection&#34;&gt;&lt;a href=&#34;#DEP-Data-Execution-Protection&#34; class=&#34;headerlink&#34; title=&#34;DEP (Data Execution Protection)&#34;&gt;&lt;/a&gt;DEP (Data Execution Protection)&lt;/h3&gt;&lt;p&gt;The kernel&amp;#x2019;s DEP is the same concept as Userland&amp;#x2019;s DEP, which is a technique that prevents shellcode execution by restricting the execution permissions of the stack/heap. The bypass method is also the same as ROP! However, the kernel has one more mitigation that extends from DEP, which will be discussed in detail in SMEP, which will be explained later.&lt;/p&gt;
+&lt;h3 id=&#34;kASLR-Kernel-Address-Layout-Randomization&#34;&gt;&lt;a href=&#34;#kASLR-Kernel-Address-Layout-Randomization&#34; class=&#34;headerlink&#34; title=&#34;kASLR (Kernel Address Layout Randomization)&#34;&gt;&lt;/a&gt;kASLR (Kernel Address Layout Randomization)&lt;/h3&gt;&lt;p&gt;kASLR is also the same concept as ASLR in userland, but in the case of the Windows kernel, there is a very useful function called &lt;code&gt;NtQuerySystemInformation&lt;/code&gt;, which is available at the Medium Integrity level, making it easy to prevent memory leaks. a piece of cake!&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;NtQuerySystemInformation&lt;/code&gt;is a function that returns various information about the current OS system, and is defined as follows.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;typedef&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;NTSTATUS&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(WINAPI* PNtQuerySystemInformation)&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;( &lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;	__in SYSTEM_INFORMATION_CLASS SystemInformationClass, &lt;span class=&#34;hljs-comment&#34;&gt;// 1. Specify the type of system information to be imported&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;	__inout PVOID SystemInformaton,                       &lt;span class=&#34;hljs-comment&#34;&gt;// 2. Buffer to store the returned system information&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;	__in ULONG SystemInformationLength,                   &lt;span class=&#34;hljs-comment&#34;&gt;// 3. Buffer size delivered to 2&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;	__out_opt PULONG ReturnLength                         &lt;span class=&#34;hljs-comment&#34;&gt;// 4. The buffer size actually returned&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;)&lt;/span&gt;	&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The first argument, &lt;code&gt;SystemInformationClass&lt;/code&gt;, is one of the values of the enumerated class &lt;code&gt;SYSYTEM_INFORMATION_CLASS&lt;/code&gt;, and you can give an enumerated value depending on the information to be queried.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs awk&#34;&gt;typedef enum _SYSTEM_INFORMATION_CLASS {
+
+&amp;#xA0;&amp;#xA0; SystemBasicInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemProcessorInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemPerformanceInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemTimeOfDayInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemNotImplemented1,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemProcessesAndThreadsInformation,&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemCallCounts,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemConfigurationInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemProcessorTimes,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemGlobalFlag,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemNotImplemented2,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemModuleInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt; 
+&amp;#xA0;&amp;#xA0; SystemLockInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemNotImplemented3,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;13&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemNotImplemented4,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;14&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemNotImplemented5,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;15&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemHandleInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemObjectInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;17&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemPagefileInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;18&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemInstructionEmulationCounts,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;19&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemInvalidInfoClass1,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;20&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemCacheInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;21&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemPoolTagInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;22&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemProcessorStatistics,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;23&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemDpcInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;24&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemNotImplemented6,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;25&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemLoadImage,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;26&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemUnloadImage,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;27&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemTimeAdjustment,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;28&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemNotImplemented7,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;29&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemNotImplemented8,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;30&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemNotImplemented9,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;31&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemCrashDumpInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;32&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemExceptionInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;33&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemCrashDumpStateInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;34&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemKernelDebuggerInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;35&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemContextSwitchInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;36&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemRegistryQuotaInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;37&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemLoadAndCallImage,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;38&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemPrioritySeparation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;39&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemNotImplemented10,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;40&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemNotImplemented11,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;41&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemInvalidInfoClass2,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;42&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemInvalidInfoClass3,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;43&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemTimeZoneInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;44&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemLookasideInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;45&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemSetTimeSlipEvent,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;46&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemCreateSession,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;47&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemDeleteSession,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;48&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemInvalidInfoClass4,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;49&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemRangeStartInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;50&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemVerifierInformation,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;51&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemAddVerifier,&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;52&lt;/span&gt;
+&amp;#xA0;&amp;#xA0; SystemSessionProcessesInformation&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0;&amp;#xA0; &lt;span class=&#34;hljs-regexp&#34;&gt;//&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;53&lt;/span&gt;
+} SYSTEM_INFORMATION_CLASS;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.geoffchappell.com/studies/windows/km/ntoskrnl/api/ex/sysinfo/class.htm&#34;&gt;SYSTEM_INFORMATION_CLASS&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Among the enumerated values above, &lt;code&gt;SystemModuleInformation&lt;/code&gt; can be used to obtain the system image base address such as ntoskrnl, and &lt;code&gt;SystemHandleInformation&lt;/code&gt; can be used to obtain the &lt;code&gt;EPROCESS&lt;/code&gt; address, which is a structure containing process information such as Privilege Token and ImageName. &lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image4.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;In this way, &lt;code&gt;NtQuerySystemInformation&lt;/code&gt;can be used to easily obtain the address required for EXE, so kASLR is not very effective except for kernel components such as &lt;code&gt;http.sys&lt;/code&gt;or &lt;code&gt;tcpip.sys&lt;/code&gt;where a remote surface exists.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;thumbnail.jpg&#34; alt=&#34;image2&#34;&gt;&lt;/p&gt;
+&lt;p&gt;However, starting with Windows 24H2, which was officially released a while ago, the &lt;a href=&#34;https://windows-internals.com/kaslr-leaks-restriction/&#34;&gt;NtQuerySystemInformation function can only be called by processes with the SeDebugPrivilege debug privilege flag enabled.&lt;/a&gt; In the future, when we exploit memory corruption vulnerabilities, we may have to find additional leak vulnerabilities&amp;#x2026;? &lt;del&gt;No, MS, Are you kidding me?&lt;/del&gt;&lt;/p&gt;
+&lt;p&gt;However, a &lt;a href=&#34;https://github.com/exploits-forsale/prefetch-tool&#34;&gt;pre-patching leak&lt;/a&gt; technique inspired by the EntryBleed vulnerability (CVE-2022-4543) in Linux has also been discovered, so it remains to be seen whether kASLR will become completely impossible to bypass. For more information, please refer to &lt;a href=&#34;https://exploits.forsale/24h2-nt-exploit/&#34;&gt;Exploiting the NT Kernel in 24H2: New Bugs in Old Code &amp;amp; Side Channels Against KASLR&lt;/a&gt;!&lt;/p&gt;
+&lt;h3 id=&#34;SMEP-Supervisor-Mode-Execution-Protection&#34;&gt;&lt;a href=&#34;#SMEP-Supervisor-Mode-Execution-Protection&#34; class=&#34;headerlink&#34; title=&#34;SMEP (Supervisor Mode Execution Protection)&#34;&gt;&lt;/a&gt;SMEP (Supervisor Mode Execution Protection)&lt;/h3&gt;&lt;p&gt;SMEP prevents the CPU from executing code in memory, including code segments in Userland (ring 3), while in Supervisor Mode (ring 0). The SMEP flag is located in the 20th bit of the cr4 register.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image5.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;source: &lt;a href=&#34;https://ctf-wiki.mahaloz.re/pwn/linux/kernel/bypass_smep/&#34;&gt;https://ctf-wiki.mahaloz.re/pwn/linux/kernel/bypass_smep/&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The reason why such mitigation is added to DEP is that local privilege escalation that exploits kernel vulnerabilities is based on the premise that the attacker can execute arbitrary code at the minimum Medium Integrity level. (This is also why kASLR is not very effective as a kernel mitigation!) Without SMEP, an attacker can allocate executable memory in userland to load and execute shellcode.&lt;/p&gt;
+&lt;p&gt;In fact, since SMEP is a mitigation that extends from DEP to &lt;code&gt;kernel &amp;#x2194; user&lt;/code&gt;, it is easy to approach the bypass using the ROP concept. By patching the cr4 register with a random value using a gadget in a kernel code segment, SMEP can be disabled and shellcode in userland can be executed.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;pop rcx; ret
+mov cr4, rcx; ret&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;image6.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image7.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;h3 id=&#34;kCFG-Kernel-Control-Flow-Guard&#34;&gt;&lt;a href=&#34;#kCFG-Kernel-Control-Flow-Guard&#34; class=&#34;headerlink&#34; title=&#34;kCFG (Kernel Control Flow Guard)&#34;&gt;&lt;/a&gt;kCFG (Kernel Control Flow Guard)&lt;/h3&gt;&lt;p&gt;kCFG is a forward-edge CFI (Control Flow Integrity) mitigation applied to the Indirect Call instruction in the kernel. There is also a backward-edge CFI, CET, but we will not be covering CET in this series, so we will skip it!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image8.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;__guard_disaptch_icall_fptr&lt;/code&gt; is a runtime address sanitizer added with cfg activation during the compilation process, which checks the function pointer before calling it. The figure below shows a simple graph of the CFG operation.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image9.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;source: &lt;a href=&#34;https://learn.microsoft.com/en-us/windows/win32/secbp/control-flow-guard&#34;&gt;https://learn.microsoft.com/en-us/windows/win32/secbp/control-flow-guard&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;kCFG throws an exception that is not the address of a normal kernel function registered in the bitmap, causing &lt;code&gt;KERNEL_SECURITY_CHECK_FAILURE&lt;/code&gt; to occur. kCFG is used to prevent the &lt;a href=&#34;https://cwe.mitre.org/data/definitions/822.html&#34;&gt;CWE-822: Untrusted Pointer Dereference&lt;/a&gt; arbitrary callback pointer dereference vulnerability. To bypass kCFG, simply call a normal kernel function that passes the check. Using a kernel function that allows limited Arbitrary Read/Write using a vulnerability that controls the callback pointer, and obtaining a Full Arbitrary Read/Write primitive through data corruption can lead to Token Swapping.&lt;/p&gt;
+&lt;p&gt;In the next part, we will analyze the vulnerabilities of the Windows built-in kernel driver and go into more detail on the basic data corruption exploit techniques using PreviousMode, SedebugPrivilege, and IoRing, and how to achieve this while bypassing kCFG!&lt;/p&gt;
+&lt;h1 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h1&gt;&lt;p&gt;&lt;a href=&#34;https://ctf-wiki.mahaloz.re/pwn/linux/kernel/bypass_smep/&#34;&gt;https://ctf-wiki.mahaloz.re/pwn/linux/kernel/bypass_smep/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.willsroot.io/2022/12/entrybleed.html&#34;&gt;https://www.willsroot.io/2022/12/entrybleed.html&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/exploits-forsale/prefetch-tool&#34;&gt;https://github.com/exploits-forsale/prefetch-tool&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://windows-internals.com/kaslr-leaks-restriction/&#34;&gt;https://windows-internals.com/kaslr-leaks-restriction/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://exploits.forsale/24h2-nt-exploit/&#34;&gt;https://exploits.forsale/24h2-nt-exploit/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/nccgroup/exploit_mitigations/blob/main/windows_mitigations.md&#34;&gt;https://github.com/nccgroup/exploit_mitigations/blob/main/windows_mitigations.md&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.crowdstrike.com/en-us/blog/state-of-exploit-development-part-1/&#34;&gt;https://www.crowdstrike.com/en-us/blog/state-of-exploit-development-part-1/&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io2024/12/08/l0ch/bypassing-kernel-mitigation-part1/en/thumbnail.jpg">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2024/12/08/l0ch/bypassing-kernel-mitigation-part1/en/">
+
+  <title>[Research] Bypassing Windows Kernel Mitigations: Part1 - Overview (En) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2024-12-08 19:00" pubdate>
+      2024년 12월 8일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      2.1k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      42
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] Bypassing Windows Kernel Mitigations: Part1 - Overview (En)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p>Finally&#x2026; I&#x2019;m back with a research paper after three years! Actually, I tried to write a research paper a year ago, but I had a mental breakdown due to graduation and job hunting, so I ended up abandoning it. So I&#x2019;ve brought back some of the drafts I wrote.</p>
+<p><img src="image1.png" srcset="/img/loading.gif" alt="image.png"></p>
+<blockquote>
+<p>A year ago, I was looking at dummy data of research papers that had been published&#x2026;</p>
+</blockquote>
+<p>I graduated and got a job, and now I&#x2019;m in my second year as a researcher, so I&#x2019;ll try to upload it from time to time :)</p>
+<h1 id="Introduction"><a href="#Introduction" class="headerlink" title="Introduction"></a>Introduction</h1><p>To summarize the previous series, it was a privilege escalation vulnerability using Arbitrary Physical Address R/W caused by insufficient verification when calling the <code>MmMapIoSpace</code> function of the AMD Ryzen Master driver. For more information, please refer to <a href="https://hackyboiz.github.io/2021/05/30/l0ch/windows-driver/">https://hackyboiz.github.io/2021/05/30/l0ch/windows-driver/</a>. In fact, the previous series was a physical memory RW caused by the incorrect use of the <code>MmMapIoSpace</code> function, so there was no need to bypass the mitigation and it was possible to find the mapped memory page with the token and overwrite the entire page! So, let&#x2019;s take a look at the mitigation bypass techniques used in more common kernel exploits.</p>
+<h1 id="Windows-Kernel-Mitigations"><a href="#Windows-Kernel-Mitigations" class="headerlink" title="Windows Kernel Mitigations"></a>Windows Kernel Mitigations</h1><p>There are so many mitigations for Windows, and new ones are emerging all the time, making it increasingly difficult to exploit vulnerabilities.</p>
+<p><img src="image3.png" srcset="/img/loading.gif" alt="image.png"></p>
+<blockquote>
+<p>You can briefly check the Exploit Protection applied in the Windows Security app.</p>
+</blockquote>
+<p>Among the mitigations, I will briefly summarize the mitigations applied to the Windows kernel, especially DEP, kASLR, SMEP, and kCFG, which are designed to prevent exploits caused by memory corruption.</p>
+<p>For mitigations not mentioned in this article, such as CET (Control-flow Enforcement Technology) or the relatively recently applied VBS-based KDP/HVCI/DSE, and for the version history information, please refer to the <a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/nccgroup/exploit_mitigations/blob/main/windows_mitigations.md">github</a> link!</p>
+<h3 id="DEP-Data-Execution-Protection"><a href="#DEP-Data-Execution-Protection" class="headerlink" title="DEP (Data Execution Protection)"></a>DEP (Data Execution Protection)</h3><p>The kernel&#x2019;s DEP is the same concept as Userland&#x2019;s DEP, which is a technique that prevents shellcode execution by restricting the execution permissions of the stack/heap. The bypass method is also the same as ROP! However, the kernel has one more mitigation that extends from DEP, which will be discussed in detail in SMEP, which will be explained later.</p>
+<h3 id="kASLR-Kernel-Address-Layout-Randomization"><a href="#kASLR-Kernel-Address-Layout-Randomization" class="headerlink" title="kASLR (Kernel Address Layout Randomization)"></a>kASLR (Kernel Address Layout Randomization)</h3><p>kASLR is also the same concept as ASLR in userland, but in the case of the Windows kernel, there is a very useful function called <code>NtQuerySystemInformation</code>, which is available at the Medium Integrity level, making it easy to prevent memory leaks. a piece of cake!</p>
+<p><code>NtQuerySystemInformation</code>is a function that returns various information about the current OS system, and is defined as follows.</p>
+<pre><code class="hljs c"><span class="hljs-function"><span class="hljs-keyword">typedef</span> <span class="hljs-title">NTSTATUS</span><span class="hljs-params">(WINAPI* PNtQuerySystemInformation)</span><span class="hljs-params">( </span></span>
+<span class="hljs-function"><span class="hljs-params">	__in SYSTEM_INFORMATION_CLASS SystemInformationClass, <span class="hljs-comment">// 1. Specify the type of system information to be imported</span></span></span>
+<span class="hljs-function"><span class="hljs-params">	__inout PVOID SystemInformaton,                       <span class="hljs-comment">// 2. Buffer to store the returned system information</span></span></span>
+<span class="hljs-function"><span class="hljs-params">	__in ULONG SystemInformationLength,                   <span class="hljs-comment">// 3. Buffer size delivered to 2</span></span></span>
+<span class="hljs-function"><span class="hljs-params">	__out_opt PULONG ReturnLength                         <span class="hljs-comment">// 4. The buffer size actually returned</span></span></span>
+<span class="hljs-function"><span class="hljs-params">)</span>	</span></code></pre>
+<p>The first argument, <code>SystemInformationClass</code>, is one of the values of the enumerated class <code>SYSYTEM_INFORMATION_CLASS</code>, and you can give an enumerated value depending on the information to be queried.</p>
+<pre><code class="hljs awk">typedef enum _SYSTEM_INFORMATION_CLASS {
+
+&#xA0;&#xA0; SystemBasicInformation,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">0</span>
+&#xA0;&#xA0; SystemProcessorInformation,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">1</span>
+&#xA0;&#xA0; SystemPerformanceInformation,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">2</span>
+&#xA0;&#xA0; SystemTimeOfDayInformation,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">3</span>
+&#xA0;&#xA0; SystemNotImplemented1,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">4</span>
+&#xA0;&#xA0; SystemProcessesAndThreadsInformation,&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">5</span>
+&#xA0;&#xA0; SystemCallCounts,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">6</span>
+&#xA0;&#xA0; SystemConfigurationInformation,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">7</span>
+&#xA0;&#xA0; SystemProcessorTimes,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">8</span>
+&#xA0;&#xA0; SystemGlobalFlag,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">9</span>
+&#xA0;&#xA0; SystemNotImplemented2,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">10</span>
+&#xA0;&#xA0; SystemModuleInformation,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">11</span> 
+&#xA0;&#xA0; SystemLockInformation,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">12</span>
+&#xA0;&#xA0; SystemNotImplemented3,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">13</span>
+&#xA0;&#xA0; SystemNotImplemented4,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">14</span>
+&#xA0;&#xA0; SystemNotImplemented5,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">15</span>
+&#xA0;&#xA0; SystemHandleInformation,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">16</span>
+&#xA0;&#xA0; SystemObjectInformation,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">17</span>
+&#xA0;&#xA0; SystemPagefileInformation,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">18</span>
+&#xA0;&#xA0; SystemInstructionEmulationCounts,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">19</span>
+&#xA0;&#xA0; SystemInvalidInfoClass1,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">20</span>
+&#xA0;&#xA0; SystemCacheInformation,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">21</span>
+&#xA0;&#xA0; SystemPoolTagInformation,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">22</span>
+&#xA0;&#xA0; SystemProcessorStatistics,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">23</span>
+&#xA0;&#xA0; SystemDpcInformation,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">24</span>
+&#xA0;&#xA0; SystemNotImplemented6,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">25</span>
+&#xA0;&#xA0; SystemLoadImage,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">26</span>
+&#xA0;&#xA0; SystemUnloadImage,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">27</span>
+&#xA0;&#xA0; SystemTimeAdjustment,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">28</span>
+&#xA0;&#xA0; SystemNotImplemented7,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">29</span>
+&#xA0;&#xA0; SystemNotImplemented8,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">30</span>
+&#xA0;&#xA0; SystemNotImplemented9,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">31</span>
+&#xA0;&#xA0; SystemCrashDumpInformation,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">32</span>
+&#xA0;&#xA0; SystemExceptionInformation,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">33</span>
+&#xA0;&#xA0; SystemCrashDumpStateInformation,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">34</span>
+&#xA0;&#xA0; SystemKernelDebuggerInformation,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">35</span>
+&#xA0;&#xA0; SystemContextSwitchInformation,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">36</span>
+&#xA0;&#xA0; SystemRegistryQuotaInformation,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">37</span>
+&#xA0;&#xA0; SystemLoadAndCallImage,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">38</span>
+&#xA0;&#xA0; SystemPrioritySeparation,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">39</span>
+&#xA0;&#xA0; SystemNotImplemented10,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">40</span>
+&#xA0;&#xA0; SystemNotImplemented11,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">41</span>
+&#xA0;&#xA0; SystemInvalidInfoClass2,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">42</span>
+&#xA0;&#xA0; SystemInvalidInfoClass3,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">43</span>
+&#xA0;&#xA0; SystemTimeZoneInformation,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">44</span>
+&#xA0;&#xA0; SystemLookasideInformation,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">45</span>
+&#xA0;&#xA0; SystemSetTimeSlipEvent,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">46</span>
+&#xA0;&#xA0; SystemCreateSession,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">47</span>
+&#xA0;&#xA0; SystemDeleteSession,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">48</span>
+&#xA0;&#xA0; SystemInvalidInfoClass4,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">49</span>
+&#xA0;&#xA0; SystemRangeStartInformation,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">50</span>
+&#xA0;&#xA0; SystemVerifierInformation,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">51</span>
+&#xA0;&#xA0; SystemAddVerifier,&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">52</span>
+&#xA0;&#xA0; SystemSessionProcessesInformation&#xA0;&#xA0;&#xA0;&#xA0;&#xA0; <span class="hljs-regexp">//</span> <span class="hljs-number">53</span>
+} SYSTEM_INFORMATION_CLASS;</code></pre>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.geoffchappell.com/studies/windows/km/ntoskrnl/api/ex/sysinfo/class.htm">SYSTEM_INFORMATION_CLASS</a></p>
+<p>Among the enumerated values above, <code>SystemModuleInformation</code> can be used to obtain the system image base address such as ntoskrnl, and <code>SystemHandleInformation</code> can be used to obtain the <code>EPROCESS</code> address, which is a structure containing process information such as Privilege Token and ImageName. </p>
+<p><img src="image4.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>In this way, <code>NtQuerySystemInformation</code>can be used to easily obtain the address required for EXE, so kASLR is not very effective except for kernel components such as <code>http.sys</code>or <code>tcpip.sys</code>where a remote surface exists.</p>
+<p><img src="thumbnail.jpg" srcset="/img/loading.gif" alt="image2"></p>
+<p>However, starting with Windows 24H2, which was officially released a while ago, the <a target="_blank" rel="external nofollow noopener noreferrer" href="https://windows-internals.com/kaslr-leaks-restriction/">NtQuerySystemInformation function can only be called by processes with the SeDebugPrivilege debug privilege flag enabled.</a> In the future, when we exploit memory corruption vulnerabilities, we may have to find additional leak vulnerabilities&#x2026;? <del>No, MS, Are you kidding me?</del></p>
+<p>However, a <a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/exploits-forsale/prefetch-tool">pre-patching leak</a> technique inspired by the EntryBleed vulnerability (CVE-2022-4543) in Linux has also been discovered, so it remains to be seen whether kASLR will become completely impossible to bypass. For more information, please refer to <a target="_blank" rel="external nofollow noopener noreferrer" href="https://exploits.forsale/24h2-nt-exploit/">Exploiting the NT Kernel in 24H2: New Bugs in Old Code &amp; Side Channels Against KASLR</a>!</p>
+<h3 id="SMEP-Supervisor-Mode-Execution-Protection"><a href="#SMEP-Supervisor-Mode-Execution-Protection" class="headerlink" title="SMEP (Supervisor Mode Execution Protection)"></a>SMEP (Supervisor Mode Execution Protection)</h3><p>SMEP prevents the CPU from executing code in memory, including code segments in Userland (ring 3), while in Supervisor Mode (ring 0). The SMEP flag is located in the 20th bit of the cr4 register.</p>
+<p><img src="image5.png" srcset="/img/loading.gif" alt="image.png"></p>
+<blockquote>
+<p>source: <a target="_blank" rel="external nofollow noopener noreferrer" href="https://ctf-wiki.mahaloz.re/pwn/linux/kernel/bypass_smep/">https://ctf-wiki.mahaloz.re/pwn/linux/kernel/bypass_smep/</a></p>
+</blockquote>
+<p>The reason why such mitigation is added to DEP is that local privilege escalation that exploits kernel vulnerabilities is based on the premise that the attacker can execute arbitrary code at the minimum Medium Integrity level. (This is also why kASLR is not very effective as a kernel mitigation!) Without SMEP, an attacker can allocate executable memory in userland to load and execute shellcode.</p>
+<p>In fact, since SMEP is a mitigation that extends from DEP to <code>kernel &#x2194; user</code>, it is easy to approach the bypass using the ROP concept. By patching the cr4 register with a random value using a gadget in a kernel code segment, SMEP can be disabled and shellcode in userland can be executed.</p>
+<pre><code class="hljs cpp">pop rcx; ret
+mov cr4, rcx; ret</code></pre>
+<p><img src="image6.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p><img src="image7.png" srcset="/img/loading.gif" alt="image.png"></p>
+<h3 id="kCFG-Kernel-Control-Flow-Guard"><a href="#kCFG-Kernel-Control-Flow-Guard" class="headerlink" title="kCFG (Kernel Control Flow Guard)"></a>kCFG (Kernel Control Flow Guard)</h3><p>kCFG is a forward-edge CFI (Control Flow Integrity) mitigation applied to the Indirect Call instruction in the kernel. There is also a backward-edge CFI, CET, but we will not be covering CET in this series, so we will skip it!</p>
+<p><img src="image8.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p><code>__guard_disaptch_icall_fptr</code> is a runtime address sanitizer added with cfg activation during the compilation process, which checks the function pointer before calling it. The figure below shows a simple graph of the CFG operation.</p>
+<p><img src="image9.png" srcset="/img/loading.gif" alt="image.png"></p>
+<blockquote>
+<p>source: <a target="_blank" rel="external nofollow noopener noreferrer" href="https://learn.microsoft.com/en-us/windows/win32/secbp/control-flow-guard">https://learn.microsoft.com/en-us/windows/win32/secbp/control-flow-guard</a></p>
+</blockquote>
+<p>kCFG throws an exception that is not the address of a normal kernel function registered in the bitmap, causing <code>KERNEL_SECURITY_CHECK_FAILURE</code> to occur. kCFG is used to prevent the <a target="_blank" rel="external nofollow noopener noreferrer" href="https://cwe.mitre.org/data/definitions/822.html">CWE-822: Untrusted Pointer Dereference</a> arbitrary callback pointer dereference vulnerability. To bypass kCFG, simply call a normal kernel function that passes the check. Using a kernel function that allows limited Arbitrary Read/Write using a vulnerability that controls the callback pointer, and obtaining a Full Arbitrary Read/Write primitive through data corruption can lead to Token Swapping.</p>
+<p>In the next part, we will analyze the vulnerabilities of the Windows built-in kernel driver and go into more detail on the basic data corruption exploit techniques using PreviousMode, SedebugPrivilege, and IoRing, and how to achieve this while bypassing kCFG!</p>
+<h1 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a>Reference</h1><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://ctf-wiki.mahaloz.re/pwn/linux/kernel/bypass_smep/">https://ctf-wiki.mahaloz.re/pwn/linux/kernel/bypass_smep/</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.willsroot.io/2022/12/entrybleed.html">https://www.willsroot.io/2022/12/entrybleed.html</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/exploits-forsale/prefetch-tool">https://github.com/exploits-forsale/prefetch-tool</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://windows-internals.com/kaslr-leaks-restriction/">https://windows-internals.com/kaslr-leaks-restriction/</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://exploits.forsale/24h2-nt-exploit/">https://exploits.forsale/24h2-nt-exploit/</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/nccgroup/exploit_mitigations/blob/main/windows_mitigations.md">https://github.com/nccgroup/exploit_mitigations/blob/main/windows_mitigations.md</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.crowdstrike.com/en-us/blog/state-of-exploit-development-part-1/">https://www.crowdstrike.com/en-us/blog/state-of-exploit-development-part-1/</a></p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/windows/">windows</a>
+                  
+                  <a class="hover-with-bg" href="/tags/kernel/">kernel</a>
+                  
+                  <a class="hover-with-bg" href="/tags/bypass/">bypass</a>
+                  
+                  <a class="hover-with-bg" href="/tags/L0ch/">L0ch</a>
+                  
+                  <a class="hover-with-bg" href="/tags/mitigation/">mitigation</a>
+                  
+                  <a class="hover-with-bg" href="/tags/kaslr/">kaslr</a>
+                  
+                  <a class="hover-with-bg" href="/tags/smep/">smep</a>
+                  
+                  <a class="hover-with-bg" href="/tags/kcfg/">kcfg</a>
+                  
+                  <a class="hover-with-bg" href="/tags/dep/">dep</a>
+                  
+                  <a class="hover-with-bg" href="/tags/exploit-techniques/">exploit techniques</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_L0ch.jpg" srcset="/img/loading.gif" alt="L0ch">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">L0ch</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/L0ch">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2024/12/11/ogu123/cve-2024-39420/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2024-39420: Adobe Acrobat Reader의 TOCTOU로 인한 OOB Write 취약점</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2024/12/08/l0ch/bypassing-kernel-mitigation-part1/ko/">
+                    <span class="hidden-mobile">[Research] Bypassing Windows Kernel Mitigations: Part1 - Overview (Ko)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2024/12/08/l0ch/bypassing-kernel-mitigation-part1/en/';
+        this.page.identifier = '/2024/12/08/l0ch/bypassing-kernel-mitigation-part1/en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] Bypassing Windows Kernel Mitigations: Part1 - Overview (En)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
