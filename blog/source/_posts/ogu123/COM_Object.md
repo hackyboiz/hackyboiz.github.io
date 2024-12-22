@@ -5,7 +5,7 @@ tags: [COM Object, ProcessChain, ShellBrowserWindow, ogu123]
 categories: [Research]
 date: 2024-11-24 17:00:00
 cc: true
-index_img: /2024/08/18/pwndorei/1day1document_CVE-2022-24834/1day1document.jpg
+index_img: /2024/11/24/ogu123/COM_Object/part1.jpg
 ---
 
 # Introduction
