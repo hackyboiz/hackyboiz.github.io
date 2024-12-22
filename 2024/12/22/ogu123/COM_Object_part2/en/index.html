@@ -1,0 +1,1332 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;h1 id=&#34;Introduction&#34;&gt;&lt;a href=&#34;#Introduction&#34; class=&#34;headerlink&#34; title=&#34;Introduction&#34;&gt;&lt;/a&gt;Introduction&lt;/h1&gt;&lt;p&gt;Hello, this is ogu123!&lt;/p&gt;
+&lt;p&gt;While writing Part1, I felt the wall to COM.. I was about to run away to another field, but then I heard &amp;#x201C;Why not find vulnerabilities in COM?&amp;#x201D; and came back to Part2&amp;#x2026;  LOL&lt;/p&gt;
+&lt;p&gt;So, Part 2 is about DCOM as it is utilized for Lateral Movement during Red Team or internal penetration testing!&lt;/p&gt;
+&lt;p&gt;It is said that the erroneous of invalid DCOM objects leads to RCE and LPE vulnerabilities, Have fun studying!&lt;/p&gt;
+&lt;p&gt;&lt;del&gt;(Caution: Part2 is more theory than practice).&lt;/del&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2024/12/22/ogu123/COM_Object_part2/en/Part2.jpg&#34; alt&gt;&lt;/p&gt;
+&lt;h1 id=&#34;DCOM&#34;&gt;&lt;a href=&#34;#DCOM&#34; class=&#34;headerlink&#34; title=&#34;DCOM&#34;&gt;&lt;/a&gt;DCOM&lt;/h1&gt;&lt;p&gt;Like COM, the Distributed Component Object Model (DCOM) is a &lt;a href=&#34;https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-dcom/86b9cf84-df2e-4f0b-ac22-1b957627e1ca&#34;&gt;Microsoft&lt;/a&gt; technology that is described below.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;The Distributed Component Object Model (DCOM) Remote Protocol extends the Component Object Model (COM) over a network by providing facilities for creating and activating objects, and for managing object references, object lifetimes, and object interface queries.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Yeah&amp;#x2026; there&amp;#x2019;s a description, but it&amp;#x2019;s encrypted&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;DCOM is an extension of COM, a technology that allows you to use COM objects on a remote computer as if they were local!&lt;/p&gt;
+&lt;p&gt;For example, when a request for a COM object comes in from a remote client, the COM object is loaded into the server computer&amp;#x2019;s memory, and the remote client can access and use it over the network!&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s start by pointing out the differences between the invocation and activation types of COM, and then we&amp;#x2019;ll check out DCOM!&lt;/p&gt;
+&lt;h1 id=&#34;COM-object-request-processing-order&#34;&gt;&lt;a href=&#34;#COM-object-request-processing-order&#34; class=&#34;headerlink&#34; title=&#34;COM object request processing order&#34;&gt;&lt;/a&gt;COM object request processing order&lt;/h1&gt;&lt;p&gt;The request processing and activation of a COM object on Windows goes in the following order!&lt;/p&gt;
+&lt;p&gt;&lt;del&gt;(Tip: It&amp;#x2019;s easier to understand if you look at it like the picture below)&lt;/del&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2024/12/22/ogu123/COM_Object_part2/en/1.png&#34; alt&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Client Request&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;A client calls a function, such as &lt;code&gt;CoCreateInstance&lt;/code&gt; or &lt;code&gt;CoGetClassObject&lt;/code&gt; with a CLSID or ProgID as an argument to request the interface pointer of a COM object.&lt;/li&gt;
+&lt;li&gt;The request is passed to the COM library (ole32.dll).&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Interacting with Service Control Manager (SCM)&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;The COM library asks SCM to find the COM server (DLL or EXE) that corresponds to the requested CLSID or ProgID.&lt;/li&gt;
+&lt;li&gt;SCM checks the registry (&lt;code&gt;HKCR\\CLSID&lt;/code&gt; or &lt;code&gt;HKCR\\ProgID&lt;/code&gt;) to determine the location of the COM server associated with the requested CLSID or ProgID.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Loading the COM Server&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;SCM loads the identified COM server and creates an instance of Class Factory associated with the requested CLSID or ProgID.&lt;ul&gt;
+&lt;li&gt;The Class Factory is responsible for creating and initializing COM objects.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Creating and Initializing COM Objects&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;The Class Factory calls the &lt;code&gt;CreateInstance&lt;/code&gt; method to create a COM object corresponding to the requested CLSID or ProgID.&lt;/li&gt;
+&lt;li&gt;The created COM object is initialized to provide the specific interface requested by the client.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Return an interface pointer&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;When Class Factory successfully creates a COM object, it returns an interface pointer to the COM library.&lt;/li&gt;
+&lt;li&gt;The COM library passes this pointer to the client.&lt;/li&gt;
+&lt;li&gt;The client uses the passed interface pointer to access the methods and properties of the generated COM object.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&lt;img src=&#34;/2024/12/22/ogu123/COM_Object_part2/en/ogu.jpg&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Yeah&amp;#x2026; if you read it slowly, it&amp;#x2019;s not too difficult, but it looks complicated from a distance.&lt;/p&gt;
+&lt;p&gt;The reason why I mentioned the above process is because I didn&amp;#x2019;t cover the COM calling process in Part 1, and the COM server is composed of DLL or EXE, and it is related to DCOM!&lt;/p&gt;
+&lt;p&gt;&lt;del&gt;(Actually, I was going to say that in part 1, but it&amp;#x2019;s no secret what I did now)&lt;/del&gt;&lt;/p&gt;
+&lt;h1 id=&#34;Activation-types-for-COM-servers&#34;&gt;&lt;a href=&#34;#Activation-types-for-COM-servers&#34; class=&#34;headerlink&#34; title=&#34;Activation types for COM servers&#34;&gt;&lt;/a&gt;Activation types for COM servers&lt;/h1&gt;&lt;p&gt;Each COM server sets an activation method when it is registered in the registry, and that setting determines how the system loads and executes objects.&lt;/p&gt;
+&lt;p&gt;Take a deep breath and let&amp;#x2019;s take a look at the three activation methods!&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;In-Process (InprocServer32)&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;This is the activation method used when the COM server is implemented as a DLL file.&lt;/li&gt;
+&lt;li&gt;It is loaded inside the client process and operates by sharing client memory space.&lt;/li&gt;
+&lt;li&gt;SCM returns the path to the DLL, loads it, and then requests the Class Factory to create objects.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Out-of-Process / Local (LocalServer32)&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;This is the activation method used when the COM server is implemented as an EXE file.&lt;/li&gt;
+&lt;li&gt;It runs in an independent process and has a different memory space than the client.&lt;/li&gt;
+&lt;li&gt;SCM runs the EXE, and the EXE registers itself with the Class Factory so that clients can access the Class Factory to create objects.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Out-of-Process / Remote (DCOM)&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Remote here refers to COM over a network, or Distributed COM (DCOM), a technology for enabling or accessing COM objects on a remote computer.&lt;/li&gt;
+&lt;li&gt;The local SCM gets the Class Factory interface pointer from the SCM on the remote computer to make the object accessible over the network.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Just like the COM object request processing sequence earlier, take your time reading this&amp;#x2026;!&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Wait, here&amp;#x2019;s the problem!&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;Should the COM object that acts as the DCOM server be a DLL or an EXE?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2024/12/22/ogu123/COM_Object_part2/en/sphinx.jpg&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;The correct answer is I don&amp;#x2019;t care! &lt;/p&gt;
+&lt;p&gt;Typically, when we think of remote, we think of only EXE files because they run in a different address space than the client &lt;del&gt;(that&amp;#x2019;s what I thought, actually)&lt;/del&gt;&lt;/p&gt;
+&lt;p&gt;However, DLL Surrogate allows you to implement DCOM objects as DLLs.&lt;br&gt;DLLs are passive modules, they can&amp;#x2019;t run on their own, so they need a Surrogate process to run them.&lt;/p&gt;
+&lt;p&gt;The Surrogate process is, of course, an EXE, right?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2024/12/22/ogu123/COM_Object_part2/en/2.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;If you check the picture above, you can see that dllhost.exe acts as Windows&amp;#x2019; default DLL Surrogate. Additionally, you can see the COM server running on dllhost.exe.&lt;/p&gt;
+&lt;h1 id=&#34;Out-of-Process-Practice-MMC-exe&#34;&gt;&lt;a href=&#34;#Out-of-Process-Practice-MMC-exe&#34; class=&#34;headerlink&#34; title=&#34;Out-of-Process Practice(MMC.exe)&#34;&gt;&lt;/a&gt;Out-of-Process Practice(MMC.exe)&lt;/h1&gt;&lt;p&gt;Now, let&amp;#x2019;s leave the theory behind for a moment and do a quick lab to see this in action.&lt;/p&gt;
+&lt;p&gt;In this lab, we&amp;#x2019;ll determine the type of COM server activation by looking at a specific CLSID, create a real object, and see where it goes through ProcessHacker.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs latex&#34;&gt;Get-ChildItem -Path &amp;quot;Registry::HKEY_LOCAL_MACHINE&lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;SOFTWARE&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;Classes&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;CLSID&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;{&lt;/span&gt;&lt;/span&gt;49B2791A-B1AE-4C90-9B8E-E860BA07F889}&amp;quot;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Use the command above to see what activation type the COM server corresponding to your CLSID is registered with.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2024/12/22/ogu123/COM_Object_part2/en/3.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;As a result of running the command, you can see the &lt;code&gt;LocalServer32&lt;/code&gt; key, which means it is running as an Out-of-Process (EXE).&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs elixir&#34;&gt;&lt;span class=&#34;hljs-variable&#34;&gt;$comobj&lt;/span&gt; = [System.Activator]::CreateInstance([Type]::GetTypeFromCLSID(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;49B2791A-B1AE-4C90-9B8E-E860BA07F889&amp;quot;&lt;/span&gt;))
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Let&amp;#x2019;s use the above command to create a COM object for that CLSID and verify it with ProcessHacker.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2024/12/22/ogu123/COM_Object_part2/en/4.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;When using Out-of-Process (LocalServer) COM or DCOM, client and server communication is handled by the RPCSS service running inside the svchost.exe process.&lt;/p&gt;
+&lt;p&gt;So, if you check the MMC.exe process properties, you will see &lt;code&gt;svchost.exe&lt;/code&gt; as the Parent Process.&lt;/p&gt;
+&lt;p&gt;Practicing is easy, right? We think it&amp;#x2019;s best to learn by doing, so Let&amp;#x2019;s do the same!&lt;/p&gt;
+&lt;h1 id=&#34;DCOM-Concepts&#34;&gt;&lt;a href=&#34;#DCOM-Concepts&#34; class=&#34;headerlink&#34; title=&#34;DCOM Concepts&#34;&gt;&lt;/a&gt;DCOM Concepts&lt;/h1&gt;&lt;p&gt;Now, finally, the DCOM concept! It&amp;#x2019;s not as complicated as the order in which COM requests are processed, or the types of activation, so it&amp;#x2019;s a light read.&lt;/p&gt;
+&lt;p&gt;The main function of DCOM is a technology that enables COM objects to be activated and used on a remote computer.&lt;/p&gt;
+&lt;p&gt;The objects themselves run in memory on the remote computer, and the local computer accesses them over the network.&lt;/p&gt;
+&lt;p&gt;So where and how do you use DCOM?&lt;/p&gt;
+&lt;p&gt;DCOM is often used for Lateral Movement because of its ability to remotely execute COM objects. In the past, PowerShell Remoting was the primary method used, but more recently, the following DCOM objects have been utilized&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;ShellWindows&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;ShellBrowserWindows&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;MMC20.Application&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Excel.Application&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;DDEInitiate&lt;/li&gt;
+&lt;li&gt;RegisterXLL&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Outlook.Application&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;CreateObject-&amp;gt;Shell.Application&lt;/li&gt;
+&lt;li&gt;CreateObject-&amp;gt;ScriptControl (office-32bit only)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Visio.InvisibleApp&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Addons&lt;/li&gt;
+&lt;li&gt;ExecuteLine&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Word.Application&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;RunAutoMacro&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h1 id=&#34;Setting-conditions-for-DCOM-objects&#34;&gt;&lt;a href=&#34;#Setting-conditions-for-DCOM-objects&#34; class=&#34;headerlink&#34; title=&#34;Setting conditions for DCOM objects&#34;&gt;&lt;/a&gt;Setting conditions for DCOM objects&lt;/h1&gt;&lt;p&gt;In fact, in addition to CLSID and ProgID, COM has a value called AppID.&lt;/p&gt;
+&lt;p&gt;The &lt;a href=&#34;https://learn.microsoft.com/en-us/windows/win32/com/appid-key&#34;&gt;AppID&lt;/a&gt; contains various configuration information for instantiating COM objects and managing access rights,&lt;br&gt;It is used in association with one or more COM objects.&lt;/p&gt;
+&lt;p&gt;If a particular COM object does not have an AppID set for it, the remote computer will not be able to access it.&lt;/p&gt;
+&lt;p&gt;Therefore, in order to utilize DCOM, the CLSID must be associated with the appropriate AppID, and the AppID must have the appropriate permissions set!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2024/12/22/ogu123/COM_Object_part2/en/5.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;To access DCOM objects remotely, the following permissions must be defined in the AppID!&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;AccessPermissions&lt;/code&gt;: Permissions to access the object&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;LaunchPermissions&lt;/code&gt;: Permissions to launch the object&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The permissions in the figure above are applied to specific DCOM objects, but you can also set permissions for system-wide DCOM objects through Global Permissions.&lt;/p&gt;
+&lt;p&gt;Additionally, DCOM uses the Distributed Computing Environment Remote Procedure Call (DCE-RPC) protocol, which communicates over port 135 by default.&lt;/p&gt;
+&lt;p&gt;So, if DCOM isn&amp;#x2019;t working, check your ports, then Global Permissions, then COM AppID&amp;#x2026; and so on!&lt;/p&gt;
+&lt;h1 id=&#34;Find-vulnerable-COMs-in-a-specific-program&#34;&gt;&lt;a href=&#34;#Find-vulnerable-COMs-in-a-specific-program&#34; class=&#34;headerlink&#34; title=&#34;Find vulnerable COMs in a specific program&#34;&gt;&lt;/a&gt;Find vulnerable COMs in a specific program&lt;/h1&gt;&lt;p&gt;In the DCOM concept, we identified COM objects that exist in specific programs (Excel, Outlook &amp;#x2026;).&lt;/p&gt;
+&lt;p&gt;So, we&amp;#x2019;re going to cover how to find vulnerable COM objects in a specific program.&lt;/p&gt;
+&lt;p&gt;To find a vulnerable COM object, we need to satisfy the following three characteristics.&lt;br&gt;&lt;del&gt;(7KCA64qUIE1jQWZlZSBTY2Fu66W8IO2DgOqyn+ycvOuhnCDtlojsirXri4jri6Qu)&lt;/del&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;COM objects installed by a specific program&lt;/li&gt;
+&lt;li&gt;Out-of-Process objects running with system privileges&lt;/li&gt;
+&lt;li&gt;interfaces accessible with user privileges&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Let&amp;#x2019;s check them out in turn!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs pgsql&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;Set&lt;/span&gt;-ComDatabase -&lt;span class=&#34;hljs-type&#34;&gt;Path&lt;/span&gt; ComDb_old.db -&lt;span class=&#34;hljs-keyword&#34;&gt;Database&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;Get&lt;/span&gt;-ComDatabase -PassThru)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;A simple and clear way to find out which COM objects a particular program has installed is to take a snapshot before and after the installation and compare them!&lt;/p&gt;
+&lt;p&gt;Use the above command to collect the information of previously registered COM objects, back them up to a &lt;code&gt;ComDb_old.db&lt;/code&gt; file, and install the target program!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs mathematica&#34;&gt;$comDiff = Compare-ComDatabase `
+    -&lt;span class=&#34;hljs-keyword&#34;&gt;Left&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;Get&lt;/span&gt;-ComDatabase -&lt;span class=&#34;hljs-keyword&#34;&gt;Path&lt;/span&gt; ComDb_old.db -PassThru) `
+    -&lt;span class=&#34;hljs-keyword&#34;&gt;Right&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;Get&lt;/span&gt;-ComDatabase -PassThru) `
+    -DiffMode RightOnly
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Once the installation is complete, we collect the information of the re-registered COM objects and compare them to the snapshot taken in the previous step to find differences.&lt;/p&gt;
+&lt;p&gt;As a result, the &lt;code&gt;$comDiff&lt;/code&gt; variable stores the information of the newly added COM objects!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs powershell&#34;&gt;&lt;span class=&#34;hljs-variable&#34;&gt;$explorerId&lt;/span&gt; = (&lt;span class=&#34;hljs-built_in&#34;&gt;Get-Process&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;-Name&lt;/span&gt; explorer).Id
+
+&lt;span class=&#34;hljs-variable&#34;&gt;$comsAsSystem&lt;/span&gt; = &lt;span class=&#34;hljs-variable&#34;&gt;$comDiff&lt;/span&gt;.AppIDs.Values |
+    &lt;span class=&#34;hljs-built_in&#34;&gt;Where-Object&lt;/span&gt; {
+        &lt;span class=&#34;hljs-variable&#34;&gt;$_&lt;/span&gt;.IsService &lt;span class=&#34;hljs-operator&#34;&gt;-eq&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$true&lt;/span&gt; &lt;span class=&#34;hljs-operator&#34;&gt;-or&lt;/span&gt;
+        &lt;span class=&#34;hljs-variable&#34;&gt;$_&lt;/span&gt;.RunAs &lt;span class=&#34;hljs-operator&#34;&gt;-ieq&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;nt authority\system&amp;quot;&lt;/span&gt;
+    }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Gets the ID of the Explorer process and filters only the newly added COM objects in &lt;code&gt;$comDiff&lt;/code&gt; that are running with NT Authority\SYSTEM permissions or registered as a service.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs routeros&#34;&gt;&lt;span class=&#34;hljs-variable&#34;&gt;$comsAsSystem&lt;/span&gt; |
+Select-ComAccess -ProcessId &lt;span class=&#34;hljs-variable&#34;&gt;$explorerId&lt;/span&gt; -Principal S-1-5-18
+
+Name                           AppID                                IsService  HasPermission
+----                           -----                                ---------  -------------
+PerceptionSimulation           1b162a5b-b67a-4468-9613-c3f9765b353b &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;       &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;
+42CBFAA7-A4A7-47BB-B422-BD1&lt;span class=&#34;hljs-built_in&#34;&gt;..&lt;/span&gt;. 42cbfaa7-a4a7-47bb-b422-bd10e9d02700 &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;       &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;
+Trusted Installer&lt;span class=&#34;hljs-built_in&#34;&gt; Service &lt;/span&gt;     752073a2-23f2-4396-85f0-8fdb879ed0ed &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;       &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;
+Spectrum                       c0e1ce99-c981-44a2-ac4c-41036fac6593 &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;       &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Verify that the Explorer process (&lt;code&gt;$explorerId&lt;/code&gt;) has access to COM objects running with SYSTEM privileges (&lt;code&gt;S-1-5-18&lt;/code&gt;).&lt;/p&gt;
+&lt;p&gt;The command results show that it is running with System privileges and is accessible, but it cannot see the COM objects of the target program&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;This means that the COM objects created by the target program are not registered as accessible (Launch and Access) under the &lt;code&gt;$explorerId&lt;/code&gt; privilege.&lt;/p&gt;
+&lt;p&gt;But! Access here means both Launch and Access permissions, so if you check only Launch permissions (for example, if Access=0), you might see the target program&amp;#x2019;s COM objects!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs angelscript&#34;&gt;$comsAsSystem |
+Select-ComAccess `
+         -ProcessId $explorerId `
+         -Principal S&lt;span class=&#34;hljs-number&#34;&gt;-1&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-5&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-18&lt;/span&gt; `
+         -LaunchAccess ActivateLocal, ExecuteLocal `
+         -Access &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+
+Name                           AppID                                IsService  HasPermission
+----                           -----                                ---------  -------------
+&lt;span class=&#34;hljs-number&#34;&gt;000&lt;/span&gt;C101C&lt;span class=&#34;hljs-number&#34;&gt;-0000&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-0000&lt;/span&gt;-C000&lt;span class=&#34;hljs-number&#34;&gt;-000.&lt;/span&gt;.. &lt;span class=&#34;hljs-number&#34;&gt;000&lt;/span&gt;c101c&lt;span class=&#34;hljs-number&#34;&gt;-0000&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-0000&lt;/span&gt;-c000&lt;span class=&#34;hljs-number&#34;&gt;-000000000046&lt;/span&gt; True       False
+PerceptionSimulation           &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;b162a5b-b67a&lt;span class=&#34;hljs-number&#34;&gt;-4468&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-9613&lt;/span&gt;-c3f9765b353b True       True
+&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;FCBE96C&lt;span class=&#34;hljs-number&#34;&gt;-1697&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-43&lt;/span&gt;AF&lt;span class=&#34;hljs-number&#34;&gt;-9140&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-289.&lt;/span&gt;.. &lt;span class=&#34;hljs-number&#34;&gt;1f&lt;/span&gt;cbe96c&lt;span class=&#34;hljs-number&#34;&gt;-1697&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-43&lt;/span&gt;af&lt;span class=&#34;hljs-number&#34;&gt;-9140&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-2897&lt;/span&gt;c7c69767 True       False
+&lt;span class=&#34;hljs-number&#34;&gt;2781761E-28&lt;/span&gt;E2&lt;span class=&#34;hljs-number&#34;&gt;-4109&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-99&lt;/span&gt;FE-B9D... &lt;span class=&#34;hljs-number&#34;&gt;2781761e-28&lt;/span&gt;e2&lt;span class=&#34;hljs-number&#34;&gt;-4109&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-99f&lt;/span&gt;e-b9d127c57afe True       False
+Windows Security Health Ser... &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;eb6d15c&lt;span class=&#34;hljs-number&#34;&gt;-5239&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-41&lt;/span&gt;cf&lt;span class=&#34;hljs-number&#34;&gt;-82f&lt;/span&gt;b&lt;span class=&#34;hljs-number&#34;&gt;-353&lt;/span&gt;d20b816cf True       True
+&lt;span class=&#34;hljs-number&#34;&gt;42&lt;/span&gt;CBFAA7-A4A7&lt;span class=&#34;hljs-number&#34;&gt;-47&lt;/span&gt;BB-B422-BD1... &lt;span class=&#34;hljs-number&#34;&gt;42&lt;/span&gt;cbfaa7-a4a7&lt;span class=&#34;hljs-number&#34;&gt;-47&lt;/span&gt;bb-b422-bd10e9d02700 True       True
+&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;A0F9AA8-A71E&lt;span class=&#34;hljs-number&#34;&gt;-4&lt;/span&gt;CC3&lt;span class=&#34;hljs-number&#34;&gt;-891&lt;/span&gt;B&lt;span class=&#34;hljs-number&#34;&gt;-76&lt;/span&gt;C... &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;a0f9aa8-a71e&lt;span class=&#34;hljs-number&#34;&gt;-4&lt;/span&gt;cc3&lt;span class=&#34;hljs-number&#34;&gt;-891&lt;/span&gt;b&lt;span class=&#34;hljs-number&#34;&gt;-76&lt;/span&gt;cac67e67c0 True       False
+&lt;span class=&#34;hljs-number&#34;&gt;521&lt;/span&gt;FDB42&lt;span class=&#34;hljs-number&#34;&gt;-7130&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-4806&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-822&lt;/span&gt;A-FC5... &lt;span class=&#34;hljs-number&#34;&gt;521f&lt;/span&gt;db42&lt;span class=&#34;hljs-number&#34;&gt;-7130&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-4806&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-822&lt;/span&gt;a-fc5163fad983 True       False
+&lt;span class=&#34;hljs-number&#34;&gt;534&lt;/span&gt;F5323&lt;span class=&#34;hljs-number&#34;&gt;-3569&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-4&lt;/span&gt;F42&lt;span class=&#34;hljs-number&#34;&gt;-919&lt;/span&gt;D&lt;span class=&#34;hljs-number&#34;&gt;-1E1&lt;/span&gt;... &lt;span class=&#34;hljs-number&#34;&gt;534f&lt;/span&gt;5323&lt;span class=&#34;hljs-number&#34;&gt;-3569&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-4f&lt;/span&gt;42&lt;span class=&#34;hljs-number&#34;&gt;-919&lt;/span&gt;d&lt;span class=&#34;hljs-number&#34;&gt;-1e1&lt;/span&gt;cf93e5bf6 True       False
+&lt;span class=&#34;hljs-number&#34;&gt;53&lt;/span&gt;A53FE9&lt;span class=&#34;hljs-number&#34;&gt;-0&lt;/span&gt;D1A&lt;span class=&#34;hljs-number&#34;&gt;-5&lt;/span&gt;CE1-A982&lt;span class=&#34;hljs-number&#34;&gt;-92&lt;/span&gt;E... &lt;span class=&#34;hljs-number&#34;&gt;53&lt;/span&gt;a53fe9&lt;span class=&#34;hljs-number&#34;&gt;-0&lt;/span&gt;d1a&lt;span class=&#34;hljs-number&#34;&gt;-5&lt;/span&gt;ce1-a982&lt;span class=&#34;hljs-number&#34;&gt;-92&lt;/span&gt;eca1cb48bc True       False
+&lt;span class=&#34;hljs-number&#34;&gt;63&lt;/span&gt;A53A38&lt;span class=&#34;hljs-number&#34;&gt;-004&lt;/span&gt;F&lt;span class=&#34;hljs-number&#34;&gt;-489&lt;/span&gt;B-BD61&lt;span class=&#34;hljs-number&#34;&gt;-96&lt;/span&gt;B... &lt;span class=&#34;hljs-number&#34;&gt;63&lt;/span&gt;a53a38&lt;span class=&#34;hljs-number&#34;&gt;-004f&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-489&lt;/span&gt;b-bd61&lt;span class=&#34;hljs-number&#34;&gt;-96&lt;/span&gt;b5eefadc04 True       False
+TieringEngineService           &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;df5bcf4&lt;span class=&#34;hljs-number&#34;&gt;-22e9&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-446&lt;/span&gt;d&lt;span class=&#34;hljs-number&#34;&gt;-8763&lt;/span&gt;-a2c7677ecf7d True       True
+&lt;span class=&#34;hljs-number&#34;&gt;708860E0&lt;/span&gt;-F641&lt;span class=&#34;hljs-number&#34;&gt;-4611&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-8895&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-7&lt;/span&gt;D8... &lt;span class=&#34;hljs-number&#34;&gt;708860e0&lt;/span&gt;-f641&lt;span class=&#34;hljs-number&#34;&gt;-4611&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-8895&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-7&lt;/span&gt;d867dd3675b True       False
+McComponentHostService         &lt;span class=&#34;hljs-number&#34;&gt;727&lt;/span&gt;b5bd4-fae7&lt;span class=&#34;hljs-number&#34;&gt;-4&lt;/span&gt;ea7&lt;span class=&#34;hljs-number&#34;&gt;-98&lt;/span&gt;bd&lt;span class=&#34;hljs-number&#34;&gt;-20&lt;/span&gt;ac6bc25d89 True       False
+Trusted Installer Service      &lt;span class=&#34;hljs-number&#34;&gt;752073&lt;/span&gt;a2&lt;span class=&#34;hljs-number&#34;&gt;-23f&lt;/span&gt;2&lt;span class=&#34;hljs-number&#34;&gt;-4396&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-85f&lt;/span&gt;0&lt;span class=&#34;hljs-number&#34;&gt;-8f&lt;/span&gt;db879ed0ed True       True
+&lt;span class=&#34;hljs-number&#34;&gt;8018&lt;/span&gt;F647-BF07&lt;span class=&#34;hljs-number&#34;&gt;-55&lt;/span&gt;BB&lt;span class=&#34;hljs-number&#34;&gt;-82&lt;/span&gt;BE-A2D... &lt;span class=&#34;hljs-number&#34;&gt;8018f&lt;/span&gt;647-bf07&lt;span class=&#34;hljs-number&#34;&gt;-55&lt;/span&gt;bb&lt;span class=&#34;hljs-number&#34;&gt;-82&lt;/span&gt;be-a2d7049f7ce4 True       False
+&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;A1D4361&lt;span class=&#34;hljs-number&#34;&gt;-2&lt;/span&gt;C08&lt;span class=&#34;hljs-number&#34;&gt;-4700&lt;/span&gt;-A351&lt;span class=&#34;hljs-number&#34;&gt;-3&lt;/span&gt;EA... &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;a1d4361&lt;span class=&#34;hljs-number&#34;&gt;-2&lt;/span&gt;c08&lt;span class=&#34;hljs-number&#34;&gt;-4700&lt;/span&gt;-a351&lt;span class=&#34;hljs-number&#34;&gt;-3&lt;/span&gt;eaa9cbff5e4 True       False
+&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;A2F4279&lt;span class=&#34;hljs-number&#34;&gt;-5&lt;/span&gt;AFC&lt;span class=&#34;hljs-number&#34;&gt;-549&lt;/span&gt;D-B352-F32... &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;a2f4279&lt;span class=&#34;hljs-number&#34;&gt;-5&lt;/span&gt;afc&lt;span class=&#34;hljs-number&#34;&gt;-549&lt;/span&gt;d-b352-f32e6dbac9df True       False
+WSearch                        &lt;span class=&#34;hljs-number&#34;&gt;9e175&lt;/span&gt;b9c-f52a&lt;span class=&#34;hljs-number&#34;&gt;-11&lt;/span&gt;d8-b9a5&lt;span class=&#34;hljs-number&#34;&gt;-505054503030&lt;/span&gt; True       True
+ServiceModule                  a6b716cb&lt;span class=&#34;hljs-number&#34;&gt;-028&lt;/span&gt;b&lt;span class=&#34;hljs-number&#34;&gt;-404&lt;/span&gt;d-b72c&lt;span class=&#34;hljs-number&#34;&gt;-50e153&lt;/span&gt;dd68da True       False
+ABC01078-F197&lt;span class=&#34;hljs-number&#34;&gt;-4&lt;/span&gt;B0B-ADBC-CFE... abc01078-f197&lt;span class=&#34;hljs-number&#34;&gt;-4&lt;/span&gt;b0b-adbc-cfe684b39c82 True       False
+Spectrum                       c0e1ce99-c981&lt;span class=&#34;hljs-number&#34;&gt;-44&lt;/span&gt;a2-ac4c&lt;span class=&#34;hljs-number&#34;&gt;-41036f&lt;/span&gt;ac6593 True       True
+ServiceModule                  cecddd22&lt;span class=&#34;hljs-number&#34;&gt;-2e72&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-4832&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-9606&lt;/span&gt;-a9b0e5e344b2 True       False
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;After checking only the Launch permission, I see a list of COM objects that is longer than before, including COM objects that seem to be related to the target program&amp;#x2026;!&lt;/p&gt;
+&lt;p&gt;From now on, we need to dynamically analyze why the target program COM object can be created but not used!&lt;/p&gt;
+&lt;p&gt;Because sometimes HasPermission becomes true when the object is created.&lt;/p&gt;
+&lt;p&gt;Since we know from Part 1 that COM objects have hidden methods, we can use recursive traversal to find the hidden methods in the object and dynamically analyze them!&lt;/p&gt;
+&lt;h1 id=&#34;Conclusion&#34;&gt;&lt;a href=&#34;#Conclusion&#34; class=&#34;headerlink&#34; title=&#34;Conclusion&#34;&gt;&lt;/a&gt;Conclusion&lt;/h1&gt;&lt;p&gt;In this article, we&amp;#x2019;ve covered COM processing order, activation types, what qualifies as a DCOM object, and how to find vulnerable COM objects in a given program.&lt;/p&gt;
+&lt;p&gt;There&amp;#x2019;s more COM than DCOM, but that&amp;#x2019;s what you need to know to understand DCOM, and DCOM itself is relatively straightforward aside from the communication process (marshaling, proxy, stub).&lt;/p&gt;
+&lt;p&gt;Finally, we even saw how to find vulnerable COM objects in other programs that we didn&amp;#x2019;t cover in Part 1, so in Part 3, we&amp;#x2019;ll bring you tools and vulnerabilities related to COM objects!&lt;/p&gt;
+&lt;p&gt;Thank you for reading this long post&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2024/12/22/ogu123/COM_Object_part2/en/truman.gif&#34; alt&gt;&lt;/p&gt;
+&lt;h1 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h1&gt;&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://klezvirus.github.io/RedTeaming/LateralMovement/LateralMovementDCOM/&#34;&gt;https://klezvirus.github.io/RedTeaming/LateralMovement/LateralMovementDCOM/&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://www.221bluestreet.com/offensive-security/windows-components-object-model/demystifying-windows-component-object-model-com&#34;&gt;https://www.221bluestreet.com/offensive-security/windows-components-object-model/demystifying-windows-component-object-model-com&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://the-deniss.github.io/posts/2021/05/17/discovering-and-exploiting-mcafee-com-objects.html&#34;&gt;https://the-deniss.github.io/posts/2021/05/17/discovering-and-exploiting-mcafee-com-objects.html&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://posts.specterops.io/lateral-movement-abuse-the-power-of-dcom-excel-application-3c016d0d9922&#34;&gt;https://posts.specterops.io/lateral-movement-abuse-the-power-of-dcom-excel-application-3c016d0d9922&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] COM Object - Part 2 (DCOM)(EN) - hackyboiz">
+  <meta property="og:description" content="&lt;h1 id=&#34;Introduction&#34;&gt;&lt;a href=&#34;#Introduction&#34; class=&#34;headerlink&#34; title=&#34;Introduction&#34;&gt;&lt;/a&gt;Introduction&lt;/h1&gt;&lt;p&gt;Hello, this is ogu123!&lt;/p&gt;
+&lt;p&gt;While writing Part1, I felt the wall to COM.. I was about to run away to another field, but then I heard &amp;#x201C;Why not find vulnerabilities in COM?&amp;#x201D; and came back to Part2&amp;#x2026;  LOL&lt;/p&gt;
+&lt;p&gt;So, Part 2 is about DCOM as it is utilized for Lateral Movement during Red Team or internal penetration testing!&lt;/p&gt;
+&lt;p&gt;It is said that the erroneous of invalid DCOM objects leads to RCE and LPE vulnerabilities, Have fun studying!&lt;/p&gt;
+&lt;p&gt;&lt;del&gt;(Caution: Part2 is more theory than practice).&lt;/del&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2024/12/22/ogu123/COM_Object_part2/en/Part2.jpg&#34; alt&gt;&lt;/p&gt;
+&lt;h1 id=&#34;DCOM&#34;&gt;&lt;a href=&#34;#DCOM&#34; class=&#34;headerlink&#34; title=&#34;DCOM&#34;&gt;&lt;/a&gt;DCOM&lt;/h1&gt;&lt;p&gt;Like COM, the Distributed Component Object Model (DCOM) is a &lt;a href=&#34;https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-dcom/86b9cf84-df2e-4f0b-ac22-1b957627e1ca&#34;&gt;Microsoft&lt;/a&gt; technology that is described below.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;The Distributed Component Object Model (DCOM) Remote Protocol extends the Component Object Model (COM) over a network by providing facilities for creating and activating objects, and for managing object references, object lifetimes, and object interface queries.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Yeah&amp;#x2026; there&amp;#x2019;s a description, but it&amp;#x2019;s encrypted&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;DCOM is an extension of COM, a technology that allows you to use COM objects on a remote computer as if they were local!&lt;/p&gt;
+&lt;p&gt;For example, when a request for a COM object comes in from a remote client, the COM object is loaded into the server computer&amp;#x2019;s memory, and the remote client can access and use it over the network!&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s start by pointing out the differences between the invocation and activation types of COM, and then we&amp;#x2019;ll check out DCOM!&lt;/p&gt;
+&lt;h1 id=&#34;COM-object-request-processing-order&#34;&gt;&lt;a href=&#34;#COM-object-request-processing-order&#34; class=&#34;headerlink&#34; title=&#34;COM object request processing order&#34;&gt;&lt;/a&gt;COM object request processing order&lt;/h1&gt;&lt;p&gt;The request processing and activation of a COM object on Windows goes in the following order!&lt;/p&gt;
+&lt;p&gt;&lt;del&gt;(Tip: It&amp;#x2019;s easier to understand if you look at it like the picture below)&lt;/del&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2024/12/22/ogu123/COM_Object_part2/en/1.png&#34; alt&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Client Request&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;A client calls a function, such as &lt;code&gt;CoCreateInstance&lt;/code&gt; or &lt;code&gt;CoGetClassObject&lt;/code&gt; with a CLSID or ProgID as an argument to request the interface pointer of a COM object.&lt;/li&gt;
+&lt;li&gt;The request is passed to the COM library (ole32.dll).&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Interacting with Service Control Manager (SCM)&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;The COM library asks SCM to find the COM server (DLL or EXE) that corresponds to the requested CLSID or ProgID.&lt;/li&gt;
+&lt;li&gt;SCM checks the registry (&lt;code&gt;HKCR\\CLSID&lt;/code&gt; or &lt;code&gt;HKCR\\ProgID&lt;/code&gt;) to determine the location of the COM server associated with the requested CLSID or ProgID.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Loading the COM Server&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;SCM loads the identified COM server and creates an instance of Class Factory associated with the requested CLSID or ProgID.&lt;ul&gt;
+&lt;li&gt;The Class Factory is responsible for creating and initializing COM objects.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Creating and Initializing COM Objects&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;The Class Factory calls the &lt;code&gt;CreateInstance&lt;/code&gt; method to create a COM object corresponding to the requested CLSID or ProgID.&lt;/li&gt;
+&lt;li&gt;The created COM object is initialized to provide the specific interface requested by the client.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Return an interface pointer&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;When Class Factory successfully creates a COM object, it returns an interface pointer to the COM library.&lt;/li&gt;
+&lt;li&gt;The COM library passes this pointer to the client.&lt;/li&gt;
+&lt;li&gt;The client uses the passed interface pointer to access the methods and properties of the generated COM object.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&lt;img src=&#34;/2024/12/22/ogu123/COM_Object_part2/en/ogu.jpg&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Yeah&amp;#x2026; if you read it slowly, it&amp;#x2019;s not too difficult, but it looks complicated from a distance.&lt;/p&gt;
+&lt;p&gt;The reason why I mentioned the above process is because I didn&amp;#x2019;t cover the COM calling process in Part 1, and the COM server is composed of DLL or EXE, and it is related to DCOM!&lt;/p&gt;
+&lt;p&gt;&lt;del&gt;(Actually, I was going to say that in part 1, but it&amp;#x2019;s no secret what I did now)&lt;/del&gt;&lt;/p&gt;
+&lt;h1 id=&#34;Activation-types-for-COM-servers&#34;&gt;&lt;a href=&#34;#Activation-types-for-COM-servers&#34; class=&#34;headerlink&#34; title=&#34;Activation types for COM servers&#34;&gt;&lt;/a&gt;Activation types for COM servers&lt;/h1&gt;&lt;p&gt;Each COM server sets an activation method when it is registered in the registry, and that setting determines how the system loads and executes objects.&lt;/p&gt;
+&lt;p&gt;Take a deep breath and let&amp;#x2019;s take a look at the three activation methods!&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;In-Process (InprocServer32)&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;This is the activation method used when the COM server is implemented as a DLL file.&lt;/li&gt;
+&lt;li&gt;It is loaded inside the client process and operates by sharing client memory space.&lt;/li&gt;
+&lt;li&gt;SCM returns the path to the DLL, loads it, and then requests the Class Factory to create objects.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Out-of-Process / Local (LocalServer32)&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;This is the activation method used when the COM server is implemented as an EXE file.&lt;/li&gt;
+&lt;li&gt;It runs in an independent process and has a different memory space than the client.&lt;/li&gt;
+&lt;li&gt;SCM runs the EXE, and the EXE registers itself with the Class Factory so that clients can access the Class Factory to create objects.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Out-of-Process / Remote (DCOM)&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Remote here refers to COM over a network, or Distributed COM (DCOM), a technology for enabling or accessing COM objects on a remote computer.&lt;/li&gt;
+&lt;li&gt;The local SCM gets the Class Factory interface pointer from the SCM on the remote computer to make the object accessible over the network.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Just like the COM object request processing sequence earlier, take your time reading this&amp;#x2026;!&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Wait, here&amp;#x2019;s the problem!&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;Should the COM object that acts as the DCOM server be a DLL or an EXE?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2024/12/22/ogu123/COM_Object_part2/en/sphinx.jpg&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;The correct answer is I don&amp;#x2019;t care! &lt;/p&gt;
+&lt;p&gt;Typically, when we think of remote, we think of only EXE files because they run in a different address space than the client &lt;del&gt;(that&amp;#x2019;s what I thought, actually)&lt;/del&gt;&lt;/p&gt;
+&lt;p&gt;However, DLL Surrogate allows you to implement DCOM objects as DLLs.&lt;br&gt;DLLs are passive modules, they can&amp;#x2019;t run on their own, so they need a Surrogate process to run them.&lt;/p&gt;
+&lt;p&gt;The Surrogate process is, of course, an EXE, right?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2024/12/22/ogu123/COM_Object_part2/en/2.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;If you check the picture above, you can see that dllhost.exe acts as Windows&amp;#x2019; default DLL Surrogate. Additionally, you can see the COM server running on dllhost.exe.&lt;/p&gt;
+&lt;h1 id=&#34;Out-of-Process-Practice-MMC-exe&#34;&gt;&lt;a href=&#34;#Out-of-Process-Practice-MMC-exe&#34; class=&#34;headerlink&#34; title=&#34;Out-of-Process Practice(MMC.exe)&#34;&gt;&lt;/a&gt;Out-of-Process Practice(MMC.exe)&lt;/h1&gt;&lt;p&gt;Now, let&amp;#x2019;s leave the theory behind for a moment and do a quick lab to see this in action.&lt;/p&gt;
+&lt;p&gt;In this lab, we&amp;#x2019;ll determine the type of COM server activation by looking at a specific CLSID, create a real object, and see where it goes through ProcessHacker.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs latex&#34;&gt;Get-ChildItem -Path &amp;quot;Registry::HKEY_LOCAL_MACHINE&lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;SOFTWARE&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;Classes&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;CLSID&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;{&lt;/span&gt;&lt;/span&gt;49B2791A-B1AE-4C90-9B8E-E860BA07F889}&amp;quot;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Use the command above to see what activation type the COM server corresponding to your CLSID is registered with.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2024/12/22/ogu123/COM_Object_part2/en/3.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;As a result of running the command, you can see the &lt;code&gt;LocalServer32&lt;/code&gt; key, which means it is running as an Out-of-Process (EXE).&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs elixir&#34;&gt;&lt;span class=&#34;hljs-variable&#34;&gt;$comobj&lt;/span&gt; = [System.Activator]::CreateInstance([Type]::GetTypeFromCLSID(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;49B2791A-B1AE-4C90-9B8E-E860BA07F889&amp;quot;&lt;/span&gt;))
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Let&amp;#x2019;s use the above command to create a COM object for that CLSID and verify it with ProcessHacker.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2024/12/22/ogu123/COM_Object_part2/en/4.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;When using Out-of-Process (LocalServer) COM or DCOM, client and server communication is handled by the RPCSS service running inside the svchost.exe process.&lt;/p&gt;
+&lt;p&gt;So, if you check the MMC.exe process properties, you will see &lt;code&gt;svchost.exe&lt;/code&gt; as the Parent Process.&lt;/p&gt;
+&lt;p&gt;Practicing is easy, right? We think it&amp;#x2019;s best to learn by doing, so Let&amp;#x2019;s do the same!&lt;/p&gt;
+&lt;h1 id=&#34;DCOM-Concepts&#34;&gt;&lt;a href=&#34;#DCOM-Concepts&#34; class=&#34;headerlink&#34; title=&#34;DCOM Concepts&#34;&gt;&lt;/a&gt;DCOM Concepts&lt;/h1&gt;&lt;p&gt;Now, finally, the DCOM concept! It&amp;#x2019;s not as complicated as the order in which COM requests are processed, or the types of activation, so it&amp;#x2019;s a light read.&lt;/p&gt;
+&lt;p&gt;The main function of DCOM is a technology that enables COM objects to be activated and used on a remote computer.&lt;/p&gt;
+&lt;p&gt;The objects themselves run in memory on the remote computer, and the local computer accesses them over the network.&lt;/p&gt;
+&lt;p&gt;So where and how do you use DCOM?&lt;/p&gt;
+&lt;p&gt;DCOM is often used for Lateral Movement because of its ability to remotely execute COM objects. In the past, PowerShell Remoting was the primary method used, but more recently, the following DCOM objects have been utilized&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;ShellWindows&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;ShellBrowserWindows&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;MMC20.Application&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Excel.Application&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;DDEInitiate&lt;/li&gt;
+&lt;li&gt;RegisterXLL&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Outlook.Application&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;CreateObject-&amp;gt;Shell.Application&lt;/li&gt;
+&lt;li&gt;CreateObject-&amp;gt;ScriptControl (office-32bit only)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Visio.InvisibleApp&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Addons&lt;/li&gt;
+&lt;li&gt;ExecuteLine&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Word.Application&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;RunAutoMacro&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h1 id=&#34;Setting-conditions-for-DCOM-objects&#34;&gt;&lt;a href=&#34;#Setting-conditions-for-DCOM-objects&#34; class=&#34;headerlink&#34; title=&#34;Setting conditions for DCOM objects&#34;&gt;&lt;/a&gt;Setting conditions for DCOM objects&lt;/h1&gt;&lt;p&gt;In fact, in addition to CLSID and ProgID, COM has a value called AppID.&lt;/p&gt;
+&lt;p&gt;The &lt;a href=&#34;https://learn.microsoft.com/en-us/windows/win32/com/appid-key&#34;&gt;AppID&lt;/a&gt; contains various configuration information for instantiating COM objects and managing access rights,&lt;br&gt;It is used in association with one or more COM objects.&lt;/p&gt;
+&lt;p&gt;If a particular COM object does not have an AppID set for it, the remote computer will not be able to access it.&lt;/p&gt;
+&lt;p&gt;Therefore, in order to utilize DCOM, the CLSID must be associated with the appropriate AppID, and the AppID must have the appropriate permissions set!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2024/12/22/ogu123/COM_Object_part2/en/5.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;To access DCOM objects remotely, the following permissions must be defined in the AppID!&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;AccessPermissions&lt;/code&gt;: Permissions to access the object&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;LaunchPermissions&lt;/code&gt;: Permissions to launch the object&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The permissions in the figure above are applied to specific DCOM objects, but you can also set permissions for system-wide DCOM objects through Global Permissions.&lt;/p&gt;
+&lt;p&gt;Additionally, DCOM uses the Distributed Computing Environment Remote Procedure Call (DCE-RPC) protocol, which communicates over port 135 by default.&lt;/p&gt;
+&lt;p&gt;So, if DCOM isn&amp;#x2019;t working, check your ports, then Global Permissions, then COM AppID&amp;#x2026; and so on!&lt;/p&gt;
+&lt;h1 id=&#34;Find-vulnerable-COMs-in-a-specific-program&#34;&gt;&lt;a href=&#34;#Find-vulnerable-COMs-in-a-specific-program&#34; class=&#34;headerlink&#34; title=&#34;Find vulnerable COMs in a specific program&#34;&gt;&lt;/a&gt;Find vulnerable COMs in a specific program&lt;/h1&gt;&lt;p&gt;In the DCOM concept, we identified COM objects that exist in specific programs (Excel, Outlook &amp;#x2026;).&lt;/p&gt;
+&lt;p&gt;So, we&amp;#x2019;re going to cover how to find vulnerable COM objects in a specific program.&lt;/p&gt;
+&lt;p&gt;To find a vulnerable COM object, we need to satisfy the following three characteristics.&lt;br&gt;&lt;del&gt;(7KCA64qUIE1jQWZlZSBTY2Fu66W8IO2DgOqyn+ycvOuhnCDtlojsirXri4jri6Qu)&lt;/del&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;COM objects installed by a specific program&lt;/li&gt;
+&lt;li&gt;Out-of-Process objects running with system privileges&lt;/li&gt;
+&lt;li&gt;interfaces accessible with user privileges&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Let&amp;#x2019;s check them out in turn!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs pgsql&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;Set&lt;/span&gt;-ComDatabase -&lt;span class=&#34;hljs-type&#34;&gt;Path&lt;/span&gt; ComDb_old.db -&lt;span class=&#34;hljs-keyword&#34;&gt;Database&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;Get&lt;/span&gt;-ComDatabase -PassThru)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;A simple and clear way to find out which COM objects a particular program has installed is to take a snapshot before and after the installation and compare them!&lt;/p&gt;
+&lt;p&gt;Use the above command to collect the information of previously registered COM objects, back them up to a &lt;code&gt;ComDb_old.db&lt;/code&gt; file, and install the target program!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs mathematica&#34;&gt;$comDiff = Compare-ComDatabase `
+    -&lt;span class=&#34;hljs-keyword&#34;&gt;Left&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;Get&lt;/span&gt;-ComDatabase -&lt;span class=&#34;hljs-keyword&#34;&gt;Path&lt;/span&gt; ComDb_old.db -PassThru) `
+    -&lt;span class=&#34;hljs-keyword&#34;&gt;Right&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;Get&lt;/span&gt;-ComDatabase -PassThru) `
+    -DiffMode RightOnly
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Once the installation is complete, we collect the information of the re-registered COM objects and compare them to the snapshot taken in the previous step to find differences.&lt;/p&gt;
+&lt;p&gt;As a result, the &lt;code&gt;$comDiff&lt;/code&gt; variable stores the information of the newly added COM objects!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs powershell&#34;&gt;&lt;span class=&#34;hljs-variable&#34;&gt;$explorerId&lt;/span&gt; = (&lt;span class=&#34;hljs-built_in&#34;&gt;Get-Process&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;-Name&lt;/span&gt; explorer).Id
+
+&lt;span class=&#34;hljs-variable&#34;&gt;$comsAsSystem&lt;/span&gt; = &lt;span class=&#34;hljs-variable&#34;&gt;$comDiff&lt;/span&gt;.AppIDs.Values |
+    &lt;span class=&#34;hljs-built_in&#34;&gt;Where-Object&lt;/span&gt; {
+        &lt;span class=&#34;hljs-variable&#34;&gt;$_&lt;/span&gt;.IsService &lt;span class=&#34;hljs-operator&#34;&gt;-eq&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$true&lt;/span&gt; &lt;span class=&#34;hljs-operator&#34;&gt;-or&lt;/span&gt;
+        &lt;span class=&#34;hljs-variable&#34;&gt;$_&lt;/span&gt;.RunAs &lt;span class=&#34;hljs-operator&#34;&gt;-ieq&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;nt authority\system&amp;quot;&lt;/span&gt;
+    }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Gets the ID of the Explorer process and filters only the newly added COM objects in &lt;code&gt;$comDiff&lt;/code&gt; that are running with NT Authority\SYSTEM permissions or registered as a service.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs routeros&#34;&gt;&lt;span class=&#34;hljs-variable&#34;&gt;$comsAsSystem&lt;/span&gt; |
+Select-ComAccess -ProcessId &lt;span class=&#34;hljs-variable&#34;&gt;$explorerId&lt;/span&gt; -Principal S-1-5-18
+
+Name                           AppID                                IsService  HasPermission
+----                           -----                                ---------  -------------
+PerceptionSimulation           1b162a5b-b67a-4468-9613-c3f9765b353b &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;       &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;
+42CBFAA7-A4A7-47BB-B422-BD1&lt;span class=&#34;hljs-built_in&#34;&gt;..&lt;/span&gt;. 42cbfaa7-a4a7-47bb-b422-bd10e9d02700 &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;       &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;
+Trusted Installer&lt;span class=&#34;hljs-built_in&#34;&gt; Service &lt;/span&gt;     752073a2-23f2-4396-85f0-8fdb879ed0ed &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;       &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;
+Spectrum                       c0e1ce99-c981-44a2-ac4c-41036fac6593 &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;       &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Verify that the Explorer process (&lt;code&gt;$explorerId&lt;/code&gt;) has access to COM objects running with SYSTEM privileges (&lt;code&gt;S-1-5-18&lt;/code&gt;).&lt;/p&gt;
+&lt;p&gt;The command results show that it is running with System privileges and is accessible, but it cannot see the COM objects of the target program&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;This means that the COM objects created by the target program are not registered as accessible (Launch and Access) under the &lt;code&gt;$explorerId&lt;/code&gt; privilege.&lt;/p&gt;
+&lt;p&gt;But! Access here means both Launch and Access permissions, so if you check only Launch permissions (for example, if Access=0), you might see the target program&amp;#x2019;s COM objects!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs angelscript&#34;&gt;$comsAsSystem |
+Select-ComAccess `
+         -ProcessId $explorerId `
+         -Principal S&lt;span class=&#34;hljs-number&#34;&gt;-1&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-5&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-18&lt;/span&gt; `
+         -LaunchAccess ActivateLocal, ExecuteLocal `
+         -Access &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+
+Name                           AppID                                IsService  HasPermission
+----                           -----                                ---------  -------------
+&lt;span class=&#34;hljs-number&#34;&gt;000&lt;/span&gt;C101C&lt;span class=&#34;hljs-number&#34;&gt;-0000&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-0000&lt;/span&gt;-C000&lt;span class=&#34;hljs-number&#34;&gt;-000.&lt;/span&gt;.. &lt;span class=&#34;hljs-number&#34;&gt;000&lt;/span&gt;c101c&lt;span class=&#34;hljs-number&#34;&gt;-0000&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-0000&lt;/span&gt;-c000&lt;span class=&#34;hljs-number&#34;&gt;-000000000046&lt;/span&gt; True       False
+PerceptionSimulation           &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;b162a5b-b67a&lt;span class=&#34;hljs-number&#34;&gt;-4468&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-9613&lt;/span&gt;-c3f9765b353b True       True
+&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;FCBE96C&lt;span class=&#34;hljs-number&#34;&gt;-1697&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-43&lt;/span&gt;AF&lt;span class=&#34;hljs-number&#34;&gt;-9140&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-289.&lt;/span&gt;.. &lt;span class=&#34;hljs-number&#34;&gt;1f&lt;/span&gt;cbe96c&lt;span class=&#34;hljs-number&#34;&gt;-1697&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-43&lt;/span&gt;af&lt;span class=&#34;hljs-number&#34;&gt;-9140&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-2897&lt;/span&gt;c7c69767 True       False
+&lt;span class=&#34;hljs-number&#34;&gt;2781761E-28&lt;/span&gt;E2&lt;span class=&#34;hljs-number&#34;&gt;-4109&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-99&lt;/span&gt;FE-B9D... &lt;span class=&#34;hljs-number&#34;&gt;2781761e-28&lt;/span&gt;e2&lt;span class=&#34;hljs-number&#34;&gt;-4109&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-99f&lt;/span&gt;e-b9d127c57afe True       False
+Windows Security Health Ser... &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;eb6d15c&lt;span class=&#34;hljs-number&#34;&gt;-5239&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-41&lt;/span&gt;cf&lt;span class=&#34;hljs-number&#34;&gt;-82f&lt;/span&gt;b&lt;span class=&#34;hljs-number&#34;&gt;-353&lt;/span&gt;d20b816cf True       True
+&lt;span class=&#34;hljs-number&#34;&gt;42&lt;/span&gt;CBFAA7-A4A7&lt;span class=&#34;hljs-number&#34;&gt;-47&lt;/span&gt;BB-B422-BD1... &lt;span class=&#34;hljs-number&#34;&gt;42&lt;/span&gt;cbfaa7-a4a7&lt;span class=&#34;hljs-number&#34;&gt;-47&lt;/span&gt;bb-b422-bd10e9d02700 True       True
+&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;A0F9AA8-A71E&lt;span class=&#34;hljs-number&#34;&gt;-4&lt;/span&gt;CC3&lt;span class=&#34;hljs-number&#34;&gt;-891&lt;/span&gt;B&lt;span class=&#34;hljs-number&#34;&gt;-76&lt;/span&gt;C... &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;a0f9aa8-a71e&lt;span class=&#34;hljs-number&#34;&gt;-4&lt;/span&gt;cc3&lt;span class=&#34;hljs-number&#34;&gt;-891&lt;/span&gt;b&lt;span class=&#34;hljs-number&#34;&gt;-76&lt;/span&gt;cac67e67c0 True       False
+&lt;span class=&#34;hljs-number&#34;&gt;521&lt;/span&gt;FDB42&lt;span class=&#34;hljs-number&#34;&gt;-7130&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-4806&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-822&lt;/span&gt;A-FC5... &lt;span class=&#34;hljs-number&#34;&gt;521f&lt;/span&gt;db42&lt;span class=&#34;hljs-number&#34;&gt;-7130&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-4806&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-822&lt;/span&gt;a-fc5163fad983 True       False
+&lt;span class=&#34;hljs-number&#34;&gt;534&lt;/span&gt;F5323&lt;span class=&#34;hljs-number&#34;&gt;-3569&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-4&lt;/span&gt;F42&lt;span class=&#34;hljs-number&#34;&gt;-919&lt;/span&gt;D&lt;span class=&#34;hljs-number&#34;&gt;-1E1&lt;/span&gt;... &lt;span class=&#34;hljs-number&#34;&gt;534f&lt;/span&gt;5323&lt;span class=&#34;hljs-number&#34;&gt;-3569&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-4f&lt;/span&gt;42&lt;span class=&#34;hljs-number&#34;&gt;-919&lt;/span&gt;d&lt;span class=&#34;hljs-number&#34;&gt;-1e1&lt;/span&gt;cf93e5bf6 True       False
+&lt;span class=&#34;hljs-number&#34;&gt;53&lt;/span&gt;A53FE9&lt;span class=&#34;hljs-number&#34;&gt;-0&lt;/span&gt;D1A&lt;span class=&#34;hljs-number&#34;&gt;-5&lt;/span&gt;CE1-A982&lt;span class=&#34;hljs-number&#34;&gt;-92&lt;/span&gt;E... &lt;span class=&#34;hljs-number&#34;&gt;53&lt;/span&gt;a53fe9&lt;span class=&#34;hljs-number&#34;&gt;-0&lt;/span&gt;d1a&lt;span class=&#34;hljs-number&#34;&gt;-5&lt;/span&gt;ce1-a982&lt;span class=&#34;hljs-number&#34;&gt;-92&lt;/span&gt;eca1cb48bc True       False
+&lt;span class=&#34;hljs-number&#34;&gt;63&lt;/span&gt;A53A38&lt;span class=&#34;hljs-number&#34;&gt;-004&lt;/span&gt;F&lt;span class=&#34;hljs-number&#34;&gt;-489&lt;/span&gt;B-BD61&lt;span class=&#34;hljs-number&#34;&gt;-96&lt;/span&gt;B... &lt;span class=&#34;hljs-number&#34;&gt;63&lt;/span&gt;a53a38&lt;span class=&#34;hljs-number&#34;&gt;-004f&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-489&lt;/span&gt;b-bd61&lt;span class=&#34;hljs-number&#34;&gt;-96&lt;/span&gt;b5eefadc04 True       False
+TieringEngineService           &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;df5bcf4&lt;span class=&#34;hljs-number&#34;&gt;-22e9&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-446&lt;/span&gt;d&lt;span class=&#34;hljs-number&#34;&gt;-8763&lt;/span&gt;-a2c7677ecf7d True       True
+&lt;span class=&#34;hljs-number&#34;&gt;708860E0&lt;/span&gt;-F641&lt;span class=&#34;hljs-number&#34;&gt;-4611&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-8895&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-7&lt;/span&gt;D8... &lt;span class=&#34;hljs-number&#34;&gt;708860e0&lt;/span&gt;-f641&lt;span class=&#34;hljs-number&#34;&gt;-4611&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-8895&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-7&lt;/span&gt;d867dd3675b True       False
+McComponentHostService         &lt;span class=&#34;hljs-number&#34;&gt;727&lt;/span&gt;b5bd4-fae7&lt;span class=&#34;hljs-number&#34;&gt;-4&lt;/span&gt;ea7&lt;span class=&#34;hljs-number&#34;&gt;-98&lt;/span&gt;bd&lt;span class=&#34;hljs-number&#34;&gt;-20&lt;/span&gt;ac6bc25d89 True       False
+Trusted Installer Service      &lt;span class=&#34;hljs-number&#34;&gt;752073&lt;/span&gt;a2&lt;span class=&#34;hljs-number&#34;&gt;-23f&lt;/span&gt;2&lt;span class=&#34;hljs-number&#34;&gt;-4396&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-85f&lt;/span&gt;0&lt;span class=&#34;hljs-number&#34;&gt;-8f&lt;/span&gt;db879ed0ed True       True
+&lt;span class=&#34;hljs-number&#34;&gt;8018&lt;/span&gt;F647-BF07&lt;span class=&#34;hljs-number&#34;&gt;-55&lt;/span&gt;BB&lt;span class=&#34;hljs-number&#34;&gt;-82&lt;/span&gt;BE-A2D... &lt;span class=&#34;hljs-number&#34;&gt;8018f&lt;/span&gt;647-bf07&lt;span class=&#34;hljs-number&#34;&gt;-55&lt;/span&gt;bb&lt;span class=&#34;hljs-number&#34;&gt;-82&lt;/span&gt;be-a2d7049f7ce4 True       False
+&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;A1D4361&lt;span class=&#34;hljs-number&#34;&gt;-2&lt;/span&gt;C08&lt;span class=&#34;hljs-number&#34;&gt;-4700&lt;/span&gt;-A351&lt;span class=&#34;hljs-number&#34;&gt;-3&lt;/span&gt;EA... &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;a1d4361&lt;span class=&#34;hljs-number&#34;&gt;-2&lt;/span&gt;c08&lt;span class=&#34;hljs-number&#34;&gt;-4700&lt;/span&gt;-a351&lt;span class=&#34;hljs-number&#34;&gt;-3&lt;/span&gt;eaa9cbff5e4 True       False
+&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;A2F4279&lt;span class=&#34;hljs-number&#34;&gt;-5&lt;/span&gt;AFC&lt;span class=&#34;hljs-number&#34;&gt;-549&lt;/span&gt;D-B352-F32... &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;a2f4279&lt;span class=&#34;hljs-number&#34;&gt;-5&lt;/span&gt;afc&lt;span class=&#34;hljs-number&#34;&gt;-549&lt;/span&gt;d-b352-f32e6dbac9df True       False
+WSearch                        &lt;span class=&#34;hljs-number&#34;&gt;9e175&lt;/span&gt;b9c-f52a&lt;span class=&#34;hljs-number&#34;&gt;-11&lt;/span&gt;d8-b9a5&lt;span class=&#34;hljs-number&#34;&gt;-505054503030&lt;/span&gt; True       True
+ServiceModule                  a6b716cb&lt;span class=&#34;hljs-number&#34;&gt;-028&lt;/span&gt;b&lt;span class=&#34;hljs-number&#34;&gt;-404&lt;/span&gt;d-b72c&lt;span class=&#34;hljs-number&#34;&gt;-50e153&lt;/span&gt;dd68da True       False
+ABC01078-F197&lt;span class=&#34;hljs-number&#34;&gt;-4&lt;/span&gt;B0B-ADBC-CFE... abc01078-f197&lt;span class=&#34;hljs-number&#34;&gt;-4&lt;/span&gt;b0b-adbc-cfe684b39c82 True       False
+Spectrum                       c0e1ce99-c981&lt;span class=&#34;hljs-number&#34;&gt;-44&lt;/span&gt;a2-ac4c&lt;span class=&#34;hljs-number&#34;&gt;-41036f&lt;/span&gt;ac6593 True       True
+ServiceModule                  cecddd22&lt;span class=&#34;hljs-number&#34;&gt;-2e72&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-4832&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-9606&lt;/span&gt;-a9b0e5e344b2 True       False
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;After checking only the Launch permission, I see a list of COM objects that is longer than before, including COM objects that seem to be related to the target program&amp;#x2026;!&lt;/p&gt;
+&lt;p&gt;From now on, we need to dynamically analyze why the target program COM object can be created but not used!&lt;/p&gt;
+&lt;p&gt;Because sometimes HasPermission becomes true when the object is created.&lt;/p&gt;
+&lt;p&gt;Since we know from Part 1 that COM objects have hidden methods, we can use recursive traversal to find the hidden methods in the object and dynamically analyze them!&lt;/p&gt;
+&lt;h1 id=&#34;Conclusion&#34;&gt;&lt;a href=&#34;#Conclusion&#34; class=&#34;headerlink&#34; title=&#34;Conclusion&#34;&gt;&lt;/a&gt;Conclusion&lt;/h1&gt;&lt;p&gt;In this article, we&amp;#x2019;ve covered COM processing order, activation types, what qualifies as a DCOM object, and how to find vulnerable COM objects in a given program.&lt;/p&gt;
+&lt;p&gt;There&amp;#x2019;s more COM than DCOM, but that&amp;#x2019;s what you need to know to understand DCOM, and DCOM itself is relatively straightforward aside from the communication process (marshaling, proxy, stub).&lt;/p&gt;
+&lt;p&gt;Finally, we even saw how to find vulnerable COM objects in other programs that we didn&amp;#x2019;t cover in Part 1, so in Part 3, we&amp;#x2019;ll bring you tools and vulnerabilities related to COM objects!&lt;/p&gt;
+&lt;p&gt;Thank you for reading this long post&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2024/12/22/ogu123/COM_Object_part2/en/truman.gif&#34; alt&gt;&lt;/p&gt;
+&lt;h1 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h1&gt;&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://klezvirus.github.io/RedTeaming/LateralMovement/LateralMovementDCOM/&#34;&gt;https://klezvirus.github.io/RedTeaming/LateralMovement/LateralMovementDCOM/&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://www.221bluestreet.com/offensive-security/windows-components-object-model/demystifying-windows-component-object-model-com&#34;&gt;https://www.221bluestreet.com/offensive-security/windows-components-object-model/demystifying-windows-component-object-model-com&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://the-deniss.github.io/posts/2021/05/17/discovering-and-exploiting-mcafee-com-objects.html&#34;&gt;https://the-deniss.github.io/posts/2021/05/17/discovering-and-exploiting-mcafee-com-objects.html&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://posts.specterops.io/lateral-movement-abuse-the-power-of-dcom-excel-application-3c016d0d9922&#34;&gt;https://posts.specterops.io/lateral-movement-abuse-the-power-of-dcom-excel-application-3c016d0d9922&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2024/12/22/ogu123/COM_Object_part2/en/Part2.jpg">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2024/12/22/ogu123/com_object_part2/en/">
+
+  <title>[Research] COM Object - Part 2 (DCOM)(EN) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2024-12-22 19:00" pubdate>
+      2024년 12월 22일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      2.4k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      47
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] COM Object - Part 2 (DCOM)(EN)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <h1 id="Introduction"><a href="#Introduction" class="headerlink" title="Introduction"></a>Introduction</h1><p>Hello, this is ogu123!</p>
+<p>While writing Part1, I felt the wall to COM.. I was about to run away to another field, but then I heard &#x201C;Why not find vulnerabilities in COM?&#x201D; and came back to Part2&#x2026;  LOL</p>
+<p>So, Part 2 is about DCOM as it is utilized for Lateral Movement during Red Team or internal penetration testing!</p>
+<p>It is said that the erroneous of invalid DCOM objects leads to RCE and LPE vulnerabilities, Have fun studying!</p>
+<p><del>(Caution: Part2 is more theory than practice).</del></p>
+<p><img src="/2024/12/22/ogu123/COM_Object_part2/en/Part2.jpg" srcset="/img/loading.gif" alt></p>
+<h1 id="DCOM"><a href="#DCOM" class="headerlink" title="DCOM"></a>DCOM</h1><p>Like COM, the Distributed Component Object Model (DCOM) is a <a target="_blank" rel="external nofollow noopener noreferrer" href="https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-dcom/86b9cf84-df2e-4f0b-ac22-1b957627e1ca">Microsoft</a> technology that is described below.</p>
+<blockquote>
+<p>The Distributed Component Object Model (DCOM) Remote Protocol extends the Component Object Model (COM) over a network by providing facilities for creating and activating objects, and for managing object references, object lifetimes, and object interface queries.</p>
+</blockquote>
+<p>Yeah&#x2026; there&#x2019;s a description, but it&#x2019;s encrypted&#x2026;</p>
+<p>DCOM is an extension of COM, a technology that allows you to use COM objects on a remote computer as if they were local!</p>
+<p>For example, when a request for a COM object comes in from a remote client, the COM object is loaded into the server computer&#x2019;s memory, and the remote client can access and use it over the network!</p>
+<p>Let&#x2019;s start by pointing out the differences between the invocation and activation types of COM, and then we&#x2019;ll check out DCOM!</p>
+<h1 id="COM-object-request-processing-order"><a href="#COM-object-request-processing-order" class="headerlink" title="COM object request processing order"></a>COM object request processing order</h1><p>The request processing and activation of a COM object on Windows goes in the following order!</p>
+<p><del>(Tip: It&#x2019;s easier to understand if you look at it like the picture below)</del></p>
+<p><img src="/2024/12/22/ogu123/COM_Object_part2/en/1.png" srcset="/img/loading.gif" alt></p>
+<ol>
+<li><strong>Client Request</strong><ul>
+<li>A client calls a function, such as <code>CoCreateInstance</code> or <code>CoGetClassObject</code> with a CLSID or ProgID as an argument to request the interface pointer of a COM object.</li>
+<li>The request is passed to the COM library (ole32.dll).</li>
+</ul>
+</li>
+<li><strong>Interacting with Service Control Manager (SCM)</strong><ul>
+<li>The COM library asks SCM to find the COM server (DLL or EXE) that corresponds to the requested CLSID or ProgID.</li>
+<li>SCM checks the registry (<code>HKCR\\CLSID</code> or <code>HKCR\\ProgID</code>) to determine the location of the COM server associated with the requested CLSID or ProgID.</li>
+</ul>
+</li>
+<li><strong>Loading the COM Server</strong><ul>
+<li>SCM loads the identified COM server and creates an instance of Class Factory associated with the requested CLSID or ProgID.<ul>
+<li>The Class Factory is responsible for creating and initializing COM objects.</li>
+</ul>
+</li>
+</ul>
+</li>
+<li><strong>Creating and Initializing COM Objects</strong><ul>
+<li>The Class Factory calls the <code>CreateInstance</code> method to create a COM object corresponding to the requested CLSID or ProgID.</li>
+<li>The created COM object is initialized to provide the specific interface requested by the client.</li>
+</ul>
+</li>
+<li><strong>Return an interface pointer</strong><ul>
+<li>When Class Factory successfully creates a COM object, it returns an interface pointer to the COM library.</li>
+<li>The COM library passes this pointer to the client.</li>
+<li>The client uses the passed interface pointer to access the methods and properties of the generated COM object.</li>
+</ul>
+</li>
+</ol>
+<p><img src="/2024/12/22/ogu123/COM_Object_part2/en/ogu.jpg" srcset="/img/loading.gif" alt></p>
+<p>Yeah&#x2026; if you read it slowly, it&#x2019;s not too difficult, but it looks complicated from a distance.</p>
+<p>The reason why I mentioned the above process is because I didn&#x2019;t cover the COM calling process in Part 1, and the COM server is composed of DLL or EXE, and it is related to DCOM!</p>
+<p><del>(Actually, I was going to say that in part 1, but it&#x2019;s no secret what I did now)</del></p>
+<h1 id="Activation-types-for-COM-servers"><a href="#Activation-types-for-COM-servers" class="headerlink" title="Activation types for COM servers"></a>Activation types for COM servers</h1><p>Each COM server sets an activation method when it is registered in the registry, and that setting determines how the system loads and executes objects.</p>
+<p>Take a deep breath and let&#x2019;s take a look at the three activation methods!</p>
+<ol>
+<li><strong>In-Process (InprocServer32)</strong><ul>
+<li>This is the activation method used when the COM server is implemented as a DLL file.</li>
+<li>It is loaded inside the client process and operates by sharing client memory space.</li>
+<li>SCM returns the path to the DLL, loads it, and then requests the Class Factory to create objects.</li>
+</ul>
+</li>
+<li><strong>Out-of-Process / Local (LocalServer32)</strong><ul>
+<li>This is the activation method used when the COM server is implemented as an EXE file.</li>
+<li>It runs in an independent process and has a different memory space than the client.</li>
+<li>SCM runs the EXE, and the EXE registers itself with the Class Factory so that clients can access the Class Factory to create objects.</li>
+</ul>
+</li>
+<li><strong>Out-of-Process / Remote (DCOM)</strong><ul>
+<li>Remote here refers to COM over a network, or Distributed COM (DCOM), a technology for enabling or accessing COM objects on a remote computer.</li>
+<li>The local SCM gets the Class Factory interface pointer from the SCM on the remote computer to make the object accessible over the network.</li>
+</ul>
+</li>
+</ol>
+<p>Just like the COM object request processing sequence earlier, take your time reading this&#x2026;!</p>
+<p><strong>Wait, here&#x2019;s the problem!</strong></p>
+<p>Should the COM object that acts as the DCOM server be a DLL or an EXE?</p>
+<p><img src="/2024/12/22/ogu123/COM_Object_part2/en/sphinx.jpg" srcset="/img/loading.gif" alt></p>
+<p>The correct answer is I don&#x2019;t care! </p>
+<p>Typically, when we think of remote, we think of only EXE files because they run in a different address space than the client <del>(that&#x2019;s what I thought, actually)</del></p>
+<p>However, DLL Surrogate allows you to implement DCOM objects as DLLs.<br>DLLs are passive modules, they can&#x2019;t run on their own, so they need a Surrogate process to run them.</p>
+<p>The Surrogate process is, of course, an EXE, right?</p>
+<p><img src="/2024/12/22/ogu123/COM_Object_part2/en/2.png" srcset="/img/loading.gif" alt></p>
+<p>If you check the picture above, you can see that dllhost.exe acts as Windows&#x2019; default DLL Surrogate. Additionally, you can see the COM server running on dllhost.exe.</p>
+<h1 id="Out-of-Process-Practice-MMC-exe"><a href="#Out-of-Process-Practice-MMC-exe" class="headerlink" title="Out-of-Process Practice(MMC.exe)"></a>Out-of-Process Practice(MMC.exe)</h1><p>Now, let&#x2019;s leave the theory behind for a moment and do a quick lab to see this in action.</p>
+<p>In this lab, we&#x2019;ll determine the type of COM server activation by looking at a specific CLSID, create a real object, and see where it goes through ProcessHacker.</p>
+<pre><code class="hljs latex">Get-ChildItem -Path &quot;Registry::HKEY_LOCAL_MACHINE<span class="hljs-tag">\<span class="hljs-name">SOFTWARE</span></span><span class="hljs-tag">\<span class="hljs-name">Classes</span></span><span class="hljs-tag">\<span class="hljs-name">CLSID</span></span><span class="hljs-tag">\<span class="hljs-name">{</span></span>49B2791A-B1AE-4C90-9B8E-E860BA07F889}&quot;
+</code></pre>
+<p>Use the command above to see what activation type the COM server corresponding to your CLSID is registered with.</p>
+<p><img src="/2024/12/22/ogu123/COM_Object_part2/en/3.png" srcset="/img/loading.gif" alt></p>
+<p>As a result of running the command, you can see the <code>LocalServer32</code> key, which means it is running as an Out-of-Process (EXE).</p>
+<pre><code class="hljs elixir"><span class="hljs-variable">$comobj</span> = [System.Activator]::CreateInstance([Type]::GetTypeFromCLSID(<span class="hljs-string">&quot;49B2791A-B1AE-4C90-9B8E-E860BA07F889&quot;</span>))
+</code></pre>
+<p>Let&#x2019;s use the above command to create a COM object for that CLSID and verify it with ProcessHacker.</p>
+<p><img src="/2024/12/22/ogu123/COM_Object_part2/en/4.png" srcset="/img/loading.gif" alt></p>
+<p>When using Out-of-Process (LocalServer) COM or DCOM, client and server communication is handled by the RPCSS service running inside the svchost.exe process.</p>
+<p>So, if you check the MMC.exe process properties, you will see <code>svchost.exe</code> as the Parent Process.</p>
+<p>Practicing is easy, right? We think it&#x2019;s best to learn by doing, so Let&#x2019;s do the same!</p>
+<h1 id="DCOM-Concepts"><a href="#DCOM-Concepts" class="headerlink" title="DCOM Concepts"></a>DCOM Concepts</h1><p>Now, finally, the DCOM concept! It&#x2019;s not as complicated as the order in which COM requests are processed, or the types of activation, so it&#x2019;s a light read.</p>
+<p>The main function of DCOM is a technology that enables COM objects to be activated and used on a remote computer.</p>
+<p>The objects themselves run in memory on the remote computer, and the local computer accesses them over the network.</p>
+<p>So where and how do you use DCOM?</p>
+<p>DCOM is often used for Lateral Movement because of its ability to remotely execute COM objects. In the past, PowerShell Remoting was the primary method used, but more recently, the following DCOM objects have been utilized</p>
+<ul>
+<li><strong>ShellWindows</strong></li>
+<li><strong>ShellBrowserWindows</strong></li>
+<li><strong>MMC20.Application</strong></li>
+<li><strong>Excel.Application</strong><ul>
+<li>DDEInitiate</li>
+<li>RegisterXLL</li>
+</ul>
+</li>
+<li><strong>Outlook.Application</strong><ul>
+<li>CreateObject-&gt;Shell.Application</li>
+<li>CreateObject-&gt;ScriptControl (office-32bit only)</li>
+</ul>
+</li>
+<li><strong>Visio.InvisibleApp</strong><ul>
+<li>Addons</li>
+<li>ExecuteLine</li>
+</ul>
+</li>
+<li><strong>Word.Application</strong><ul>
+<li>RunAutoMacro</li>
+</ul>
+</li>
+</ul>
+<h1 id="Setting-conditions-for-DCOM-objects"><a href="#Setting-conditions-for-DCOM-objects" class="headerlink" title="Setting conditions for DCOM objects"></a>Setting conditions for DCOM objects</h1><p>In fact, in addition to CLSID and ProgID, COM has a value called AppID.</p>
+<p>The <a target="_blank" rel="external nofollow noopener noreferrer" href="https://learn.microsoft.com/en-us/windows/win32/com/appid-key">AppID</a> contains various configuration information for instantiating COM objects and managing access rights,<br>It is used in association with one or more COM objects.</p>
+<p>If a particular COM object does not have an AppID set for it, the remote computer will not be able to access it.</p>
+<p>Therefore, in order to utilize DCOM, the CLSID must be associated with the appropriate AppID, and the AppID must have the appropriate permissions set!</p>
+<p><img src="/2024/12/22/ogu123/COM_Object_part2/en/5.png" srcset="/img/loading.gif" alt></p>
+<p>To access DCOM objects remotely, the following permissions must be defined in the AppID!</p>
+<ul>
+<li><code>AccessPermissions</code>: Permissions to access the object</li>
+<li><code>LaunchPermissions</code>: Permissions to launch the object</li>
+</ul>
+<p>The permissions in the figure above are applied to specific DCOM objects, but you can also set permissions for system-wide DCOM objects through Global Permissions.</p>
+<p>Additionally, DCOM uses the Distributed Computing Environment Remote Procedure Call (DCE-RPC) protocol, which communicates over port 135 by default.</p>
+<p>So, if DCOM isn&#x2019;t working, check your ports, then Global Permissions, then COM AppID&#x2026; and so on!</p>
+<h1 id="Find-vulnerable-COMs-in-a-specific-program"><a href="#Find-vulnerable-COMs-in-a-specific-program" class="headerlink" title="Find vulnerable COMs in a specific program"></a>Find vulnerable COMs in a specific program</h1><p>In the DCOM concept, we identified COM objects that exist in specific programs (Excel, Outlook &#x2026;).</p>
+<p>So, we&#x2019;re going to cover how to find vulnerable COM objects in a specific program.</p>
+<p>To find a vulnerable COM object, we need to satisfy the following three characteristics.<br><del>(7KCA64qUIE1jQWZlZSBTY2Fu66W8IO2DgOqyn+ycvOuhnCDtlojsirXri4jri6Qu)</del></p>
+<ol>
+<li>COM objects installed by a specific program</li>
+<li>Out-of-Process objects running with system privileges</li>
+<li>interfaces accessible with user privileges</li>
+</ol>
+<p>Let&#x2019;s check them out in turn!</p>
+<pre><code class="hljs pgsql"><span class="hljs-keyword">Set</span>-ComDatabase -<span class="hljs-type">Path</span> ComDb_old.db -<span class="hljs-keyword">Database</span> (<span class="hljs-keyword">Get</span>-ComDatabase -PassThru)</code></pre>
+<p>A simple and clear way to find out which COM objects a particular program has installed is to take a snapshot before and after the installation and compare them!</p>
+<p>Use the above command to collect the information of previously registered COM objects, back them up to a <code>ComDb_old.db</code> file, and install the target program!</p>
+<pre><code class="hljs mathematica">$comDiff = Compare-ComDatabase `
+    -<span class="hljs-keyword">Left</span> (<span class="hljs-keyword">Get</span>-ComDatabase -<span class="hljs-keyword">Path</span> ComDb_old.db -PassThru) `
+    -<span class="hljs-keyword">Right</span> (<span class="hljs-keyword">Get</span>-ComDatabase -PassThru) `
+    -DiffMode RightOnly
+</code></pre>
+<p>Once the installation is complete, we collect the information of the re-registered COM objects and compare them to the snapshot taken in the previous step to find differences.</p>
+<p>As a result, the <code>$comDiff</code> variable stores the information of the newly added COM objects!</p>
+<pre><code class="hljs powershell"><span class="hljs-variable">$explorerId</span> = (<span class="hljs-built_in">Get-Process</span> <span class="hljs-literal">-Name</span> explorer).Id
+
+<span class="hljs-variable">$comsAsSystem</span> = <span class="hljs-variable">$comDiff</span>.AppIDs.Values |
+    <span class="hljs-built_in">Where-Object</span> {
+        <span class="hljs-variable">$_</span>.IsService <span class="hljs-operator">-eq</span> <span class="hljs-variable">$true</span> <span class="hljs-operator">-or</span>
+        <span class="hljs-variable">$_</span>.RunAs <span class="hljs-operator">-ieq</span> <span class="hljs-string">&quot;nt authority\system&quot;</span>
+    }
+</code></pre>
+<p>Gets the ID of the Explorer process and filters only the newly added COM objects in <code>$comDiff</code> that are running with NT Authority\SYSTEM permissions or registered as a service.</p>
+<pre><code class="hljs routeros"><span class="hljs-variable">$comsAsSystem</span> |
+Select-ComAccess -ProcessId <span class="hljs-variable">$explorerId</span> -Principal S-1-5-18
+
+Name                           AppID                                IsService  HasPermission
+----                           -----                                ---------  -------------
+PerceptionSimulation           1b162a5b-b67a-4468-9613-c3f9765b353b <span class="hljs-literal">True</span>       <span class="hljs-literal">True</span>
+42CBFAA7-A4A7-47BB-B422-BD1<span class="hljs-built_in">..</span>. 42cbfaa7-a4a7-47bb-b422-bd10e9d02700 <span class="hljs-literal">True</span>       <span class="hljs-literal">True</span>
+Trusted Installer<span class="hljs-built_in"> Service </span>     752073a2-23f2-4396-85f0-8fdb879ed0ed <span class="hljs-literal">True</span>       <span class="hljs-literal">True</span>
+Spectrum                       c0e1ce99-c981-44a2-ac4c-41036fac6593 <span class="hljs-literal">True</span>       <span class="hljs-literal">True</span>
+</code></pre>
+<p>Verify that the Explorer process (<code>$explorerId</code>) has access to COM objects running with SYSTEM privileges (<code>S-1-5-18</code>).</p>
+<p>The command results show that it is running with System privileges and is accessible, but it cannot see the COM objects of the target program&#x2026;</p>
+<p>This means that the COM objects created by the target program are not registered as accessible (Launch and Access) under the <code>$explorerId</code> privilege.</p>
+<p>But! Access here means both Launch and Access permissions, so if you check only Launch permissions (for example, if Access=0), you might see the target program&#x2019;s COM objects!</p>
+<pre><code class="hljs angelscript">$comsAsSystem |
+Select-ComAccess `
+         -ProcessId $explorerId `
+         -Principal S<span class="hljs-number">-1</span><span class="hljs-number">-5</span><span class="hljs-number">-18</span> `
+         -LaunchAccess ActivateLocal, ExecuteLocal `
+         -Access <span class="hljs-number">0</span>
+
+Name                           AppID                                IsService  HasPermission
+----                           -----                                ---------  -------------
+<span class="hljs-number">000</span>C101C<span class="hljs-number">-0000</span><span class="hljs-number">-0000</span>-C000<span class="hljs-number">-000.</span>.. <span class="hljs-number">000</span>c101c<span class="hljs-number">-0000</span><span class="hljs-number">-0000</span>-c000<span class="hljs-number">-000000000046</span> True       False
+PerceptionSimulation           <span class="hljs-number">1</span>b162a5b-b67a<span class="hljs-number">-4468</span><span class="hljs-number">-9613</span>-c3f9765b353b True       True
+<span class="hljs-number">1</span>FCBE96C<span class="hljs-number">-1697</span><span class="hljs-number">-43</span>AF<span class="hljs-number">-9140</span><span class="hljs-number">-289.</span>.. <span class="hljs-number">1f</span>cbe96c<span class="hljs-number">-1697</span><span class="hljs-number">-43</span>af<span class="hljs-number">-9140</span><span class="hljs-number">-2897</span>c7c69767 True       False
+<span class="hljs-number">2781761E-28</span>E2<span class="hljs-number">-4109</span><span class="hljs-number">-99</span>FE-B9D... <span class="hljs-number">2781761e-28</span>e2<span class="hljs-number">-4109</span><span class="hljs-number">-99f</span>e-b9d127c57afe True       False
+Windows Security Health Ser... <span class="hljs-number">2</span>eb6d15c<span class="hljs-number">-5239</span><span class="hljs-number">-41</span>cf<span class="hljs-number">-82f</span>b<span class="hljs-number">-353</span>d20b816cf True       True
+<span class="hljs-number">42</span>CBFAA7-A4A7<span class="hljs-number">-47</span>BB-B422-BD1... <span class="hljs-number">42</span>cbfaa7-a4a7<span class="hljs-number">-47</span>bb-b422-bd10e9d02700 True       True
+<span class="hljs-number">4</span>A0F9AA8-A71E<span class="hljs-number">-4</span>CC3<span class="hljs-number">-891</span>B<span class="hljs-number">-76</span>C... <span class="hljs-number">4</span>a0f9aa8-a71e<span class="hljs-number">-4</span>cc3<span class="hljs-number">-891</span>b<span class="hljs-number">-76</span>cac67e67c0 True       False
+<span class="hljs-number">521</span>FDB42<span class="hljs-number">-7130</span><span class="hljs-number">-4806</span><span class="hljs-number">-822</span>A-FC5... <span class="hljs-number">521f</span>db42<span class="hljs-number">-7130</span><span class="hljs-number">-4806</span><span class="hljs-number">-822</span>a-fc5163fad983 True       False
+<span class="hljs-number">534</span>F5323<span class="hljs-number">-3569</span><span class="hljs-number">-4</span>F42<span class="hljs-number">-919</span>D<span class="hljs-number">-1E1</span>... <span class="hljs-number">534f</span>5323<span class="hljs-number">-3569</span><span class="hljs-number">-4f</span>42<span class="hljs-number">-919</span>d<span class="hljs-number">-1e1</span>cf93e5bf6 True       False
+<span class="hljs-number">53</span>A53FE9<span class="hljs-number">-0</span>D1A<span class="hljs-number">-5</span>CE1-A982<span class="hljs-number">-92</span>E... <span class="hljs-number">53</span>a53fe9<span class="hljs-number">-0</span>d1a<span class="hljs-number">-5</span>ce1-a982<span class="hljs-number">-92</span>eca1cb48bc True       False
+<span class="hljs-number">63</span>A53A38<span class="hljs-number">-004</span>F<span class="hljs-number">-489</span>B-BD61<span class="hljs-number">-96</span>B... <span class="hljs-number">63</span>a53a38<span class="hljs-number">-004f</span><span class="hljs-number">-489</span>b-bd61<span class="hljs-number">-96</span>b5eefadc04 True       False
+TieringEngineService           <span class="hljs-number">6</span>df5bcf4<span class="hljs-number">-22e9</span><span class="hljs-number">-446</span>d<span class="hljs-number">-8763</span>-a2c7677ecf7d True       True
+<span class="hljs-number">708860E0</span>-F641<span class="hljs-number">-4611</span><span class="hljs-number">-8895</span><span class="hljs-number">-7</span>D8... <span class="hljs-number">708860e0</span>-f641<span class="hljs-number">-4611</span><span class="hljs-number">-8895</span><span class="hljs-number">-7</span>d867dd3675b True       False
+McComponentHostService         <span class="hljs-number">727</span>b5bd4-fae7<span class="hljs-number">-4</span>ea7<span class="hljs-number">-98</span>bd<span class="hljs-number">-20</span>ac6bc25d89 True       False
+Trusted Installer Service      <span class="hljs-number">752073</span>a2<span class="hljs-number">-23f</span>2<span class="hljs-number">-4396</span><span class="hljs-number">-85f</span>0<span class="hljs-number">-8f</span>db879ed0ed True       True
+<span class="hljs-number">8018</span>F647-BF07<span class="hljs-number">-55</span>BB<span class="hljs-number">-82</span>BE-A2D... <span class="hljs-number">8018f</span>647-bf07<span class="hljs-number">-55</span>bb<span class="hljs-number">-82</span>be-a2d7049f7ce4 True       False
+<span class="hljs-number">8</span>A1D4361<span class="hljs-number">-2</span>C08<span class="hljs-number">-4700</span>-A351<span class="hljs-number">-3</span>EA... <span class="hljs-number">8</span>a1d4361<span class="hljs-number">-2</span>c08<span class="hljs-number">-4700</span>-a351<span class="hljs-number">-3</span>eaa9cbff5e4 True       False
+<span class="hljs-number">8</span>A2F4279<span class="hljs-number">-5</span>AFC<span class="hljs-number">-549</span>D-B352-F32... <span class="hljs-number">8</span>a2f4279<span class="hljs-number">-5</span>afc<span class="hljs-number">-549</span>d-b352-f32e6dbac9df True       False
+WSearch                        <span class="hljs-number">9e175</span>b9c-f52a<span class="hljs-number">-11</span>d8-b9a5<span class="hljs-number">-505054503030</span> True       True
+ServiceModule                  a6b716cb<span class="hljs-number">-028</span>b<span class="hljs-number">-404</span>d-b72c<span class="hljs-number">-50e153</span>dd68da True       False
+ABC01078-F197<span class="hljs-number">-4</span>B0B-ADBC-CFE... abc01078-f197<span class="hljs-number">-4</span>b0b-adbc-cfe684b39c82 True       False
+Spectrum                       c0e1ce99-c981<span class="hljs-number">-44</span>a2-ac4c<span class="hljs-number">-41036f</span>ac6593 True       True
+ServiceModule                  cecddd22<span class="hljs-number">-2e72</span><span class="hljs-number">-4832</span><span class="hljs-number">-9606</span>-a9b0e5e344b2 True       False
+</code></pre>
+<p>After checking only the Launch permission, I see a list of COM objects that is longer than before, including COM objects that seem to be related to the target program&#x2026;!</p>
+<p>From now on, we need to dynamically analyze why the target program COM object can be created but not used!</p>
+<p>Because sometimes HasPermission becomes true when the object is created.</p>
+<p>Since we know from Part 1 that COM objects have hidden methods, we can use recursive traversal to find the hidden methods in the object and dynamically analyze them!</p>
+<h1 id="Conclusion"><a href="#Conclusion" class="headerlink" title="Conclusion"></a>Conclusion</h1><p>In this article, we&#x2019;ve covered COM processing order, activation types, what qualifies as a DCOM object, and how to find vulnerable COM objects in a given program.</p>
+<p>There&#x2019;s more COM than DCOM, but that&#x2019;s what you need to know to understand DCOM, and DCOM itself is relatively straightforward aside from the communication process (marshaling, proxy, stub).</p>
+<p>Finally, we even saw how to find vulnerable COM objects in other programs that we didn&#x2019;t cover in Part 1, so in Part 3, we&#x2019;ll bring you tools and vulnerabilities related to COM objects!</p>
+<p>Thank you for reading this long post</p>
+<p><img src="/2024/12/22/ogu123/COM_Object_part2/en/truman.gif" srcset="/img/loading.gif" alt></p>
+<h1 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a>Reference</h1><ul>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://klezvirus.github.io/RedTeaming/LateralMovement/LateralMovementDCOM/">https://klezvirus.github.io/RedTeaming/LateralMovement/LateralMovementDCOM/</a></p>
+</li>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.221bluestreet.com/offensive-security/windows-components-object-model/demystifying-windows-component-object-model-com">https://www.221bluestreet.com/offensive-security/windows-components-object-model/demystifying-windows-component-object-model-com</a></p>
+</li>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://the-deniss.github.io/posts/2021/05/17/discovering-and-exploiting-mcafee-com-objects.html">https://the-deniss.github.io/posts/2021/05/17/discovering-and-exploiting-mcafee-com-objects.html</a></p>
+</li>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://posts.specterops.io/lateral-movement-abuse-the-power-of-dcom-excel-application-3c016d0d9922">https://posts.specterops.io/lateral-movement-abuse-the-power-of-dcom-excel-application-3c016d0d9922</a></p>
+</li>
+</ul>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/COM-Object/">COM Object</a>
+                  
+                  <a class="hover-with-bg" href="/tags/ogu123/">ogu123</a>
+                  
+                  <a class="hover-with-bg" href="/tags/DCOM/">DCOM</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_ogu123.jpg" srcset="/img/loading.gif" alt="ogu123">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">ogu123</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/ogu123">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2024/12/22/ogu123/COM_Object_part2/ko/">
+                    <span class="hidden-mobile">[Research] COM Object - Part 2 (DCOM)(KR)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2024/12/22/ogu123/COM_Object_part2/en/';
+        this.page.identifier = '/2024/12/22/ogu123/COM_Object_part2/en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] COM Object - Part 2 (DCOM)(EN)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
