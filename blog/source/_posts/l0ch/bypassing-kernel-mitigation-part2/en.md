@@ -8,7 +8,7 @@ cc: false
 index_img: 2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image.png
 ---
 
-[Bypassing Windows Kernel Mitigations: Part1 - Overview](https://hackyboiz.github.io/2024/12/08/l0ch/bypassing-kernel-mitigation-part1/ko/)
+[Bypassing Windows Kernel Mitigations: Part1 - Overview](https://hackyboiz.github.io/2024/12/08/l0ch/bypassing-kernel-mitigation-part1/en/)
 
 Bypassing Windows Kernel Mitigations: Part2 - CVE-2024-21338 ← Now
 
@@ -362,15 +362,3 @@ int main() {
 I originally planned to introduce all three techniques in this part. It ended up being longer than I thought, so I'll summarize the remaining two techniques in the next part... (it's okay, I'm off for the holidays)
 
 I'll be back with Part 3 :) Keep up the good work in 2025!
-
-> **Bypassing Windows Kernel Mitigations Part 2 - CVE-2024-21338**
-> 
-> 
-> Dive into bypassing kCFG with a **Local Privilege Escalation exploit** in appid.sys (CVE-2024-21338). Learn about the **PreviousMode** trick, vulnerabilities, debugging, and achieving SYSTEM privilege via token swapping.
-> 
-> 📚 Details + PoC:
-> 
-> Coming soon: Part 3!
-> 
-> #Windows #Exploit #KernelMitigations
->

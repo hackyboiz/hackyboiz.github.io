@@ -8,6 +8,12 @@ cc: false
 index_img: 2024/12/08/l0ch/bypassing-kernel-mitigation-part1/ko/thumbnail.jpg
 ---
 
+Bypassing Windows Kernel Mitigations: Part1 - Overview ← Now
+
+[Bypassing Windows Kernel Mitigations: Part2 - CVE-2024-21338](https://hackyboiz.github.io/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/ko/) 
+
+---
+
 안녕하세요, L0ch입니다. 드디어.. 3년 만에 연구글로 돌아왔습니다! 사실 원래 1년 전에 연구글을 쓰려 했지만 졸업과 취업 양각에서 멘탈이 탈탈 털리고 있었기 때문에 흐지부지됐었던 기억이 있네요 ㅎㅎ.. 그래서 쓰다 만 초안 일부를 가져와봤습니다.
 
 ![image](image1.png)
