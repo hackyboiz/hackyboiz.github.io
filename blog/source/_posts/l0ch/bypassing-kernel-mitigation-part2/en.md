@@ -1,5 +1,5 @@
 ---
-title: "[Research] Bypassing Windows Kernel Mitigations: Part1 - Overview (En)"
+title: "[Research] Bypassing Windows Kernel Mitigations: Part2 - CVE-2024-21338 (En)"
 author: L0ch
 tags: [L0ch, windows, kernel, mitigation, previousmode, smep, kcfg, dep, bypass, exploit techniques, cve-2024-21338, sedebugprivilege, ioring]
 categories: [Research]
