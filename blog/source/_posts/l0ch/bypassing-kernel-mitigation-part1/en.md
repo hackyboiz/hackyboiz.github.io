@@ -8,6 +8,11 @@ cc: false
 index_img: 2024/12/08/l0ch/bypassing-kernel-mitigation-part1/en/thumbnail.jpg
 ---
 
+Bypassing Windows Kernel Mitigations: Part1 - Overview ← Now
+
+[Bypassing Windows Kernel Mitigations: Part2 - CVE-2024-21338](https://hackyboiz.github.io/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/) 
+
+---
 
 Finally... I'm back with a research paper after three years! Actually, I tried to write a research paper a year ago, but I had a mental breakdown due to graduation and job hunting, so I ended up abandoning it. So I've brought back some of the drafts I wrote.
 
