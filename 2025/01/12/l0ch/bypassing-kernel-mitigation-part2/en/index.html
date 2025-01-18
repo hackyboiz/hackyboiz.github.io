@@ -54,7 +54,7 @@
 &lt;li&gt;A value of 0 means it was created from kernel mode.&lt;/li&gt;
 &lt;/ul&gt;
 &lt;p&gt;This flag helps restrict kernel access to objects originating from user mode&lt;/p&gt;
-&lt;p&gt;If we can modify the PrevousMode of a user-mode process to 0, we can call the &lt;code&gt;NtWriteVirtualMemory&lt;/code&gt; or &lt;code&gt;ReadProcessMemory&lt;/code&gt; functions to get the kernel memory RW primitives, which we&amp;#x2019;ll demonstrate with a simple example and debugging to help make it easier to understand!&lt;/p&gt;
+&lt;p&gt;If we can modify the PreviousMode of a user-mode process to 0, we can call the &lt;code&gt;NtWriteVirtualMemory&lt;/code&gt; or &lt;code&gt;ReadProcessMemory&lt;/code&gt; functions to get the kernel memory RW primitives, which we&amp;#x2019;ll demonstrate with a simple example and debugging to help make it easier to understand!&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;stdio.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
 &lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;quot;defines.h&amp;quot;&lt;/span&gt;&lt;/span&gt;
 
@@ -109,7 +109,7 @@ _NtReadVirtualMemory pNtReadVIrtualMemory;
 &lt;li&gt;Overwrite the token value of the user-mode process to the system process&lt;/li&gt;
 &lt;li&gt;Spawn a cmd with system privileges&lt;/li&gt;
 &lt;/ol&gt;
-&lt;p&gt;In normal execution, nothing happens because the user-mode process cannot RW the kernel memory via &lt;code&gt;pNtWriteVirtualMemory&lt;/code&gt;&amp;#x2026;but we will now modify PreviouMode in the debugger before calling &lt;code&gt;pNtWriteVirtualMemory&lt;/code&gt; and do the privilege escalation.&lt;/p&gt;
+&lt;p&gt;In normal execution, nothing happens because the user-mode process cannot RW the kernel memory via &lt;code&gt;pNtWriteVirtualMemory&lt;/code&gt;&amp;#x2026;but we will now modify PreviousMode in the debugger before calling &lt;code&gt;pNtWriteVirtualMemory&lt;/code&gt; and do the privilege escalation.&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%205.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
 &lt;p&gt;When we run it, it will output the KTHREAD/EPROCESS address of the current process and the EPROCESS address of the SYSTEM process. Copy these and go to windbg.&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;: kd&amp;gt; dt _KTHREAD FFFFDC0FC3780080
@@ -133,7 +133,7 @@ nt!_KTHREAD
    +&lt;span class=&#34;hljs-number&#34;&gt;0x232&lt;/span&gt; PreviousMode     : &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;&amp;apos;&lt;/span&gt;
    +0x233 BasePriority     : 8 &amp;apos;&amp;apos;&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%206.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
-&lt;p&gt;We can see that PreviouMode is located at &lt;code&gt;KTHREAD+0x232&lt;/code&gt;. Since the current process is in user mode, we can see that the PreviouMode is 1. Now, in the Memory window of windbg, modify that value to 0.&lt;/p&gt;
+&lt;p&gt;We can see that PreviousMode is located at &lt;code&gt;KTHREAD+0x232&lt;/code&gt;. Since the current process is in user mode, we can see that the PreviousMode is 1. Now, in the Memory window of windbg, modify that value to 0.&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%207.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;: kd&amp;gt; dt _KTHREAD FFFFDC0FC3780080
 nt!_KTHREAD
@@ -159,7 +159,6 @@ nt!_KTHREAD
 &lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;pNtWriteVirtualMemory(GetCurrentProcess(), (ULONGLONG)EPROCESS + &lt;span class=&#34;hljs-number&#34;&gt;0x4b8&lt;/span&gt; , (ULONGLONG)SYSTEM_EPROCESS + &lt;span class=&#34;hljs-number&#34;&gt;0x4b8&lt;/span&gt;, &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(ULONGLONG), &amp;amp;dwbytes);
 system(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;cmd.exe&amp;quot;&lt;/span&gt;)&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Kernel Read/Write is now possible with &lt;code&gt;pNtWritevirtualMemory&lt;/code&gt; function through PreviousMode modification. After swapping the token with that of the system EPROCESS, executing the cmd process grants NT AUTHORITY\SYSTEM privileges&amp;#x2026;!&lt;/p&gt;
-&lt;p&gt;After swapping the token with that of the system EPROCESS, executing the cmd process grants NT AUTHORITY\SYSTEM privileges&amp;#x2026;!&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%208.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
 &lt;p&gt;?&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%209.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
@@ -173,7 +172,7 @@ system(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;cmd.exe&amp;quot;&lt;/s
 &lt;p&gt;If we add the code above and try again&amp;#x2026;&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%2010.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
 &lt;p&gt;We can modify the PreviousMode to achieve elevated privileges.&lt;/p&gt;
-&lt;p&gt;Coming back to the kCFG bypass, we can modify the PreviouMode by calling a normal kernel function registered in the kCFG bitmap after triggering the untrusted pointer dereference vulnerability of CVE-2024-21338. But&amp;#x2026; how do we find this function among the many, many kernel functions :(&lt;/p&gt;
+&lt;p&gt;Coming back to the kCFG bypass, we can modify the PreviousMode by calling a normal kernel function registered in the kCFG bitmap after triggering the untrusted pointer dereference vulnerability of CVE-2024-21338. But&amp;#x2026; how do we find this function among the many, many kernel functions :(&lt;/p&gt;
 &lt;p&gt;One function worth noting is the &lt;code&gt;ObfDereferenceObjectWithTag&lt;/code&gt; kernel macro. This macro decrements the reference count field of the object address being passed (offset -0x30), so it would be a perfect macro to change PreviousMode from a user-mode value of 1 to a kernel-mode value of 0.&lt;/p&gt;
 &lt;p&gt;However, there is one limitation to calling &lt;code&gt;ObfDereferenceObjectWithTag&lt;/code&gt; directly. As we saw earlier in the bug trigger, we can&amp;#x2019;t directly control the value of the first argument, but only indirectly control the value.&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%203.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
@@ -342,7 +341,7 @@ _NtDeviceIoControlFile pNtDeviceIoControlFile;
 &lt;li&gt;A value of 0 means it was created from kernel mode.&lt;/li&gt;
 &lt;/ul&gt;
 &lt;p&gt;This flag helps restrict kernel access to objects originating from user mode&lt;/p&gt;
-&lt;p&gt;If we can modify the PrevousMode of a user-mode process to 0, we can call the &lt;code&gt;NtWriteVirtualMemory&lt;/code&gt; or &lt;code&gt;ReadProcessMemory&lt;/code&gt; functions to get the kernel memory RW primitives, which we&amp;#x2019;ll demonstrate with a simple example and debugging to help make it easier to understand!&lt;/p&gt;
+&lt;p&gt;If we can modify the PreviousMode of a user-mode process to 0, we can call the &lt;code&gt;NtWriteVirtualMemory&lt;/code&gt; or &lt;code&gt;ReadProcessMemory&lt;/code&gt; functions to get the kernel memory RW primitives, which we&amp;#x2019;ll demonstrate with a simple example and debugging to help make it easier to understand!&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;stdio.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
 &lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;quot;defines.h&amp;quot;&lt;/span&gt;&lt;/span&gt;
 
@@ -397,7 +396,7 @@ _NtReadVirtualMemory pNtReadVIrtualMemory;
 &lt;li&gt;Overwrite the token value of the user-mode process to the system process&lt;/li&gt;
 &lt;li&gt;Spawn a cmd with system privileges&lt;/li&gt;
 &lt;/ol&gt;
-&lt;p&gt;In normal execution, nothing happens because the user-mode process cannot RW the kernel memory via &lt;code&gt;pNtWriteVirtualMemory&lt;/code&gt;&amp;#x2026;but we will now modify PreviouMode in the debugger before calling &lt;code&gt;pNtWriteVirtualMemory&lt;/code&gt; and do the privilege escalation.&lt;/p&gt;
+&lt;p&gt;In normal execution, nothing happens because the user-mode process cannot RW the kernel memory via &lt;code&gt;pNtWriteVirtualMemory&lt;/code&gt;&amp;#x2026;but we will now modify PreviousMode in the debugger before calling &lt;code&gt;pNtWriteVirtualMemory&lt;/code&gt; and do the privilege escalation.&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%205.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
 &lt;p&gt;When we run it, it will output the KTHREAD/EPROCESS address of the current process and the EPROCESS address of the SYSTEM process. Copy these and go to windbg.&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;: kd&amp;gt; dt _KTHREAD FFFFDC0FC3780080
@@ -421,7 +420,7 @@ nt!_KTHREAD
    +&lt;span class=&#34;hljs-number&#34;&gt;0x232&lt;/span&gt; PreviousMode     : &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;&amp;apos;&lt;/span&gt;
    +0x233 BasePriority     : 8 &amp;apos;&amp;apos;&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%206.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
-&lt;p&gt;We can see that PreviouMode is located at &lt;code&gt;KTHREAD+0x232&lt;/code&gt;. Since the current process is in user mode, we can see that the PreviouMode is 1. Now, in the Memory window of windbg, modify that value to 0.&lt;/p&gt;
+&lt;p&gt;We can see that PreviousMode is located at &lt;code&gt;KTHREAD+0x232&lt;/code&gt;. Since the current process is in user mode, we can see that the PreviousMode is 1. Now, in the Memory window of windbg, modify that value to 0.&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%207.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;: kd&amp;gt; dt _KTHREAD FFFFDC0FC3780080
 nt!_KTHREAD
@@ -447,7 +446,6 @@ nt!_KTHREAD
 &lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;pNtWriteVirtualMemory(GetCurrentProcess(), (ULONGLONG)EPROCESS + &lt;span class=&#34;hljs-number&#34;&gt;0x4b8&lt;/span&gt; , (ULONGLONG)SYSTEM_EPROCESS + &lt;span class=&#34;hljs-number&#34;&gt;0x4b8&lt;/span&gt;, &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(ULONGLONG), &amp;amp;dwbytes);
 system(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;cmd.exe&amp;quot;&lt;/span&gt;)&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Kernel Read/Write is now possible with &lt;code&gt;pNtWritevirtualMemory&lt;/code&gt; function through PreviousMode modification. After swapping the token with that of the system EPROCESS, executing the cmd process grants NT AUTHORITY\SYSTEM privileges&amp;#x2026;!&lt;/p&gt;
-&lt;p&gt;After swapping the token with that of the system EPROCESS, executing the cmd process grants NT AUTHORITY\SYSTEM privileges&amp;#x2026;!&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%208.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
 &lt;p&gt;?&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%209.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
@@ -461,7 +459,7 @@ system(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;cmd.exe&amp;quot;&lt;/s
 &lt;p&gt;If we add the code above and try again&amp;#x2026;&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%2010.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
 &lt;p&gt;We can modify the PreviousMode to achieve elevated privileges.&lt;/p&gt;
-&lt;p&gt;Coming back to the kCFG bypass, we can modify the PreviouMode by calling a normal kernel function registered in the kCFG bitmap after triggering the untrusted pointer dereference vulnerability of CVE-2024-21338. But&amp;#x2026; how do we find this function among the many, many kernel functions :(&lt;/p&gt;
+&lt;p&gt;Coming back to the kCFG bypass, we can modify the PreviousMode by calling a normal kernel function registered in the kCFG bitmap after triggering the untrusted pointer dereference vulnerability of CVE-2024-21338. But&amp;#x2026; how do we find this function among the many, many kernel functions :(&lt;/p&gt;
 &lt;p&gt;One function worth noting is the &lt;code&gt;ObfDereferenceObjectWithTag&lt;/code&gt; kernel macro. This macro decrements the reference count field of the object address being passed (offset -0x30), so it would be a perfect macro to change PreviousMode from a user-mode value of 1 to a kernel-mode value of 0.&lt;/p&gt;
 &lt;p&gt;However, there is one limitation to calling &lt;code&gt;ObfDereferenceObjectWithTag&lt;/code&gt; directly. As we saw earlier in the bug trigger, we can&amp;#x2019;t directly control the value of the first argument, but only indirectly control the value.&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%203.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
@@ -760,7 +758,7 @@ _NtDeviceIoControlFile pNtDeviceIoControlFile;
       <i class="iconfont icon-clock-fill"></i>
       
       
-      40
+      39
        분
     </span>
   
@@ -849,7 +847,7 @@ _NtDeviceIoControlFile pNtDeviceIoControlFile;
 <li>A value of 0 means it was created from kernel mode.</li>
 </ul>
 <p>This flag helps restrict kernel access to objects originating from user mode</p>
-<p>If we can modify the PrevousMode of a user-mode process to 0, we can call the <code>NtWriteVirtualMemory</code> or <code>ReadProcessMemory</code> functions to get the kernel memory RW primitives, which we&#x2019;ll demonstrate with a simple example and debugging to help make it easier to understand!</p>
+<p>If we can modify the PreviousMode of a user-mode process to 0, we can call the <code>NtWriteVirtualMemory</code> or <code>ReadProcessMemory</code> functions to get the kernel memory RW primitives, which we&#x2019;ll demonstrate with a simple example and debugging to help make it easier to understand!</p>
 <pre><code class="hljs c"><span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;stdio.h&gt;</span></span>
 <span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&quot;defines.h&quot;</span></span>
 
@@ -904,7 +902,7 @@ _NtReadVirtualMemory pNtReadVIrtualMemory;
 <li>Overwrite the token value of the user-mode process to the system process</li>
 <li>Spawn a cmd with system privileges</li>
 </ol>
-<p>In normal execution, nothing happens because the user-mode process cannot RW the kernel memory via <code>pNtWriteVirtualMemory</code>&#x2026;but we will now modify PreviouMode in the debugger before calling <code>pNtWriteVirtualMemory</code> and do the privilege escalation.</p>
+<p>In normal execution, nothing happens because the user-mode process cannot RW the kernel memory via <code>pNtWriteVirtualMemory</code>&#x2026;but we will now modify PreviousMode in the debugger before calling <code>pNtWriteVirtualMemory</code> and do the privilege escalation.</p>
 <p><img src="/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%205.png" srcset="/img/loading.gif" alt="image.png"></p>
 <p>When we run it, it will output the KTHREAD/EPROCESS address of the current process and the EPROCESS address of the SYSTEM process. Copy these and go to windbg.</p>
 <pre><code class="hljs c"><span class="hljs-number">2</span>: kd&gt; dt _KTHREAD FFFFDC0FC3780080
@@ -928,7 +926,7 @@ nt!_KTHREAD
    +<span class="hljs-number">0x232</span> PreviousMode     : <span class="hljs-number">1</span> <span class="hljs-string">&apos;&apos;</span>
    +0x233 BasePriority     : 8 &apos;&apos;</code></pre>
 <p><img src="/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%206.png" srcset="/img/loading.gif" alt="image.png"></p>
-<p>We can see that PreviouMode is located at <code>KTHREAD+0x232</code>. Since the current process is in user mode, we can see that the PreviouMode is 1. Now, in the Memory window of windbg, modify that value to 0.</p>
+<p>We can see that PreviousMode is located at <code>KTHREAD+0x232</code>. Since the current process is in user mode, we can see that the PreviousMode is 1. Now, in the Memory window of windbg, modify that value to 0.</p>
 <p><img src="/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%207.png" srcset="/img/loading.gif" alt="image.png"></p>
 <pre><code class="hljs c"><span class="hljs-number">2</span>: kd&gt; dt _KTHREAD FFFFDC0FC3780080
 nt!_KTHREAD
@@ -954,7 +952,6 @@ nt!_KTHREAD
 <pre><code class="hljs c">pNtWriteVirtualMemory(GetCurrentProcess(), (ULONGLONG)EPROCESS + <span class="hljs-number">0x4b8</span> , (ULONGLONG)SYSTEM_EPROCESS + <span class="hljs-number">0x4b8</span>, <span class="hljs-keyword">sizeof</span>(ULONGLONG), &amp;dwbytes);
 system(<span class="hljs-string">&quot;cmd.exe&quot;</span>)</code></pre>
 <p>Kernel Read/Write is now possible with <code>pNtWritevirtualMemory</code> function through PreviousMode modification. After swapping the token with that of the system EPROCESS, executing the cmd process grants NT AUTHORITY\SYSTEM privileges&#x2026;!</p>
-<p>After swapping the token with that of the system EPROCESS, executing the cmd process grants NT AUTHORITY\SYSTEM privileges&#x2026;!</p>
 <p><img src="/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%208.png" srcset="/img/loading.gif" alt="image.png"></p>
 <p>?</p>
 <p><img src="/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%209.png" srcset="/img/loading.gif" alt="image.png"></p>
@@ -968,7 +965,7 @@ system(<span class="hljs-string">&quot;cmd.exe&quot;</span>);</code></pre>
 <p>If we add the code above and try again&#x2026;</p>
 <p><img src="/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%2010.png" srcset="/img/loading.gif" alt="image.png"></p>
 <p>We can modify the PreviousMode to achieve elevated privileges.</p>
-<p>Coming back to the kCFG bypass, we can modify the PreviouMode by calling a normal kernel function registered in the kCFG bitmap after triggering the untrusted pointer dereference vulnerability of CVE-2024-21338. But&#x2026; how do we find this function among the many, many kernel functions :(</p>
+<p>Coming back to the kCFG bypass, we can modify the PreviousMode by calling a normal kernel function registered in the kCFG bitmap after triggering the untrusted pointer dereference vulnerability of CVE-2024-21338. But&#x2026; how do we find this function among the many, many kernel functions :(</p>
 <p>One function worth noting is the <code>ObfDereferenceObjectWithTag</code> kernel macro. This macro decrements the reference count field of the object address being passed (offset -0x30), so it would be a perfect macro to change PreviousMode from a user-mode value of 1 to a kernel-mode value of 0.</p>
 <p>However, there is one limitation to calling <code>ObfDereferenceObjectWithTag</code> directly. As we saw earlier in the bug trigger, we can&#x2019;t directly control the value of the first argument, but only indirectly control the value.</p>
 <p><img src="/2025/01/12/l0ch/bypassing-kernel-mitigation-part2/en/image%203.png" srcset="/img/loading.gif" alt="image.png"></p>
@@ -1114,8 +1111,6 @@ _NtDeviceIoControlFile pNtDeviceIoControlFile;
                   
                   <a class="hover-with-bg" href="/tags/mitigation/">mitigation</a>
                   
-                  <a class="hover-with-bg" href="/tags/previousmode/">previousmode</a>
-                  
                   <a class="hover-with-bg" href="/tags/smep/">smep</a>
                   
                   <a class="hover-with-bg" href="/tags/kcfg/">kcfg</a>
@@ -1123,6 +1118,8 @@ _NtDeviceIoControlFile pNtDeviceIoControlFile;
                   <a class="hover-with-bg" href="/tags/dep/">dep</a>
                   
                   <a class="hover-with-bg" href="/tags/exploit-techniques/">exploit techniques</a>
+                  
+                  <a class="hover-with-bg" href="/tags/previousmode/">previousmode</a>
                   
                   <a class="hover-with-bg" href="/tags/cve-2024-21338/">cve-2024-21338</a>
                   
