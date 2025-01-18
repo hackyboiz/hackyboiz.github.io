@@ -70,7 +70,7 @@ PreviousMode is a field in the KTHREAD structure that acts as a flag. It indicat
 
 This flag helps restrict kernel access to objects originating from user mode
 
-If we can modify the PrevousMode of a user-mode process to 0, we can call the `NtWriteVirtualMemory` or `ReadProcessMemory` functions to get the kernel memory RW primitives, which we'll demonstrate with a simple example and debugging to help make it easier to understand!
+If we can modify the PreviousMode of a user-mode process to 0, we can call the `NtWriteVirtualMemory` or `ReadProcessMemory` functions to get the kernel memory RW primitives, which we'll demonstrate with a simple example and debugging to help make it easier to understand!
 
 ```c
 #include <stdio.h>
@@ -129,7 +129,7 @@ The above code works as follows
 2. Overwrite the token value of the user-mode process to the system process
 3. Spawn a cmd with system privileges
 
-In normal execution, nothing happens because the user-mode process cannot RW the kernel memory via `pNtWriteVirtualMemory`...but we will now modify PreviouMode in the debugger before calling `pNtWriteVirtualMemory` and do the privilege escalation.
+In normal execution, nothing happens because the user-mode process cannot RW the kernel memory via `pNtWriteVirtualMemory`...but we will now modify PreviousMode in the debugger before calling `pNtWriteVirtualMemory` and do the privilege escalation.
 
 ![image.png](en/image%205.png)
 
@@ -160,7 +160,7 @@ nt!_KTHREAD
 
 ![image.png](en/image%206.png)
 
-We can see that PreviouMode is located at `KTHREAD+0x232`. Since the current process is in user mode, we can see that the PreviouMode is 1. Now, in the Memory window of windbg, modify that value to 0.
+We can see that PreviousMode is located at `KTHREAD+0x232`. Since the current process is in user mode, we can see that the PreviousMode is 1. Now, in the Memory window of windbg, modify that value to 0.
 
 ![image.png](en/image%207.png)
 
@@ -196,7 +196,6 @@ system("cmd.exe")
 
 Kernel Read/Write is now possible with `pNtWritevirtualMemory` function through PreviousMode modification. After swapping the token with that of the system EPROCESS, executing the cmd process grants NT AUTHORITY\SYSTEM privileges...!
 
-After swapping the token with that of the system EPROCESS, executing the cmd process grants NT AUTHORITY\SYSTEM privileges...!
 
 ![image.png](en/image%208.png)
 
@@ -222,7 +221,7 @@ If we add the code above and try again…
 
 We can modify the PreviousMode to achieve elevated privileges.
 
-Coming back to the kCFG bypass, we can modify the PreviouMode by calling a normal kernel function registered in the kCFG bitmap after triggering the untrusted pointer dereference vulnerability of CVE-2024-21338. But... how do we find this function among the many, many kernel functions :(
+Coming back to the kCFG bypass, we can modify the PreviousMode by calling a normal kernel function registered in the kCFG bitmap after triggering the untrusted pointer dereference vulnerability of CVE-2024-21338. But... how do we find this function among the many, many kernel functions :(
 
 One function worth noting is the `ObfDereferenceObjectWithTag` kernel macro. This macro decrements the reference count field of the object address being passed (offset -0x30), so it would be a perfect macro to change PreviousMode from a user-mode value of 1 to a kernel-mode value of 0.
 
