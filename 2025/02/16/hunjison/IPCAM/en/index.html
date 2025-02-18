@@ -1,0 +1,1277 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;hr&gt;
+&lt;p&gt;Hello, this is &lt;code&gt;hunjison&lt;/code&gt;. While studying hacking, I always felt something was missing&amp;#x2014;namely, the fact that I had never discovered a CVE.&lt;/p&gt;
+&lt;p&gt;Then one day&amp;#x2026; I heard an interesting story from &lt;code&gt;OUYA77&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Dun&amp;#x2026; Dun&amp;#x2026;!! It turns out that KISA was running a 1.5x payout event for IP CAM vulnerabilities.&lt;/p&gt;
+&lt;p&gt;After seeing this, every IP CAM started looking like money to me. Of course, I also thought this would be a great opportunity to earn a CVE.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;h1 id=&#34;IP-CAM-Target-Search&#34;&gt;&lt;a href=&#34;#IP-CAM-Target-Search&#34; class=&#34;headerlink&#34; title=&#34;IP CAM Target Search&#34;&gt;&lt;/a&gt;IP CAM Target Search&lt;/h1&gt;&lt;p&gt;Together with &lt;code&gt;OUYA77&lt;/code&gt;, we immediately began narrowing down a list of IP CAM products. Home IP CAMs ranged from 20,000 to 100,000 KRW, while enterprise-grade IP CAMs varied from 200,000 KRW to over a million.&lt;/p&gt;
+&lt;p&gt;Since we were not rich but wanted to make money, we decided to buy multiple home IP CAMs!&lt;/p&gt;
+&lt;p&gt;We specifically selected products with numerous attack vectors, especially focusing on external interfaces. Here are the interfaces we identified:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Wi-Fi (AP)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;App (iOS/Android &amp;#x2192; IP CAM)&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Windows program&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;External cloud storage&lt;/li&gt;
+&lt;li&gt;Ethernet&lt;/li&gt;
+&lt;li&gt;SD Card&lt;/li&gt;
+&lt;li&gt;USB&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Most modern IP CAMs include most of these interfaces, making them somewhat similar in structure. Additionally, we considered whether firmware could be obtained online.&lt;/p&gt;
+&lt;p&gt;In the end, we purchased four small and adorable IP CAMs. Among them, I will introduce our analysis of two devices.&lt;/p&gt;
+&lt;h1 id=&#34;Target-A&#34;&gt;&lt;a href=&#34;#Target-A&#34; class=&#34;headerlink&#34; title=&#34;Target A&#34;&gt;&lt;/a&gt;Target A&lt;/h1&gt;&lt;h2 id=&#34;1-Initial-Exploration&#34;&gt;&lt;a href=&#34;#1-Initial-Exploration&#34; class=&#34;headerlink&#34; title=&#34;#1 - Initial Exploration&#34;&gt;&lt;/a&gt;#1 - Initial Exploration&lt;/h2&gt;&lt;p&gt;Target A had two user interfaces: an app (iOS/Android) and a Windows EXE. Below are the initial findings from our analysis:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;App:&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Requires account registration/login and appears to transmit data from the app to a server.&lt;/li&gt;
+&lt;li&gt;Device registration involves scanning a QR code from the app, which contains Wi-Fi credentials.&lt;/li&gt;
+&lt;li&gt;Once registered, the user can watch video feeds.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Windows Program:&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Requires account registration/login and tran smits data to a server.&lt;/li&gt;
+&lt;li&gt;After logging in, it automatically scans for devices on the LAN, registering them based on serial numbers.&lt;/li&gt;
+&lt;li&gt;If not logged in, it can still scan the LAN for devices and watch video feeds.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Firmware Download:&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Found a method via publicly available blog posts.&lt;/li&gt;
+&lt;li&gt;Could be downloaded from the official website using a &lt;code&gt;/device/{device-model}/{device-model}&lt;/code&gt; URL structure.&lt;/li&gt;
+&lt;li&gt;Using &lt;code&gt;binwalk&lt;/code&gt;, we confirmed that the firmware used a &lt;code&gt;squashfs&lt;/code&gt; file system and extracted the files.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;2-Windows-EXE-Analysis&#34;&gt;&lt;a href=&#34;#2-Windows-EXE-Analysis&#34; class=&#34;headerlink&#34; title=&#34;#2 - Windows EXE Analysis&#34;&gt;&lt;/a&gt;#2 - Windows EXE Analysis&lt;/h2&gt;&lt;p&gt;We aimed to analyze the Windows program to answer the following questions:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;What data is exchanged with the server when the login button is pressed?&lt;/li&gt;
+&lt;li&gt;What authentication protocol is used when the video playback button is pressed?&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;We first attempted network analysis using Wireshark.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Due to TLS encryption, the packets were unreadable.&lt;/li&gt;
+&lt;li&gt;Just as browsers allow TLS decryption via &lt;code&gt;SSLKEYLOGFILE&lt;/code&gt;, we attempted dynamic debugging of the program&amp;#x2019;s TLS logic to extract key files.&lt;/li&gt;
+&lt;li&gt;However, reversing the TLS structure turned out to be difficult, so we sought an alternative approach.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Fortunately, I had prior experience with the Frida framework, so we used Frida to hook SSL-related encryption and decryption functions.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Identified SSL-related functions imported by the Windows EXE.&lt;/li&gt;
+&lt;li&gt;Extracted argument values and return buffers based on static analysis. The right-hand image shows an HTTP 200 response!&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image%201.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Using the Frida hooking method, we gained some insights into how the Windows EXE operates.&lt;/p&gt;
+&lt;h3 id=&#34;2-1-Watching-Video-After-User-Login-WAN-Network&#34;&gt;&lt;a href=&#34;#2-1-Watching-Video-After-User-Login-WAN-Network&#34; class=&#34;headerlink&#34; title=&#34;#2.1 - Watching Video After User Login (WAN Network)&#34;&gt;&lt;/a&gt;#2.1 - Watching Video After User Login (WAN Network)&lt;/h3&gt;&lt;p&gt;When the Windows program and IP CAM are on different networks (WAN), they communicate through a server, as shown below:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Once TLS decryption is disabled, the server receives the user&amp;#x2019;s password.&lt;/li&gt;
+&lt;li&gt;If authentication is successful, the server sends video data.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image%202.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;However, the TLS 1.2 encrypted communication between the IP CAM and server was not decryptable. Only certain cipher suites using RSA are known to have vulnerabilities, but the target IP CAM used &lt;code&gt;TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256&lt;/code&gt;, making MITM attacks impossible.&lt;/p&gt;
+&lt;h3 id=&#34;See-Also-Packet-Sniffing-with-a-Wi-Fi-Dongle&#34;&gt;&lt;a href=&#34;#See-Also-Packet-Sniffing-with-a-Wi-Fi-Dongle&#34; class=&#34;headerlink&#34; title=&#34;[See Also] Packet Sniffing with a Wi-Fi Dongle&#34;&gt;&lt;/a&gt;[See Also] Packet Sniffing with a Wi-Fi Dongle&lt;/h3&gt;&lt;p&gt;To capture packets exchanged between the IP CAM and server, we used a Wi-Fi dongle. Typically, dongles enable Wi-Fi on devices without built-in Wi-Fi, but we repurposed one to rebroadcast Ethernet as Wi-Fi.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;As shown below, the dongle functions like a router.&lt;/li&gt;
+&lt;li&gt;By selecting the dongle&amp;#x2019;s network interface in Wireshark, we captured all packets sent to the IP CAM.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image%203.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;h3 id=&#34;2-2-Watching-Video-After-User-Login-LAN-Network&#34;&gt;&lt;a href=&#34;#2-2-Watching-Video-After-User-Login-LAN-Network&#34; class=&#34;headerlink&#34; title=&#34;#2.2 - Watching Video After User Login (LAN Network)&#34;&gt;&lt;/a&gt;#2.2 - Watching Video After User Login (LAN Network)&lt;/h3&gt;&lt;p&gt;An interesting logic was discovered in the LAN network. When I confirmed that the Windows EXE and IP CAM were encrypting data using a LAN encryption key, I naturally assumed it was a fixed key. That was my mistake&amp;#x2014;I underestimated Target A.&lt;/p&gt;
+&lt;p&gt;As shown in the diagram below, when a user logs in, the server issues a JWT token, which is then used to deliver the LAN encryption key. It is assumed that a similar mechanism is used between the server and the IP CAM.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%204.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;h3 id=&#34;2-3-Watching-Video-Without-User-Login-LAN-Network&#34;&gt;&lt;a href=&#34;#2-3-Watching-Video-Without-User-Login-LAN-Network&#34; class=&#34;headerlink&#34; title=&#34;#2.3 - Watching Video Without User Login (LAN Network)&#34;&gt;&lt;/a&gt;#2.3 - Watching Video Without User Login (LAN Network)&lt;/h3&gt;&lt;p&gt;Target A had a feature that allowed scanning and watching videos on the LAN without logging in. However, a user password was required to access the video stream.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The Windows EXE cached successful passwords so that users wouldn&amp;#x2019;t have to re-enter them repeatedly. I mistakenly thought I had found a vulnerability, but right before writing the report, I realized I had misunderstood the caching mechanism.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image%205.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;h3 id=&#34;2-4-Watching-Video-Without-User-Login-RTSP-Protocol&#34;&gt;&lt;a href=&#34;#2-4-Watching-Video-Without-User-Login-RTSP-Protocol&#34; class=&#34;headerlink&#34; title=&#34;#2.4 - Watching Video Without User Login (RTSP Protocol)&#34;&gt;&lt;/a&gt;#2.4 - Watching Video Without User Login (RTSP Protocol)&lt;/h3&gt;&lt;p&gt;Target A also supported the RTSP protocol. RTSP (Real-Time Streaming Protocol) is used to stream multimedia data such as audio and video over a network. I was able to identify Target A&amp;#x2019;s RTSP URL through an online blog post.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;In older versions of Target A, &lt;strong&gt;a six-digit device code was used as the RTSP password&lt;/strong&gt;. However, the latest version patched this by requiring users to set a password during device registration.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image%206.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;h2 id=&#34;3-API-Server&#34;&gt;&lt;a href=&#34;#3-API-Server&#34; class=&#34;headerlink&#34; title=&#34;#3 - API Server&#34;&gt;&lt;/a&gt;#3 - API Server&lt;/h2&gt;&lt;p&gt;While hooking the Windows EXE with Frida, I discovered the API server&amp;#x2019;s address. This server provided the same functionality as the Windows program but was only accessible via Internet Explorer. It was an extremely outdated website.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The server supported user registration, device registration, and password changes, just like the Windows program.&lt;/li&gt;
+&lt;li&gt;I considered testing various possibilities, but I stopped after realizing it was outside the scope of the bug bounty program.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;4-Firmware-Analysis&#34;&gt;&lt;a href=&#34;#4-Firmware-Analysis&#34; class=&#34;headerlink&#34; title=&#34;#4 - Firmware Analysis&#34;&gt;&lt;/a&gt;#4 - Firmware Analysis&lt;/h2&gt;&lt;p&gt;As mentioned earlier, we acquired the firmware early in our research. We focused on the following areas but did not find any vulnerabilities:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Command Injection:&lt;/strong&gt; We examined processes that accepted system commands as parameters but found no exploitable weaknesses.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;BOF / DoS Attacks:&lt;/strong&gt; We checked whether input length validation was properly implemented in user request handling but found nothing exploitable.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;5-Result&#34;&gt;&lt;a href=&#34;#5-Result&#34; class=&#34;headerlink&#34; title=&#34;#5 - Result&#34;&gt;&lt;/a&gt;#5 - Result&lt;/h2&gt;&lt;p&gt;Our analysis of Target A primarily focused on the Windows EXE, testing various scenarios. Unfortunately, we did not discover any vulnerabilities. One thing that stood out was that this product had likely been analyzed by many hackers before.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The four scenarios analyzed in &lt;strong&gt;Section #2&lt;/strong&gt; applied secure encryption methods. I doubt it was designed this way from the beginning.&lt;/li&gt;
+&lt;li&gt;Input length validation for buffer overflow (BOF) attacks was abnormally strict.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image%207.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;hr&gt;
+&lt;h1 id=&#34;Target-B&#34;&gt;&lt;a href=&#34;#Target-B&#34; class=&#34;headerlink&#34; title=&#34;Target B&#34;&gt;&lt;/a&gt;Target B&lt;/h1&gt;&lt;h2 id=&#34;1-Initial-exploration&#34;&gt;&lt;a href=&#34;#1-Initial-exploration&#34; class=&#34;headerlink&#34; title=&#34;#1 - Initial exploration&#34;&gt;&lt;/a&gt;#1 - Initial exploration&lt;/h2&gt;&lt;p&gt;Target B&amp;#x2019;s user interface includes an App (iOS/Android) and a Windows EXE. While analyzing the network traffic of the Windows EXE, we identified a Web Interface on the IP CAM&amp;#x2019;s IP address.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;App&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Initial setup instructions appeared weak in security.&lt;/li&gt;
+&lt;li&gt;During device registration, the mobile device connects to the IP CAM&amp;#x2019;s Wi-Fi, and the mobile device&amp;#x2019;s Wi-Fi credentials are transmitted to complete the initial registration.&lt;/li&gt;
+&lt;li&gt;After registration, users can watch live video streams.&lt;/li&gt;
+&lt;li&gt;Additional features include recording, cloud uploads, camera pan/tilt/zoom, and buzzer activation.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Windows EXE&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Can discover and register devices on the local network.&lt;/li&gt;
+&lt;li&gt;Offers limited functionality.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Web Interface&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;A CGI-based website accessible via the IP CAM&amp;#x2019;s IP address. Authentication via user password is required. The poor UI suggests many potential vulnerabilities!&lt;/li&gt;
+&lt;li&gt;Provides most of the features available in the App.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Includes system configuration backup/load and firmware update functionality.&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;2-Web-Interface&#34;&gt;&lt;a href=&#34;#2-Web-Interface&#34; class=&#34;headerlink&#34; title=&#34;#2 - Web Interface&#34;&gt;&lt;/a&gt;#2 - Web Interface&lt;/h2&gt;&lt;h3 id=&#34;2-1-System-configuration-backup-load&#34;&gt;&lt;a href=&#34;#2-1-System-configuration-backup-load&#34; class=&#34;headerlink&#34; title=&#34;#2.1 - System configuration backup/load&#34;&gt;&lt;/a&gt;#2.1 - System configuration backup/load&lt;/h3&gt;&lt;p&gt;The Web Interface allows users to back up (IP CAM &amp;#x2192; PC download) and load (PC &amp;#x2192; IP CAM) system configuration files. The binary file structure is as follows:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Header (0x200)&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Contains an MD5 hash.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Body&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;TAR structure.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Identifying the TAR structure in the BODY field allowed us to extract file paths and original data. If we modified the structure to insert our own data at &lt;code&gt;/etc/shadow&lt;/code&gt;, overwriting the system file should theoretically be possible.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%208.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;However, the issue was the MD5 hash. While the length matched that of an MD5 hash, the computed value did not match. Later, we found a 2019 post detailing how someone successfully modified the MD5 value to change the root password of the same IP CAM model.&lt;/p&gt;
+&lt;p&gt;This clearly suggests that the vulnerability was reported and patched. &amp;#x1F602; As we later discovered during firmware extraction, the MD5 hash calculation method appears to have been repeatedly updated by security researchers.&lt;/p&gt;
+&lt;h3 id=&#34;2-2-Firmware-update&#34;&gt;&lt;a href=&#34;#2-2-Firmware-update&#34; class=&#34;headerlink&#34; title=&#34;#2.2 - Firmware update&#34;&gt;&lt;/a&gt;#2.2 - Firmware update&lt;/h3&gt;&lt;p&gt;We downloaded the firmware from the manufacturer&amp;#x2019;s website. Although it appeared to be in a standard ZIP format, it could not be extracted properly. Upon inspection, we found some customized modifications to the ZIP structure.&lt;/p&gt;
+&lt;p&gt;By following the ZIP format and adjusting our script accordingly, we managed to modify parts of the binary and successfully extract the firmware (although some errors prevented full extraction).&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%209.png&#34; alt=&#34;[https://blog.forensicresearch.kr/3](https://blog.forensicresearch.kr/3)&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://blog.forensicresearch.kr/3&#34;&gt;https://blog.forensicresearch.kr/3&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;During our analysis, we also discovered a way to access an archive of firmware versions from the manufacturer&amp;#x2019;s website. We analyzed the firmware using the following methods:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;ZIP structure analysis&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Adjusted scripts to match the ZIP format and extract firmware.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Main binary reverse engineering&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Reversed the logic used to generate system config files (which have the same structure as the firmware) to track changes over time.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;b6c855a3-b38e-402f-bffd-ea5f99fa942b.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Through this analysis, we identified how firmware updates had evolved. The changes suggest continuous involvement from security researchers&amp;#x2026; quite impressive!&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;ZIP file structure modifications&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Initially, file signatures were simply altered to obscure their format.&lt;/li&gt;
+&lt;li&gt;Later, parts of the file were partially encrypted.&lt;/li&gt;
+&lt;li&gt;In the latest versions, the entire file appears to be encrypted.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;MD5 hash generation logic&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Initially, it was &lt;code&gt;MD5(BODY)&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;Later, it changed to &lt;code&gt;MD5(BODY + &amp;quot;secret string&amp;quot;)&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;The current method remains unknown.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Firmware file upload location&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;From 2017 to 2021, firmware was uploaded to the manufacturer&amp;#x2019;s website.&lt;/li&gt;
+&lt;li&gt;Since then, firmware updates have been distributed via a backend connected to the App.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;3-App&#34;&gt;&lt;a href=&#34;#3-App&#34; class=&#34;headerlink&#34; title=&#34;#3 - App&#34;&gt;&lt;/a&gt;#3 - App&lt;/h2&gt;&lt;p&gt;Since we did not have a rooted Android phone, we only analyzed the App at the network level. (Okay, fine, we were just too lazy to go deeper. &amp;#x1F606;) However, since we had an iPhone, we captured network packets as follows:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;A quick Google search revealed that connecting a MacBook to an iPhone allows for iPhone packet capture.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image%2010.png&#34; alt=&#34;[https://lxxyeon.tistory.com/157](https://lxxyeon.tistory.com/157)&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://lxxyeon.tistory.com/157&#34;&gt;https://lxxyeon.tistory.com/157&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Analyzing the captured packets between the iPhone and the IP CAM, we observed the following communication process:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;When the IP CAM is powered on, it periodically communicates with the server, sending its IP address and a port number that changes every minute.&lt;/li&gt;
+&lt;li&gt;When the user launches the App, it sends a communication request to the server. The server then relays the request to the IP CAM using the stored IP/port information, including the user&amp;#x2019;s IP/port data.&lt;ul&gt;
+&lt;li&gt;The IP CAM receives this information and sends a connection request to the user.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image%2011.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Examining publicly available attack cases against Target B, we found that attackers typically followed these steps:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Performed a chip-off extraction of the flash memory and dumped the firmware.&lt;/li&gt;
+&lt;li&gt;Analyzed the binary and identified a buffer overflow (BOF) vulnerability.&lt;/li&gt;
+&lt;li&gt;Exploited the BOF to achieve remote code execution (RCE) and gain a shell.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image%2012.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;If we were to start analyzing the IP CAM from scratch, we would follow their approach and extract the firmware directly from the flash memory. Through this project, we realized the absolute importance of obtaining firmware and setting up a dynamic debugging environment.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Seriously, this is &lt;strong&gt;the most important part&lt;/strong&gt;.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;4-Windows-EXE&#34;&gt;&lt;a href=&#34;#4-Windows-EXE&#34; class=&#34;headerlink&#34; title=&#34;#4 - Windows EXE&#34;&gt;&lt;/a&gt;#4 - Windows EXE&lt;/h2&gt;&lt;p&gt;Although the logic of the Windows EXE was simple, what stood out was that the App and the Windows EXE used completely different protocols. Since the IP CAM supports multiple protocols, this suggests that many vulnerabilities could potentially be found if explored further.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%2013.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;Conclusion&#34;&gt;&lt;a href=&#34;#Conclusion&#34; class=&#34;headerlink&#34; title=&#34;Conclusion&#34;&gt;&lt;/a&gt;Conclusion&lt;/h2&gt;&lt;p&gt;Over approximately three months (Nov 2024 &amp;#x2013; Jan 2025), I analyzed four IP CAMs, including the two described in this post. As this was my first experience analyzing IoT devices, I encountered many challenges. In particular, I was not very familiar with Windows EXE analysis and network protocol analysis.&lt;/p&gt;
+&lt;p&gt;Despite this, I learned several key lessons from this project:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Some targets are more vulnerable than others. Devices that have been extensively analyzed by hackers tend to have a much higher security level.&lt;/li&gt;
+&lt;li&gt;Many of the most basic vulnerabilities in IP CAMs seem to have been patched.&lt;/li&gt;
+&lt;li&gt;IoT device analysis requires a broad range of foundational knowledge, including Windows EXE static and dynamic analysis, network protocol analysis, socket programming, web hacking, system hacking, and even hardware-based approaches.&lt;/li&gt;
+&lt;li&gt;Extracting firmware and setting up a dynamic debugging environment should always be the top priority.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image%2014.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Thank you for reading!&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] One day.. I got an IPCAM (en) - hackyboiz">
+  <meta property="og:description" content="&lt;hr&gt;
+&lt;p&gt;Hello, this is &lt;code&gt;hunjison&lt;/code&gt;. While studying hacking, I always felt something was missing&amp;#x2014;namely, the fact that I had never discovered a CVE.&lt;/p&gt;
+&lt;p&gt;Then one day&amp;#x2026; I heard an interesting story from &lt;code&gt;OUYA77&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Dun&amp;#x2026; Dun&amp;#x2026;!! It turns out that KISA was running a 1.5x payout event for IP CAM vulnerabilities.&lt;/p&gt;
+&lt;p&gt;After seeing this, every IP CAM started looking like money to me. Of course, I also thought this would be a great opportunity to earn a CVE.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;h1 id=&#34;IP-CAM-Target-Search&#34;&gt;&lt;a href=&#34;#IP-CAM-Target-Search&#34; class=&#34;headerlink&#34; title=&#34;IP CAM Target Search&#34;&gt;&lt;/a&gt;IP CAM Target Search&lt;/h1&gt;&lt;p&gt;Together with &lt;code&gt;OUYA77&lt;/code&gt;, we immediately began narrowing down a list of IP CAM products. Home IP CAMs ranged from 20,000 to 100,000 KRW, while enterprise-grade IP CAMs varied from 200,000 KRW to over a million.&lt;/p&gt;
+&lt;p&gt;Since we were not rich but wanted to make money, we decided to buy multiple home IP CAMs!&lt;/p&gt;
+&lt;p&gt;We specifically selected products with numerous attack vectors, especially focusing on external interfaces. Here are the interfaces we identified:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Wi-Fi (AP)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;App (iOS/Android &amp;#x2192; IP CAM)&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Windows program&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;External cloud storage&lt;/li&gt;
+&lt;li&gt;Ethernet&lt;/li&gt;
+&lt;li&gt;SD Card&lt;/li&gt;
+&lt;li&gt;USB&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Most modern IP CAMs include most of these interfaces, making them somewhat similar in structure. Additionally, we considered whether firmware could be obtained online.&lt;/p&gt;
+&lt;p&gt;In the end, we purchased four small and adorable IP CAMs. Among them, I will introduce our analysis of two devices.&lt;/p&gt;
+&lt;h1 id=&#34;Target-A&#34;&gt;&lt;a href=&#34;#Target-A&#34; class=&#34;headerlink&#34; title=&#34;Target A&#34;&gt;&lt;/a&gt;Target A&lt;/h1&gt;&lt;h2 id=&#34;1-Initial-Exploration&#34;&gt;&lt;a href=&#34;#1-Initial-Exploration&#34; class=&#34;headerlink&#34; title=&#34;#1 - Initial Exploration&#34;&gt;&lt;/a&gt;#1 - Initial Exploration&lt;/h2&gt;&lt;p&gt;Target A had two user interfaces: an app (iOS/Android) and a Windows EXE. Below are the initial findings from our analysis:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;App:&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Requires account registration/login and appears to transmit data from the app to a server.&lt;/li&gt;
+&lt;li&gt;Device registration involves scanning a QR code from the app, which contains Wi-Fi credentials.&lt;/li&gt;
+&lt;li&gt;Once registered, the user can watch video feeds.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Windows Program:&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Requires account registration/login and tran smits data to a server.&lt;/li&gt;
+&lt;li&gt;After logging in, it automatically scans for devices on the LAN, registering them based on serial numbers.&lt;/li&gt;
+&lt;li&gt;If not logged in, it can still scan the LAN for devices and watch video feeds.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Firmware Download:&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Found a method via publicly available blog posts.&lt;/li&gt;
+&lt;li&gt;Could be downloaded from the official website using a &lt;code&gt;/device/{device-model}/{device-model}&lt;/code&gt; URL structure.&lt;/li&gt;
+&lt;li&gt;Using &lt;code&gt;binwalk&lt;/code&gt;, we confirmed that the firmware used a &lt;code&gt;squashfs&lt;/code&gt; file system and extracted the files.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;2-Windows-EXE-Analysis&#34;&gt;&lt;a href=&#34;#2-Windows-EXE-Analysis&#34; class=&#34;headerlink&#34; title=&#34;#2 - Windows EXE Analysis&#34;&gt;&lt;/a&gt;#2 - Windows EXE Analysis&lt;/h2&gt;&lt;p&gt;We aimed to analyze the Windows program to answer the following questions:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;What data is exchanged with the server when the login button is pressed?&lt;/li&gt;
+&lt;li&gt;What authentication protocol is used when the video playback button is pressed?&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;We first attempted network analysis using Wireshark.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Due to TLS encryption, the packets were unreadable.&lt;/li&gt;
+&lt;li&gt;Just as browsers allow TLS decryption via &lt;code&gt;SSLKEYLOGFILE&lt;/code&gt;, we attempted dynamic debugging of the program&amp;#x2019;s TLS logic to extract key files.&lt;/li&gt;
+&lt;li&gt;However, reversing the TLS structure turned out to be difficult, so we sought an alternative approach.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Fortunately, I had prior experience with the Frida framework, so we used Frida to hook SSL-related encryption and decryption functions.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Identified SSL-related functions imported by the Windows EXE.&lt;/li&gt;
+&lt;li&gt;Extracted argument values and return buffers based on static analysis. The right-hand image shows an HTTP 200 response!&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image%201.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Using the Frida hooking method, we gained some insights into how the Windows EXE operates.&lt;/p&gt;
+&lt;h3 id=&#34;2-1-Watching-Video-After-User-Login-WAN-Network&#34;&gt;&lt;a href=&#34;#2-1-Watching-Video-After-User-Login-WAN-Network&#34; class=&#34;headerlink&#34; title=&#34;#2.1 - Watching Video After User Login (WAN Network)&#34;&gt;&lt;/a&gt;#2.1 - Watching Video After User Login (WAN Network)&lt;/h3&gt;&lt;p&gt;When the Windows program and IP CAM are on different networks (WAN), they communicate through a server, as shown below:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Once TLS decryption is disabled, the server receives the user&amp;#x2019;s password.&lt;/li&gt;
+&lt;li&gt;If authentication is successful, the server sends video data.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image%202.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;However, the TLS 1.2 encrypted communication between the IP CAM and server was not decryptable. Only certain cipher suites using RSA are known to have vulnerabilities, but the target IP CAM used &lt;code&gt;TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256&lt;/code&gt;, making MITM attacks impossible.&lt;/p&gt;
+&lt;h3 id=&#34;See-Also-Packet-Sniffing-with-a-Wi-Fi-Dongle&#34;&gt;&lt;a href=&#34;#See-Also-Packet-Sniffing-with-a-Wi-Fi-Dongle&#34; class=&#34;headerlink&#34; title=&#34;[See Also] Packet Sniffing with a Wi-Fi Dongle&#34;&gt;&lt;/a&gt;[See Also] Packet Sniffing with a Wi-Fi Dongle&lt;/h3&gt;&lt;p&gt;To capture packets exchanged between the IP CAM and server, we used a Wi-Fi dongle. Typically, dongles enable Wi-Fi on devices without built-in Wi-Fi, but we repurposed one to rebroadcast Ethernet as Wi-Fi.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;As shown below, the dongle functions like a router.&lt;/li&gt;
+&lt;li&gt;By selecting the dongle&amp;#x2019;s network interface in Wireshark, we captured all packets sent to the IP CAM.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image%203.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;h3 id=&#34;2-2-Watching-Video-After-User-Login-LAN-Network&#34;&gt;&lt;a href=&#34;#2-2-Watching-Video-After-User-Login-LAN-Network&#34; class=&#34;headerlink&#34; title=&#34;#2.2 - Watching Video After User Login (LAN Network)&#34;&gt;&lt;/a&gt;#2.2 - Watching Video After User Login (LAN Network)&lt;/h3&gt;&lt;p&gt;An interesting logic was discovered in the LAN network. When I confirmed that the Windows EXE and IP CAM were encrypting data using a LAN encryption key, I naturally assumed it was a fixed key. That was my mistake&amp;#x2014;I underestimated Target A.&lt;/p&gt;
+&lt;p&gt;As shown in the diagram below, when a user logs in, the server issues a JWT token, which is then used to deliver the LAN encryption key. It is assumed that a similar mechanism is used between the server and the IP CAM.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%204.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;h3 id=&#34;2-3-Watching-Video-Without-User-Login-LAN-Network&#34;&gt;&lt;a href=&#34;#2-3-Watching-Video-Without-User-Login-LAN-Network&#34; class=&#34;headerlink&#34; title=&#34;#2.3 - Watching Video Without User Login (LAN Network)&#34;&gt;&lt;/a&gt;#2.3 - Watching Video Without User Login (LAN Network)&lt;/h3&gt;&lt;p&gt;Target A had a feature that allowed scanning and watching videos on the LAN without logging in. However, a user password was required to access the video stream.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The Windows EXE cached successful passwords so that users wouldn&amp;#x2019;t have to re-enter them repeatedly. I mistakenly thought I had found a vulnerability, but right before writing the report, I realized I had misunderstood the caching mechanism.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image%205.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;h3 id=&#34;2-4-Watching-Video-Without-User-Login-RTSP-Protocol&#34;&gt;&lt;a href=&#34;#2-4-Watching-Video-Without-User-Login-RTSP-Protocol&#34; class=&#34;headerlink&#34; title=&#34;#2.4 - Watching Video Without User Login (RTSP Protocol)&#34;&gt;&lt;/a&gt;#2.4 - Watching Video Without User Login (RTSP Protocol)&lt;/h3&gt;&lt;p&gt;Target A also supported the RTSP protocol. RTSP (Real-Time Streaming Protocol) is used to stream multimedia data such as audio and video over a network. I was able to identify Target A&amp;#x2019;s RTSP URL through an online blog post.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;In older versions of Target A, &lt;strong&gt;a six-digit device code was used as the RTSP password&lt;/strong&gt;. However, the latest version patched this by requiring users to set a password during device registration.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image%206.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;h2 id=&#34;3-API-Server&#34;&gt;&lt;a href=&#34;#3-API-Server&#34; class=&#34;headerlink&#34; title=&#34;#3 - API Server&#34;&gt;&lt;/a&gt;#3 - API Server&lt;/h2&gt;&lt;p&gt;While hooking the Windows EXE with Frida, I discovered the API server&amp;#x2019;s address. This server provided the same functionality as the Windows program but was only accessible via Internet Explorer. It was an extremely outdated website.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The server supported user registration, device registration, and password changes, just like the Windows program.&lt;/li&gt;
+&lt;li&gt;I considered testing various possibilities, but I stopped after realizing it was outside the scope of the bug bounty program.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;4-Firmware-Analysis&#34;&gt;&lt;a href=&#34;#4-Firmware-Analysis&#34; class=&#34;headerlink&#34; title=&#34;#4 - Firmware Analysis&#34;&gt;&lt;/a&gt;#4 - Firmware Analysis&lt;/h2&gt;&lt;p&gt;As mentioned earlier, we acquired the firmware early in our research. We focused on the following areas but did not find any vulnerabilities:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Command Injection:&lt;/strong&gt; We examined processes that accepted system commands as parameters but found no exploitable weaknesses.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;BOF / DoS Attacks:&lt;/strong&gt; We checked whether input length validation was properly implemented in user request handling but found nothing exploitable.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;5-Result&#34;&gt;&lt;a href=&#34;#5-Result&#34; class=&#34;headerlink&#34; title=&#34;#5 - Result&#34;&gt;&lt;/a&gt;#5 - Result&lt;/h2&gt;&lt;p&gt;Our analysis of Target A primarily focused on the Windows EXE, testing various scenarios. Unfortunately, we did not discover any vulnerabilities. One thing that stood out was that this product had likely been analyzed by many hackers before.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The four scenarios analyzed in &lt;strong&gt;Section #2&lt;/strong&gt; applied secure encryption methods. I doubt it was designed this way from the beginning.&lt;/li&gt;
+&lt;li&gt;Input length validation for buffer overflow (BOF) attacks was abnormally strict.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image%207.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;hr&gt;
+&lt;h1 id=&#34;Target-B&#34;&gt;&lt;a href=&#34;#Target-B&#34; class=&#34;headerlink&#34; title=&#34;Target B&#34;&gt;&lt;/a&gt;Target B&lt;/h1&gt;&lt;h2 id=&#34;1-Initial-exploration&#34;&gt;&lt;a href=&#34;#1-Initial-exploration&#34; class=&#34;headerlink&#34; title=&#34;#1 - Initial exploration&#34;&gt;&lt;/a&gt;#1 - Initial exploration&lt;/h2&gt;&lt;p&gt;Target B&amp;#x2019;s user interface includes an App (iOS/Android) and a Windows EXE. While analyzing the network traffic of the Windows EXE, we identified a Web Interface on the IP CAM&amp;#x2019;s IP address.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;App&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Initial setup instructions appeared weak in security.&lt;/li&gt;
+&lt;li&gt;During device registration, the mobile device connects to the IP CAM&amp;#x2019;s Wi-Fi, and the mobile device&amp;#x2019;s Wi-Fi credentials are transmitted to complete the initial registration.&lt;/li&gt;
+&lt;li&gt;After registration, users can watch live video streams.&lt;/li&gt;
+&lt;li&gt;Additional features include recording, cloud uploads, camera pan/tilt/zoom, and buzzer activation.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Windows EXE&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Can discover and register devices on the local network.&lt;/li&gt;
+&lt;li&gt;Offers limited functionality.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Web Interface&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;A CGI-based website accessible via the IP CAM&amp;#x2019;s IP address. Authentication via user password is required. The poor UI suggests many potential vulnerabilities!&lt;/li&gt;
+&lt;li&gt;Provides most of the features available in the App.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Includes system configuration backup/load and firmware update functionality.&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;2-Web-Interface&#34;&gt;&lt;a href=&#34;#2-Web-Interface&#34; class=&#34;headerlink&#34; title=&#34;#2 - Web Interface&#34;&gt;&lt;/a&gt;#2 - Web Interface&lt;/h2&gt;&lt;h3 id=&#34;2-1-System-configuration-backup-load&#34;&gt;&lt;a href=&#34;#2-1-System-configuration-backup-load&#34; class=&#34;headerlink&#34; title=&#34;#2.1 - System configuration backup/load&#34;&gt;&lt;/a&gt;#2.1 - System configuration backup/load&lt;/h3&gt;&lt;p&gt;The Web Interface allows users to back up (IP CAM &amp;#x2192; PC download) and load (PC &amp;#x2192; IP CAM) system configuration files. The binary file structure is as follows:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Header (0x200)&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Contains an MD5 hash.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Body&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;TAR structure.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Identifying the TAR structure in the BODY field allowed us to extract file paths and original data. If we modified the structure to insert our own data at &lt;code&gt;/etc/shadow&lt;/code&gt;, overwriting the system file should theoretically be possible.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%208.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;However, the issue was the MD5 hash. While the length matched that of an MD5 hash, the computed value did not match. Later, we found a 2019 post detailing how someone successfully modified the MD5 value to change the root password of the same IP CAM model.&lt;/p&gt;
+&lt;p&gt;This clearly suggests that the vulnerability was reported and patched. &amp;#x1F602; As we later discovered during firmware extraction, the MD5 hash calculation method appears to have been repeatedly updated by security researchers.&lt;/p&gt;
+&lt;h3 id=&#34;2-2-Firmware-update&#34;&gt;&lt;a href=&#34;#2-2-Firmware-update&#34; class=&#34;headerlink&#34; title=&#34;#2.2 - Firmware update&#34;&gt;&lt;/a&gt;#2.2 - Firmware update&lt;/h3&gt;&lt;p&gt;We downloaded the firmware from the manufacturer&amp;#x2019;s website. Although it appeared to be in a standard ZIP format, it could not be extracted properly. Upon inspection, we found some customized modifications to the ZIP structure.&lt;/p&gt;
+&lt;p&gt;By following the ZIP format and adjusting our script accordingly, we managed to modify parts of the binary and successfully extract the firmware (although some errors prevented full extraction).&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%209.png&#34; alt=&#34;[https://blog.forensicresearch.kr/3](https://blog.forensicresearch.kr/3)&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://blog.forensicresearch.kr/3&#34;&gt;https://blog.forensicresearch.kr/3&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;During our analysis, we also discovered a way to access an archive of firmware versions from the manufacturer&amp;#x2019;s website. We analyzed the firmware using the following methods:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;ZIP structure analysis&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Adjusted scripts to match the ZIP format and extract firmware.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Main binary reverse engineering&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Reversed the logic used to generate system config files (which have the same structure as the firmware) to track changes over time.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;b6c855a3-b38e-402f-bffd-ea5f99fa942b.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Through this analysis, we identified how firmware updates had evolved. The changes suggest continuous involvement from security researchers&amp;#x2026; quite impressive!&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;ZIP file structure modifications&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Initially, file signatures were simply altered to obscure their format.&lt;/li&gt;
+&lt;li&gt;Later, parts of the file were partially encrypted.&lt;/li&gt;
+&lt;li&gt;In the latest versions, the entire file appears to be encrypted.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;MD5 hash generation logic&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Initially, it was &lt;code&gt;MD5(BODY)&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;Later, it changed to &lt;code&gt;MD5(BODY + &amp;quot;secret string&amp;quot;)&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;The current method remains unknown.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Firmware file upload location&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;From 2017 to 2021, firmware was uploaded to the manufacturer&amp;#x2019;s website.&lt;/li&gt;
+&lt;li&gt;Since then, firmware updates have been distributed via a backend connected to the App.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;3-App&#34;&gt;&lt;a href=&#34;#3-App&#34; class=&#34;headerlink&#34; title=&#34;#3 - App&#34;&gt;&lt;/a&gt;#3 - App&lt;/h2&gt;&lt;p&gt;Since we did not have a rooted Android phone, we only analyzed the App at the network level. (Okay, fine, we were just too lazy to go deeper. &amp;#x1F606;) However, since we had an iPhone, we captured network packets as follows:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;A quick Google search revealed that connecting a MacBook to an iPhone allows for iPhone packet capture.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image%2010.png&#34; alt=&#34;[https://lxxyeon.tistory.com/157](https://lxxyeon.tistory.com/157)&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://lxxyeon.tistory.com/157&#34;&gt;https://lxxyeon.tistory.com/157&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Analyzing the captured packets between the iPhone and the IP CAM, we observed the following communication process:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;When the IP CAM is powered on, it periodically communicates with the server, sending its IP address and a port number that changes every minute.&lt;/li&gt;
+&lt;li&gt;When the user launches the App, it sends a communication request to the server. The server then relays the request to the IP CAM using the stored IP/port information, including the user&amp;#x2019;s IP/port data.&lt;ul&gt;
+&lt;li&gt;The IP CAM receives this information and sends a connection request to the user.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image%2011.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Examining publicly available attack cases against Target B, we found that attackers typically followed these steps:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Performed a chip-off extraction of the flash memory and dumped the firmware.&lt;/li&gt;
+&lt;li&gt;Analyzed the binary and identified a buffer overflow (BOF) vulnerability.&lt;/li&gt;
+&lt;li&gt;Exploited the BOF to achieve remote code execution (RCE) and gain a shell.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image%2012.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;If we were to start analyzing the IP CAM from scratch, we would follow their approach and extract the firmware directly from the flash memory. Through this project, we realized the absolute importance of obtaining firmware and setting up a dynamic debugging environment.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Seriously, this is &lt;strong&gt;the most important part&lt;/strong&gt;.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;4-Windows-EXE&#34;&gt;&lt;a href=&#34;#4-Windows-EXE&#34; class=&#34;headerlink&#34; title=&#34;#4 - Windows EXE&#34;&gt;&lt;/a&gt;#4 - Windows EXE&lt;/h2&gt;&lt;p&gt;Although the logic of the Windows EXE was simple, what stood out was that the App and the Windows EXE used completely different protocols. Since the IP CAM supports multiple protocols, this suggests that many vulnerabilities could potentially be found if explored further.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%2013.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;Conclusion&#34;&gt;&lt;a href=&#34;#Conclusion&#34; class=&#34;headerlink&#34; title=&#34;Conclusion&#34;&gt;&lt;/a&gt;Conclusion&lt;/h2&gt;&lt;p&gt;Over approximately three months (Nov 2024 &amp;#x2013; Jan 2025), I analyzed four IP CAMs, including the two described in this post. As this was my first experience analyzing IoT devices, I encountered many challenges. In particular, I was not very familiar with Windows EXE analysis and network protocol analysis.&lt;/p&gt;
+&lt;p&gt;Despite this, I learned several key lessons from this project:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Some targets are more vulnerable than others. Devices that have been extensively analyzed by hackers tend to have a much higher security level.&lt;/li&gt;
+&lt;li&gt;Many of the most basic vulnerabilities in IP CAMs seem to have been patched.&lt;/li&gt;
+&lt;li&gt;IoT device analysis requires a broad range of foundational knowledge, including Windows EXE static and dynamic analysis, network protocol analysis, socket programming, web hacking, system hacking, and even hardware-based approaches.&lt;/li&gt;
+&lt;li&gt;Extracting firmware and setting up a dynamic debugging environment should always be the top priority.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image%2014.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Thank you for reading!&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/02/16/hunjison/IPCAM/ko/image%202.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/02/16/hunjison/ipcam/en/">
+
+  <title>[Research] One day.. I got an IPCAM (en) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-02-16 20:00" pubdate>
+      2025년 2월 16일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      2.2k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      43
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] One day.. I got an IPCAM (en)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <hr>
+<p>Hello, this is <code>hunjison</code>. While studying hacking, I always felt something was missing&#x2014;namely, the fact that I had never discovered a CVE.</p>
+<p>Then one day&#x2026; I heard an interesting story from <code>OUYA77</code>.</p>
+<p>Dun&#x2026; Dun&#x2026;!! It turns out that KISA was running a 1.5x payout event for IP CAM vulnerabilities.</p>
+<p>After seeing this, every IP CAM started looking like money to me. Of course, I also thought this would be a great opportunity to earn a CVE.</p>
+<p><img src="image.png" srcset="/img/loading.gif" alt="image.png"></p>
+<h1 id="IP-CAM-Target-Search"><a href="#IP-CAM-Target-Search" class="headerlink" title="IP CAM Target Search"></a>IP CAM Target Search</h1><p>Together with <code>OUYA77</code>, we immediately began narrowing down a list of IP CAM products. Home IP CAMs ranged from 20,000 to 100,000 KRW, while enterprise-grade IP CAMs varied from 200,000 KRW to over a million.</p>
+<p>Since we were not rich but wanted to make money, we decided to buy multiple home IP CAMs!</p>
+<p>We specifically selected products with numerous attack vectors, especially focusing on external interfaces. Here are the interfaces we identified:</p>
+<ul>
+<li>Wi-Fi (AP)</li>
+<li><strong>App (iOS/Android &#x2192; IP CAM)</strong></li>
+<li><strong>Windows program</strong></li>
+<li>External cloud storage</li>
+<li>Ethernet</li>
+<li>SD Card</li>
+<li>USB</li>
+</ul>
+<p>Most modern IP CAMs include most of these interfaces, making them somewhat similar in structure. Additionally, we considered whether firmware could be obtained online.</p>
+<p>In the end, we purchased four small and adorable IP CAMs. Among them, I will introduce our analysis of two devices.</p>
+<h1 id="Target-A"><a href="#Target-A" class="headerlink" title="Target A"></a>Target A</h1><h2 id="1-Initial-Exploration"><a href="#1-Initial-Exploration" class="headerlink" title="#1 - Initial Exploration"></a>#1 - Initial Exploration</h2><p>Target A had two user interfaces: an app (iOS/Android) and a Windows EXE. Below are the initial findings from our analysis:</p>
+<ul>
+<li><strong>App:</strong><ul>
+<li>Requires account registration/login and appears to transmit data from the app to a server.</li>
+<li>Device registration involves scanning a QR code from the app, which contains Wi-Fi credentials.</li>
+<li>Once registered, the user can watch video feeds.</li>
+</ul>
+</li>
+<li><strong>Windows Program:</strong><ul>
+<li>Requires account registration/login and tran smits data to a server.</li>
+<li>After logging in, it automatically scans for devices on the LAN, registering them based on serial numbers.</li>
+<li>If not logged in, it can still scan the LAN for devices and watch video feeds.</li>
+</ul>
+</li>
+<li><strong>Firmware Download:</strong><ul>
+<li>Found a method via publicly available blog posts.</li>
+<li>Could be downloaded from the official website using a <code>/device/{device-model}/{device-model}</code> URL structure.</li>
+<li>Using <code>binwalk</code>, we confirmed that the firmware used a <code>squashfs</code> file system and extracted the files.</li>
+</ul>
+</li>
+</ul>
+<h2 id="2-Windows-EXE-Analysis"><a href="#2-Windows-EXE-Analysis" class="headerlink" title="#2 - Windows EXE Analysis"></a>#2 - Windows EXE Analysis</h2><p>We aimed to analyze the Windows program to answer the following questions:</p>
+<ul>
+<li>What data is exchanged with the server when the login button is pressed?</li>
+<li>What authentication protocol is used when the video playback button is pressed?</li>
+</ul>
+<p>We first attempted network analysis using Wireshark.</p>
+<ul>
+<li>Due to TLS encryption, the packets were unreadable.</li>
+<li>Just as browsers allow TLS decryption via <code>SSLKEYLOGFILE</code>, we attempted dynamic debugging of the program&#x2019;s TLS logic to extract key files.</li>
+<li>However, reversing the TLS structure turned out to be difficult, so we sought an alternative approach.</li>
+</ul>
+<p>Fortunately, I had prior experience with the Frida framework, so we used Frida to hook SSL-related encryption and decryption functions.</p>
+<ul>
+<li>Identified SSL-related functions imported by the Windows EXE.</li>
+<li>Extracted argument values and return buffers based on static analysis. The right-hand image shows an HTTP 200 response!</li>
+</ul>
+<p><img src="image%201.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Using the Frida hooking method, we gained some insights into how the Windows EXE operates.</p>
+<h3 id="2-1-Watching-Video-After-User-Login-WAN-Network"><a href="#2-1-Watching-Video-After-User-Login-WAN-Network" class="headerlink" title="#2.1 - Watching Video After User Login (WAN Network)"></a>#2.1 - Watching Video After User Login (WAN Network)</h3><p>When the Windows program and IP CAM are on different networks (WAN), they communicate through a server, as shown below:</p>
+<ul>
+<li>Once TLS decryption is disabled, the server receives the user&#x2019;s password.</li>
+<li>If authentication is successful, the server sends video data.</li>
+</ul>
+<p><img src="image%202.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>However, the TLS 1.2 encrypted communication between the IP CAM and server was not decryptable. Only certain cipher suites using RSA are known to have vulnerabilities, but the target IP CAM used <code>TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256</code>, making MITM attacks impossible.</p>
+<h3 id="See-Also-Packet-Sniffing-with-a-Wi-Fi-Dongle"><a href="#See-Also-Packet-Sniffing-with-a-Wi-Fi-Dongle" class="headerlink" title="[See Also] Packet Sniffing with a Wi-Fi Dongle"></a>[See Also] Packet Sniffing with a Wi-Fi Dongle</h3><p>To capture packets exchanged between the IP CAM and server, we used a Wi-Fi dongle. Typically, dongles enable Wi-Fi on devices without built-in Wi-Fi, but we repurposed one to rebroadcast Ethernet as Wi-Fi.</p>
+<ul>
+<li>As shown below, the dongle functions like a router.</li>
+<li>By selecting the dongle&#x2019;s network interface in Wireshark, we captured all packets sent to the IP CAM.</li>
+</ul>
+<p><img src="image%203.png" srcset="/img/loading.gif" alt="image.png"></p>
+<h3 id="2-2-Watching-Video-After-User-Login-LAN-Network"><a href="#2-2-Watching-Video-After-User-Login-LAN-Network" class="headerlink" title="#2.2 - Watching Video After User Login (LAN Network)"></a>#2.2 - Watching Video After User Login (LAN Network)</h3><p>An interesting logic was discovered in the LAN network. When I confirmed that the Windows EXE and IP CAM were encrypting data using a LAN encryption key, I naturally assumed it was a fixed key. That was my mistake&#x2014;I underestimated Target A.</p>
+<p>As shown in the diagram below, when a user logs in, the server issues a JWT token, which is then used to deliver the LAN encryption key. It is assumed that a similar mechanism is used between the server and the IP CAM.</p>
+<p><img src="image%204.png" srcset="/img/loading.gif" alt="image.png"></p>
+<h3 id="2-3-Watching-Video-Without-User-Login-LAN-Network"><a href="#2-3-Watching-Video-Without-User-Login-LAN-Network" class="headerlink" title="#2.3 - Watching Video Without User Login (LAN Network)"></a>#2.3 - Watching Video Without User Login (LAN Network)</h3><p>Target A had a feature that allowed scanning and watching videos on the LAN without logging in. However, a user password was required to access the video stream.</p>
+<ul>
+<li>The Windows EXE cached successful passwords so that users wouldn&#x2019;t have to re-enter them repeatedly. I mistakenly thought I had found a vulnerability, but right before writing the report, I realized I had misunderstood the caching mechanism.</li>
+</ul>
+<p><img src="image%205.png" srcset="/img/loading.gif" alt="image.png"></p>
+<h3 id="2-4-Watching-Video-Without-User-Login-RTSP-Protocol"><a href="#2-4-Watching-Video-Without-User-Login-RTSP-Protocol" class="headerlink" title="#2.4 - Watching Video Without User Login (RTSP Protocol)"></a>#2.4 - Watching Video Without User Login (RTSP Protocol)</h3><p>Target A also supported the RTSP protocol. RTSP (Real-Time Streaming Protocol) is used to stream multimedia data such as audio and video over a network. I was able to identify Target A&#x2019;s RTSP URL through an online blog post.</p>
+<ul>
+<li>In older versions of Target A, <strong>a six-digit device code was used as the RTSP password</strong>. However, the latest version patched this by requiring users to set a password during device registration.</li>
+</ul>
+<p><img src="image%206.png" srcset="/img/loading.gif" alt="image.png"></p>
+<h2 id="3-API-Server"><a href="#3-API-Server" class="headerlink" title="#3 - API Server"></a>#3 - API Server</h2><p>While hooking the Windows EXE with Frida, I discovered the API server&#x2019;s address. This server provided the same functionality as the Windows program but was only accessible via Internet Explorer. It was an extremely outdated website.</p>
+<ul>
+<li>The server supported user registration, device registration, and password changes, just like the Windows program.</li>
+<li>I considered testing various possibilities, but I stopped after realizing it was outside the scope of the bug bounty program.</li>
+</ul>
+<h2 id="4-Firmware-Analysis"><a href="#4-Firmware-Analysis" class="headerlink" title="#4 - Firmware Analysis"></a>#4 - Firmware Analysis</h2><p>As mentioned earlier, we acquired the firmware early in our research. We focused on the following areas but did not find any vulnerabilities:</p>
+<ul>
+<li><strong>Command Injection:</strong> We examined processes that accepted system commands as parameters but found no exploitable weaknesses.</li>
+<li><strong>BOF / DoS Attacks:</strong> We checked whether input length validation was properly implemented in user request handling but found nothing exploitable.</li>
+</ul>
+<h2 id="5-Result"><a href="#5-Result" class="headerlink" title="#5 - Result"></a>#5 - Result</h2><p>Our analysis of Target A primarily focused on the Windows EXE, testing various scenarios. Unfortunately, we did not discover any vulnerabilities. One thing that stood out was that this product had likely been analyzed by many hackers before.</p>
+<ul>
+<li>The four scenarios analyzed in <strong>Section #2</strong> applied secure encryption methods. I doubt it was designed this way from the beginning.</li>
+<li>Input length validation for buffer overflow (BOF) attacks was abnormally strict.</li>
+</ul>
+<p><img src="image%207.png" srcset="/img/loading.gif" alt="image.png"></p>
+<hr>
+<h1 id="Target-B"><a href="#Target-B" class="headerlink" title="Target B"></a>Target B</h1><h2 id="1-Initial-exploration"><a href="#1-Initial-exploration" class="headerlink" title="#1 - Initial exploration"></a>#1 - Initial exploration</h2><p>Target B&#x2019;s user interface includes an App (iOS/Android) and a Windows EXE. While analyzing the network traffic of the Windows EXE, we identified a Web Interface on the IP CAM&#x2019;s IP address.</p>
+<ul>
+<li><strong>App</strong><ul>
+<li>Initial setup instructions appeared weak in security.</li>
+<li>During device registration, the mobile device connects to the IP CAM&#x2019;s Wi-Fi, and the mobile device&#x2019;s Wi-Fi credentials are transmitted to complete the initial registration.</li>
+<li>After registration, users can watch live video streams.</li>
+<li>Additional features include recording, cloud uploads, camera pan/tilt/zoom, and buzzer activation.</li>
+</ul>
+</li>
+<li><strong>Windows EXE</strong><ul>
+<li>Can discover and register devices on the local network.</li>
+<li>Offers limited functionality.</li>
+</ul>
+</li>
+<li><strong>Web Interface</strong><ul>
+<li>A CGI-based website accessible via the IP CAM&#x2019;s IP address. Authentication via user password is required. The poor UI suggests many potential vulnerabilities!</li>
+<li>Provides most of the features available in the App.</li>
+<li><strong>Includes system configuration backup/load and firmware update functionality.</strong></li>
+</ul>
+</li>
+</ul>
+<h2 id="2-Web-Interface"><a href="#2-Web-Interface" class="headerlink" title="#2 - Web Interface"></a>#2 - Web Interface</h2><h3 id="2-1-System-configuration-backup-load"><a href="#2-1-System-configuration-backup-load" class="headerlink" title="#2.1 - System configuration backup/load"></a>#2.1 - System configuration backup/load</h3><p>The Web Interface allows users to back up (IP CAM &#x2192; PC download) and load (PC &#x2192; IP CAM) system configuration files. The binary file structure is as follows:</p>
+<ul>
+<li><strong>Header (0x200)</strong><ul>
+<li>Contains an MD5 hash.</li>
+</ul>
+</li>
+<li><strong>Body</strong><ul>
+<li>TAR structure.</li>
+</ul>
+</li>
+</ul>
+<p>Identifying the TAR structure in the BODY field allowed us to extract file paths and original data. If we modified the structure to insert our own data at <code>/etc/shadow</code>, overwriting the system file should theoretically be possible.</p>
+<p><img src="image%208.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>However, the issue was the MD5 hash. While the length matched that of an MD5 hash, the computed value did not match. Later, we found a 2019 post detailing how someone successfully modified the MD5 value to change the root password of the same IP CAM model.</p>
+<p>This clearly suggests that the vulnerability was reported and patched. &#x1F602; As we later discovered during firmware extraction, the MD5 hash calculation method appears to have been repeatedly updated by security researchers.</p>
+<h3 id="2-2-Firmware-update"><a href="#2-2-Firmware-update" class="headerlink" title="#2.2 - Firmware update"></a>#2.2 - Firmware update</h3><p>We downloaded the firmware from the manufacturer&#x2019;s website. Although it appeared to be in a standard ZIP format, it could not be extracted properly. Upon inspection, we found some customized modifications to the ZIP structure.</p>
+<p>By following the ZIP format and adjusting our script accordingly, we managed to modify parts of the binary and successfully extract the firmware (although some errors prevented full extraction).</p>
+<p><img src="image%209.png" srcset="/img/loading.gif" alt="[https://blog.forensicresearch.kr/3](https://blog.forensicresearch.kr/3)"></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://blog.forensicresearch.kr/3">https://blog.forensicresearch.kr/3</a></p>
+<p>During our analysis, we also discovered a way to access an archive of firmware versions from the manufacturer&#x2019;s website. We analyzed the firmware using the following methods:</p>
+<ul>
+<li><strong>ZIP structure analysis</strong><ul>
+<li>Adjusted scripts to match the ZIP format and extract firmware.</li>
+</ul>
+</li>
+<li><strong>Main binary reverse engineering</strong><ul>
+<li>Reversed the logic used to generate system config files (which have the same structure as the firmware) to track changes over time.</li>
+</ul>
+</li>
+</ul>
+<p><img src="b6c855a3-b38e-402f-bffd-ea5f99fa942b.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Through this analysis, we identified how firmware updates had evolved. The changes suggest continuous involvement from security researchers&#x2026; quite impressive!</p>
+<ul>
+<li><strong>ZIP file structure modifications</strong><ul>
+<li>Initially, file signatures were simply altered to obscure their format.</li>
+<li>Later, parts of the file were partially encrypted.</li>
+<li>In the latest versions, the entire file appears to be encrypted.</li>
+</ul>
+</li>
+<li><strong>MD5 hash generation logic</strong><ul>
+<li>Initially, it was <code>MD5(BODY)</code>.</li>
+<li>Later, it changed to <code>MD5(BODY + &quot;secret string&quot;)</code>.</li>
+<li>The current method remains unknown.</li>
+</ul>
+</li>
+<li><strong>Firmware file upload location</strong><ul>
+<li>From 2017 to 2021, firmware was uploaded to the manufacturer&#x2019;s website.</li>
+<li>Since then, firmware updates have been distributed via a backend connected to the App.</li>
+</ul>
+</li>
+</ul>
+<h2 id="3-App"><a href="#3-App" class="headerlink" title="#3 - App"></a>#3 - App</h2><p>Since we did not have a rooted Android phone, we only analyzed the App at the network level. (Okay, fine, we were just too lazy to go deeper. &#x1F606;) However, since we had an iPhone, we captured network packets as follows:</p>
+<ul>
+<li>A quick Google search revealed that connecting a MacBook to an iPhone allows for iPhone packet capture.</li>
+</ul>
+<p><img src="image%2010.png" srcset="/img/loading.gif" alt="[https://lxxyeon.tistory.com/157](https://lxxyeon.tistory.com/157)"></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://lxxyeon.tistory.com/157">https://lxxyeon.tistory.com/157</a></p>
+<p>Analyzing the captured packets between the iPhone and the IP CAM, we observed the following communication process:</p>
+<ul>
+<li>When the IP CAM is powered on, it periodically communicates with the server, sending its IP address and a port number that changes every minute.</li>
+<li>When the user launches the App, it sends a communication request to the server. The server then relays the request to the IP CAM using the stored IP/port information, including the user&#x2019;s IP/port data.<ul>
+<li>The IP CAM receives this information and sends a connection request to the user.</li>
+</ul>
+</li>
+</ul>
+<p><img src="image%2011.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Examining publicly available attack cases against Target B, we found that attackers typically followed these steps:</p>
+<ul>
+<li>Performed a chip-off extraction of the flash memory and dumped the firmware.</li>
+<li>Analyzed the binary and identified a buffer overflow (BOF) vulnerability.</li>
+<li>Exploited the BOF to achieve remote code execution (RCE) and gain a shell.</li>
+</ul>
+<p><img src="image%2012.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>If we were to start analyzing the IP CAM from scratch, we would follow their approach and extract the firmware directly from the flash memory. Through this project, we realized the absolute importance of obtaining firmware and setting up a dynamic debugging environment.</p>
+<ul>
+<li>Seriously, this is <strong>the most important part</strong>.</li>
+</ul>
+<h2 id="4-Windows-EXE"><a href="#4-Windows-EXE" class="headerlink" title="#4 - Windows EXE"></a>#4 - Windows EXE</h2><p>Although the logic of the Windows EXE was simple, what stood out was that the App and the Windows EXE used completely different protocols. Since the IP CAM supports multiple protocols, this suggests that many vulnerabilities could potentially be found if explored further.</p>
+<p><img src="image%2013.png" srcset="/img/loading.gif" alt="image.png"></p>
+<hr>
+<h2 id="Conclusion"><a href="#Conclusion" class="headerlink" title="Conclusion"></a>Conclusion</h2><p>Over approximately three months (Nov 2024 &#x2013; Jan 2025), I analyzed four IP CAMs, including the two described in this post. As this was my first experience analyzing IoT devices, I encountered many challenges. In particular, I was not very familiar with Windows EXE analysis and network protocol analysis.</p>
+<p>Despite this, I learned several key lessons from this project:</p>
+<ul>
+<li>Some targets are more vulnerable than others. Devices that have been extensively analyzed by hackers tend to have a much higher security level.</li>
+<li>Many of the most basic vulnerabilities in IP CAMs seem to have been patched.</li>
+<li>IoT device analysis requires a broad range of foundational knowledge, including Windows EXE static and dynamic analysis, network protocol analysis, socket programming, web hacking, system hacking, and even hardware-based approaches.</li>
+<li>Extracting firmware and setting up a dynamic debugging environment should always be the top priority.</li>
+</ul>
+<p><img src="image%2014.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Thank you for reading!</p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/hunjison/">hunjison</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Bug-Bounty/">Bug Bounty</a>
+                  
+                  <a class="hover-with-bg" href="/tags/IP-CAMERA/">IP CAMERA</a>
+                  
+                  <a class="hover-with-bg" href="/tags/IoT/">IoT</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_hunjison.jpg" srcset="/img/loading.gif" alt="hunjison">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">hunjison</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/hunjison">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/02/16/hunjison/IPCAM/ko/">
+                    <span class="hidden-mobile">[Research] 어느날 IP CAM이 내게 주어진다면 (ko)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/02/16/hunjison/IPCAM/en/';
+        this.page.identifier = '/2025/02/16/hunjison/IPCAM/en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] One day.. I got an IPCAM (en)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
