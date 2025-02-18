@@ -1,6 +1,6 @@
 ---
 title: "[Research] One day.. I got an IPCAM (en)"
-author: jihun son
+author: hunjison
 tags: [Bug Bounty, IP CAMERA, IoT, hunjison]
 categories: [Research]
 date: 2025-02-16 20:00:00

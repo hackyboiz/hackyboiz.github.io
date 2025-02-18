@@ -1,6 +1,6 @@
 ---
 title: "[Research] 어느날 IP CAM이 내게 주어진다면 (ko)"
-author: jihun son
+author: hunjison
 tags: [Bug Bounty, IP CAMERA, IoT, hunjison]
 categories: [Research]
 date: 2025-02-16 20:00:00
