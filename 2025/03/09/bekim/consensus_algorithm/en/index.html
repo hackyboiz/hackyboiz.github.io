@@ -1,0 +1,1494 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;h1 id=&#34;Introduction&#34;&gt;&lt;a href=&#34;#Introduction&#34; class=&#34;headerlink&#34; title=&#34;Introduction&#34;&gt;&lt;/a&gt;Introduction&lt;/h1&gt;&lt;p&gt;Hello! It&amp;#x2019;s bekim.&lt;/p&gt;
+&lt;p&gt;In my previous post, I briefly explained that transactions in the Bitcoin network become possible by adding new blocks through a mechanism called &amp;#x201C;Proof of Work.&amp;#x201D;. But, PoW isn\&amp;#x2019;t the only consensus algorithm available. Actually there are actually many different consensus algorithms used in blockchain systems.&lt;br&gt;A consensus algorithm is basically the mechanism by which participants in a blockchain network agree on choosing a single valid block and maintaining the chain.&lt;br&gt;In this post, I&amp;#x2019;ll introduce various consensus algorithms: PoW, PoS, DPoS, PBFT, and Hybrid PoW/PoS.&lt;br&gt;&lt;img src=&#34;/2025/03/09/bekim/consensus_algorithm/en/image.png&#34; alt&gt;&lt;/p&gt;
+&lt;h1 id=&#34;1-Proof-of-Work-PoW&#34;&gt;&lt;a href=&#34;#1-Proof-of-Work-PoW&#34; class=&#34;headerlink&#34; title=&#34;1. Proof of Work  (PoW)&#34;&gt;&lt;/a&gt;1. Proof of Work  (PoW)&lt;/h1&gt;&lt;p&gt;To explain this a bit further, Proof of Work is a method where participants (miners) need to find a hash value that meets a specific difficulty requirement. This mechanism was first introduced by Bitcoin. Miners repeatedly adjust a Nonce value, attempting to find a hash that matches the target difficulty.&lt;br&gt;Bitcoin aims to generate a new block roughly every 10 minutes. To keep this timing consistent, the network automatically adjusts the mining difficulty approximately every two weeks (every 2016 blocks)&lt;br&gt;Now, let&amp;#x2019;s take a closer look at how Proof of Work (PoW) functions in Bitcoin&amp;#x2019;s latest implementation.&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;GetNextWorkRequired&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; CBlockIndex* pindexLast, &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; CBlockHeader *pblock, &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; Consensus::Params&amp;amp; params)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+    assert(pindexLast != &lt;span class=&#34;hljs-literal&#34;&gt;nullptr&lt;/span&gt;);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; nProofOfWorkLimit = UintToArith256(params.powLimit).GetCompact();
+		
+		&lt;span class=&#34;hljs-comment&#34;&gt;// Only change once per difficulty adjustment interval&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// [1] &lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ((pindexLast-&amp;gt;nHeight+&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;) % params.DifficultyAdjustmentInterval() != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;)
+    {
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (params.fPowAllowMinDifficultyBlocks)
+        {
+            &lt;span class=&#34;hljs-comment&#34;&gt;// Special difficulty rule for testnet:&lt;/span&gt;
+            &lt;span class=&#34;hljs-comment&#34;&gt;// If the new block&amp;apos;s timestamp is more than 2* 10 minutes&lt;/span&gt;
+            &lt;span class=&#34;hljs-comment&#34;&gt;// then allow mining of a min-difficulty block.&lt;/span&gt;
+            &lt;span class=&#34;hljs-comment&#34;&gt;// [2]&lt;/span&gt;
+            &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (pblock-&amp;gt;GetBlockTime() &amp;gt; pindexLast-&amp;gt;GetBlockTime() + params.nPowTargetSpacing*&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;)
+                &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; nProofOfWorkLimit;
+            &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+            {
+                &lt;span class=&#34;hljs-comment&#34;&gt;// Return the last non-special-min-difficulty-rules-block&lt;/span&gt;
+                &lt;span class=&#34;hljs-comment&#34;&gt;// [3]&lt;/span&gt;
+                &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; CBlockIndex* pindex = pindexLast;
+                &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; (pindex-&amp;gt;pprev &amp;amp;&amp;amp; pindex-&amp;gt;nHeight % params.DifficultyAdjustmentInterval() != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; &amp;amp;&amp;amp; pindex-&amp;gt;nBits == nProofOfWorkLimit)
+                    pindex = pindex-&amp;gt;pprev;
+                &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; pindex-&amp;gt;nBits;
+            }
+        }
+        &lt;span class=&#34;hljs-comment&#34;&gt;// [4]&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; pindexLast-&amp;gt;nBits;
+    }
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;// Go back by what we want to be 14 days worth of blocks&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// [5]&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; nHeightFirst = pindexLast-&amp;gt;nHeight - (params.DifficultyAdjustmentInterval()&lt;span class=&#34;hljs-number&#34;&gt;-1&lt;/span&gt;);
+    assert(nHeightFirst &amp;gt;= &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; CBlockIndex* pindexFirst = pindexLast-&amp;gt;GetAncestor(nHeightFirst);
+    assert(pindexFirst);
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; CalculateNextWorkRequired(pindexLast, pindexFirst-&amp;gt;GetBlockTime(), params);
+}&lt;/code&gt;&lt;/pre&gt;&lt;br&gt;[1] Bitcoin adjusts the mining difficulty approximately every two weeks (every 2016 blocks). If the next block&amp;#x2019;s height (&lt;code&gt;pindexLast-&amp;gt;nHeight+1&lt;/code&gt;) is not a multiple of 2016 (&lt;code&gt;params.DifficultyAdjustmentInterval()&lt;/code&gt;), Bitcoin retains the difficulty level (&lt;code&gt;pindexLast-&amp;gt;nBits&lt;/code&gt;)[4] from the previous block without any adjustment.&lt;br&gt;[2]In Bitcoin&amp;#x2019;s Testnet, there is an exception rule: if no new block is generated for 20 minutes (twice the normal 10-minute interval), the network temporarily reduces the difficulty to its minimum value (&lt;code&gt;nProofOfWorkLimit&lt;/code&gt;).&lt;br&gt;[3] Even after this temporary minimum difficulty adjustment on Testnet, once miners successfully generate subsequent blocks, the difficulty returns to its previous normal level. This is done by tracking backwards through recent blocks to find the most recent valid difficulty value&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; CBlockIndex* pindex = pindexLast;
+&lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; (pindex-&amp;gt;pprev &amp;amp;&amp;amp; pindex-&amp;gt;nHeight % params.DifficultyAdjustmentInterval() != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; &amp;amp;&amp;amp; pindex-&amp;gt;nBits == nProofOfWorkLimit)
+    pindex = pindex-&amp;gt;pprev;
+&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; pindex-&amp;gt;nBits;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;For this purpose, Bitcoin checks the most recently added block (&lt;code&gt;pindexLast&lt;/code&gt;) and traces back from there. While traversing backward through previous blocks, Bitcoin skips blocks where the difficulty was temporarily reduced to the minimum (&lt;code&gt;pindex-&amp;gt;nBits == nProofOfWorkLimit&lt;/code&gt;). Specifically, it continues moving backward through blocks that haven&amp;#x2019;t yet reached the difficulty adjustment interval (&lt;code&gt;pindex-&amp;gt;nHeight % params.DifficultyAdjustmentInterval() != 0&lt;/code&gt;) until it finds a block where an actual difficulty adjustment occurred. At that point, it stops searching and uses that block&amp;#x2019;s difficulty as a reference.&lt;/p&gt;
+&lt;p&gt;[5] However, if the current block height (&lt;code&gt;pindexLast-&amp;gt;nHeight&lt;/code&gt;) is a multiple of the difficulty adjustment interval (2016 blocks), Bitcoin recalculates the difficulty level instead of using the previous one.&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;Bitcoin is designed so that if the previous 2016 blocks were generated faster than expected, the difficulty increases. On the other hand, if those blocks were generated more slowly than expected, the difficulty is lowered.&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;CalculateNextWorkRequired&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; CBlockIndex* pindexLast, &lt;span class=&#34;hljs-keyword&#34;&gt;int64_t&lt;/span&gt; nFirstBlockTime, &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; Consensus::Params&amp;amp; params)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (params.fPowNoRetargeting)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; pindexLast-&amp;gt;nBits;
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;// Limit adjustment step&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// [1]&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int64_t&lt;/span&gt; nActualTimespan = pindexLast-&amp;gt;GetBlockTime() - nFirstBlockTime;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// [2]&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (nActualTimespan &amp;lt; params.nPowTargetTimespan/&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;)
+        nActualTimespan = params.nPowTargetTimespan/&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (nActualTimespan &amp;gt; params.nPowTargetTimespan*&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;)
+        nActualTimespan = params.nPowTargetTimespan*&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;;
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;// Retarget&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; arith_uint256 bnPowLimit = UintToArith256(params.powLimit);
+    arith_uint256 bnNew;
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;// Special difficulty rule for Testnet4&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// [3]&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (params.enforce_BIP94) {
+        &lt;span class=&#34;hljs-comment&#34;&gt;// Here we use the first block of the difficulty period. This way&lt;/span&gt;
+        &lt;span class=&#34;hljs-comment&#34;&gt;// the real difficulty is always preserved in the first block as&lt;/span&gt;
+        &lt;span class=&#34;hljs-comment&#34;&gt;// it is not allowed to use the min-difficulty exception.&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; nHeightFirst = pindexLast-&amp;gt;nHeight - (params.DifficultyAdjustmentInterval()&lt;span class=&#34;hljs-number&#34;&gt;-1&lt;/span&gt;);
+        &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; CBlockIndex* pindexFirst = pindexLast-&amp;gt;GetAncestor(nHeightFirst);
+        bnNew.SetCompact(pindexFirst-&amp;gt;nBits);
+    } &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+        bnNew.SetCompact(pindexLast-&amp;gt;nBits);
+    }
+		
+		&lt;span class=&#34;hljs-comment&#34;&gt;// [4]&lt;/span&gt;
+    bnNew *= nActualTimespan;
+    bnNew /= params.nPowTargetTimespan;
+		
+		
+		&lt;span class=&#34;hljs-comment&#34;&gt;// [5]&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (bnNew &amp;gt; bnPowLimit)
+        bnNew = bnPowLimit;
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; bnNew.GetCompact();
+}&lt;/code&gt;&lt;/pre&gt;&lt;br&gt;[1] First, The network compares the timestamp of the latest block (&lt;code&gt;pindexLast-&amp;gt;GetBlockTime()&lt;/code&gt;) with the timestamp from 2016 blocks ago (&lt;code&gt;nFirstBlockTime&lt;/code&gt;) to calculate the actual time taken to generate the previous 2016 blocks, storing this result in &lt;code&gt;nActualTimespan&lt;/code&gt;. This value serves as the basis for adjusting the difficulty later.&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int64_t&lt;/span&gt; nActualTimespan = pindexLast-&amp;gt;GetBlockTime() - nFirstBlockTime;&lt;/code&gt;&lt;/pre&gt;&lt;/p&gt;
+&lt;p&gt;[2] Bitcoin measures &lt;code&gt;nActualTimespan&lt;/code&gt; and compares it to the target time (&lt;code&gt;params.nPowTargetTimespan&lt;/code&gt;) to adjust the difficulty. To prevent drastic changes in difficulty, the adjustment is limited&amp;#x2014;difficulty can only increase up to 1/4 of the target time or decrease up to 4 times the target time.&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (nActualTimespan &amp;lt; params.nPowTargetTimespan/&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;)
+    nActualTimespan = params.nPowTargetTimespan/&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;;
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (nActualTimespan &amp;gt; params.nPowTargetTimespan*&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;)
+    nActualTimespan = params.nPowTargetTimespan*&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;;&lt;/code&gt;&lt;/pre&gt;&lt;br&gt;This limitation helps prevent sudden fluctuations in the network.&lt;br&gt;The process of determining the reference block for difficulty adjustment depends on the value of &lt;code&gt;params.enforce_BIP94&lt;/code&gt;.&lt;br&gt;If this rule is applied, the difficulty of the block 2016 blocks before the current one (&lt;code&gt;pindexFirst-&amp;gt;nBits&lt;/code&gt;) is used as the reference. This helps prevent exceptional cases where the difficulty could drop to the minimum value. If the rule is not applied, the difficulty of the current block (&lt;code&gt;pindexLast-&amp;gt;nBits&lt;/code&gt;) is used instead.&lt;br&gt;This approach helps prevent the difficulty from dropping abnormally low in environments like Testnet.&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (params.enforce_BIP94) {
+    &lt;span class=&#34;hljs-comment&#34;&gt;// Here we use the first block of the difficulty period. This way&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// the real difficulty is always preserved in the first block as&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// it is not allowed to use the min-difficulty exception.&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; nHeightFirst = pindexLast-&amp;gt;nHeight - (params.DifficultyAdjustmentInterval()&lt;span class=&#34;hljs-number&#34;&gt;-1&lt;/span&gt;);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; CBlockIndex* pindexFirst = pindexLast-&amp;gt;GetAncestor(nHeightFirst);
+    bnNew.SetCompact(pindexFirst-&amp;gt;nBits);
+} &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+    bnNew.SetCompact(pindexLast-&amp;gt;nBits);
+}&lt;/code&gt;&lt;/pre&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;BIP (Bitcoin Improvement Proposal): A proposal for improving the Bitcoin protocol. BIP94 is one of these proposals and is designed to prevent the difficulty from dropping excessively in certain networks (such as Testnet4) during difficulty adjustments.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;[4] After that, Bitcoin calculates the new difficulty using the &lt;code&gt;nActualTimespan&lt;/code&gt; value. Bitcoin sets the target block generation time to 10 minutes, and assuming 2016 blocks are created, the target time (&lt;code&gt;params.nPowTargetTimespan&lt;/code&gt;) is approximately two weeks (1,209,600 seconds). The difficulty is then adjusted based on the ratio between the actual block generation time and the target time.&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;bnNew *= nActualTimespan;
+bnNew /= params.nPowTargetTimespan;&lt;/code&gt;&lt;/pre&gt;&lt;br&gt;In other words, the new difficulty is adjusted using the formula:&lt;br&gt;&lt;em&gt;New Difficulty = (Current Difficulty &amp;#xD7; Actual Time Taken) / Target Time&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;By applying this formula, Bitcoin ensures that the average block generation time stays around 10 minutes.&lt;br&gt;[5] Plus, to prevent the difficulty from dropping too low, it is restricted from falling below the minimum difficulty (&lt;code&gt;bnPowLimit&lt;/code&gt;).&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (bnNew &amp;gt; bnPowLimit)
+    bnNew = bnPowLimit;&lt;/code&gt;&lt;/pre&gt;&lt;br&gt;The calculated difficulty is then applied to the next block, and miners must solve for this target value.&lt;br&gt;However, as mentioned in a previous post, the PoW method requires a massive amount of computation, which means it uses a ton of energy.&lt;br&gt;On top of that, with the rise of large-scale mining pools, there is a risk that one group could control more than 51% of the network&amp;#x2019;s hash power&lt;strong&gt;.&lt;/strong&gt; If that happens, they could manipulate transactions or even pull off a double-spending attack.&lt;br&gt;To overcome these limitations of PoW, the Proof of Stake (PoS) consensus algorithm was introduced.&lt;/p&gt;
+&lt;h1 id=&#34;2-Proof-of-Stake-PoS&#34;&gt;&lt;a href=&#34;#2-Proof-of-Stake-PoS&#34; class=&#34;headerlink&#34; title=&#34;2. Proof of Stake (PoS)&#34;&gt;&lt;/a&gt;2. Proof of Stake (PoS)&lt;/h1&gt;&lt;p&gt;Proof of Stake (PoS) is a consensus algorithm that grants block creation and validation rights based on the amount of cryptocurrency a user holds and how long they&amp;#x2019;ve held it.&lt;br&gt;In PoW, miners have to solve complex mathematical problems, but in PoS, users can participate as validators by staking a certain amount of the network&amp;#x2019;s cryptocurrency. The more coins a validator stakes, the higher their chances of being selected to create a new block. PoS also enhances security through economic incentives. honest validators receive rewards, while those who engage in fraudulent activities face penalties, such as losing a portion of their staked funds.&lt;br&gt;The PoS concept was first implemented in Peercoin in 2012, and many blockchains have adopted it since then. In 2022, Ethereum also transitioned from PoW to PoS.&lt;br&gt;&lt;img src=&#34;/2025/03/09/bekim/consensus_algorithm/en/image1.png&#34; alt&gt;&lt;br&gt;I was going to use Ethereum as an example to explain how PoS works, but analyzing its code would make this post way too long. So instead, let&amp;#x2019;s break it down using a highly simplified version of the PoS consensus algorithm to understand the core principles.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; random
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; hashlib
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; time
+
+// [&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;]
+&lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;class&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;Validator&lt;/span&gt;:&lt;/span&gt;
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;__init__&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self, address, stake&lt;/span&gt;):&lt;/span&gt;
+        self.address = address  &lt;span class=&#34;hljs-comment&#34;&gt;# Validator address&lt;/span&gt;
+        self.stake = stake 
+        self.vote_weight = stake  
+    
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;__repr__&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self&lt;/span&gt;):&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;Validator(&lt;span class=&#34;hljs-subst&#34;&gt;{self.address}&lt;/span&gt;, Stake: &lt;span class=&#34;hljs-subst&#34;&gt;{self.stake}&lt;/span&gt;)&amp;quot;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;class&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;PoSBlockchain&lt;/span&gt;:&lt;/span&gt;
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;__init__&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self&lt;/span&gt;):&lt;/span&gt;
+        self.validators = [] 
+        self.blocks = []
+    
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;register_validator&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self, address, stake&lt;/span&gt;):&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; stake &amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;32&lt;/span&gt;:
+            print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;[ERROR] &lt;span class=&#34;hljs-subst&#34;&gt;{address}&lt;/span&gt; need to stake over 32 ETH&amp;quot;&lt;/span&gt;)
+            &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;
+        validator = Validator(address, stake)
+        self.validators.append(validator)
+        print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;[INFO] &lt;span class=&#34;hljs-subst&#34;&gt;{validator}&lt;/span&gt; registered as a validator.&amp;quot;&lt;/span&gt;)
+		
+		// [&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;]
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;select_proposer&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self&lt;/span&gt;):&lt;/span&gt;
+        &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&amp;quot; Randomly select a block proposer &amp;quot;&amp;quot;&amp;quot;&lt;/span&gt;
+        total_stake = sum(v.stake &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; v &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; self.validators)
+        rand_value = random.uniform(&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, total_stake)
+        
+        cumulative = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; validator &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; self.validators:
+            cumulative += validator.stake
+            &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; rand_value &amp;lt;= cumulative:
+                print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;[INFO] selected validator: &lt;span class=&#34;hljs-subst&#34;&gt;{validator.address}&lt;/span&gt;&amp;quot;&lt;/span&gt;)
+                &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; validator
+		// [&lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;]
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;create_block&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self, proposer&lt;/span&gt;):&lt;/span&gt;
+        &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&amp;quot; Generate a block and calculate hash &amp;quot;&amp;quot;&amp;quot;&lt;/span&gt;
+        prev_hash = self.blocks[&lt;span class=&#34;hljs-number&#34;&gt;-1&lt;/span&gt;][&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;hash&amp;apos;&lt;/span&gt;] &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; self.blocks &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;GENESIS&amp;quot;&lt;/span&gt;
+        timestamp = time.time()
+        block_data = &lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;&lt;span class=&#34;hljs-subst&#34;&gt;{proposer.address}&lt;/span&gt;-&lt;span class=&#34;hljs-subst&#34;&gt;{timestamp}&lt;/span&gt;-&lt;span class=&#34;hljs-subst&#34;&gt;{prev_hash}&lt;/span&gt;&amp;quot;&lt;/span&gt;
+        block_hash = hashlib.sha256(block_data.encode()).hexdigest()
+        block = {&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;proposer&amp;quot;&lt;/span&gt;: proposer.address, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;hash&amp;quot;&lt;/span&gt;: block_hash, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;prev_hash&amp;quot;&lt;/span&gt;: prev_hash}
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; block
+		
+		// [&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;]
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;validate_and_vote&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self, block&lt;/span&gt;):&lt;/span&gt;
+        votes = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; validator &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; self.validators:
+            &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; random.random() &amp;gt; &lt;span class=&#34;hljs-number&#34;&gt;0.1&lt;/span&gt;:  &lt;span class=&#34;hljs-comment&#34;&gt;# 90% probability of a valid vote&lt;/span&gt;
+                votes += validator.vote_weight
+        
+        required_votes = sum(v.stake &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; v &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; self.validators) * &lt;span class=&#34;hljs-number&#34;&gt;0.67&lt;/span&gt;  &lt;span class=&#34;hljs-comment&#34;&gt;# At least 67% approval required&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; votes &amp;gt;= required_votes:
+            self.blocks.append(block)
+            print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;[INFO] Validation: &lt;span class=&#34;hljs-subst&#34;&gt;{block[&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;hash&amp;apos;&lt;/span&gt;]}&lt;/span&gt;&amp;quot;&lt;/span&gt;)
+            &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;:
+            print(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[WARNING] Not enough votes &amp;quot;&lt;/span&gt;)
+            &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;False&lt;/span&gt;
+		// [&lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;]
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;run_consensus&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self&lt;/span&gt;):&lt;/span&gt;
+        proposer = self.select_proposer()
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; proposer:
+            new_block = self.create_block(proposer)
+            self.validate_and_vote(new_block)
+
+pos_chain = PoSBlockchain()
+
+pos_chain.register_validator(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Alice&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;50&lt;/span&gt;)
+pos_chain.register_validator(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Bob&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;40&lt;/span&gt;)
+pos_chain.register_validator(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Charlie&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;32&lt;/span&gt;)
+pos_chain.register_validator(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Dave&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;100&lt;/span&gt;)
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; _ &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; range(&lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;):
+    pos_chain.run_consensus()&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;[1] In Ethereum, you need to stake 32 ETH to participate as a validator.&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;class&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;Validator&lt;/span&gt;:&lt;/span&gt;
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;__init__&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self, address, stake&lt;/span&gt;):&lt;/span&gt;
+        self.address = address  
+        self.stake = stake  
+        
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;__repr__&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self&lt;/span&gt;):&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;Validator(&lt;span class=&#34;hljs-subst&#34;&gt;{self.address}&lt;/span&gt;, Stake: &lt;span class=&#34;hljs-subst&#34;&gt;{self.stake}&lt;/span&gt;)&amp;quot;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/p&gt;
+&lt;p&gt;[2] Participants who stake more coins have a higher chance of being selected as the next block validator, but the selection process also involves randomization algorithms to make it unpredictable and harder to manipulate&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;select_proposer&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self&lt;/span&gt;):&lt;/span&gt;
+    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&amp;quot;Select a block proposer randomly, weighted by stake&amp;quot;&amp;quot;&amp;quot;&lt;/span&gt;
+    total_stake = sum(v.stake &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; v &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; self.validators.values())
+    rand_value = random.uniform(&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, total_stake)
+
+    cumulative = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; validator &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; self.validators.values():
+        cumulative += validator.stake
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; rand_value &amp;lt;= cumulative:
+            print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;[INFO] Selected proposer: &lt;span class=&#34;hljs-subst&#34;&gt;{validator.address}&lt;/span&gt;&amp;quot;&lt;/span&gt;)
+            &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; validator
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;None&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/p&gt;
+&lt;p&gt;[3] The selected validator bundles new transactions, creates a block, and proposes it to the blockchain.&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;create_block&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self, proposer&lt;/span&gt;):&lt;/span&gt;
+    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&amp;quot;Generate a new block&amp;quot;&amp;quot;&amp;quot;&lt;/span&gt;
+    prev_hash = self.blockchain[&lt;span class=&#34;hljs-number&#34;&gt;-1&lt;/span&gt;][&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;Hash&amp;apos;&lt;/span&gt;]
+    new_block = {
+        &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Index&amp;quot;&lt;/span&gt;: len(self.blockchain),
+        &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Timestamp&amp;quot;&lt;/span&gt;: str(datetime.now()),
+        &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;PrevHash&amp;quot;&lt;/span&gt;: prev_hash,
+        &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Validator&amp;quot;&lt;/span&gt;: proposer.address
+    }
+    new_block[&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Hash&amp;quot;&lt;/span&gt;] = self.hash_block(new_block)
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; new_block&lt;/code&gt;&lt;/pre&gt;&lt;/p&gt;
+&lt;p&gt;[4] Other validators participate in the consensus process by verifying the block&amp;#x2019;s validity and voting on it. In Ethereum, at least 128 validators must review and vote on a block. Once enough consensus is reached through this voting process, the block is added to the blockchain.&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;validate_and_vote&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self, block&lt;/span&gt;):&lt;/span&gt;
+    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&amp;quot;Simulate validator voting process&amp;quot;&amp;quot;&amp;quot;&lt;/span&gt;
+    total_stake = sum(v.stake &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; v &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; self.validators.values())
+    votes = sum(v.stake &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; v &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; self.validators.values() &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; random.random() &amp;gt; &lt;span class=&#34;hljs-number&#34;&gt;0.1&lt;/span&gt;)  &lt;span class=&#34;hljs-comment&#34;&gt;# # 90% chance to approve&lt;/span&gt;
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; votes &amp;gt;= total_stake * &lt;span class=&#34;hljs-number&#34;&gt;0.67&lt;/span&gt;:  &lt;span class=&#34;hljs-comment&#34;&gt;# Requires at least 67% approval &lt;/span&gt;
+        self.blockchain.append(block)
+        print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;[INFO] Block added: &lt;span class=&#34;hljs-subst&#34;&gt;{block[&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;Hash&amp;apos;&lt;/span&gt;]}&lt;/span&gt;&amp;quot;&lt;/span&gt;)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;:
+        print(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[WARNING] Block rejected due to insufficient votes.&amp;quot;&lt;/span&gt;)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;False&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/p&gt;
+&lt;p&gt;[5] Validators who successfully create a valid block receive transaction fees and network rewards as compensation.&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;run_consensus&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self&lt;/span&gt;):&lt;/span&gt;
+    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&amp;quot;Run the PoS consensus process&amp;quot;&amp;quot;&amp;quot;&lt;/span&gt;
+    proposer = self.select_proposer()
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; proposer:
+        new_block = self.create_block(proposer)
+        self.validate_and_vote(new_block)
+        proposer.stake += &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;  &lt;span class=&#34;hljs-comment&#34;&gt;# reward&lt;/span&gt;
+        print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;[INFO] &lt;span class=&#34;hljs-subst&#34;&gt;{proposer.address}&lt;/span&gt; received 5 ETH as a reward.&amp;quot;&lt;/span&gt;)&lt;/code&gt;&lt;/pre&gt;&lt;br&gt;If a validator engages in dishonest behavior or fails to perform the required validation tasks, they face penalties. For example, if a validator goes offline and fails to validate blocks, they may receive reduced rewards or have a portion of their staked funds slashed. In more severe cases, such as double signing or approving an invalid block, the validator can be slashed, meaning they lose some or even all of their staked funds and get removed from the network.&lt;/p&gt;
+&lt;p&gt;Because of this system, PoS helps maintain the security and integrity of the network while being more energy-efficient than PoW. However, PoS has its own limitations. Those who hold more coins tend to have a continuous advantage, leading to potential centralization risks in the network.&lt;/p&gt;
+&lt;h1 id=&#34;3-Hybrid-PoW-PoS&#34;&gt;&lt;a href=&#34;#3-Hybrid-PoW-PoS&#34; class=&#34;headerlink&#34; title=&#34;3. Hybrid PoW/PoS&#34;&gt;&lt;/a&gt;3. Hybrid PoW/PoS&lt;/h1&gt;&lt;p&gt;&lt;img src=&#34;/2025/03/09/bekim/consensus_algorithm/en/image2.png&#34; alt&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Complete Overview of Decred&amp;#x2019;s Structure [Source: &lt;a href=&#34;https://medium.com/decred/blockchain-governance-how-decred-iterates-upon-bitcoin-3cc7030c655e&#34;&gt;https://medium.com/decred/blockchain-governance-how-decred-iterates-upon-bitcoin-3cc7030c655e&lt;/a&gt;]&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The traditional PoW provides high security but has high energy consumption and the issue of mining monopolization. On the other hand, the PoS method is energy-efficient but comes with the risk of validator monopoly. To solve this, the Hybrid PoW/PoS model emerged. In this method, PoW is used to generate blocks, while PoS validators approve them.&lt;br&gt;First, a miner performs computations using the Proof-of-Work method to create a new block. However, the created block is not immediately added to the chain but goes through a final approval process via the PoS validators&amp;#x2019; vote. PoS validators participate by staking a certain amount of the cryptocurrency they hold, and randomly selected validators evaluate the validity of the block and vote on it. Typically, if at least 3 out of 5 validators approve, the block is validated and added to the blockchain. The rewards are distributed to both PoW miners and PoS validators. For example, in Decred (DCR), 60% of the reward is given to PoW miners, 30% goes to PoS validators, and the remaining 10% is allocated to the network development fund. Through this, excessive monopolization by PoW miners is prevented, and PoS validators are incentivized to actively participate in maintaining the network.&lt;br&gt;By combining PoW&amp;#x2019;s high security with PoS&amp;#x2019;s energy efficiency, this structure strengthens resistance against 51% attacks and mitigates validator centralization issues.&lt;/p&gt;
+&lt;h1 id=&#34;4-DPoS-Delegated-Proof-of-Stake&#34;&gt;&lt;a href=&#34;#4-DPoS-Delegated-Proof-of-Stake&#34; class=&#34;headerlink&#34; title=&#34;4. DPoS (Delegated Proof of Stake)&#34;&gt;&lt;/a&gt;4. DPoS (Delegated Proof of Stake)&lt;/h1&gt;&lt;p&gt;Delegated Proof of Stake (DPoS) is an improved version of the traditional PoS consensus algorithm, designed to make transaction verification and block generation in blockchain networks more efficient. Instead of users directly creating blocks, DPoS allows them to elect delegates, who are then entrusted with the responsibility of validating transactions and generating blocks.&lt;br&gt;&lt;img src=&#34;/2025/03/09/bekim/consensus_algorithm/en/image3.png&#34; alt&gt;&lt;br&gt;First, all token holders vote based on their stake to elect delegates. These elected delegates take turns generating and validating blocks in a fixed order, playing a key role in maintaining the network.&lt;/p&gt;
+&lt;p&gt;In this system, the integrity of the delegates is crucial. Voting is an ongoing process, and if a delegate fails to create blocks or engages in dishonest behavior, token holders can replace them through re-elections. Because DPoS operates in a more democratic manner and delegates take turns producing blocks, it achieves faster block finalization times, leading to better network performance. Additionally, since there is no mining competition, energy consumption is significantly lower compared to PoW. However, since the number of delegates is limited, DPoS carries a higher risk of centralization compared to PoW or PoS. If a small group of delegates collude, it could undermine the fairness of the network.&lt;/p&gt;
+&lt;p&gt;Notable DPoS-based blockchains include EOS and TRON, as well as projects like Steem and Lisk, which also utilize DPoS. In these systems, a fixed number of delegates manage the network and execute the consensus process efficiently.&lt;/p&gt;
+&lt;h1 id=&#34;5-PBFT-Practical-Byzantine-Fault-Tolerance&#34;&gt;&lt;a href=&#34;#5-PBFT-Practical-Byzantine-Fault-Tolerance&#34; class=&#34;headerlink&#34; title=&#34;5. PBFT (Practical Byzantine Fault Tolerance)&#34;&gt;&lt;/a&gt;5. PBFT (Practical Byzantine Fault Tolerance)&lt;/h1&gt;&lt;p&gt;Those who have studied blockchain may have heard of the Byzantine Generals Problem.&lt;br&gt;The Byzantine fault tolerance problem was designed to address this issue and is described as follows:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;A group of Byzantine generals has surrounded an enemy city. They cannot communicate directly with each other and must rely on messengers to exchange information. The problem is that some of the generals might be &lt;strong&gt;traitors&lt;/strong&gt;. Loyal generals need to either attack together or retreat together, but the traitors aim to create confusion, causing some to attack while others retreat, ultimately ruining the operation.&lt;/li&gt;
+&lt;li&gt;In this situation, loyal generals must achieve two key goals:&lt;ul&gt;
+&lt;li&gt;All loyal generals must reach the same decision&amp;#x2014;either they all attack or they all retreat.&lt;/li&gt;
+&lt;li&gt;The traitors must not be able to spread false information that leads to an incorrect decision.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;The loyal generals must maintain these two conditions under any circumstances. However, the traitors can do anything&amp;#x2014;they can send false messages, alter communications, or deceive others in various ways.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Thus, the generals need a reliable communication method (algorithm) that enables them to reach a correct agreement in any situation.&lt;br&gt;This is the essence of the &amp;#x201C;Byzantine Generals Problem.&amp;#x201D;&lt;br&gt;PBFT (Practical Byzantine Fault Tolerance) is a consensus algorithm designed to ensure secure agreement within a network, even if some nodes fail to respond or provide incorrect information. In particular, when there are 3f + 1 nodes, the system can remain secure and functional even if up to f nodes are malicious (Byzantine). Unlike PoW or PoS, this consensus algorithm does not require computational competition. Instead, it operates based on a voting system, allowing for faster transaction finality.&lt;br&gt;&lt;img src=&#34;/2025/03/09/bekim/consensus_algorithm/en/image4.png&#34; alt&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Figure 1. Byzantine Generals Problem Image [Source: Attached research paper]&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;PBFT consists of clients and replicas, with one of the replicas acting as the leader (Primary) node. To achieve consensus, it follows a four-step protocol: Request, Pre-prepare, Prepare, and Commit. &lt;em&gt;(f: The number of nodes that can exhibit Byzantine faults)&lt;/em&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Request&lt;/strong&gt;&lt;br&gt;The client sends a request to the leader node.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Pre-Prepare&lt;/strong&gt;&lt;br&gt;The leader node broadcasts the request to all backup nodes. At this stage, if the leader node is malicious, it could propagate an incorrect request. However, the following steps will verify its validity.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Prepare&lt;/strong&gt;&lt;br&gt;Each backup node verifies the Pre-Prepare message sent by the leader node and then broadcasts a PREPARE message to the other nodes. At this stage, a node considers the request trustworthy if it receives at least 2f + 1 PREPARE messages for the same request.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Commit&lt;/strong&gt;&lt;br&gt;Each backup node considers the request trustworthy once it receives 2f + 1 PREPARE messages and then sends a COMMIT message to the other nodes. Nodes finalize the request when they receive 2f + 1 COMMIT messages for the same request.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Reply&lt;/strong&gt;&lt;br&gt;The client confirms that the request has been successfully processed once it receives f + 1 matching responses.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;PBFT is a consensus algorithm that provides fast transaction finality and high security. Unlike PoW or PoS, it does not rely on computational competition and can maintain network stability even with up to one-third Byzantine faults. However, as the network grows, the consensus process slows down, making scalability a major limitation. PBFT is used in Hyperledger Fabric, Zilliqa, and other blockchain projects. It is considered a suitable consensus algorithm for private blockchains and small-scale node networks.&lt;br&gt;We&amp;#x2019;ve explored 5 different blockchain consensus algorithms so far. Some were explained in detail, while others were covered more briefly. Since Proof of Work (PoW) and Proof of Stake (PoS) are the most familiar ones from my studies, I ended up writing a bit more about them.&lt;br&gt;Of course, there are many other consensus algorithms out there, but for today, I focused on these five well-known ones.&lt;br&gt;Thanks for reading this long post! If I come across more interesting topics, I&amp;#x2019;ll make sure to summarize them again. &amp;#x1F44B;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Reference&lt;/strong&gt;&lt;br&gt;&lt;a href=&#34;https://github.com/bitcoin/bitcoin&#34;&gt;https://github.com/bitcoin/bitcoin&lt;/a&gt;&lt;br&gt;&lt;a href=&#34;https://github.com/ethereum/go-ethereum&#34;&gt;https://github.com/ethereum/go-ethereum&lt;/a&gt;&lt;br&gt;&lt;a href=&#34;https://blockapps.net/blog/staking-in-crypto-exploring-adoption-trends-and-strategies-for-2024/&#34;&gt;https://blockapps.net/blog/staking-in-crypto-exploring-adoption-trends-and-strategies-for-2024/&lt;/a&gt;&lt;br&gt;&lt;a href=&#34;https://coinbureau.com/review/decred-dcr/&#34;&gt;https://coinbureau.com/review/decred-dcr/&lt;/a&gt;&lt;br&gt;&lt;a href=&#34;https://pmg.csail.mit.edu/papers/osdi99.pdf&#34;&gt;https://pmg.csail.mit.edu/papers/osdi99.pdf&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] Five Consensus Algorithms in Blockchain [en] - hackyboiz">
+  <meta property="og:description" content="&lt;h1 id=&#34;Introduction&#34;&gt;&lt;a href=&#34;#Introduction&#34; class=&#34;headerlink&#34; title=&#34;Introduction&#34;&gt;&lt;/a&gt;Introduction&lt;/h1&gt;&lt;p&gt;Hello! It&amp;#x2019;s bekim.&lt;/p&gt;
+&lt;p&gt;In my previous post, I briefly explained that transactions in the Bitcoin network become possible by adding new blocks through a mechanism called &amp;#x201C;Proof of Work.&amp;#x201D;. But, PoW isn\&amp;#x2019;t the only consensus algorithm available. Actually there are actually many different consensus algorithms used in blockchain systems.&lt;br&gt;A consensus algorithm is basically the mechanism by which participants in a blockchain network agree on choosing a single valid block and maintaining the chain.&lt;br&gt;In this post, I&amp;#x2019;ll introduce various consensus algorithms: PoW, PoS, DPoS, PBFT, and Hybrid PoW/PoS.&lt;br&gt;&lt;img src=&#34;/2025/03/09/bekim/consensus_algorithm/en/image.png&#34; alt&gt;&lt;/p&gt;
+&lt;h1 id=&#34;1-Proof-of-Work-PoW&#34;&gt;&lt;a href=&#34;#1-Proof-of-Work-PoW&#34; class=&#34;headerlink&#34; title=&#34;1. Proof of Work  (PoW)&#34;&gt;&lt;/a&gt;1. Proof of Work  (PoW)&lt;/h1&gt;&lt;p&gt;To explain this a bit further, Proof of Work is a method where participants (miners) need to find a hash value that meets a specific difficulty requirement. This mechanism was first introduced by Bitcoin. Miners repeatedly adjust a Nonce value, attempting to find a hash that matches the target difficulty.&lt;br&gt;Bitcoin aims to generate a new block roughly every 10 minutes. To keep this timing consistent, the network automatically adjusts the mining difficulty approximately every two weeks (every 2016 blocks)&lt;br&gt;Now, let&amp;#x2019;s take a closer look at how Proof of Work (PoW) functions in Bitcoin&amp;#x2019;s latest implementation.&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;GetNextWorkRequired&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; CBlockIndex* pindexLast, &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; CBlockHeader *pblock, &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; Consensus::Params&amp;amp; params)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+    assert(pindexLast != &lt;span class=&#34;hljs-literal&#34;&gt;nullptr&lt;/span&gt;);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; nProofOfWorkLimit = UintToArith256(params.powLimit).GetCompact();
+		
+		&lt;span class=&#34;hljs-comment&#34;&gt;// Only change once per difficulty adjustment interval&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// [1] &lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ((pindexLast-&amp;gt;nHeight+&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;) % params.DifficultyAdjustmentInterval() != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;)
+    {
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (params.fPowAllowMinDifficultyBlocks)
+        {
+            &lt;span class=&#34;hljs-comment&#34;&gt;// Special difficulty rule for testnet:&lt;/span&gt;
+            &lt;span class=&#34;hljs-comment&#34;&gt;// If the new block&amp;apos;s timestamp is more than 2* 10 minutes&lt;/span&gt;
+            &lt;span class=&#34;hljs-comment&#34;&gt;// then allow mining of a min-difficulty block.&lt;/span&gt;
+            &lt;span class=&#34;hljs-comment&#34;&gt;// [2]&lt;/span&gt;
+            &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (pblock-&amp;gt;GetBlockTime() &amp;gt; pindexLast-&amp;gt;GetBlockTime() + params.nPowTargetSpacing*&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;)
+                &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; nProofOfWorkLimit;
+            &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+            {
+                &lt;span class=&#34;hljs-comment&#34;&gt;// Return the last non-special-min-difficulty-rules-block&lt;/span&gt;
+                &lt;span class=&#34;hljs-comment&#34;&gt;// [3]&lt;/span&gt;
+                &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; CBlockIndex* pindex = pindexLast;
+                &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; (pindex-&amp;gt;pprev &amp;amp;&amp;amp; pindex-&amp;gt;nHeight % params.DifficultyAdjustmentInterval() != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; &amp;amp;&amp;amp; pindex-&amp;gt;nBits == nProofOfWorkLimit)
+                    pindex = pindex-&amp;gt;pprev;
+                &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; pindex-&amp;gt;nBits;
+            }
+        }
+        &lt;span class=&#34;hljs-comment&#34;&gt;// [4]&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; pindexLast-&amp;gt;nBits;
+    }
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;// Go back by what we want to be 14 days worth of blocks&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// [5]&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; nHeightFirst = pindexLast-&amp;gt;nHeight - (params.DifficultyAdjustmentInterval()&lt;span class=&#34;hljs-number&#34;&gt;-1&lt;/span&gt;);
+    assert(nHeightFirst &amp;gt;= &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; CBlockIndex* pindexFirst = pindexLast-&amp;gt;GetAncestor(nHeightFirst);
+    assert(pindexFirst);
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; CalculateNextWorkRequired(pindexLast, pindexFirst-&amp;gt;GetBlockTime(), params);
+}&lt;/code&gt;&lt;/pre&gt;&lt;br&gt;[1] Bitcoin adjusts the mining difficulty approximately every two weeks (every 2016 blocks). If the next block&amp;#x2019;s height (&lt;code&gt;pindexLast-&amp;gt;nHeight+1&lt;/code&gt;) is not a multiple of 2016 (&lt;code&gt;params.DifficultyAdjustmentInterval()&lt;/code&gt;), Bitcoin retains the difficulty level (&lt;code&gt;pindexLast-&amp;gt;nBits&lt;/code&gt;)[4] from the previous block without any adjustment.&lt;br&gt;[2]In Bitcoin&amp;#x2019;s Testnet, there is an exception rule: if no new block is generated for 20 minutes (twice the normal 10-minute interval), the network temporarily reduces the difficulty to its minimum value (&lt;code&gt;nProofOfWorkLimit&lt;/code&gt;).&lt;br&gt;[3] Even after this temporary minimum difficulty adjustment on Testnet, once miners successfully generate subsequent blocks, the difficulty returns to its previous normal level. This is done by tracking backwards through recent blocks to find the most recent valid difficulty value&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; CBlockIndex* pindex = pindexLast;
+&lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; (pindex-&amp;gt;pprev &amp;amp;&amp;amp; pindex-&amp;gt;nHeight % params.DifficultyAdjustmentInterval() != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; &amp;amp;&amp;amp; pindex-&amp;gt;nBits == nProofOfWorkLimit)
+    pindex = pindex-&amp;gt;pprev;
+&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; pindex-&amp;gt;nBits;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;For this purpose, Bitcoin checks the most recently added block (&lt;code&gt;pindexLast&lt;/code&gt;) and traces back from there. While traversing backward through previous blocks, Bitcoin skips blocks where the difficulty was temporarily reduced to the minimum (&lt;code&gt;pindex-&amp;gt;nBits == nProofOfWorkLimit&lt;/code&gt;). Specifically, it continues moving backward through blocks that haven&amp;#x2019;t yet reached the difficulty adjustment interval (&lt;code&gt;pindex-&amp;gt;nHeight % params.DifficultyAdjustmentInterval() != 0&lt;/code&gt;) until it finds a block where an actual difficulty adjustment occurred. At that point, it stops searching and uses that block&amp;#x2019;s difficulty as a reference.&lt;/p&gt;
+&lt;p&gt;[5] However, if the current block height (&lt;code&gt;pindexLast-&amp;gt;nHeight&lt;/code&gt;) is a multiple of the difficulty adjustment interval (2016 blocks), Bitcoin recalculates the difficulty level instead of using the previous one.&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;Bitcoin is designed so that if the previous 2016 blocks were generated faster than expected, the difficulty increases. On the other hand, if those blocks were generated more slowly than expected, the difficulty is lowered.&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;CalculateNextWorkRequired&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; CBlockIndex* pindexLast, &lt;span class=&#34;hljs-keyword&#34;&gt;int64_t&lt;/span&gt; nFirstBlockTime, &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; Consensus::Params&amp;amp; params)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (params.fPowNoRetargeting)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; pindexLast-&amp;gt;nBits;
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;// Limit adjustment step&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// [1]&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int64_t&lt;/span&gt; nActualTimespan = pindexLast-&amp;gt;GetBlockTime() - nFirstBlockTime;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// [2]&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (nActualTimespan &amp;lt; params.nPowTargetTimespan/&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;)
+        nActualTimespan = params.nPowTargetTimespan/&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (nActualTimespan &amp;gt; params.nPowTargetTimespan*&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;)
+        nActualTimespan = params.nPowTargetTimespan*&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;;
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;// Retarget&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; arith_uint256 bnPowLimit = UintToArith256(params.powLimit);
+    arith_uint256 bnNew;
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;// Special difficulty rule for Testnet4&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// [3]&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (params.enforce_BIP94) {
+        &lt;span class=&#34;hljs-comment&#34;&gt;// Here we use the first block of the difficulty period. This way&lt;/span&gt;
+        &lt;span class=&#34;hljs-comment&#34;&gt;// the real difficulty is always preserved in the first block as&lt;/span&gt;
+        &lt;span class=&#34;hljs-comment&#34;&gt;// it is not allowed to use the min-difficulty exception.&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; nHeightFirst = pindexLast-&amp;gt;nHeight - (params.DifficultyAdjustmentInterval()&lt;span class=&#34;hljs-number&#34;&gt;-1&lt;/span&gt;);
+        &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; CBlockIndex* pindexFirst = pindexLast-&amp;gt;GetAncestor(nHeightFirst);
+        bnNew.SetCompact(pindexFirst-&amp;gt;nBits);
+    } &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+        bnNew.SetCompact(pindexLast-&amp;gt;nBits);
+    }
+		
+		&lt;span class=&#34;hljs-comment&#34;&gt;// [4]&lt;/span&gt;
+    bnNew *= nActualTimespan;
+    bnNew /= params.nPowTargetTimespan;
+		
+		
+		&lt;span class=&#34;hljs-comment&#34;&gt;// [5]&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (bnNew &amp;gt; bnPowLimit)
+        bnNew = bnPowLimit;
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; bnNew.GetCompact();
+}&lt;/code&gt;&lt;/pre&gt;&lt;br&gt;[1] First, The network compares the timestamp of the latest block (&lt;code&gt;pindexLast-&amp;gt;GetBlockTime()&lt;/code&gt;) with the timestamp from 2016 blocks ago (&lt;code&gt;nFirstBlockTime&lt;/code&gt;) to calculate the actual time taken to generate the previous 2016 blocks, storing this result in &lt;code&gt;nActualTimespan&lt;/code&gt;. This value serves as the basis for adjusting the difficulty later.&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int64_t&lt;/span&gt; nActualTimespan = pindexLast-&amp;gt;GetBlockTime() - nFirstBlockTime;&lt;/code&gt;&lt;/pre&gt;&lt;/p&gt;
+&lt;p&gt;[2] Bitcoin measures &lt;code&gt;nActualTimespan&lt;/code&gt; and compares it to the target time (&lt;code&gt;params.nPowTargetTimespan&lt;/code&gt;) to adjust the difficulty. To prevent drastic changes in difficulty, the adjustment is limited&amp;#x2014;difficulty can only increase up to 1/4 of the target time or decrease up to 4 times the target time.&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (nActualTimespan &amp;lt; params.nPowTargetTimespan/&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;)
+    nActualTimespan = params.nPowTargetTimespan/&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;;
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (nActualTimespan &amp;gt; params.nPowTargetTimespan*&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;)
+    nActualTimespan = params.nPowTargetTimespan*&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;;&lt;/code&gt;&lt;/pre&gt;&lt;br&gt;This limitation helps prevent sudden fluctuations in the network.&lt;br&gt;The process of determining the reference block for difficulty adjustment depends on the value of &lt;code&gt;params.enforce_BIP94&lt;/code&gt;.&lt;br&gt;If this rule is applied, the difficulty of the block 2016 blocks before the current one (&lt;code&gt;pindexFirst-&amp;gt;nBits&lt;/code&gt;) is used as the reference. This helps prevent exceptional cases where the difficulty could drop to the minimum value. If the rule is not applied, the difficulty of the current block (&lt;code&gt;pindexLast-&amp;gt;nBits&lt;/code&gt;) is used instead.&lt;br&gt;This approach helps prevent the difficulty from dropping abnormally low in environments like Testnet.&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (params.enforce_BIP94) {
+    &lt;span class=&#34;hljs-comment&#34;&gt;// Here we use the first block of the difficulty period. This way&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// the real difficulty is always preserved in the first block as&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// it is not allowed to use the min-difficulty exception.&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; nHeightFirst = pindexLast-&amp;gt;nHeight - (params.DifficultyAdjustmentInterval()&lt;span class=&#34;hljs-number&#34;&gt;-1&lt;/span&gt;);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; CBlockIndex* pindexFirst = pindexLast-&amp;gt;GetAncestor(nHeightFirst);
+    bnNew.SetCompact(pindexFirst-&amp;gt;nBits);
+} &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+    bnNew.SetCompact(pindexLast-&amp;gt;nBits);
+}&lt;/code&gt;&lt;/pre&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;BIP (Bitcoin Improvement Proposal): A proposal for improving the Bitcoin protocol. BIP94 is one of these proposals and is designed to prevent the difficulty from dropping excessively in certain networks (such as Testnet4) during difficulty adjustments.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;[4] After that, Bitcoin calculates the new difficulty using the &lt;code&gt;nActualTimespan&lt;/code&gt; value. Bitcoin sets the target block generation time to 10 minutes, and assuming 2016 blocks are created, the target time (&lt;code&gt;params.nPowTargetTimespan&lt;/code&gt;) is approximately two weeks (1,209,600 seconds). The difficulty is then adjusted based on the ratio between the actual block generation time and the target time.&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;bnNew *= nActualTimespan;
+bnNew /= params.nPowTargetTimespan;&lt;/code&gt;&lt;/pre&gt;&lt;br&gt;In other words, the new difficulty is adjusted using the formula:&lt;br&gt;&lt;em&gt;New Difficulty = (Current Difficulty &amp;#xD7; Actual Time Taken) / Target Time&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;By applying this formula, Bitcoin ensures that the average block generation time stays around 10 minutes.&lt;br&gt;[5] Plus, to prevent the difficulty from dropping too low, it is restricted from falling below the minimum difficulty (&lt;code&gt;bnPowLimit&lt;/code&gt;).&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (bnNew &amp;gt; bnPowLimit)
+    bnNew = bnPowLimit;&lt;/code&gt;&lt;/pre&gt;&lt;br&gt;The calculated difficulty is then applied to the next block, and miners must solve for this target value.&lt;br&gt;However, as mentioned in a previous post, the PoW method requires a massive amount of computation, which means it uses a ton of energy.&lt;br&gt;On top of that, with the rise of large-scale mining pools, there is a risk that one group could control more than 51% of the network&amp;#x2019;s hash power&lt;strong&gt;.&lt;/strong&gt; If that happens, they could manipulate transactions or even pull off a double-spending attack.&lt;br&gt;To overcome these limitations of PoW, the Proof of Stake (PoS) consensus algorithm was introduced.&lt;/p&gt;
+&lt;h1 id=&#34;2-Proof-of-Stake-PoS&#34;&gt;&lt;a href=&#34;#2-Proof-of-Stake-PoS&#34; class=&#34;headerlink&#34; title=&#34;2. Proof of Stake (PoS)&#34;&gt;&lt;/a&gt;2. Proof of Stake (PoS)&lt;/h1&gt;&lt;p&gt;Proof of Stake (PoS) is a consensus algorithm that grants block creation and validation rights based on the amount of cryptocurrency a user holds and how long they&amp;#x2019;ve held it.&lt;br&gt;In PoW, miners have to solve complex mathematical problems, but in PoS, users can participate as validators by staking a certain amount of the network&amp;#x2019;s cryptocurrency. The more coins a validator stakes, the higher their chances of being selected to create a new block. PoS also enhances security through economic incentives. honest validators receive rewards, while those who engage in fraudulent activities face penalties, such as losing a portion of their staked funds.&lt;br&gt;The PoS concept was first implemented in Peercoin in 2012, and many blockchains have adopted it since then. In 2022, Ethereum also transitioned from PoW to PoS.&lt;br&gt;&lt;img src=&#34;/2025/03/09/bekim/consensus_algorithm/en/image1.png&#34; alt&gt;&lt;br&gt;I was going to use Ethereum as an example to explain how PoS works, but analyzing its code would make this post way too long. So instead, let&amp;#x2019;s break it down using a highly simplified version of the PoS consensus algorithm to understand the core principles.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; random
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; hashlib
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; time
+
+// [&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;]
+&lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;class&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;Validator&lt;/span&gt;:&lt;/span&gt;
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;__init__&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self, address, stake&lt;/span&gt;):&lt;/span&gt;
+        self.address = address  &lt;span class=&#34;hljs-comment&#34;&gt;# Validator address&lt;/span&gt;
+        self.stake = stake 
+        self.vote_weight = stake  
+    
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;__repr__&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self&lt;/span&gt;):&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;Validator(&lt;span class=&#34;hljs-subst&#34;&gt;{self.address}&lt;/span&gt;, Stake: &lt;span class=&#34;hljs-subst&#34;&gt;{self.stake}&lt;/span&gt;)&amp;quot;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;class&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;PoSBlockchain&lt;/span&gt;:&lt;/span&gt;
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;__init__&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self&lt;/span&gt;):&lt;/span&gt;
+        self.validators = [] 
+        self.blocks = []
+    
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;register_validator&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self, address, stake&lt;/span&gt;):&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; stake &amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;32&lt;/span&gt;:
+            print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;[ERROR] &lt;span class=&#34;hljs-subst&#34;&gt;{address}&lt;/span&gt; need to stake over 32 ETH&amp;quot;&lt;/span&gt;)
+            &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;
+        validator = Validator(address, stake)
+        self.validators.append(validator)
+        print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;[INFO] &lt;span class=&#34;hljs-subst&#34;&gt;{validator}&lt;/span&gt; registered as a validator.&amp;quot;&lt;/span&gt;)
+		
+		// [&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;]
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;select_proposer&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self&lt;/span&gt;):&lt;/span&gt;
+        &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&amp;quot; Randomly select a block proposer &amp;quot;&amp;quot;&amp;quot;&lt;/span&gt;
+        total_stake = sum(v.stake &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; v &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; self.validators)
+        rand_value = random.uniform(&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, total_stake)
+        
+        cumulative = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; validator &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; self.validators:
+            cumulative += validator.stake
+            &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; rand_value &amp;lt;= cumulative:
+                print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;[INFO] selected validator: &lt;span class=&#34;hljs-subst&#34;&gt;{validator.address}&lt;/span&gt;&amp;quot;&lt;/span&gt;)
+                &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; validator
+		// [&lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;]
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;create_block&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self, proposer&lt;/span&gt;):&lt;/span&gt;
+        &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&amp;quot; Generate a block and calculate hash &amp;quot;&amp;quot;&amp;quot;&lt;/span&gt;
+        prev_hash = self.blocks[&lt;span class=&#34;hljs-number&#34;&gt;-1&lt;/span&gt;][&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;hash&amp;apos;&lt;/span&gt;] &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; self.blocks &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;GENESIS&amp;quot;&lt;/span&gt;
+        timestamp = time.time()
+        block_data = &lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;&lt;span class=&#34;hljs-subst&#34;&gt;{proposer.address}&lt;/span&gt;-&lt;span class=&#34;hljs-subst&#34;&gt;{timestamp}&lt;/span&gt;-&lt;span class=&#34;hljs-subst&#34;&gt;{prev_hash}&lt;/span&gt;&amp;quot;&lt;/span&gt;
+        block_hash = hashlib.sha256(block_data.encode()).hexdigest()
+        block = {&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;proposer&amp;quot;&lt;/span&gt;: proposer.address, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;hash&amp;quot;&lt;/span&gt;: block_hash, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;prev_hash&amp;quot;&lt;/span&gt;: prev_hash}
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; block
+		
+		// [&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;]
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;validate_and_vote&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self, block&lt;/span&gt;):&lt;/span&gt;
+        votes = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; validator &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; self.validators:
+            &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; random.random() &amp;gt; &lt;span class=&#34;hljs-number&#34;&gt;0.1&lt;/span&gt;:  &lt;span class=&#34;hljs-comment&#34;&gt;# 90% probability of a valid vote&lt;/span&gt;
+                votes += validator.vote_weight
+        
+        required_votes = sum(v.stake &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; v &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; self.validators) * &lt;span class=&#34;hljs-number&#34;&gt;0.67&lt;/span&gt;  &lt;span class=&#34;hljs-comment&#34;&gt;# At least 67% approval required&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; votes &amp;gt;= required_votes:
+            self.blocks.append(block)
+            print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;[INFO] Validation: &lt;span class=&#34;hljs-subst&#34;&gt;{block[&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;hash&amp;apos;&lt;/span&gt;]}&lt;/span&gt;&amp;quot;&lt;/span&gt;)
+            &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;:
+            print(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[WARNING] Not enough votes &amp;quot;&lt;/span&gt;)
+            &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;False&lt;/span&gt;
+		// [&lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;]
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;run_consensus&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self&lt;/span&gt;):&lt;/span&gt;
+        proposer = self.select_proposer()
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; proposer:
+            new_block = self.create_block(proposer)
+            self.validate_and_vote(new_block)
+
+pos_chain = PoSBlockchain()
+
+pos_chain.register_validator(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Alice&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;50&lt;/span&gt;)
+pos_chain.register_validator(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Bob&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;40&lt;/span&gt;)
+pos_chain.register_validator(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Charlie&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;32&lt;/span&gt;)
+pos_chain.register_validator(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Dave&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;100&lt;/span&gt;)
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; _ &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; range(&lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;):
+    pos_chain.run_consensus()&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;[1] In Ethereum, you need to stake 32 ETH to participate as a validator.&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;class&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;Validator&lt;/span&gt;:&lt;/span&gt;
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;__init__&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self, address, stake&lt;/span&gt;):&lt;/span&gt;
+        self.address = address  
+        self.stake = stake  
+        
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;__repr__&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self&lt;/span&gt;):&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;Validator(&lt;span class=&#34;hljs-subst&#34;&gt;{self.address}&lt;/span&gt;, Stake: &lt;span class=&#34;hljs-subst&#34;&gt;{self.stake}&lt;/span&gt;)&amp;quot;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/p&gt;
+&lt;p&gt;[2] Participants who stake more coins have a higher chance of being selected as the next block validator, but the selection process also involves randomization algorithms to make it unpredictable and harder to manipulate&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;select_proposer&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self&lt;/span&gt;):&lt;/span&gt;
+    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&amp;quot;Select a block proposer randomly, weighted by stake&amp;quot;&amp;quot;&amp;quot;&lt;/span&gt;
+    total_stake = sum(v.stake &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; v &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; self.validators.values())
+    rand_value = random.uniform(&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, total_stake)
+
+    cumulative = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; validator &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; self.validators.values():
+        cumulative += validator.stake
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; rand_value &amp;lt;= cumulative:
+            print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;[INFO] Selected proposer: &lt;span class=&#34;hljs-subst&#34;&gt;{validator.address}&lt;/span&gt;&amp;quot;&lt;/span&gt;)
+            &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; validator
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;None&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/p&gt;
+&lt;p&gt;[3] The selected validator bundles new transactions, creates a block, and proposes it to the blockchain.&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;create_block&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self, proposer&lt;/span&gt;):&lt;/span&gt;
+    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&amp;quot;Generate a new block&amp;quot;&amp;quot;&amp;quot;&lt;/span&gt;
+    prev_hash = self.blockchain[&lt;span class=&#34;hljs-number&#34;&gt;-1&lt;/span&gt;][&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;Hash&amp;apos;&lt;/span&gt;]
+    new_block = {
+        &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Index&amp;quot;&lt;/span&gt;: len(self.blockchain),
+        &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Timestamp&amp;quot;&lt;/span&gt;: str(datetime.now()),
+        &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;PrevHash&amp;quot;&lt;/span&gt;: prev_hash,
+        &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Validator&amp;quot;&lt;/span&gt;: proposer.address
+    }
+    new_block[&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Hash&amp;quot;&lt;/span&gt;] = self.hash_block(new_block)
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; new_block&lt;/code&gt;&lt;/pre&gt;&lt;/p&gt;
+&lt;p&gt;[4] Other validators participate in the consensus process by verifying the block&amp;#x2019;s validity and voting on it. In Ethereum, at least 128 validators must review and vote on a block. Once enough consensus is reached through this voting process, the block is added to the blockchain.&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;validate_and_vote&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self, block&lt;/span&gt;):&lt;/span&gt;
+    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&amp;quot;Simulate validator voting process&amp;quot;&amp;quot;&amp;quot;&lt;/span&gt;
+    total_stake = sum(v.stake &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; v &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; self.validators.values())
+    votes = sum(v.stake &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; v &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; self.validators.values() &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; random.random() &amp;gt; &lt;span class=&#34;hljs-number&#34;&gt;0.1&lt;/span&gt;)  &lt;span class=&#34;hljs-comment&#34;&gt;# # 90% chance to approve&lt;/span&gt;
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; votes &amp;gt;= total_stake * &lt;span class=&#34;hljs-number&#34;&gt;0.67&lt;/span&gt;:  &lt;span class=&#34;hljs-comment&#34;&gt;# Requires at least 67% approval &lt;/span&gt;
+        self.blockchain.append(block)
+        print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;[INFO] Block added: &lt;span class=&#34;hljs-subst&#34;&gt;{block[&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;Hash&amp;apos;&lt;/span&gt;]}&lt;/span&gt;&amp;quot;&lt;/span&gt;)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;:
+        print(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[WARNING] Block rejected due to insufficient votes.&amp;quot;&lt;/span&gt;)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;False&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/p&gt;
+&lt;p&gt;[5] Validators who successfully create a valid block receive transaction fees and network rewards as compensation.&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;run_consensus&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;self&lt;/span&gt;):&lt;/span&gt;
+    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&amp;quot;Run the PoS consensus process&amp;quot;&amp;quot;&amp;quot;&lt;/span&gt;
+    proposer = self.select_proposer()
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; proposer:
+        new_block = self.create_block(proposer)
+        self.validate_and_vote(new_block)
+        proposer.stake += &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;  &lt;span class=&#34;hljs-comment&#34;&gt;# reward&lt;/span&gt;
+        print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;[INFO] &lt;span class=&#34;hljs-subst&#34;&gt;{proposer.address}&lt;/span&gt; received 5 ETH as a reward.&amp;quot;&lt;/span&gt;)&lt;/code&gt;&lt;/pre&gt;&lt;br&gt;If a validator engages in dishonest behavior or fails to perform the required validation tasks, they face penalties. For example, if a validator goes offline and fails to validate blocks, they may receive reduced rewards or have a portion of their staked funds slashed. In more severe cases, such as double signing or approving an invalid block, the validator can be slashed, meaning they lose some or even all of their staked funds and get removed from the network.&lt;/p&gt;
+&lt;p&gt;Because of this system, PoS helps maintain the security and integrity of the network while being more energy-efficient than PoW. However, PoS has its own limitations. Those who hold more coins tend to have a continuous advantage, leading to potential centralization risks in the network.&lt;/p&gt;
+&lt;h1 id=&#34;3-Hybrid-PoW-PoS&#34;&gt;&lt;a href=&#34;#3-Hybrid-PoW-PoS&#34; class=&#34;headerlink&#34; title=&#34;3. Hybrid PoW/PoS&#34;&gt;&lt;/a&gt;3. Hybrid PoW/PoS&lt;/h1&gt;&lt;p&gt;&lt;img src=&#34;/2025/03/09/bekim/consensus_algorithm/en/image2.png&#34; alt&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Complete Overview of Decred&amp;#x2019;s Structure [Source: &lt;a href=&#34;https://medium.com/decred/blockchain-governance-how-decred-iterates-upon-bitcoin-3cc7030c655e&#34;&gt;https://medium.com/decred/blockchain-governance-how-decred-iterates-upon-bitcoin-3cc7030c655e&lt;/a&gt;]&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The traditional PoW provides high security but has high energy consumption and the issue of mining monopolization. On the other hand, the PoS method is energy-efficient but comes with the risk of validator monopoly. To solve this, the Hybrid PoW/PoS model emerged. In this method, PoW is used to generate blocks, while PoS validators approve them.&lt;br&gt;First, a miner performs computations using the Proof-of-Work method to create a new block. However, the created block is not immediately added to the chain but goes through a final approval process via the PoS validators&amp;#x2019; vote. PoS validators participate by staking a certain amount of the cryptocurrency they hold, and randomly selected validators evaluate the validity of the block and vote on it. Typically, if at least 3 out of 5 validators approve, the block is validated and added to the blockchain. The rewards are distributed to both PoW miners and PoS validators. For example, in Decred (DCR), 60% of the reward is given to PoW miners, 30% goes to PoS validators, and the remaining 10% is allocated to the network development fund. Through this, excessive monopolization by PoW miners is prevented, and PoS validators are incentivized to actively participate in maintaining the network.&lt;br&gt;By combining PoW&amp;#x2019;s high security with PoS&amp;#x2019;s energy efficiency, this structure strengthens resistance against 51% attacks and mitigates validator centralization issues.&lt;/p&gt;
+&lt;h1 id=&#34;4-DPoS-Delegated-Proof-of-Stake&#34;&gt;&lt;a href=&#34;#4-DPoS-Delegated-Proof-of-Stake&#34; class=&#34;headerlink&#34; title=&#34;4. DPoS (Delegated Proof of Stake)&#34;&gt;&lt;/a&gt;4. DPoS (Delegated Proof of Stake)&lt;/h1&gt;&lt;p&gt;Delegated Proof of Stake (DPoS) is an improved version of the traditional PoS consensus algorithm, designed to make transaction verification and block generation in blockchain networks more efficient. Instead of users directly creating blocks, DPoS allows them to elect delegates, who are then entrusted with the responsibility of validating transactions and generating blocks.&lt;br&gt;&lt;img src=&#34;/2025/03/09/bekim/consensus_algorithm/en/image3.png&#34; alt&gt;&lt;br&gt;First, all token holders vote based on their stake to elect delegates. These elected delegates take turns generating and validating blocks in a fixed order, playing a key role in maintaining the network.&lt;/p&gt;
+&lt;p&gt;In this system, the integrity of the delegates is crucial. Voting is an ongoing process, and if a delegate fails to create blocks or engages in dishonest behavior, token holders can replace them through re-elections. Because DPoS operates in a more democratic manner and delegates take turns producing blocks, it achieves faster block finalization times, leading to better network performance. Additionally, since there is no mining competition, energy consumption is significantly lower compared to PoW. However, since the number of delegates is limited, DPoS carries a higher risk of centralization compared to PoW or PoS. If a small group of delegates collude, it could undermine the fairness of the network.&lt;/p&gt;
+&lt;p&gt;Notable DPoS-based blockchains include EOS and TRON, as well as projects like Steem and Lisk, which also utilize DPoS. In these systems, a fixed number of delegates manage the network and execute the consensus process efficiently.&lt;/p&gt;
+&lt;h1 id=&#34;5-PBFT-Practical-Byzantine-Fault-Tolerance&#34;&gt;&lt;a href=&#34;#5-PBFT-Practical-Byzantine-Fault-Tolerance&#34; class=&#34;headerlink&#34; title=&#34;5. PBFT (Practical Byzantine Fault Tolerance)&#34;&gt;&lt;/a&gt;5. PBFT (Practical Byzantine Fault Tolerance)&lt;/h1&gt;&lt;p&gt;Those who have studied blockchain may have heard of the Byzantine Generals Problem.&lt;br&gt;The Byzantine fault tolerance problem was designed to address this issue and is described as follows:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;A group of Byzantine generals has surrounded an enemy city. They cannot communicate directly with each other and must rely on messengers to exchange information. The problem is that some of the generals might be &lt;strong&gt;traitors&lt;/strong&gt;. Loyal generals need to either attack together or retreat together, but the traitors aim to create confusion, causing some to attack while others retreat, ultimately ruining the operation.&lt;/li&gt;
+&lt;li&gt;In this situation, loyal generals must achieve two key goals:&lt;ul&gt;
+&lt;li&gt;All loyal generals must reach the same decision&amp;#x2014;either they all attack or they all retreat.&lt;/li&gt;
+&lt;li&gt;The traitors must not be able to spread false information that leads to an incorrect decision.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;The loyal generals must maintain these two conditions under any circumstances. However, the traitors can do anything&amp;#x2014;they can send false messages, alter communications, or deceive others in various ways.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Thus, the generals need a reliable communication method (algorithm) that enables them to reach a correct agreement in any situation.&lt;br&gt;This is the essence of the &amp;#x201C;Byzantine Generals Problem.&amp;#x201D;&lt;br&gt;PBFT (Practical Byzantine Fault Tolerance) is a consensus algorithm designed to ensure secure agreement within a network, even if some nodes fail to respond or provide incorrect information. In particular, when there are 3f + 1 nodes, the system can remain secure and functional even if up to f nodes are malicious (Byzantine). Unlike PoW or PoS, this consensus algorithm does not require computational competition. Instead, it operates based on a voting system, allowing for faster transaction finality.&lt;br&gt;&lt;img src=&#34;/2025/03/09/bekim/consensus_algorithm/en/image4.png&#34; alt&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Figure 1. Byzantine Generals Problem Image [Source: Attached research paper]&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;PBFT consists of clients and replicas, with one of the replicas acting as the leader (Primary) node. To achieve consensus, it follows a four-step protocol: Request, Pre-prepare, Prepare, and Commit. &lt;em&gt;(f: The number of nodes that can exhibit Byzantine faults)&lt;/em&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Request&lt;/strong&gt;&lt;br&gt;The client sends a request to the leader node.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Pre-Prepare&lt;/strong&gt;&lt;br&gt;The leader node broadcasts the request to all backup nodes. At this stage, if the leader node is malicious, it could propagate an incorrect request. However, the following steps will verify its validity.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Prepare&lt;/strong&gt;&lt;br&gt;Each backup node verifies the Pre-Prepare message sent by the leader node and then broadcasts a PREPARE message to the other nodes. At this stage, a node considers the request trustworthy if it receives at least 2f + 1 PREPARE messages for the same request.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Commit&lt;/strong&gt;&lt;br&gt;Each backup node considers the request trustworthy once it receives 2f + 1 PREPARE messages and then sends a COMMIT message to the other nodes. Nodes finalize the request when they receive 2f + 1 COMMIT messages for the same request.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Reply&lt;/strong&gt;&lt;br&gt;The client confirms that the request has been successfully processed once it receives f + 1 matching responses.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;PBFT is a consensus algorithm that provides fast transaction finality and high security. Unlike PoW or PoS, it does not rely on computational competition and can maintain network stability even with up to one-third Byzantine faults. However, as the network grows, the consensus process slows down, making scalability a major limitation. PBFT is used in Hyperledger Fabric, Zilliqa, and other blockchain projects. It is considered a suitable consensus algorithm for private blockchains and small-scale node networks.&lt;br&gt;We&amp;#x2019;ve explored 5 different blockchain consensus algorithms so far. Some were explained in detail, while others were covered more briefly. Since Proof of Work (PoW) and Proof of Stake (PoS) are the most familiar ones from my studies, I ended up writing a bit more about them.&lt;br&gt;Of course, there are many other consensus algorithms out there, but for today, I focused on these five well-known ones.&lt;br&gt;Thanks for reading this long post! If I come across more interesting topics, I&amp;#x2019;ll make sure to summarize them again. &amp;#x1F44B;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Reference&lt;/strong&gt;&lt;br&gt;&lt;a href=&#34;https://github.com/bitcoin/bitcoin&#34;&gt;https://github.com/bitcoin/bitcoin&lt;/a&gt;&lt;br&gt;&lt;a href=&#34;https://github.com/ethereum/go-ethereum&#34;&gt;https://github.com/ethereum/go-ethereum&lt;/a&gt;&lt;br&gt;&lt;a href=&#34;https://blockapps.net/blog/staking-in-crypto-exploring-adoption-trends-and-strategies-for-2024/&#34;&gt;https://blockapps.net/blog/staking-in-crypto-exploring-adoption-trends-and-strategies-for-2024/&lt;/a&gt;&lt;br&gt;&lt;a href=&#34;https://coinbureau.com/review/decred-dcr/&#34;&gt;https://coinbureau.com/review/decred-dcr/&lt;/a&gt;&lt;br&gt;&lt;a href=&#34;https://pmg.csail.mit.edu/papers/osdi99.pdf&#34;&gt;https://pmg.csail.mit.edu/papers/osdi99.pdf&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/03/09/bekim/consensus_algorithm/en/consensus_algorithm.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/03/09/bekim/consensus_algorithm/en/">
+
+  <title>[Research] Five Consensus Algorithms in Blockchain [en] - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-03-09 17:00" pubdate>
+      2025년 3월 9일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      3.6k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      71
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] Five Consensus Algorithms in Blockchain [en]</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <h1 id="Introduction"><a href="#Introduction" class="headerlink" title="Introduction"></a>Introduction</h1><p>Hello! It&#x2019;s bekim.</p>
+<p>In my previous post, I briefly explained that transactions in the Bitcoin network become possible by adding new blocks through a mechanism called &#x201C;Proof of Work.&#x201D;. But, PoW isn\&#x2019;t the only consensus algorithm available. Actually there are actually many different consensus algorithms used in blockchain systems.<br>A consensus algorithm is basically the mechanism by which participants in a blockchain network agree on choosing a single valid block and maintaining the chain.<br>In this post, I&#x2019;ll introduce various consensus algorithms: PoW, PoS, DPoS, PBFT, and Hybrid PoW/PoS.<br><img src="/2025/03/09/bekim/consensus_algorithm/en/image.png" srcset="/img/loading.gif" alt></p>
+<h1 id="1-Proof-of-Work-PoW"><a href="#1-Proof-of-Work-PoW" class="headerlink" title="1. Proof of Work  (PoW)"></a>1. Proof of Work  (PoW)</h1><p>To explain this a bit further, Proof of Work is a method where participants (miners) need to find a hash value that meets a specific difficulty requirement. This mechanism was first introduced by Bitcoin. Miners repeatedly adjust a Nonce value, attempting to find a hash that matches the target difficulty.<br>Bitcoin aims to generate a new block roughly every 10 minutes. To keep this timing consistent, the network automatically adjusts the mining difficulty approximately every two weeks (every 2016 blocks)<br>Now, let&#x2019;s take a closer look at how Proof of Work (PoW) functions in Bitcoin&#x2019;s latest implementation.<br><pre><code class="hljs cpp"><span class="hljs-function"><span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span> <span class="hljs-title">GetNextWorkRequired</span><span class="hljs-params">(<span class="hljs-keyword">const</span> CBlockIndex* pindexLast, <span class="hljs-keyword">const</span> CBlockHeader *pblock, <span class="hljs-keyword">const</span> Consensus::Params&amp; params)</span></span>
+<span class="hljs-function"></span>{
+    assert(pindexLast != <span class="hljs-literal">nullptr</span>);
+    <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span> nProofOfWorkLimit = UintToArith256(params.powLimit).GetCompact();
+		
+		<span class="hljs-comment">// Only change once per difficulty adjustment interval</span>
+    <span class="hljs-comment">// [1] </span>
+    <span class="hljs-keyword">if</span> ((pindexLast-&gt;nHeight+<span class="hljs-number">1</span>) % params.DifficultyAdjustmentInterval() != <span class="hljs-number">0</span>)
+    {
+        <span class="hljs-keyword">if</span> (params.fPowAllowMinDifficultyBlocks)
+        {
+            <span class="hljs-comment">// Special difficulty rule for testnet:</span>
+            <span class="hljs-comment">// If the new block&apos;s timestamp is more than 2* 10 minutes</span>
+            <span class="hljs-comment">// then allow mining of a min-difficulty block.</span>
+            <span class="hljs-comment">// [2]</span>
+            <span class="hljs-keyword">if</span> (pblock-&gt;GetBlockTime() &gt; pindexLast-&gt;GetBlockTime() + params.nPowTargetSpacing*<span class="hljs-number">2</span>)
+                <span class="hljs-keyword">return</span> nProofOfWorkLimit;
+            <span class="hljs-keyword">else</span>
+            {
+                <span class="hljs-comment">// Return the last non-special-min-difficulty-rules-block</span>
+                <span class="hljs-comment">// [3]</span>
+                <span class="hljs-keyword">const</span> CBlockIndex* pindex = pindexLast;
+                <span class="hljs-keyword">while</span> (pindex-&gt;pprev &amp;&amp; pindex-&gt;nHeight % params.DifficultyAdjustmentInterval() != <span class="hljs-number">0</span> &amp;&amp; pindex-&gt;nBits == nProofOfWorkLimit)
+                    pindex = pindex-&gt;pprev;
+                <span class="hljs-keyword">return</span> pindex-&gt;nBits;
+            }
+        }
+        <span class="hljs-comment">// [4]</span>
+        <span class="hljs-keyword">return</span> pindexLast-&gt;nBits;
+    }
+
+    <span class="hljs-comment">// Go back by what we want to be 14 days worth of blocks</span>
+    <span class="hljs-comment">// [5]</span>
+    <span class="hljs-keyword">int</span> nHeightFirst = pindexLast-&gt;nHeight - (params.DifficultyAdjustmentInterval()<span class="hljs-number">-1</span>);
+    assert(nHeightFirst &gt;= <span class="hljs-number">0</span>);
+    <span class="hljs-keyword">const</span> CBlockIndex* pindexFirst = pindexLast-&gt;GetAncestor(nHeightFirst);
+    assert(pindexFirst);
+
+    <span class="hljs-keyword">return</span> CalculateNextWorkRequired(pindexLast, pindexFirst-&gt;GetBlockTime(), params);
+}</code></pre><br>[1] Bitcoin adjusts the mining difficulty approximately every two weeks (every 2016 blocks). If the next block&#x2019;s height (<code>pindexLast-&gt;nHeight+1</code>) is not a multiple of 2016 (<code>params.DifficultyAdjustmentInterval()</code>), Bitcoin retains the difficulty level (<code>pindexLast-&gt;nBits</code>)[4] from the previous block without any adjustment.<br>[2]In Bitcoin&#x2019;s Testnet, there is an exception rule: if no new block is generated for 20 minutes (twice the normal 10-minute interval), the network temporarily reduces the difficulty to its minimum value (<code>nProofOfWorkLimit</code>).<br>[3] Even after this temporary minimum difficulty adjustment on Testnet, once miners successfully generate subsequent blocks, the difficulty returns to its previous normal level. This is done by tracking backwards through recent blocks to find the most recent valid difficulty value</p>
+<pre><code class="hljs cpp"><span class="hljs-keyword">const</span> CBlockIndex* pindex = pindexLast;
+<span class="hljs-keyword">while</span> (pindex-&gt;pprev &amp;&amp; pindex-&gt;nHeight % params.DifficultyAdjustmentInterval() != <span class="hljs-number">0</span> &amp;&amp; pindex-&gt;nBits == nProofOfWorkLimit)
+    pindex = pindex-&gt;pprev;
+<span class="hljs-keyword">return</span> pindex-&gt;nBits;</code></pre>
+<p>For this purpose, Bitcoin checks the most recently added block (<code>pindexLast</code>) and traces back from there. While traversing backward through previous blocks, Bitcoin skips blocks where the difficulty was temporarily reduced to the minimum (<code>pindex-&gt;nBits == nProofOfWorkLimit</code>). Specifically, it continues moving backward through blocks that haven&#x2019;t yet reached the difficulty adjustment interval (<code>pindex-&gt;nHeight % params.DifficultyAdjustmentInterval() != 0</code>) until it finds a block where an actual difficulty adjustment occurred. At that point, it stops searching and uses that block&#x2019;s difficulty as a reference.</p>
+<p>[5] However, if the current block height (<code>pindexLast-&gt;nHeight</code>) is a multiple of the difficulty adjustment interval (2016 blocks), Bitcoin recalculates the difficulty level instead of using the previous one.</p>
+<hr>
+<p>Bitcoin is designed so that if the previous 2016 blocks were generated faster than expected, the difficulty increases. On the other hand, if those blocks were generated more slowly than expected, the difficulty is lowered.<br><pre><code class="hljs cpp"><span class="hljs-function"><span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span> <span class="hljs-title">CalculateNextWorkRequired</span><span class="hljs-params">(<span class="hljs-keyword">const</span> CBlockIndex* pindexLast, <span class="hljs-keyword">int64_t</span> nFirstBlockTime, <span class="hljs-keyword">const</span> Consensus::Params&amp; params)</span></span>
+<span class="hljs-function"></span>{
+    <span class="hljs-keyword">if</span> (params.fPowNoRetargeting)
+        <span class="hljs-keyword">return</span> pindexLast-&gt;nBits;
+
+    <span class="hljs-comment">// Limit adjustment step</span>
+    <span class="hljs-comment">// [1]</span>
+    <span class="hljs-keyword">int64_t</span> nActualTimespan = pindexLast-&gt;GetBlockTime() - nFirstBlockTime;
+    <span class="hljs-comment">// [2]</span>
+    <span class="hljs-keyword">if</span> (nActualTimespan &lt; params.nPowTargetTimespan/<span class="hljs-number">4</span>)
+        nActualTimespan = params.nPowTargetTimespan/<span class="hljs-number">4</span>;
+    <span class="hljs-keyword">if</span> (nActualTimespan &gt; params.nPowTargetTimespan*<span class="hljs-number">4</span>)
+        nActualTimespan = params.nPowTargetTimespan*<span class="hljs-number">4</span>;
+
+    <span class="hljs-comment">// Retarget</span>
+    <span class="hljs-keyword">const</span> arith_uint256 bnPowLimit = UintToArith256(params.powLimit);
+    arith_uint256 bnNew;
+
+    <span class="hljs-comment">// Special difficulty rule for Testnet4</span>
+    <span class="hljs-comment">// [3]</span>
+    <span class="hljs-keyword">if</span> (params.enforce_BIP94) {
+        <span class="hljs-comment">// Here we use the first block of the difficulty period. This way</span>
+        <span class="hljs-comment">// the real difficulty is always preserved in the first block as</span>
+        <span class="hljs-comment">// it is not allowed to use the min-difficulty exception.</span>
+        <span class="hljs-keyword">int</span> nHeightFirst = pindexLast-&gt;nHeight - (params.DifficultyAdjustmentInterval()<span class="hljs-number">-1</span>);
+        <span class="hljs-keyword">const</span> CBlockIndex* pindexFirst = pindexLast-&gt;GetAncestor(nHeightFirst);
+        bnNew.SetCompact(pindexFirst-&gt;nBits);
+    } <span class="hljs-keyword">else</span> {
+        bnNew.SetCompact(pindexLast-&gt;nBits);
+    }
+		
+		<span class="hljs-comment">// [4]</span>
+    bnNew *= nActualTimespan;
+    bnNew /= params.nPowTargetTimespan;
+		
+		
+		<span class="hljs-comment">// [5]</span>
+    <span class="hljs-keyword">if</span> (bnNew &gt; bnPowLimit)
+        bnNew = bnPowLimit;
+
+    <span class="hljs-keyword">return</span> bnNew.GetCompact();
+}</code></pre><br>[1] First, The network compares the timestamp of the latest block (<code>pindexLast-&gt;GetBlockTime()</code>) with the timestamp from 2016 blocks ago (<code>nFirstBlockTime</code>) to calculate the actual time taken to generate the previous 2016 blocks, storing this result in <code>nActualTimespan</code>. This value serves as the basis for adjusting the difficulty later.<br><pre><code class="hljs cpp"><span class="hljs-keyword">int64_t</span> nActualTimespan = pindexLast-&gt;GetBlockTime() - nFirstBlockTime;</code></pre></p>
+<p>[2] Bitcoin measures <code>nActualTimespan</code> and compares it to the target time (<code>params.nPowTargetTimespan</code>) to adjust the difficulty. To prevent drastic changes in difficulty, the adjustment is limited&#x2014;difficulty can only increase up to 1/4 of the target time or decrease up to 4 times the target time.<br><pre><code class="hljs cpp"><span class="hljs-keyword">if</span> (nActualTimespan &lt; params.nPowTargetTimespan/<span class="hljs-number">4</span>)
+    nActualTimespan = params.nPowTargetTimespan/<span class="hljs-number">4</span>;
+<span class="hljs-keyword">if</span> (nActualTimespan &gt; params.nPowTargetTimespan*<span class="hljs-number">4</span>)
+    nActualTimespan = params.nPowTargetTimespan*<span class="hljs-number">4</span>;</code></pre><br>This limitation helps prevent sudden fluctuations in the network.<br>The process of determining the reference block for difficulty adjustment depends on the value of <code>params.enforce_BIP94</code>.<br>If this rule is applied, the difficulty of the block 2016 blocks before the current one (<code>pindexFirst-&gt;nBits</code>) is used as the reference. This helps prevent exceptional cases where the difficulty could drop to the minimum value. If the rule is not applied, the difficulty of the current block (<code>pindexLast-&gt;nBits</code>) is used instead.<br>This approach helps prevent the difficulty from dropping abnormally low in environments like Testnet.<br><pre><code class="hljs cpp"><span class="hljs-keyword">if</span> (params.enforce_BIP94) {
+    <span class="hljs-comment">// Here we use the first block of the difficulty period. This way</span>
+    <span class="hljs-comment">// the real difficulty is always preserved in the first block as</span>
+    <span class="hljs-comment">// it is not allowed to use the min-difficulty exception.</span>
+    <span class="hljs-keyword">int</span> nHeightFirst = pindexLast-&gt;nHeight - (params.DifficultyAdjustmentInterval()<span class="hljs-number">-1</span>);
+    <span class="hljs-keyword">const</span> CBlockIndex* pindexFirst = pindexLast-&gt;GetAncestor(nHeightFirst);
+    bnNew.SetCompact(pindexFirst-&gt;nBits);
+} <span class="hljs-keyword">else</span> {
+    bnNew.SetCompact(pindexLast-&gt;nBits);
+}</code></pre></p>
+<blockquote>
+<p>BIP (Bitcoin Improvement Proposal): A proposal for improving the Bitcoin protocol. BIP94 is one of these proposals and is designed to prevent the difficulty from dropping excessively in certain networks (such as Testnet4) during difficulty adjustments.</p>
+</blockquote>
+<p>[4] After that, Bitcoin calculates the new difficulty using the <code>nActualTimespan</code> value. Bitcoin sets the target block generation time to 10 minutes, and assuming 2016 blocks are created, the target time (<code>params.nPowTargetTimespan</code>) is approximately two weeks (1,209,600 seconds). The difficulty is then adjusted based on the ratio between the actual block generation time and the target time.<br><pre><code class="hljs cpp">bnNew *= nActualTimespan;
+bnNew /= params.nPowTargetTimespan;</code></pre><br>In other words, the new difficulty is adjusted using the formula:<br><em>New Difficulty = (Current Difficulty &#xD7; Actual Time Taken) / Target Time</em></p>
+<p>By applying this formula, Bitcoin ensures that the average block generation time stays around 10 minutes.<br>[5] Plus, to prevent the difficulty from dropping too low, it is restricted from falling below the minimum difficulty (<code>bnPowLimit</code>).<br><pre><code class="hljs cpp"><span class="hljs-keyword">if</span> (bnNew &gt; bnPowLimit)
+    bnNew = bnPowLimit;</code></pre><br>The calculated difficulty is then applied to the next block, and miners must solve for this target value.<br>However, as mentioned in a previous post, the PoW method requires a massive amount of computation, which means it uses a ton of energy.<br>On top of that, with the rise of large-scale mining pools, there is a risk that one group could control more than 51% of the network&#x2019;s hash power<strong>.</strong> If that happens, they could manipulate transactions or even pull off a double-spending attack.<br>To overcome these limitations of PoW, the Proof of Stake (PoS) consensus algorithm was introduced.</p>
+<h1 id="2-Proof-of-Stake-PoS"><a href="#2-Proof-of-Stake-PoS" class="headerlink" title="2. Proof of Stake (PoS)"></a>2. Proof of Stake (PoS)</h1><p>Proof of Stake (PoS) is a consensus algorithm that grants block creation and validation rights based on the amount of cryptocurrency a user holds and how long they&#x2019;ve held it.<br>In PoW, miners have to solve complex mathematical problems, but in PoS, users can participate as validators by staking a certain amount of the network&#x2019;s cryptocurrency. The more coins a validator stakes, the higher their chances of being selected to create a new block. PoS also enhances security through economic incentives. honest validators receive rewards, while those who engage in fraudulent activities face penalties, such as losing a portion of their staked funds.<br>The PoS concept was first implemented in Peercoin in 2012, and many blockchains have adopted it since then. In 2022, Ethereum also transitioned from PoW to PoS.<br><img src="/2025/03/09/bekim/consensus_algorithm/en/image1.png" srcset="/img/loading.gif" alt><br>I was going to use Ethereum as an example to explain how PoS works, but analyzing its code would make this post way too long. So instead, let&#x2019;s break it down using a highly simplified version of the PoS consensus algorithm to understand the core principles.</p>
+<pre><code class="hljs python"><span class="hljs-keyword">import</span> random
+<span class="hljs-keyword">import</span> hashlib
+<span class="hljs-keyword">import</span> time
+
+// [<span class="hljs-number">1</span>]
+<span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">Validator</span>:</span>
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">__init__</span>(<span class="hljs-params">self, address, stake</span>):</span>
+        self.address = address  <span class="hljs-comment"># Validator address</span>
+        self.stake = stake 
+        self.vote_weight = stake  
+    
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">__repr__</span>(<span class="hljs-params">self</span>):</span>
+        <span class="hljs-keyword">return</span> <span class="hljs-string">f&quot;Validator(<span class="hljs-subst">{self.address}</span>, Stake: <span class="hljs-subst">{self.stake}</span>)&quot;</span>
+
+<span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">PoSBlockchain</span>:</span>
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">__init__</span>(<span class="hljs-params">self</span>):</span>
+        self.validators = [] 
+        self.blocks = []
+    
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">register_validator</span>(<span class="hljs-params">self, address, stake</span>):</span>
+        <span class="hljs-keyword">if</span> stake &lt; <span class="hljs-number">32</span>:
+            print(<span class="hljs-string">f&quot;[ERROR] <span class="hljs-subst">{address}</span> need to stake over 32 ETH&quot;</span>)
+            <span class="hljs-keyword">return</span>
+        validator = Validator(address, stake)
+        self.validators.append(validator)
+        print(<span class="hljs-string">f&quot;[INFO] <span class="hljs-subst">{validator}</span> registered as a validator.&quot;</span>)
+		
+		// [<span class="hljs-number">2</span>]
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">select_proposer</span>(<span class="hljs-params">self</span>):</span>
+        <span class="hljs-string">&quot;&quot;&quot; Randomly select a block proposer &quot;&quot;&quot;</span>
+        total_stake = sum(v.stake <span class="hljs-keyword">for</span> v <span class="hljs-keyword">in</span> self.validators)
+        rand_value = random.uniform(<span class="hljs-number">0</span>, total_stake)
+        
+        cumulative = <span class="hljs-number">0</span>
+        <span class="hljs-keyword">for</span> validator <span class="hljs-keyword">in</span> self.validators:
+            cumulative += validator.stake
+            <span class="hljs-keyword">if</span> rand_value &lt;= cumulative:
+                print(<span class="hljs-string">f&quot;[INFO] selected validator: <span class="hljs-subst">{validator.address}</span>&quot;</span>)
+                <span class="hljs-keyword">return</span> validator
+		// [<span class="hljs-number">3</span>]
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">create_block</span>(<span class="hljs-params">self, proposer</span>):</span>
+        <span class="hljs-string">&quot;&quot;&quot; Generate a block and calculate hash &quot;&quot;&quot;</span>
+        prev_hash = self.blocks[<span class="hljs-number">-1</span>][<span class="hljs-string">&apos;hash&apos;</span>] <span class="hljs-keyword">if</span> self.blocks <span class="hljs-keyword">else</span> <span class="hljs-string">&quot;GENESIS&quot;</span>
+        timestamp = time.time()
+        block_data = <span class="hljs-string">f&quot;<span class="hljs-subst">{proposer.address}</span>-<span class="hljs-subst">{timestamp}</span>-<span class="hljs-subst">{prev_hash}</span>&quot;</span>
+        block_hash = hashlib.sha256(block_data.encode()).hexdigest()
+        block = {<span class="hljs-string">&quot;proposer&quot;</span>: proposer.address, <span class="hljs-string">&quot;hash&quot;</span>: block_hash, <span class="hljs-string">&quot;prev_hash&quot;</span>: prev_hash}
+        <span class="hljs-keyword">return</span> block
+		
+		// [<span class="hljs-number">4</span>]
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">validate_and_vote</span>(<span class="hljs-params">self, block</span>):</span>
+        votes = <span class="hljs-number">0</span>
+        <span class="hljs-keyword">for</span> validator <span class="hljs-keyword">in</span> self.validators:
+            <span class="hljs-keyword">if</span> random.random() &gt; <span class="hljs-number">0.1</span>:  <span class="hljs-comment"># 90% probability of a valid vote</span>
+                votes += validator.vote_weight
+        
+        required_votes = sum(v.stake <span class="hljs-keyword">for</span> v <span class="hljs-keyword">in</span> self.validators) * <span class="hljs-number">0.67</span>  <span class="hljs-comment"># At least 67% approval required</span>
+        <span class="hljs-keyword">if</span> votes &gt;= required_votes:
+            self.blocks.append(block)
+            print(<span class="hljs-string">f&quot;[INFO] Validation: <span class="hljs-subst">{block[<span class="hljs-string">&apos;hash&apos;</span>]}</span>&quot;</span>)
+            <span class="hljs-keyword">return</span> <span class="hljs-literal">True</span>
+        <span class="hljs-keyword">else</span>:
+            print(<span class="hljs-string">&quot;[WARNING] Not enough votes &quot;</span>)
+            <span class="hljs-keyword">return</span> <span class="hljs-literal">False</span>
+		// [<span class="hljs-number">5</span>]
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">run_consensus</span>(<span class="hljs-params">self</span>):</span>
+        proposer = self.select_proposer()
+        <span class="hljs-keyword">if</span> proposer:
+            new_block = self.create_block(proposer)
+            self.validate_and_vote(new_block)
+
+pos_chain = PoSBlockchain()
+
+pos_chain.register_validator(<span class="hljs-string">&quot;Alice&quot;</span>, <span class="hljs-number">50</span>)
+pos_chain.register_validator(<span class="hljs-string">&quot;Bob&quot;</span>, <span class="hljs-number">40</span>)
+pos_chain.register_validator(<span class="hljs-string">&quot;Charlie&quot;</span>, <span class="hljs-number">32</span>)
+pos_chain.register_validator(<span class="hljs-string">&quot;Dave&quot;</span>, <span class="hljs-number">100</span>)
+
+<span class="hljs-keyword">for</span> _ <span class="hljs-keyword">in</span> range(<span class="hljs-number">3</span>):
+    pos_chain.run_consensus()</code></pre>
+<p>[1] In Ethereum, you need to stake 32 ETH to participate as a validator.<br><pre><code class="hljs python"><span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">Validator</span>:</span>
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">__init__</span>(<span class="hljs-params">self, address, stake</span>):</span>
+        self.address = address  
+        self.stake = stake  
+        
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">__repr__</span>(<span class="hljs-params">self</span>):</span>
+        <span class="hljs-keyword">return</span> <span class="hljs-string">f&quot;Validator(<span class="hljs-subst">{self.address}</span>, Stake: <span class="hljs-subst">{self.stake}</span>)&quot;</span></code></pre></p>
+<p>[2] Participants who stake more coins have a higher chance of being selected as the next block validator, but the selection process also involves randomization algorithms to make it unpredictable and harder to manipulate<br><pre><code class="hljs python"><span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">select_proposer</span>(<span class="hljs-params">self</span>):</span>
+    <span class="hljs-string">&quot;&quot;&quot;Select a block proposer randomly, weighted by stake&quot;&quot;&quot;</span>
+    total_stake = sum(v.stake <span class="hljs-keyword">for</span> v <span class="hljs-keyword">in</span> self.validators.values())
+    rand_value = random.uniform(<span class="hljs-number">0</span>, total_stake)
+
+    cumulative = <span class="hljs-number">0</span>
+    <span class="hljs-keyword">for</span> validator <span class="hljs-keyword">in</span> self.validators.values():
+        cumulative += validator.stake
+        <span class="hljs-keyword">if</span> rand_value &lt;= cumulative:
+            print(<span class="hljs-string">f&quot;[INFO] Selected proposer: <span class="hljs-subst">{validator.address}</span>&quot;</span>)
+            <span class="hljs-keyword">return</span> validator
+    <span class="hljs-keyword">return</span> <span class="hljs-literal">None</span></code></pre></p>
+<p>[3] The selected validator bundles new transactions, creates a block, and proposes it to the blockchain.<br><pre><code class="hljs python"><span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">create_block</span>(<span class="hljs-params">self, proposer</span>):</span>
+    <span class="hljs-string">&quot;&quot;&quot;Generate a new block&quot;&quot;&quot;</span>
+    prev_hash = self.blockchain[<span class="hljs-number">-1</span>][<span class="hljs-string">&apos;Hash&apos;</span>]
+    new_block = {
+        <span class="hljs-string">&quot;Index&quot;</span>: len(self.blockchain),
+        <span class="hljs-string">&quot;Timestamp&quot;</span>: str(datetime.now()),
+        <span class="hljs-string">&quot;PrevHash&quot;</span>: prev_hash,
+        <span class="hljs-string">&quot;Validator&quot;</span>: proposer.address
+    }
+    new_block[<span class="hljs-string">&quot;Hash&quot;</span>] = self.hash_block(new_block)
+    <span class="hljs-keyword">return</span> new_block</code></pre></p>
+<p>[4] Other validators participate in the consensus process by verifying the block&#x2019;s validity and voting on it. In Ethereum, at least 128 validators must review and vote on a block. Once enough consensus is reached through this voting process, the block is added to the blockchain.<br><pre><code class="hljs python"><span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">validate_and_vote</span>(<span class="hljs-params">self, block</span>):</span>
+    <span class="hljs-string">&quot;&quot;&quot;Simulate validator voting process&quot;&quot;&quot;</span>
+    total_stake = sum(v.stake <span class="hljs-keyword">for</span> v <span class="hljs-keyword">in</span> self.validators.values())
+    votes = sum(v.stake <span class="hljs-keyword">for</span> v <span class="hljs-keyword">in</span> self.validators.values() <span class="hljs-keyword">if</span> random.random() &gt; <span class="hljs-number">0.1</span>)  <span class="hljs-comment"># # 90% chance to approve</span>
+
+    <span class="hljs-keyword">if</span> votes &gt;= total_stake * <span class="hljs-number">0.67</span>:  <span class="hljs-comment"># Requires at least 67% approval </span>
+        self.blockchain.append(block)
+        print(<span class="hljs-string">f&quot;[INFO] Block added: <span class="hljs-subst">{block[<span class="hljs-string">&apos;Hash&apos;</span>]}</span>&quot;</span>)
+        <span class="hljs-keyword">return</span> <span class="hljs-literal">True</span>
+    <span class="hljs-keyword">else</span>:
+        print(<span class="hljs-string">&quot;[WARNING] Block rejected due to insufficient votes.&quot;</span>)
+        <span class="hljs-keyword">return</span> <span class="hljs-literal">False</span></code></pre></p>
+<p>[5] Validators who successfully create a valid block receive transaction fees and network rewards as compensation.<br><pre><code class="hljs python"><span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">run_consensus</span>(<span class="hljs-params">self</span>):</span>
+    <span class="hljs-string">&quot;&quot;&quot;Run the PoS consensus process&quot;&quot;&quot;</span>
+    proposer = self.select_proposer()
+    <span class="hljs-keyword">if</span> proposer:
+        new_block = self.create_block(proposer)
+        self.validate_and_vote(new_block)
+        proposer.stake += <span class="hljs-number">5</span>  <span class="hljs-comment"># reward</span>
+        print(<span class="hljs-string">f&quot;[INFO] <span class="hljs-subst">{proposer.address}</span> received 5 ETH as a reward.&quot;</span>)</code></pre><br>If a validator engages in dishonest behavior or fails to perform the required validation tasks, they face penalties. For example, if a validator goes offline and fails to validate blocks, they may receive reduced rewards or have a portion of their staked funds slashed. In more severe cases, such as double signing or approving an invalid block, the validator can be slashed, meaning they lose some or even all of their staked funds and get removed from the network.</p>
+<p>Because of this system, PoS helps maintain the security and integrity of the network while being more energy-efficient than PoW. However, PoS has its own limitations. Those who hold more coins tend to have a continuous advantage, leading to potential centralization risks in the network.</p>
+<h1 id="3-Hybrid-PoW-PoS"><a href="#3-Hybrid-PoW-PoS" class="headerlink" title="3. Hybrid PoW/PoS"></a>3. Hybrid PoW/PoS</h1><p><img src="/2025/03/09/bekim/consensus_algorithm/en/image2.png" srcset="/img/loading.gif" alt></p>
+<blockquote>
+<p>Complete Overview of Decred&#x2019;s Structure [Source: <a target="_blank" rel="external nofollow noopener noreferrer" href="https://medium.com/decred/blockchain-governance-how-decred-iterates-upon-bitcoin-3cc7030c655e">https://medium.com/decred/blockchain-governance-how-decred-iterates-upon-bitcoin-3cc7030c655e</a>]</p>
+</blockquote>
+<p>The traditional PoW provides high security but has high energy consumption and the issue of mining monopolization. On the other hand, the PoS method is energy-efficient but comes with the risk of validator monopoly. To solve this, the Hybrid PoW/PoS model emerged. In this method, PoW is used to generate blocks, while PoS validators approve them.<br>First, a miner performs computations using the Proof-of-Work method to create a new block. However, the created block is not immediately added to the chain but goes through a final approval process via the PoS validators&#x2019; vote. PoS validators participate by staking a certain amount of the cryptocurrency they hold, and randomly selected validators evaluate the validity of the block and vote on it. Typically, if at least 3 out of 5 validators approve, the block is validated and added to the blockchain. The rewards are distributed to both PoW miners and PoS validators. For example, in Decred (DCR), 60% of the reward is given to PoW miners, 30% goes to PoS validators, and the remaining 10% is allocated to the network development fund. Through this, excessive monopolization by PoW miners is prevented, and PoS validators are incentivized to actively participate in maintaining the network.<br>By combining PoW&#x2019;s high security with PoS&#x2019;s energy efficiency, this structure strengthens resistance against 51% attacks and mitigates validator centralization issues.</p>
+<h1 id="4-DPoS-Delegated-Proof-of-Stake"><a href="#4-DPoS-Delegated-Proof-of-Stake" class="headerlink" title="4. DPoS (Delegated Proof of Stake)"></a>4. DPoS (Delegated Proof of Stake)</h1><p>Delegated Proof of Stake (DPoS) is an improved version of the traditional PoS consensus algorithm, designed to make transaction verification and block generation in blockchain networks more efficient. Instead of users directly creating blocks, DPoS allows them to elect delegates, who are then entrusted with the responsibility of validating transactions and generating blocks.<br><img src="/2025/03/09/bekim/consensus_algorithm/en/image3.png" srcset="/img/loading.gif" alt><br>First, all token holders vote based on their stake to elect delegates. These elected delegates take turns generating and validating blocks in a fixed order, playing a key role in maintaining the network.</p>
+<p>In this system, the integrity of the delegates is crucial. Voting is an ongoing process, and if a delegate fails to create blocks or engages in dishonest behavior, token holders can replace them through re-elections. Because DPoS operates in a more democratic manner and delegates take turns producing blocks, it achieves faster block finalization times, leading to better network performance. Additionally, since there is no mining competition, energy consumption is significantly lower compared to PoW. However, since the number of delegates is limited, DPoS carries a higher risk of centralization compared to PoW or PoS. If a small group of delegates collude, it could undermine the fairness of the network.</p>
+<p>Notable DPoS-based blockchains include EOS and TRON, as well as projects like Steem and Lisk, which also utilize DPoS. In these systems, a fixed number of delegates manage the network and execute the consensus process efficiently.</p>
+<h1 id="5-PBFT-Practical-Byzantine-Fault-Tolerance"><a href="#5-PBFT-Practical-Byzantine-Fault-Tolerance" class="headerlink" title="5. PBFT (Practical Byzantine Fault Tolerance)"></a>5. PBFT (Practical Byzantine Fault Tolerance)</h1><p>Those who have studied blockchain may have heard of the Byzantine Generals Problem.<br>The Byzantine fault tolerance problem was designed to address this issue and is described as follows:</p>
+<ul>
+<li>A group of Byzantine generals has surrounded an enemy city. They cannot communicate directly with each other and must rely on messengers to exchange information. The problem is that some of the generals might be <strong>traitors</strong>. Loyal generals need to either attack together or retreat together, but the traitors aim to create confusion, causing some to attack while others retreat, ultimately ruining the operation.</li>
+<li>In this situation, loyal generals must achieve two key goals:<ul>
+<li>All loyal generals must reach the same decision&#x2014;either they all attack or they all retreat.</li>
+<li>The traitors must not be able to spread false information that leads to an incorrect decision.</li>
+</ul>
+</li>
+<li>The loyal generals must maintain these two conditions under any circumstances. However, the traitors can do anything&#x2014;they can send false messages, alter communications, or deceive others in various ways.</li>
+</ul>
+<p>Thus, the generals need a reliable communication method (algorithm) that enables them to reach a correct agreement in any situation.<br>This is the essence of the &#x201C;Byzantine Generals Problem.&#x201D;<br>PBFT (Practical Byzantine Fault Tolerance) is a consensus algorithm designed to ensure secure agreement within a network, even if some nodes fail to respond or provide incorrect information. In particular, when there are 3f + 1 nodes, the system can remain secure and functional even if up to f nodes are malicious (Byzantine). Unlike PoW or PoS, this consensus algorithm does not require computational competition. Instead, it operates based on a voting system, allowing for faster transaction finality.<br><img src="/2025/03/09/bekim/consensus_algorithm/en/image4.png" srcset="/img/loading.gif" alt></p>
+<blockquote>
+<p>Figure 1. Byzantine Generals Problem Image [Source: Attached research paper]</p>
+</blockquote>
+<p>PBFT consists of clients and replicas, with one of the replicas acting as the leader (Primary) node. To achieve consensus, it follows a four-step protocol: Request, Pre-prepare, Prepare, and Commit. <em>(f: The number of nodes that can exhibit Byzantine faults)</em></p>
+<ol>
+<li><p><strong>Request</strong><br>The client sends a request to the leader node.</p>
+</li>
+<li><p><strong>Pre-Prepare</strong><br>The leader node broadcasts the request to all backup nodes. At this stage, if the leader node is malicious, it could propagate an incorrect request. However, the following steps will verify its validity.</p>
+</li>
+<li><p><strong>Prepare</strong><br>Each backup node verifies the Pre-Prepare message sent by the leader node and then broadcasts a PREPARE message to the other nodes. At this stage, a node considers the request trustworthy if it receives at least 2f + 1 PREPARE messages for the same request.</p>
+</li>
+<li><p><strong>Commit</strong><br>Each backup node considers the request trustworthy once it receives 2f + 1 PREPARE messages and then sends a COMMIT message to the other nodes. Nodes finalize the request when they receive 2f + 1 COMMIT messages for the same request.</p>
+</li>
+<li><p><strong>Reply</strong><br>The client confirms that the request has been successfully processed once it receives f + 1 matching responses.</p>
+</li>
+</ol>
+<p>PBFT is a consensus algorithm that provides fast transaction finality and high security. Unlike PoW or PoS, it does not rely on computational competition and can maintain network stability even with up to one-third Byzantine faults. However, as the network grows, the consensus process slows down, making scalability a major limitation. PBFT is used in Hyperledger Fabric, Zilliqa, and other blockchain projects. It is considered a suitable consensus algorithm for private blockchains and small-scale node networks.<br>We&#x2019;ve explored 5 different blockchain consensus algorithms so far. Some were explained in detail, while others were covered more briefly. Since Proof of Work (PoW) and Proof of Stake (PoS) are the most familiar ones from my studies, I ended up writing a bit more about them.<br>Of course, there are many other consensus algorithms out there, but for today, I focused on these five well-known ones.<br>Thanks for reading this long post! If I come across more interesting topics, I&#x2019;ll make sure to summarize them again. &#x1F44B;</p>
+<ul>
+<li><strong>Reference</strong><br><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/bitcoin/bitcoin">https://github.com/bitcoin/bitcoin</a><br><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/ethereum/go-ethereum">https://github.com/ethereum/go-ethereum</a><br><a target="_blank" rel="external nofollow noopener noreferrer" href="https://blockapps.net/blog/staking-in-crypto-exploring-adoption-trends-and-strategies-for-2024/">https://blockapps.net/blog/staking-in-crypto-exploring-adoption-trends-and-strategies-for-2024/</a><br><a target="_blank" rel="external nofollow noopener noreferrer" href="https://coinbureau.com/review/decred-dcr/">https://coinbureau.com/review/decred-dcr/</a><br><a target="_blank" rel="external nofollow noopener noreferrer" href="https://pmg.csail.mit.edu/papers/osdi99.pdf">https://pmg.csail.mit.edu/papers/osdi99.pdf</a></li>
+</ul>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/bekim/">bekim</a>
+                  
+                  <a class="hover-with-bg" href="/tags/bitcoin/">bitcoin</a>
+                  
+                  <a class="hover-with-bg" href="/tags/blockchain/">blockchain</a>
+                  
+                  <a class="hover-with-bg" href="/tags/ethereum/">ethereum</a>
+                  
+                  <a class="hover-with-bg" href="/tags/PoW/">PoW</a>
+                  
+                  <a class="hover-with-bg" href="/tags/PoS/">PoS</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_bekim.jpg" srcset="/img/loading.gif" alt="bekim">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">bekim</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/bekim">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/03/12/romi0x/1day1line0312/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2024-1086: Linux Kernel 내 Use-After-Free</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/03/09/bekim/consensus_algorithm/ko/">
+                    <span class="hidden-mobile">[Research] Five Consensus Algorithms in Blockchain [ko]</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/03/09/bekim/consensus_algorithm/en/';
+        this.page.identifier = '/2025/03/09/bekim/consensus_algorithm/en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] Five Consensus Algorithms in Blockchain [en]&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
