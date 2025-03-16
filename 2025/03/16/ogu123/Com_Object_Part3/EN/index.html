@@ -1,0 +1,877 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;h3 id=&#34;Introduction&#34;&gt;&lt;a href=&#34;#Introduction&#34; class=&#34;headerlink&#34; title=&#34;Introduction&#34;&gt;&lt;/a&gt;Introduction&lt;/h3&gt;&lt;p&gt;Hello, this is ogu123!!!&lt;/p&gt;
+&lt;p&gt;In Part3, we&amp;#x2019;ll look at Cross Session Activation, which occurs when a COM object is set to Interactive User, and continue with &lt;a href=&#34;https://hackyboiz.github.io/2024/12/22/ogu123/COM_Object_part2/ko/&#34;&gt;Part2&lt;/a&gt; finding vulnerable COMs in a specific program!&lt;/p&gt;
+&lt;p&gt;This time, there won&amp;#x2019;t be much theory, so you can relax, and let&amp;#x2019;s get to work!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/1.jpg&#34; alt&gt;&lt;/p&gt;
+&lt;h3 id=&#34;COM-Security&#34;&gt;&lt;a href=&#34;#COM-Security&#34; class=&#34;headerlink&#34; title=&#34;COM Security&#34;&gt;&lt;/a&gt;COM Security&lt;/h3&gt;&lt;p&gt;COM objects can use COM Security to control object creation, access, permissions, and more.&lt;/p&gt;
+&lt;p&gt;Among the many settings for COM Security, Application Identity determines which account permissions the COM object uses when it runs.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/2.png&#34; alt&gt;&lt;br&gt;When you check the properties of a particular DCOM object in Component Services, you see that it is set to Interactive User.&lt;/p&gt;
+&lt;p&gt;In this context, Interactive User is a setting that runs the COM object with the privileges of the currently logged in user.&lt;/p&gt;
+&lt;p&gt;This is because COM objects that are capable of cross-session activation must be set to Interactive User.&lt;/p&gt;
+&lt;p&gt;To better understand this, let&amp;#x2019;s first look at the concept of Windows Session Isolation.&lt;/p&gt;
+&lt;h3 id=&#34;Windows-Session-Isolation&#34;&gt;&lt;a href=&#34;#Windows-Session-Isolation&#34; class=&#34;headerlink&#34; title=&#34;Windows Session Isolation&#34;&gt;&lt;/a&gt;Windows Session Isolation&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/3.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;In Windows XP and Windows Server 2003 and earlier, when a user first logged in, both the user application and Windows services ran in Session 0.&lt;/p&gt;
+&lt;p&gt;Attackers exploited this to target service processes with high privileges and interact with user applications to gain elevation of privilege.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/4.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;To address this issue, the following security policies have been in place since Windows 7&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;logged-in users are assigned different sessions (1, 2, 3&amp;#x2026;) sequentially&lt;/li&gt;
+&lt;li&gt;services running in session 0 are restricted from interacting with user sessions.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;This resulted in complete separation of sessions, so services could not directly interact with user applications running in other sessions.&lt;/p&gt;
+&lt;p&gt;However&amp;#x2026; Cross-Session Activation can occur here if a COM object set to Interactive User exists.&lt;/p&gt;
+&lt;h3 id=&#34;Cross-Session-Activation&#34;&gt;&lt;a href=&#34;#Cross-Session-Activation&#34; class=&#34;headerlink&#34; title=&#34;Cross-Session Activation&#34;&gt;&lt;/a&gt;Cross-Session Activation&lt;/h3&gt;&lt;p&gt;Cross-Session Activation is a technique for literally activating a COM object across sessions.&lt;/p&gt;
+&lt;p&gt;In addition to the interactive user, the following conditions must be met to create a cross-session COM object through the Session Moniker.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;INTERACTIVE exists in the Start and Activate COM Object permission&lt;/li&gt;
+&lt;li&gt;Existence of appropriate permissions in the process Access Security (Authenticated Users, &amp;#x2026;)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/5.png&#34; alt&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Source : &lt;a href=&#34;https://decoder.cloud/2024/08/02/the-fake-potato/&#34;&gt;Windows File Explorer EoP (CVE-2024-38100)&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;CVE-2024-38100 is an EoP vulnerability due to COM Cross-Session Activation because the DCOM object in Explorer (Hight IL) satisfies all the conditions for Cross-Session Activation and contains a ShellExecute method.&lt;/p&gt;
+&lt;p&gt;Although MS claimed that cross-session activation is only possible for Interactive User, it was found that SYSTEM can also be cross-session activated through &lt;a href=&#34;https://issues.chromium.org/issues/341803763&#34;&gt;Chrome Updater EoP (CVE-2024-7023)&lt;/a&gt;.&lt;/p&gt;
+&lt;h3 id=&#34;Finding-Cross-Session-Activation-COMs&#34;&gt;&lt;a href=&#34;#Finding-Cross-Session-Activation-COMs&#34; class=&#34;headerlink&#34; title=&#34;Finding Cross Session Activation COMs&#34;&gt;&lt;/a&gt;Finding Cross Session Activation COMs&lt;/h3&gt;&lt;p&gt;How do you find COM objects that you can leverage for cross-session activation?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/6.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;First, you can use PowerShell to filter all registered COM objects to &amp;#x201C;Interactive User&amp;#x201D; and find them one by one, checking if they fulfill the conditions mentioned above.&lt;/p&gt;
+&lt;p&gt;My recommendation is to use the &lt;a href=&#34;https://github.com/CICADA8-Research/COMThanasia&#34;&gt;COMThanasia Tool&lt;/a&gt;, which is much more convenient because you can see RunAs, AppIDs, CLSIDs, etc. at a glance.&lt;/p&gt;
+&lt;h3 id=&#34;Find-vulnerable-COMs-in-a-specific-program&#34;&gt;&lt;a href=&#34;#Find-vulnerable-COMs-in-a-specific-program&#34; class=&#34;headerlink&#34; title=&#34;Find vulnerable COMs in a specific program&#34;&gt;&lt;/a&gt;Find vulnerable COMs in a specific program&lt;/h3&gt;&lt;p&gt;Now let&amp;#x2019;s continue with Part 2 and look for vulnerable COM objects in antivirus programs!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/7.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;After checking only the Launch permission, we found Name(A), which appears to be related to the target program.&lt;/p&gt;
+&lt;p&gt;The corresponding AppID (xxxxxxxx-xxxx-xxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) object says that it is not available, which is a static analysis, so we recommend that you recheck it after creating the object.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/8.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;We looked for CLSIDs using the AppID (xxxxxxxx-xxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) and found two CLSIDs.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;xxxxxxxx-xxxx-xxxx-AAAA-AAAAAAAAAAAA (File Handler)&lt;/li&gt;
+&lt;li&gt;xxxxxxxx-xxxx-xxxx-BBBB-BBBBBBBBBBBB&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/9.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;First, I checked the xxxxxxxx-xxxx-xxxx-AAAA-AAAAAAAAAAAA (File Handler) CLSID via &lt;a href=&#34;http://oleview.net/&#34;&gt;OleView.Net&lt;/a&gt;, and got lucky and found the IDispatch interface and Typelib!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/10.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;With trepidation, I looked into Typelib and found several file-related methods within the File Handler interface.&lt;/p&gt;
+&lt;p&gt;Of these, the GoFileDelete method was my first thought of a File Delete vulnerability.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/11.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;To summarize, we have verified that the CLSID (xxxxxxxx-xxxx-xxxx-AAAA-AAAAAAAAAAAAAA) is a COM object that exists within TARGET.exe and that the Integrity Level (IL) of TARGET.exe is System.&lt;/p&gt;
+&lt;p&gt;Finally, we should have checked the Application Identity value of the COM object, but Thinking I had already found the zero-day, I used the GoFileDelete method without checking.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/12.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;I tried to delete notepad.exe inside the System32 folder via the GoFileDelete method, but it failed&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;Frustrated, I moved on, thinking at the time that the Application Identity value was The Launching User.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/13.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;While writing the articles, I remembered that I hadn&amp;#x2019;t checked the Application Identity, so I checked it and it was SYSTEM?!&lt;/p&gt;
+&lt;p&gt;I thought about why the GoFileDelete method failed and came up with the following guess.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Before deleting a file, we filter out files in protected directories like C:\Windows, C:\windows\system32, C:\Program Files, etc.&lt;/li&gt;
+&lt;li&gt;Blacklist file extensions like .exe, .dll, .db, etc. to filter them out&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/14.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;After applying GoFileDelete to all the files in the System32 folder, we see that we can&amp;#x2019;t delete files like exe, dll, db, but we can delete ini, chm files, etc.&lt;/p&gt;
+&lt;p&gt;So&amp;#x2026; all that&amp;#x2019;s left is to check with the IDA to see exactly which files the GoFileDelete method can delete! (I will&amp;#x2026;)&lt;/p&gt;
+&lt;h3 id=&#34;Conclusion&#34;&gt;&lt;a href=&#34;#Conclusion&#34; class=&#34;headerlink&#34; title=&#34;Conclusion&#34;&gt;&lt;/a&gt;Conclusion&lt;/h3&gt;&lt;p&gt;In this article, we looked at the Cross Session Activation technique and how we almost found a File Delete vulnerability in COM inside AntiVirus&amp;#x2026;!&lt;/p&gt;
+&lt;p&gt;Now, let&amp;#x2019;s analyze with IDA and find the File Delete vulnerability, or if that doesn&amp;#x2019;t work, let&amp;#x2019;s try to piece it together and find a COM zero-day because there are other methods related to files. (I wonder why there is no Execute method&amp;#x2026;)&lt;/p&gt;
+&lt;p&gt;Thank you for reading this long post.&lt;/p&gt;
+&lt;h3 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://www.tiraniddo.dev/2018/09/finding-interactive-user-com-objects_9.html&#34;&gt;https://www.tiraniddo.dev/2018/09/finding-interactive-user-com-objects_9.html&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://blog.compass-security.com/2024/10/com-cross-session-activation/&#34;&gt;https://blog.compass-security.com/2024/10/com-cross-session-activation/&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://note-ing.tistory.com/65&#34;&gt;https://note-ing.tistory.com/65&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] COM Object - Part 3(Cross-Session Activation)(EN) - hackyboiz">
+  <meta property="og:description" content="&lt;h3 id=&#34;Introduction&#34;&gt;&lt;a href=&#34;#Introduction&#34; class=&#34;headerlink&#34; title=&#34;Introduction&#34;&gt;&lt;/a&gt;Introduction&lt;/h3&gt;&lt;p&gt;Hello, this is ogu123!!!&lt;/p&gt;
+&lt;p&gt;In Part3, we&amp;#x2019;ll look at Cross Session Activation, which occurs when a COM object is set to Interactive User, and continue with &lt;a href=&#34;https://hackyboiz.github.io/2024/12/22/ogu123/COM_Object_part2/ko/&#34;&gt;Part2&lt;/a&gt; finding vulnerable COMs in a specific program!&lt;/p&gt;
+&lt;p&gt;This time, there won&amp;#x2019;t be much theory, so you can relax, and let&amp;#x2019;s get to work!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/1.jpg&#34; alt&gt;&lt;/p&gt;
+&lt;h3 id=&#34;COM-Security&#34;&gt;&lt;a href=&#34;#COM-Security&#34; class=&#34;headerlink&#34; title=&#34;COM Security&#34;&gt;&lt;/a&gt;COM Security&lt;/h3&gt;&lt;p&gt;COM objects can use COM Security to control object creation, access, permissions, and more.&lt;/p&gt;
+&lt;p&gt;Among the many settings for COM Security, Application Identity determines which account permissions the COM object uses when it runs.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/2.png&#34; alt&gt;&lt;br&gt;When you check the properties of a particular DCOM object in Component Services, you see that it is set to Interactive User.&lt;/p&gt;
+&lt;p&gt;In this context, Interactive User is a setting that runs the COM object with the privileges of the currently logged in user.&lt;/p&gt;
+&lt;p&gt;This is because COM objects that are capable of cross-session activation must be set to Interactive User.&lt;/p&gt;
+&lt;p&gt;To better understand this, let&amp;#x2019;s first look at the concept of Windows Session Isolation.&lt;/p&gt;
+&lt;h3 id=&#34;Windows-Session-Isolation&#34;&gt;&lt;a href=&#34;#Windows-Session-Isolation&#34; class=&#34;headerlink&#34; title=&#34;Windows Session Isolation&#34;&gt;&lt;/a&gt;Windows Session Isolation&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/3.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;In Windows XP and Windows Server 2003 and earlier, when a user first logged in, both the user application and Windows services ran in Session 0.&lt;/p&gt;
+&lt;p&gt;Attackers exploited this to target service processes with high privileges and interact with user applications to gain elevation of privilege.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/4.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;To address this issue, the following security policies have been in place since Windows 7&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;logged-in users are assigned different sessions (1, 2, 3&amp;#x2026;) sequentially&lt;/li&gt;
+&lt;li&gt;services running in session 0 are restricted from interacting with user sessions.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;This resulted in complete separation of sessions, so services could not directly interact with user applications running in other sessions.&lt;/p&gt;
+&lt;p&gt;However&amp;#x2026; Cross-Session Activation can occur here if a COM object set to Interactive User exists.&lt;/p&gt;
+&lt;h3 id=&#34;Cross-Session-Activation&#34;&gt;&lt;a href=&#34;#Cross-Session-Activation&#34; class=&#34;headerlink&#34; title=&#34;Cross-Session Activation&#34;&gt;&lt;/a&gt;Cross-Session Activation&lt;/h3&gt;&lt;p&gt;Cross-Session Activation is a technique for literally activating a COM object across sessions.&lt;/p&gt;
+&lt;p&gt;In addition to the interactive user, the following conditions must be met to create a cross-session COM object through the Session Moniker.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;INTERACTIVE exists in the Start and Activate COM Object permission&lt;/li&gt;
+&lt;li&gt;Existence of appropriate permissions in the process Access Security (Authenticated Users, &amp;#x2026;)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/5.png&#34; alt&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Source : &lt;a href=&#34;https://decoder.cloud/2024/08/02/the-fake-potato/&#34;&gt;Windows File Explorer EoP (CVE-2024-38100)&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;CVE-2024-38100 is an EoP vulnerability due to COM Cross-Session Activation because the DCOM object in Explorer (Hight IL) satisfies all the conditions for Cross-Session Activation and contains a ShellExecute method.&lt;/p&gt;
+&lt;p&gt;Although MS claimed that cross-session activation is only possible for Interactive User, it was found that SYSTEM can also be cross-session activated through &lt;a href=&#34;https://issues.chromium.org/issues/341803763&#34;&gt;Chrome Updater EoP (CVE-2024-7023)&lt;/a&gt;.&lt;/p&gt;
+&lt;h3 id=&#34;Finding-Cross-Session-Activation-COMs&#34;&gt;&lt;a href=&#34;#Finding-Cross-Session-Activation-COMs&#34; class=&#34;headerlink&#34; title=&#34;Finding Cross Session Activation COMs&#34;&gt;&lt;/a&gt;Finding Cross Session Activation COMs&lt;/h3&gt;&lt;p&gt;How do you find COM objects that you can leverage for cross-session activation?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/6.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;First, you can use PowerShell to filter all registered COM objects to &amp;#x201C;Interactive User&amp;#x201D; and find them one by one, checking if they fulfill the conditions mentioned above.&lt;/p&gt;
+&lt;p&gt;My recommendation is to use the &lt;a href=&#34;https://github.com/CICADA8-Research/COMThanasia&#34;&gt;COMThanasia Tool&lt;/a&gt;, which is much more convenient because you can see RunAs, AppIDs, CLSIDs, etc. at a glance.&lt;/p&gt;
+&lt;h3 id=&#34;Find-vulnerable-COMs-in-a-specific-program&#34;&gt;&lt;a href=&#34;#Find-vulnerable-COMs-in-a-specific-program&#34; class=&#34;headerlink&#34; title=&#34;Find vulnerable COMs in a specific program&#34;&gt;&lt;/a&gt;Find vulnerable COMs in a specific program&lt;/h3&gt;&lt;p&gt;Now let&amp;#x2019;s continue with Part 2 and look for vulnerable COM objects in antivirus programs!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/7.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;After checking only the Launch permission, we found Name(A), which appears to be related to the target program.&lt;/p&gt;
+&lt;p&gt;The corresponding AppID (xxxxxxxx-xxxx-xxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) object says that it is not available, which is a static analysis, so we recommend that you recheck it after creating the object.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/8.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;We looked for CLSIDs using the AppID (xxxxxxxx-xxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) and found two CLSIDs.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;xxxxxxxx-xxxx-xxxx-AAAA-AAAAAAAAAAAA (File Handler)&lt;/li&gt;
+&lt;li&gt;xxxxxxxx-xxxx-xxxx-BBBB-BBBBBBBBBBBB&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/9.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;First, I checked the xxxxxxxx-xxxx-xxxx-AAAA-AAAAAAAAAAAA (File Handler) CLSID via &lt;a href=&#34;http://oleview.net/&#34;&gt;OleView.Net&lt;/a&gt;, and got lucky and found the IDispatch interface and Typelib!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/10.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;With trepidation, I looked into Typelib and found several file-related methods within the File Handler interface.&lt;/p&gt;
+&lt;p&gt;Of these, the GoFileDelete method was my first thought of a File Delete vulnerability.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/11.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;To summarize, we have verified that the CLSID (xxxxxxxx-xxxx-xxxx-AAAA-AAAAAAAAAAAAAA) is a COM object that exists within TARGET.exe and that the Integrity Level (IL) of TARGET.exe is System.&lt;/p&gt;
+&lt;p&gt;Finally, we should have checked the Application Identity value of the COM object, but Thinking I had already found the zero-day, I used the GoFileDelete method without checking.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/12.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;I tried to delete notepad.exe inside the System32 folder via the GoFileDelete method, but it failed&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;Frustrated, I moved on, thinking at the time that the Application Identity value was The Launching User.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/13.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;While writing the articles, I remembered that I hadn&amp;#x2019;t checked the Application Identity, so I checked it and it was SYSTEM?!&lt;/p&gt;
+&lt;p&gt;I thought about why the GoFileDelete method failed and came up with the following guess.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Before deleting a file, we filter out files in protected directories like C:\Windows, C:\windows\system32, C:\Program Files, etc.&lt;/li&gt;
+&lt;li&gt;Blacklist file extensions like .exe, .dll, .db, etc. to filter them out&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/16/ogu123/Com_Object_Part3/EN/14.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;After applying GoFileDelete to all the files in the System32 folder, we see that we can&amp;#x2019;t delete files like exe, dll, db, but we can delete ini, chm files, etc.&lt;/p&gt;
+&lt;p&gt;So&amp;#x2026; all that&amp;#x2019;s left is to check with the IDA to see exactly which files the GoFileDelete method can delete! (I will&amp;#x2026;)&lt;/p&gt;
+&lt;h3 id=&#34;Conclusion&#34;&gt;&lt;a href=&#34;#Conclusion&#34; class=&#34;headerlink&#34; title=&#34;Conclusion&#34;&gt;&lt;/a&gt;Conclusion&lt;/h3&gt;&lt;p&gt;In this article, we looked at the Cross Session Activation technique and how we almost found a File Delete vulnerability in COM inside AntiVirus&amp;#x2026;!&lt;/p&gt;
+&lt;p&gt;Now, let&amp;#x2019;s analyze with IDA and find the File Delete vulnerability, or if that doesn&amp;#x2019;t work, let&amp;#x2019;s try to piece it together and find a COM zero-day because there are other methods related to files. (I wonder why there is no Execute method&amp;#x2026;)&lt;/p&gt;
+&lt;p&gt;Thank you for reading this long post.&lt;/p&gt;
+&lt;h3 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://www.tiraniddo.dev/2018/09/finding-interactive-user-com-objects_9.html&#34;&gt;https://www.tiraniddo.dev/2018/09/finding-interactive-user-com-objects_9.html&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://blog.compass-security.com/2024/10/com-cross-session-activation/&#34;&gt;https://blog.compass-security.com/2024/10/com-cross-session-activation/&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://note-ing.tistory.com/65&#34;&gt;https://note-ing.tistory.com/65&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/03/16/ogu123/Com_Object_Part3/EN/1.jpg">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/03/16/ogu123/com_object_part3/en/">
+
+  <title>[Research] COM Object - Part 3(Cross-Session Activation)(EN) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-03-16 17:00" pubdate>
+      2025년 3월 16일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      999 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      19
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] COM Object - Part 3(Cross-Session Activation)(EN)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <h3 id="Introduction"><a href="#Introduction" class="headerlink" title="Introduction"></a>Introduction</h3><p>Hello, this is ogu123!!!</p>
+<p>In Part3, we&#x2019;ll look at Cross Session Activation, which occurs when a COM object is set to Interactive User, and continue with <a href="https://hackyboiz.github.io/2024/12/22/ogu123/COM_Object_part2/ko/">Part2</a> finding vulnerable COMs in a specific program!</p>
+<p>This time, there won&#x2019;t be much theory, so you can relax, and let&#x2019;s get to work!</p>
+<p><img src="/2025/03/16/ogu123/Com_Object_Part3/EN/1.jpg" srcset="/img/loading.gif" alt></p>
+<h3 id="COM-Security"><a href="#COM-Security" class="headerlink" title="COM Security"></a>COM Security</h3><p>COM objects can use COM Security to control object creation, access, permissions, and more.</p>
+<p>Among the many settings for COM Security, Application Identity determines which account permissions the COM object uses when it runs.</p>
+<p><img src="/2025/03/16/ogu123/Com_Object_Part3/EN/2.png" srcset="/img/loading.gif" alt><br>When you check the properties of a particular DCOM object in Component Services, you see that it is set to Interactive User.</p>
+<p>In this context, Interactive User is a setting that runs the COM object with the privileges of the currently logged in user.</p>
+<p>This is because COM objects that are capable of cross-session activation must be set to Interactive User.</p>
+<p>To better understand this, let&#x2019;s first look at the concept of Windows Session Isolation.</p>
+<h3 id="Windows-Session-Isolation"><a href="#Windows-Session-Isolation" class="headerlink" title="Windows Session Isolation"></a>Windows Session Isolation</h3><p><img src="/2025/03/16/ogu123/Com_Object_Part3/EN/3.png" srcset="/img/loading.gif" alt></p>
+<p>In Windows XP and Windows Server 2003 and earlier, when a user first logged in, both the user application and Windows services ran in Session 0.</p>
+<p>Attackers exploited this to target service processes with high privileges and interact with user applications to gain elevation of privilege.</p>
+<p><img src="/2025/03/16/ogu123/Com_Object_Part3/EN/4.png" srcset="/img/loading.gif" alt></p>
+<p>To address this issue, the following security policies have been in place since Windows 7</p>
+<ol>
+<li>logged-in users are assigned different sessions (1, 2, 3&#x2026;) sequentially</li>
+<li>services running in session 0 are restricted from interacting with user sessions.</li>
+</ol>
+<p>This resulted in complete separation of sessions, so services could not directly interact with user applications running in other sessions.</p>
+<p>However&#x2026; Cross-Session Activation can occur here if a COM object set to Interactive User exists.</p>
+<h3 id="Cross-Session-Activation"><a href="#Cross-Session-Activation" class="headerlink" title="Cross-Session Activation"></a>Cross-Session Activation</h3><p>Cross-Session Activation is a technique for literally activating a COM object across sessions.</p>
+<p>In addition to the interactive user, the following conditions must be met to create a cross-session COM object through the Session Moniker.</p>
+<ul>
+<li>INTERACTIVE exists in the Start and Activate COM Object permission</li>
+<li>Existence of appropriate permissions in the process Access Security (Authenticated Users, &#x2026;)</li>
+</ul>
+<p><img src="/2025/03/16/ogu123/Com_Object_Part3/EN/5.png" srcset="/img/loading.gif" alt></p>
+<blockquote>
+<p>Source : <a target="_blank" rel="external nofollow noopener noreferrer" href="https://decoder.cloud/2024/08/02/the-fake-potato/">Windows File Explorer EoP (CVE-2024-38100)</a></p>
+</blockquote>
+<p>CVE-2024-38100 is an EoP vulnerability due to COM Cross-Session Activation because the DCOM object in Explorer (Hight IL) satisfies all the conditions for Cross-Session Activation and contains a ShellExecute method.</p>
+<p>Although MS claimed that cross-session activation is only possible for Interactive User, it was found that SYSTEM can also be cross-session activated through <a target="_blank" rel="external nofollow noopener noreferrer" href="https://issues.chromium.org/issues/341803763">Chrome Updater EoP (CVE-2024-7023)</a>.</p>
+<h3 id="Finding-Cross-Session-Activation-COMs"><a href="#Finding-Cross-Session-Activation-COMs" class="headerlink" title="Finding Cross Session Activation COMs"></a>Finding Cross Session Activation COMs</h3><p>How do you find COM objects that you can leverage for cross-session activation?</p>
+<p><img src="/2025/03/16/ogu123/Com_Object_Part3/EN/6.png" srcset="/img/loading.gif" alt></p>
+<p>First, you can use PowerShell to filter all registered COM objects to &#x201C;Interactive User&#x201D; and find them one by one, checking if they fulfill the conditions mentioned above.</p>
+<p>My recommendation is to use the <a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/CICADA8-Research/COMThanasia">COMThanasia Tool</a>, which is much more convenient because you can see RunAs, AppIDs, CLSIDs, etc. at a glance.</p>
+<h3 id="Find-vulnerable-COMs-in-a-specific-program"><a href="#Find-vulnerable-COMs-in-a-specific-program" class="headerlink" title="Find vulnerable COMs in a specific program"></a>Find vulnerable COMs in a specific program</h3><p>Now let&#x2019;s continue with Part 2 and look for vulnerable COM objects in antivirus programs!</p>
+<p><img src="/2025/03/16/ogu123/Com_Object_Part3/EN/7.png" srcset="/img/loading.gif" alt></p>
+<p>After checking only the Launch permission, we found Name(A), which appears to be related to the target program.</p>
+<p>The corresponding AppID (xxxxxxxx-xxxx-xxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) object says that it is not available, which is a static analysis, so we recommend that you recheck it after creating the object.</p>
+<p><img src="/2025/03/16/ogu123/Com_Object_Part3/EN/8.png" srcset="/img/loading.gif" alt></p>
+<p>We looked for CLSIDs using the AppID (xxxxxxxx-xxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) and found two CLSIDs.</p>
+<ul>
+<li>xxxxxxxx-xxxx-xxxx-AAAA-AAAAAAAAAAAA (File Handler)</li>
+<li>xxxxxxxx-xxxx-xxxx-BBBB-BBBBBBBBBBBB</li>
+</ul>
+<p><img src="/2025/03/16/ogu123/Com_Object_Part3/EN/9.png" srcset="/img/loading.gif" alt></p>
+<p>First, I checked the xxxxxxxx-xxxx-xxxx-AAAA-AAAAAAAAAAAA (File Handler) CLSID via <a target="_blank" rel="external nofollow noopener noreferrer" href="http://oleview.net/">OleView.Net</a>, and got lucky and found the IDispatch interface and Typelib!</p>
+<p><img src="/2025/03/16/ogu123/Com_Object_Part3/EN/10.png" srcset="/img/loading.gif" alt></p>
+<p>With trepidation, I looked into Typelib and found several file-related methods within the File Handler interface.</p>
+<p>Of these, the GoFileDelete method was my first thought of a File Delete vulnerability.</p>
+<p><img src="/2025/03/16/ogu123/Com_Object_Part3/EN/11.png" srcset="/img/loading.gif" alt></p>
+<p>To summarize, we have verified that the CLSID (xxxxxxxx-xxxx-xxxx-AAAA-AAAAAAAAAAAAAA) is a COM object that exists within TARGET.exe and that the Integrity Level (IL) of TARGET.exe is System.</p>
+<p>Finally, we should have checked the Application Identity value of the COM object, but Thinking I had already found the zero-day, I used the GoFileDelete method without checking.</p>
+<p><img src="/2025/03/16/ogu123/Com_Object_Part3/EN/12.png" srcset="/img/loading.gif" alt></p>
+<p>I tried to delete notepad.exe inside the System32 folder via the GoFileDelete method, but it failed&#x2026;</p>
+<p>Frustrated, I moved on, thinking at the time that the Application Identity value was The Launching User.</p>
+<p><img src="/2025/03/16/ogu123/Com_Object_Part3/EN/13.png" srcset="/img/loading.gif" alt></p>
+<p>While writing the articles, I remembered that I hadn&#x2019;t checked the Application Identity, so I checked it and it was SYSTEM?!</p>
+<p>I thought about why the GoFileDelete method failed and came up with the following guess.</p>
+<ul>
+<li>Before deleting a file, we filter out files in protected directories like C:\Windows, C:\windows\system32, C:\Program Files, etc.</li>
+<li>Blacklist file extensions like .exe, .dll, .db, etc. to filter them out</li>
+</ul>
+<p><img src="/2025/03/16/ogu123/Com_Object_Part3/EN/14.png" srcset="/img/loading.gif" alt></p>
+<p>After applying GoFileDelete to all the files in the System32 folder, we see that we can&#x2019;t delete files like exe, dll, db, but we can delete ini, chm files, etc.</p>
+<p>So&#x2026; all that&#x2019;s left is to check with the IDA to see exactly which files the GoFileDelete method can delete! (I will&#x2026;)</p>
+<h3 id="Conclusion"><a href="#Conclusion" class="headerlink" title="Conclusion"></a>Conclusion</h3><p>In this article, we looked at the Cross Session Activation technique and how we almost found a File Delete vulnerability in COM inside AntiVirus&#x2026;!</p>
+<p>Now, let&#x2019;s analyze with IDA and find the File Delete vulnerability, or if that doesn&#x2019;t work, let&#x2019;s try to piece it together and find a COM zero-day because there are other methods related to files. (I wonder why there is no Execute method&#x2026;)</p>
+<p>Thank you for reading this long post.</p>
+<h3 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a>Reference</h3><ul>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.tiraniddo.dev/2018/09/finding-interactive-user-com-objects_9.html">https://www.tiraniddo.dev/2018/09/finding-interactive-user-com-objects_9.html</a></p>
+</li>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://blog.compass-security.com/2024/10/com-cross-session-activation/">https://blog.compass-security.com/2024/10/com-cross-session-activation/</a></p>
+</li>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://note-ing.tistory.com/65">https://note-ing.tistory.com/65</a></p>
+</li>
+</ul>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/ogu123/">ogu123</a>
+                  
+                  <a class="hover-with-bg" href="/tags/COM-Object/">COM Object</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Cross-Session-Activation/">Cross-Session Activation</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Windows-Session-Isolation/">Windows Session Isolation</a>
+                  
+                  <a class="hover-with-bg" href="/tags/AntiVirus/">AntiVirus</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_ogu123.jpg" srcset="/img/loading.gif" alt="ogu123">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">ogu123</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/ogu123">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/03/16/ogu123/Com_Object_Part3/KR/">
+                    <span class="hidden-mobile">[Research] COM Object - Part 3(Cross-Session Activation)(KR)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/03/16/ogu123/Com_Object_Part3/EN/';
+        this.page.identifier = '/2025/03/16/ogu123/Com_Object_Part3/EN/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] COM Object - Part 3(Cross-Session Activation)(EN)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
