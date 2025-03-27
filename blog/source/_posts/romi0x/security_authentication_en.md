@@ -1,5 +1,5 @@
 ---
-title: "[Research] Security Authentication System(ISO/IEC) (en)"
+title: "[Research] Security Certification System(ISO/IEC) (en)"
 author: romi0x
 tags: [romi0x, certification, privacy]
 categories: [Research]
