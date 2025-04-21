@@ -1,0 +1,1046 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;h1 id=&#34;Introduction&#34;&gt;&lt;a href=&#34;#Introduction&#34; class=&#34;headerlink&#34; title=&#34;Introduction&#34;&gt;&lt;/a&gt;Introduction&lt;/h1&gt;&lt;p&gt;hello. Welcome back to the Windows Authentication Series. In Part 1 NTLM, I said that we would look at NTLM-related CVEs in Part 2. While it&amp;#x2019;s good to cover NTLM-related CVEs, I thought it would be a good idea to cover the Kerberos authentication protocol, which is mainly used in Windows, first.&lt;/p&gt;
+&lt;p&gt;In this article, I&amp;#x2019;ll show you how Kerberos works, how it&amp;#x2019;s implemented in the Windows environment, and analyze some Kerberos-related attacks and CVE vulnerabilities.&lt;/p&gt;
+&lt;h1 id=&#34;Kerberos-Authentication&#34;&gt;&lt;a href=&#34;#Kerberos-Authentication&#34; class=&#34;headerlink&#34; title=&#34;Kerberos Authentication&#34;&gt;&lt;/a&gt;Kerberos Authentication&lt;/h1&gt;&lt;p&gt;Kerberos is a ticket-based authentication protocol that allows users and services to authenticate each other without exposing the passwords themselves to the network by issuing tickets based on symmetric key cryptography through a KDC.&lt;/p&gt;
+&lt;p&gt;This authentication structure features the following elements&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Key Distribution Center (KDC): The key distribution center, a composite of the AS and TGS, provides authentication services and generates and distributes session keys.&lt;/li&gt;
+&lt;li&gt;AS (Authentication Server): Authentication server, performs client authentication and issues TGTs to clients encrypted with the TGS&amp;#x2019;s secret key.&lt;/li&gt;
+&lt;li&gt;Ticket Granting Server (TGS): A ticket granting server that issues STs and session keys when a client sends a TGT to the TGS.&lt;/li&gt;
+&lt;li&gt;TGT (Ticket Granting Ticket): A ticket granting ticket, which allows a ticket to be issued by the TGS.&lt;/li&gt;
+&lt;li&gt;ST (Service Ticket): A ticket that allows you to use a service.&lt;/li&gt;
+&lt;li&gt;SS (Service Server): The server that provides the service.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The Kerberos authentication process can be summarized as follows:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;The client makes an authentication request to the AS.&lt;/li&gt;
+&lt;li&gt;the AS issues a TGT to the client.&lt;ol&gt;
+&lt;li&gt;The TGT is encrypted with the secret key of the TGS.&lt;/li&gt;
+&lt;li&gt;the AS and TGS typically share the same host as the KDC.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/li&gt;
+&lt;li&gt;The client communicates the TGT and the ID of the service to be requested to the TGS.&lt;/li&gt;
+&lt;li&gt;the TGS issues an ST to the client.&lt;br&gt;The service the client is requesting access to must be registered with the TGS with a Service Principal Name (SPN).&lt;/li&gt;
+&lt;li&gt;The client forwards the ST to the server.&lt;/li&gt;
+&lt;li&gt;Perform the communication.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;The above process is schematized in the following figure.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/04/21/mungsul/NTLM_Part2/en/1.png&#34; alt&gt;&lt;/p&gt;
+&lt;h2 id=&#34;Kerberos-authentication-on-Windows&#34;&gt;&lt;a href=&#34;#Kerberos-authentication-on-Windows&#34; class=&#34;headerlink&#34; title=&#34;Kerberos authentication on Windows&#34;&gt;&lt;/a&gt;Kerberos authentication on Windows&lt;/h2&gt;&lt;p&gt;In the Windows Kerberos implementation, tickets include something called a Privilege Attribute Certificate (PAC). The PAC contains the user&amp;#x2019;s group information and authorization data, among other things. The KDC signs this information to issue the ticket. When a ticket comes in, the service server looks at the PAC, checks the permissions, and either grants or denies access.&lt;/p&gt;
+&lt;p&gt;Now, in Windows, the Kerberos authentication process outlined above looks like this:&lt;/p&gt;
+&lt;p&gt;It&amp;#x2019;s a bit of a headache, but let&amp;#x2019;s go through it one by one.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/04/21/mungsul/NTLM_Part2/en/2.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;1) AS-REQ&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;In an AS-REQ, the client requests a ticket with its identity from the KDC&amp;#x2019;s authentication service. By Windows default, with preauthentication, the user sends the current time encrypted with their secret key (NTLM hash). The KDC decrypts this with the user&amp;#x2019;s NTLM hash, which is stored in the domain controller (DC), to authenticate the user.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;2) AS-REP&lt;/strong&gt; &lt;/p&gt;
+&lt;p&gt;If the verification in AS-REQ is successful, the client is issued a TGT and a session key (client-TGS) in the AS-REP response. The session key is encrypted with the user&amp;#x2019;s NTLM hash, and the TGT is encrypted with the KDC&amp;#x2019;s master key (the NTLM hash of the krbtgt account), so the client cannot decrypt the TGT.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;3) TGS-REQ&lt;/strong&gt; &lt;/p&gt;
+&lt;p&gt;When a client needs access to a service server, it sends the TGT in a TGS-REQ message to the TGS in the KDC. The request also includes the SPN of the target service and the previously issued client-TGS session key.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;4) TGS-REP&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;The KDC receives the TGS-REQ and verifies that the TGT is valid. The TGT is encrypted with the KDC&amp;#x2019;s master key, so the KDC can decrypt it and verify it.&lt;/p&gt;
+&lt;p&gt;And if the user is authorized to access the requested service and there are no problems, it sends a TGS-REP response to the client.&lt;/p&gt;
+&lt;p&gt;This includes a session key (client-service server) and a service ticket (ST).&lt;/p&gt;
+&lt;p&gt;The service ticket is encrypted with the secret key of the service account (the NTLM hash of the service account), so only the &lt;strong&gt;service&lt;/strong&gt; can decrypt and view it, the client does not know the contents. The client will keep this ST and use it to access the actual service.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;5) AP-REQ&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;Finally, the client tries to connect by presenting the AP-REQ to the target server (service) with the service ticket. To prove its identity, the client also sends the authenticator (Authenticator, timestamp, etc.) encrypted with the service session key it received earlier.&lt;/p&gt;
+&lt;p&gt;The server sends a KERB_VERIFY_PAC message to the domain controller to validate the signature of the PAC in the service ticket. This PAC is protected by the KDC&amp;#x2019;s signature, and the service verifies the integrity of the PAC when validating the ticket so that it can trust the user&amp;#x2019;s authorization in the domain.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/04/21/mungsul/NTLM_Part2/en/3.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;6) AP-REP&lt;/strong&gt; &lt;/p&gt;
+&lt;p&gt;The service server verifies the PAC of the service ticket presented by the client, and if the verification is successful, the server sends a response to the client in an AP-REP message to complete the session key negotiation. The client is then allowed to access the service.&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;As you can see from the description, Kerberos authentication on Windows is based on the fact that the secret key shared with each other is the user&amp;#x2019;s NTLM hash, the authorization information, called the PAC, is contained in the ticket, and the PAC is signed by the KDC to ensure its integrity.&lt;/p&gt;
+&lt;h1 id=&#34;Kerberos-related-attacks&#34;&gt;&lt;a href=&#34;#Kerberos-related-attacks&#34; class=&#34;headerlink&#34; title=&#34;Kerberos-related attacks&#34;&gt;&lt;/a&gt;Kerberos-related attacks&lt;/h1&gt;&lt;p&gt;The Kerberos protocol itself is designed to be secure, but various attack techniques have been studied depending on the implementation settings and operating environment. Let&amp;#x2019;s take a look at the most common attacks in the Windows Kerberos environment.&lt;/p&gt;
+&lt;h2 id=&#34;Kerberoasting&#34;&gt;&lt;a href=&#34;#Kerberoasting&#34; class=&#34;headerlink&#34; title=&#34;Kerberoasting&#34;&gt;&lt;/a&gt;Kerberoasting&lt;/h2&gt;&lt;p&gt;Kerberoasting is an attack technique that uses a legitimate domain user account to request a Kerberos ticket for a &lt;strong&gt;service account&lt;/strong&gt; and then cracks the encrypted information contained in the ticket to steal the service account&amp;#x2019;s password.&lt;/p&gt;
+&lt;p&gt;Any user inside an AD domain can request a service ticket via TGS-REQ for an account with an SPN attribute, which means that an attacker can use this technique if they have already penetrated the domain.&lt;/p&gt;
+&lt;p&gt;The service ticket is encrypted with an NTLM hash, so if the crack is successful, the NTLM hash is obtained, which is no different than obtaining a password in a Windows environment.&lt;/p&gt;
+&lt;h2 id=&#34;AS-REP-Roasting&#34;&gt;&lt;a href=&#34;#AS-REP-Roasting&#34; class=&#34;headerlink&#34; title=&#34;AS-REP Roasting&#34;&gt;&lt;/a&gt;AS-REP Roasting&lt;/h2&gt;&lt;p&gt;&lt;strong&gt;AS-REP Roasting&lt;/strong&gt; is a technique similar to Kerberoasting, but targets users who have Kerberos Pre-Authentication disabled.&lt;/p&gt;
+&lt;p&gt;Pre-authentication is the process of verifying that the client knows the shared key before a TGT is issued.&lt;/p&gt;
+&lt;p&gt;If the option &amp;#x201C;Do not require Kerberos pre-authentication&amp;#x201D; is set in the AD account properties, TGTs are issued without pre-authentication, meaning that a password is not required to obtain a TGT.&lt;/p&gt;
+&lt;p&gt;The TGT is encrypted with the master key of the KDC, which is the NTLM hash of the krbtgt account, so if you successfully crack the TGT, you can take over the privileges of the krbtgt account.&lt;/p&gt;
+&lt;h2 id=&#34;Silver-Ticket&#34;&gt;&lt;a href=&#34;#Silver-Ticket&#34; class=&#34;headerlink&#34; title=&#34;Silver Ticket&#34;&gt;&lt;/a&gt;Silver Ticket&lt;/h2&gt;&lt;p&gt;If you have the NTLM hash of a specific service account, you can use it to create another service ticket that manipulates the PAC.&lt;/p&gt;
+&lt;p&gt;Service tickets are originally issued by TGS, but it is possible to create service tickets without going through TGS.&lt;/p&gt;
+&lt;p&gt;The PAC in the service ticket is signed with two keys: the service account secret key and the krbtgt account secret key, but in some cases, only the service account secret key signature is verified.&lt;/p&gt;
+&lt;p&gt;For example, an account with the SeTcbPrivilege privilege is eligible for a Silver Ticket because only the service account secret key signature is verified.&lt;/p&gt;
+&lt;h2 id=&#34;Golden-Ticket&#34;&gt;&lt;a href=&#34;#Golden-Ticket&#34; class=&#34;headerlink&#34; title=&#34;Golden Ticket&#34;&gt;&lt;/a&gt;Golden Ticket&lt;/h2&gt;&lt;p&gt;Once you have the NTLM hash of the krbtgt account, you can create a TGT. This TGT also contains a PAC, and while the Silver Ticket manipulated the PAC of the service ticket, the Golden Ticket manipulates the PAC of the TGT.&lt;/p&gt;
+&lt;p&gt;When the TGT with the manipulated PAC is delivered to the TGS, the service ticket is issued with the corresponding privilege, so it can be used to elevate to higher privileges, such as domain administrator.&lt;/p&gt;
+&lt;h1 id=&#34;Kerberos-related-vulnerabilities&#34;&gt;&lt;a href=&#34;#Kerberos-related-vulnerabilities&#34; class=&#34;headerlink&#34; title=&#34;Kerberos-related vulnerabilities&#34;&gt;&lt;/a&gt;Kerberos-related vulnerabilities&lt;/h1&gt;&lt;p&gt;The Kerberos protocol is very complex and it is difficult to introduce all the related features implemented in Windows. Therefore, let&amp;#x2019;s take a look at a few CVEs to understand the details and the vulnerabilities that occurred.&lt;/p&gt;
+&lt;h2 id=&#34;CVE-2020-17049&#34;&gt;&lt;a href=&#34;#CVE-2020-17049&#34; class=&#34;headerlink&#34; title=&#34;CVE-2020-17049&#34;&gt;&lt;/a&gt;CVE-2020-17049&lt;/h2&gt;&lt;p&gt;CVE-2020-17049 is a security vulnerability found in the Kerberos Delegation mechanism, known as a &amp;#x201C;Bronze Bit&amp;#x201D; attack.&lt;/p&gt;
+&lt;p&gt;Delegation is literally a delegation. For example, let&amp;#x2019;s say a user authenticates to a web application, and the web application needs to access a database based on the user&amp;#x2019;s permissions. There are several implementations of Kerberos Delegation to support this (Unconstrained Delegation, Constrained Delegation, Do Not Delegate, etc.)&lt;/p&gt;
+&lt;p&gt;The AllowedToDelegateTo property, which specifies the services that can be delegated to, is used to store information that a service A can delegate to another service B. This is called the Forwardable Flag in the service ticket.&lt;/p&gt;
+&lt;p&gt;The Forwardable Flag in a service ticket is a bit that indicates whether this ticket is relayable, and if Forwardable is 1, it means that the authorization can be delegated. So if the Kerberos Delegation option is Do Not Delegate or AllowedToDelegateTo is not defined, Forwardable is 0.&lt;/p&gt;
+&lt;p&gt;But the Forwardable bit is not protected by the KDC&amp;#x2019;s signature, the service&amp;#x2019;s signature, or anything else, so it can be tampered with.&lt;/p&gt;
+&lt;p&gt;At this point, do you have any idea what this CVE is?&lt;/p&gt;
+&lt;p&gt;If you manipulate the Forwardable Flag in a service ticket and send it to a service, you can force the service to delegate privileges even if it is not delegating privileges, which can lead to a privilege takeover.&lt;/p&gt;
+&lt;p&gt;In Windows, Kerberos Contained Delegation (MS-SFU) implements authorization delegation with the S4U2proxy protocol. If service A is delegated to service B, it is impossible to make a request to service B using only A&amp;#x2019;s service ticket. You need to present the A service ticket to the KDC via S4U2proxy and get the B service ticket.&lt;/p&gt;
+&lt;p&gt;This is a vulnerability that can be exploited by setting the Forwardable flag to 1 to force delegation of authorization.&lt;/p&gt;
+&lt;h2 id=&#34;CVE-2022-33647-amp-CVE-2022-33679&#34;&gt;&lt;a href=&#34;#CVE-2022-33647-amp-CVE-2022-33679&#34; class=&#34;headerlink&#34; title=&#34;CVE-2022-33647 &amp;amp; CVE-2022-33679&#34;&gt;&lt;/a&gt;CVE-2022-33647 &amp;amp; CVE-2022-33679&lt;/h2&gt;&lt;p&gt;&lt;strong&gt;CVE-2022-33647&lt;/strong&gt; and &lt;strong&gt;CVE-2022-33679&lt;/strong&gt; are vulnerabilities discovered by James Forshaw of Google&amp;#x2019;s Project Zero that allow the use of RC4 encryption during the Kerberos authentication process, which can be used to decrypt session keys and gain privileges using methods such as brute force. The vulnerability trigger forces the use of RC4 because Kerberos natively prefers AES-based encryption but supports the RC4-HMAC (MD4) method due to backward compatibility.&lt;/p&gt;
+&lt;p&gt;When a client passes an AS-REQ to a KDC, it can use an integer field called etype to specify the supported encryption algorithms. The server will check for supported ciphers and, if available, will use the cipher specified by the client.&lt;/p&gt;
+&lt;p&gt;The idea Forshaw used to exploit CVE-2022-33647 is amazing, let&amp;#x2019;s take a look:&lt;/p&gt;
+&lt;p&gt;When a client authenticates, it typically sends a request to the KDC without a pre-authentication timestamp. The KDC then returns with an error code called KDC_ERR_PREAUTH_REQUIRED. This error response includes a list of required ciphers so that the client can perform the appropriate encryption. MITM intercepts the client&amp;#x2019;s AS-REQ and returns an error, and includes information about RC4-MD4 in the error to force the client to use RC4-MD4. Relay the RC4-enabled AS-REQ to the KDC to receive the AS-REP.&lt;/p&gt;
+&lt;p&gt;Now, the attacker has the RC4-enabled AS-REQ and the encrypted session key and TGT contained in the AS-REP. The AS-REQ has a timestamped structure called PA-ENC-TS-ENC, and the AS-REP has an encrypted response structure called EncASRepPart.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/04/21/mungsul/NTLM_Part2/en/4.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;RC4 does an XOR with the generated stream key, so if you know the ciphertext and the plaintext, you know the stream key. This is computable except when both sides are yellow in the above figure:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The RC4-MD4 method generates and uses a 16-byte key, where only the first 5 bytes are random and the 11th byte is fixed at 0xAB.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The green markings are values we know or can compute because they are ASN.1 structures. We&amp;#x2019;re lucky enough to have about 4 bytes of the session key overlap, so we can decrypt it, and 1 byte needs to be brute-forced. Bruteforcing can be done by requesting a service ticket from the KDC 256 times to get a legitimate service ticket.  This allows him to obtain the session key, decrypt the ticket, and take over the user&amp;#x2019;s privileges.&lt;/p&gt;
+&lt;p&gt;The case of CVE-2022-33679 occurs when pre-authentication in Keberos is disabled. If an account has pre-authentication disabled, an attacker can send an AS-REQ request directly to the KDC for that account to request a TGT over RC4-MD4. Because pre-authentication is turned off, the KDC will return the RC4-encrypted TGT and session key via AS-REP even though the user has not proven their password.&lt;/p&gt;
+&lt;p&gt;To exploit this vulnerability, instead of obtaining the session key, we use oracle padding to append a null value to the back of the timestamp and obtain the key if the KDC responds with a valid response.&lt;/p&gt;
+&lt;h2 id=&#34;CVE-2022-37966&#34;&gt;&lt;a href=&#34;#CVE-2022-37966&#34; class=&#34;headerlink&#34; title=&#34;CVE-2022-37966&#34;&gt;&lt;/a&gt;CVE-2022-37966&lt;/h2&gt;&lt;p&gt;CVE-2022-37966 is a vulnerability announced at Black Hat Europe 2022 that allows verification bypass via MD5 collision after PAC tampering when using the RC4_HMAC_MD5 algorithm, which was natively supported in Kerberos at the time.&lt;/p&gt;
+&lt;p&gt;There is no controllable field in the PAC that can be used to insert arbitrary bytes, but the LogonScript field can be used to insert a long UTF-16 string, which can be used to trigger an MD5 collision.&lt;/p&gt;
+&lt;p&gt;To exploit this vulnerability, you need to create a PAC with domain administrator privileges that has the same MD5 hash, which in our research took about 7 hours with HashClash. Once created, you can get domain administrator privileges, so it seems to be worth the time.&lt;/p&gt;
+&lt;h2 id=&#34;CVE-2024-43639&#34;&gt;&lt;a href=&#34;#CVE-2024-43639&#34; class=&#34;headerlink&#34; title=&#34;CVE-2024-43639&#34;&gt;&lt;/a&gt;CVE-2024-43639&lt;/h2&gt;&lt;p&gt;CVE-2024-43639 is a vulnerability reported to ZDI, which is a Heap Overflow vulnerability due to Integer Overflow in KDC Proxy (kdcsvc).&lt;/p&gt;
+&lt;p&gt;Windows KDC Proxy is a Windows Server component that proxies Kerberos protocol messages over HTTP. It occurs in kpssvc.dll, which runs a service called kdcsvc.&lt;/p&gt;
+&lt;p&gt;I&amp;#x2019;ve been looking at Kerberos protocol logical bugs all the time, so it&amp;#x2019;s kind of refreshing to see a memory corruption bug.&lt;/p&gt;
+&lt;h1 id=&#34;Conclusion&#34;&gt;&lt;a href=&#34;#Conclusion&#34; class=&#34;headerlink&#34; title=&#34;Conclusion&#34;&gt;&lt;/a&gt;&lt;strong&gt;Conclusion&lt;/strong&gt;&lt;/h1&gt;&lt;p&gt;We&amp;#x2019;ve covered how Kerberos works, the Windows implementation, and related attacks and vulnerabilities. Kerberos is a strong authentication protocol, but misconfigurations and implementation gaps can expose it to a variety of attacks and vulnerabilities. The topic for the next installment is still undecided, but we&amp;#x2019;ll be back with something interesting. Thanks for reading &amp;#x1F642;&lt;/p&gt;
+&lt;h1 id=&#34;References&#34;&gt;&lt;a href=&#34;#References&#34; class=&#34;headerlink&#34; title=&#34;References&#34;&gt;&lt;/a&gt;References&lt;/h1&gt;&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://en.wikipedia.org/wiki/Kerberos_(protocol&#34;&gt;https://en.wikipedia.org/wiki/Kerberos_(protocol)&lt;/a&gt;)&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://www.ibm.com/docs/ko/db2/11.5?topic=details-kerberos-authentication&#34;&gt;https://www.ibm.com/docs/ko/db2/11.5?topic=details-kerberos-authentication&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://www.varonis.com/blog/kerberos-attack-silver-ticket&#34;&gt;https://www.varonis.com/blog/kerberos-attack-silver-ticket&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-apds/1d1f2b0c-8e8a-4d2a-8665-508d04976f84&#34;&gt;https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-apds/1d1f2b0c-8e8a-4d2a-8665-508d04976f84&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://learn.microsoft.com/ko-kr/openspecs/windows_protocols/ms-apds/a00d0b83-97e3-44ad-ba2d-1221d4f51a35#gt_26456104-0afb-4afe-a92e-ac160a9efdf8&#34;&gt;https://learn.microsoft.com/ko-kr/openspecs/windows_protocols/ms-apds/a00d0b83-97e3-44ad-ba2d-1221d4f51a35#gt_26456104-0afb-4afe-a92e-ac160a9efdf8&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://learn.microsoft.com/ko-kr/windows-server/security/credentials-protection-and-management/authentication-policies-and-authentication-policy-silos&#34;&gt;https://learn.microsoft.com/ko-kr/windows-server/security/credentials-protection-and-management/authentication-policies-and-authentication-policy-silos&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://blog.sunggwanchoi.com/kor-keobeoroseuting-kerberoasting/&#34;&gt;https://blog.sunggwanchoi.com/kor-keobeoroseuting-kerberoasting/&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://www.hackthebox.com/blog/as-rep-roasting-detection&#34;&gt;https://www.hackthebox.com/blog/as-rep-roasting-detection&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://www.microsoft.com/en-us/security/blog/2024/10/11/microsofts-guidance-to-help-mitigate-kerberoasting/&#34;&gt;https://www.microsoft.com/en-us/security/blog/2024/10/11/microsofts-guidance-to-help-mitigate-kerberoasting/&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://googleprojectzero.blogspot.com/2022/10/rc4-is-still-considered-harmful.html&#34;&gt;https://googleprojectzero.blogspot.com/2022/10/rc4-is-still-considered-harmful.html&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://syfuhs.net/a-bit-about-kerberos&#34;&gt;https://syfuhs.net/a-bit-about-kerberos&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://i.blackhat.com/EU-22/Thursday-Briefings/EU-22-Tervoort-Breaking-Kerberos-RC4-Cipher-and-Spoofing-Windows-PACs-wp.pdf&#34;&gt;https://i.blackhat.com/EU-22/Thursday-Briefings/EU-22-Tervoort-Breaking-Kerberos-RC4-Cipher-and-Spoofing-Windows-PACs-wp.pdf&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://www.thehacker.recipes/ad/movement/kerberos/&#34;&gt;https://www.thehacker.recipes/ad/movement/kerberos/&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://en.hackndo.com/kerberos-silver-golden-tickets/&#34;&gt;https://en.hackndo.com/kerberos-silver-golden-tickets/&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://www.netspi.com/blog/technical-blog/network-pentesting/cve-2020-17049-kerberos-bronze-bit-theory/&#34;&gt;https://www.netspi.com/blog/technical-blog/network-pentesting/cve-2020-17049-kerberos-bronze-bit-theory/&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-sfu/3bff5864-8135-400e-bdd9-33b552051d94&#34;&gt;https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-sfu/3bff5864-8135-400e-bdd9-33b552051d94&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://learn.microsoft.com/en-us/windows-server/security/kerberos/kerberos-constrained-delegation-overview&#34;&gt;https://learn.microsoft.com/en-us/windows-server/security/kerberos/kerberos-constrained-delegation-overview&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2020/12/11/l0ch/2020-12-11/&#34;&gt;https://hackyboiz.github.io/2020/12/11/l0ch/2020-12-11/&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-kile/4ce3ddc0-aaaa-4a1b-b48b-62a07e906926&#34;&gt;https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-kile/4ce3ddc0-aaaa-4a1b-b48b-62a07e906926&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://www.zerodayinitiative.com/blog/2025/3/3/cve-2024-43639&#34;&gt;https://www.zerodayinitiative.com/blog/2025/3/3/cve-2024-43639&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] Windows Authentication Series (Part2. Kerberos)(EN) - hackyboiz">
+  <meta property="og:description" content="&lt;h1 id=&#34;Introduction&#34;&gt;&lt;a href=&#34;#Introduction&#34; class=&#34;headerlink&#34; title=&#34;Introduction&#34;&gt;&lt;/a&gt;Introduction&lt;/h1&gt;&lt;p&gt;hello. Welcome back to the Windows Authentication Series. In Part 1 NTLM, I said that we would look at NTLM-related CVEs in Part 2. While it&amp;#x2019;s good to cover NTLM-related CVEs, I thought it would be a good idea to cover the Kerberos authentication protocol, which is mainly used in Windows, first.&lt;/p&gt;
+&lt;p&gt;In this article, I&amp;#x2019;ll show you how Kerberos works, how it&amp;#x2019;s implemented in the Windows environment, and analyze some Kerberos-related attacks and CVE vulnerabilities.&lt;/p&gt;
+&lt;h1 id=&#34;Kerberos-Authentication&#34;&gt;&lt;a href=&#34;#Kerberos-Authentication&#34; class=&#34;headerlink&#34; title=&#34;Kerberos Authentication&#34;&gt;&lt;/a&gt;Kerberos Authentication&lt;/h1&gt;&lt;p&gt;Kerberos is a ticket-based authentication protocol that allows users and services to authenticate each other without exposing the passwords themselves to the network by issuing tickets based on symmetric key cryptography through a KDC.&lt;/p&gt;
+&lt;p&gt;This authentication structure features the following elements&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Key Distribution Center (KDC): The key distribution center, a composite of the AS and TGS, provides authentication services and generates and distributes session keys.&lt;/li&gt;
+&lt;li&gt;AS (Authentication Server): Authentication server, performs client authentication and issues TGTs to clients encrypted with the TGS&amp;#x2019;s secret key.&lt;/li&gt;
+&lt;li&gt;Ticket Granting Server (TGS): A ticket granting server that issues STs and session keys when a client sends a TGT to the TGS.&lt;/li&gt;
+&lt;li&gt;TGT (Ticket Granting Ticket): A ticket granting ticket, which allows a ticket to be issued by the TGS.&lt;/li&gt;
+&lt;li&gt;ST (Service Ticket): A ticket that allows you to use a service.&lt;/li&gt;
+&lt;li&gt;SS (Service Server): The server that provides the service.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The Kerberos authentication process can be summarized as follows:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;The client makes an authentication request to the AS.&lt;/li&gt;
+&lt;li&gt;the AS issues a TGT to the client.&lt;ol&gt;
+&lt;li&gt;The TGT is encrypted with the secret key of the TGS.&lt;/li&gt;
+&lt;li&gt;the AS and TGS typically share the same host as the KDC.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/li&gt;
+&lt;li&gt;The client communicates the TGT and the ID of the service to be requested to the TGS.&lt;/li&gt;
+&lt;li&gt;the TGS issues an ST to the client.&lt;br&gt;The service the client is requesting access to must be registered with the TGS with a Service Principal Name (SPN).&lt;/li&gt;
+&lt;li&gt;The client forwards the ST to the server.&lt;/li&gt;
+&lt;li&gt;Perform the communication.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;The above process is schematized in the following figure.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/04/21/mungsul/NTLM_Part2/en/1.png&#34; alt&gt;&lt;/p&gt;
+&lt;h2 id=&#34;Kerberos-authentication-on-Windows&#34;&gt;&lt;a href=&#34;#Kerberos-authentication-on-Windows&#34; class=&#34;headerlink&#34; title=&#34;Kerberos authentication on Windows&#34;&gt;&lt;/a&gt;Kerberos authentication on Windows&lt;/h2&gt;&lt;p&gt;In the Windows Kerberos implementation, tickets include something called a Privilege Attribute Certificate (PAC). The PAC contains the user&amp;#x2019;s group information and authorization data, among other things. The KDC signs this information to issue the ticket. When a ticket comes in, the service server looks at the PAC, checks the permissions, and either grants or denies access.&lt;/p&gt;
+&lt;p&gt;Now, in Windows, the Kerberos authentication process outlined above looks like this:&lt;/p&gt;
+&lt;p&gt;It&amp;#x2019;s a bit of a headache, but let&amp;#x2019;s go through it one by one.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/04/21/mungsul/NTLM_Part2/en/2.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;1) AS-REQ&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;In an AS-REQ, the client requests a ticket with its identity from the KDC&amp;#x2019;s authentication service. By Windows default, with preauthentication, the user sends the current time encrypted with their secret key (NTLM hash). The KDC decrypts this with the user&amp;#x2019;s NTLM hash, which is stored in the domain controller (DC), to authenticate the user.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;2) AS-REP&lt;/strong&gt; &lt;/p&gt;
+&lt;p&gt;If the verification in AS-REQ is successful, the client is issued a TGT and a session key (client-TGS) in the AS-REP response. The session key is encrypted with the user&amp;#x2019;s NTLM hash, and the TGT is encrypted with the KDC&amp;#x2019;s master key (the NTLM hash of the krbtgt account), so the client cannot decrypt the TGT.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;3) TGS-REQ&lt;/strong&gt; &lt;/p&gt;
+&lt;p&gt;When a client needs access to a service server, it sends the TGT in a TGS-REQ message to the TGS in the KDC. The request also includes the SPN of the target service and the previously issued client-TGS session key.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;4) TGS-REP&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;The KDC receives the TGS-REQ and verifies that the TGT is valid. The TGT is encrypted with the KDC&amp;#x2019;s master key, so the KDC can decrypt it and verify it.&lt;/p&gt;
+&lt;p&gt;And if the user is authorized to access the requested service and there are no problems, it sends a TGS-REP response to the client.&lt;/p&gt;
+&lt;p&gt;This includes a session key (client-service server) and a service ticket (ST).&lt;/p&gt;
+&lt;p&gt;The service ticket is encrypted with the secret key of the service account (the NTLM hash of the service account), so only the &lt;strong&gt;service&lt;/strong&gt; can decrypt and view it, the client does not know the contents. The client will keep this ST and use it to access the actual service.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;5) AP-REQ&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;Finally, the client tries to connect by presenting the AP-REQ to the target server (service) with the service ticket. To prove its identity, the client also sends the authenticator (Authenticator, timestamp, etc.) encrypted with the service session key it received earlier.&lt;/p&gt;
+&lt;p&gt;The server sends a KERB_VERIFY_PAC message to the domain controller to validate the signature of the PAC in the service ticket. This PAC is protected by the KDC&amp;#x2019;s signature, and the service verifies the integrity of the PAC when validating the ticket so that it can trust the user&amp;#x2019;s authorization in the domain.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/04/21/mungsul/NTLM_Part2/en/3.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;6) AP-REP&lt;/strong&gt; &lt;/p&gt;
+&lt;p&gt;The service server verifies the PAC of the service ticket presented by the client, and if the verification is successful, the server sends a response to the client in an AP-REP message to complete the session key negotiation. The client is then allowed to access the service.&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;As you can see from the description, Kerberos authentication on Windows is based on the fact that the secret key shared with each other is the user&amp;#x2019;s NTLM hash, the authorization information, called the PAC, is contained in the ticket, and the PAC is signed by the KDC to ensure its integrity.&lt;/p&gt;
+&lt;h1 id=&#34;Kerberos-related-attacks&#34;&gt;&lt;a href=&#34;#Kerberos-related-attacks&#34; class=&#34;headerlink&#34; title=&#34;Kerberos-related attacks&#34;&gt;&lt;/a&gt;Kerberos-related attacks&lt;/h1&gt;&lt;p&gt;The Kerberos protocol itself is designed to be secure, but various attack techniques have been studied depending on the implementation settings and operating environment. Let&amp;#x2019;s take a look at the most common attacks in the Windows Kerberos environment.&lt;/p&gt;
+&lt;h2 id=&#34;Kerberoasting&#34;&gt;&lt;a href=&#34;#Kerberoasting&#34; class=&#34;headerlink&#34; title=&#34;Kerberoasting&#34;&gt;&lt;/a&gt;Kerberoasting&lt;/h2&gt;&lt;p&gt;Kerberoasting is an attack technique that uses a legitimate domain user account to request a Kerberos ticket for a &lt;strong&gt;service account&lt;/strong&gt; and then cracks the encrypted information contained in the ticket to steal the service account&amp;#x2019;s password.&lt;/p&gt;
+&lt;p&gt;Any user inside an AD domain can request a service ticket via TGS-REQ for an account with an SPN attribute, which means that an attacker can use this technique if they have already penetrated the domain.&lt;/p&gt;
+&lt;p&gt;The service ticket is encrypted with an NTLM hash, so if the crack is successful, the NTLM hash is obtained, which is no different than obtaining a password in a Windows environment.&lt;/p&gt;
+&lt;h2 id=&#34;AS-REP-Roasting&#34;&gt;&lt;a href=&#34;#AS-REP-Roasting&#34; class=&#34;headerlink&#34; title=&#34;AS-REP Roasting&#34;&gt;&lt;/a&gt;AS-REP Roasting&lt;/h2&gt;&lt;p&gt;&lt;strong&gt;AS-REP Roasting&lt;/strong&gt; is a technique similar to Kerberoasting, but targets users who have Kerberos Pre-Authentication disabled.&lt;/p&gt;
+&lt;p&gt;Pre-authentication is the process of verifying that the client knows the shared key before a TGT is issued.&lt;/p&gt;
+&lt;p&gt;If the option &amp;#x201C;Do not require Kerberos pre-authentication&amp;#x201D; is set in the AD account properties, TGTs are issued without pre-authentication, meaning that a password is not required to obtain a TGT.&lt;/p&gt;
+&lt;p&gt;The TGT is encrypted with the master key of the KDC, which is the NTLM hash of the krbtgt account, so if you successfully crack the TGT, you can take over the privileges of the krbtgt account.&lt;/p&gt;
+&lt;h2 id=&#34;Silver-Ticket&#34;&gt;&lt;a href=&#34;#Silver-Ticket&#34; class=&#34;headerlink&#34; title=&#34;Silver Ticket&#34;&gt;&lt;/a&gt;Silver Ticket&lt;/h2&gt;&lt;p&gt;If you have the NTLM hash of a specific service account, you can use it to create another service ticket that manipulates the PAC.&lt;/p&gt;
+&lt;p&gt;Service tickets are originally issued by TGS, but it is possible to create service tickets without going through TGS.&lt;/p&gt;
+&lt;p&gt;The PAC in the service ticket is signed with two keys: the service account secret key and the krbtgt account secret key, but in some cases, only the service account secret key signature is verified.&lt;/p&gt;
+&lt;p&gt;For example, an account with the SeTcbPrivilege privilege is eligible for a Silver Ticket because only the service account secret key signature is verified.&lt;/p&gt;
+&lt;h2 id=&#34;Golden-Ticket&#34;&gt;&lt;a href=&#34;#Golden-Ticket&#34; class=&#34;headerlink&#34; title=&#34;Golden Ticket&#34;&gt;&lt;/a&gt;Golden Ticket&lt;/h2&gt;&lt;p&gt;Once you have the NTLM hash of the krbtgt account, you can create a TGT. This TGT also contains a PAC, and while the Silver Ticket manipulated the PAC of the service ticket, the Golden Ticket manipulates the PAC of the TGT.&lt;/p&gt;
+&lt;p&gt;When the TGT with the manipulated PAC is delivered to the TGS, the service ticket is issued with the corresponding privilege, so it can be used to elevate to higher privileges, such as domain administrator.&lt;/p&gt;
+&lt;h1 id=&#34;Kerberos-related-vulnerabilities&#34;&gt;&lt;a href=&#34;#Kerberos-related-vulnerabilities&#34; class=&#34;headerlink&#34; title=&#34;Kerberos-related vulnerabilities&#34;&gt;&lt;/a&gt;Kerberos-related vulnerabilities&lt;/h1&gt;&lt;p&gt;The Kerberos protocol is very complex and it is difficult to introduce all the related features implemented in Windows. Therefore, let&amp;#x2019;s take a look at a few CVEs to understand the details and the vulnerabilities that occurred.&lt;/p&gt;
+&lt;h2 id=&#34;CVE-2020-17049&#34;&gt;&lt;a href=&#34;#CVE-2020-17049&#34; class=&#34;headerlink&#34; title=&#34;CVE-2020-17049&#34;&gt;&lt;/a&gt;CVE-2020-17049&lt;/h2&gt;&lt;p&gt;CVE-2020-17049 is a security vulnerability found in the Kerberos Delegation mechanism, known as a &amp;#x201C;Bronze Bit&amp;#x201D; attack.&lt;/p&gt;
+&lt;p&gt;Delegation is literally a delegation. For example, let&amp;#x2019;s say a user authenticates to a web application, and the web application needs to access a database based on the user&amp;#x2019;s permissions. There are several implementations of Kerberos Delegation to support this (Unconstrained Delegation, Constrained Delegation, Do Not Delegate, etc.)&lt;/p&gt;
+&lt;p&gt;The AllowedToDelegateTo property, which specifies the services that can be delegated to, is used to store information that a service A can delegate to another service B. This is called the Forwardable Flag in the service ticket.&lt;/p&gt;
+&lt;p&gt;The Forwardable Flag in a service ticket is a bit that indicates whether this ticket is relayable, and if Forwardable is 1, it means that the authorization can be delegated. So if the Kerberos Delegation option is Do Not Delegate or AllowedToDelegateTo is not defined, Forwardable is 0.&lt;/p&gt;
+&lt;p&gt;But the Forwardable bit is not protected by the KDC&amp;#x2019;s signature, the service&amp;#x2019;s signature, or anything else, so it can be tampered with.&lt;/p&gt;
+&lt;p&gt;At this point, do you have any idea what this CVE is?&lt;/p&gt;
+&lt;p&gt;If you manipulate the Forwardable Flag in a service ticket and send it to a service, you can force the service to delegate privileges even if it is not delegating privileges, which can lead to a privilege takeover.&lt;/p&gt;
+&lt;p&gt;In Windows, Kerberos Contained Delegation (MS-SFU) implements authorization delegation with the S4U2proxy protocol. If service A is delegated to service B, it is impossible to make a request to service B using only A&amp;#x2019;s service ticket. You need to present the A service ticket to the KDC via S4U2proxy and get the B service ticket.&lt;/p&gt;
+&lt;p&gt;This is a vulnerability that can be exploited by setting the Forwardable flag to 1 to force delegation of authorization.&lt;/p&gt;
+&lt;h2 id=&#34;CVE-2022-33647-amp-CVE-2022-33679&#34;&gt;&lt;a href=&#34;#CVE-2022-33647-amp-CVE-2022-33679&#34; class=&#34;headerlink&#34; title=&#34;CVE-2022-33647 &amp;amp; CVE-2022-33679&#34;&gt;&lt;/a&gt;CVE-2022-33647 &amp;amp; CVE-2022-33679&lt;/h2&gt;&lt;p&gt;&lt;strong&gt;CVE-2022-33647&lt;/strong&gt; and &lt;strong&gt;CVE-2022-33679&lt;/strong&gt; are vulnerabilities discovered by James Forshaw of Google&amp;#x2019;s Project Zero that allow the use of RC4 encryption during the Kerberos authentication process, which can be used to decrypt session keys and gain privileges using methods such as brute force. The vulnerability trigger forces the use of RC4 because Kerberos natively prefers AES-based encryption but supports the RC4-HMAC (MD4) method due to backward compatibility.&lt;/p&gt;
+&lt;p&gt;When a client passes an AS-REQ to a KDC, it can use an integer field called etype to specify the supported encryption algorithms. The server will check for supported ciphers and, if available, will use the cipher specified by the client.&lt;/p&gt;
+&lt;p&gt;The idea Forshaw used to exploit CVE-2022-33647 is amazing, let&amp;#x2019;s take a look:&lt;/p&gt;
+&lt;p&gt;When a client authenticates, it typically sends a request to the KDC without a pre-authentication timestamp. The KDC then returns with an error code called KDC_ERR_PREAUTH_REQUIRED. This error response includes a list of required ciphers so that the client can perform the appropriate encryption. MITM intercepts the client&amp;#x2019;s AS-REQ and returns an error, and includes information about RC4-MD4 in the error to force the client to use RC4-MD4. Relay the RC4-enabled AS-REQ to the KDC to receive the AS-REP.&lt;/p&gt;
+&lt;p&gt;Now, the attacker has the RC4-enabled AS-REQ and the encrypted session key and TGT contained in the AS-REP. The AS-REQ has a timestamped structure called PA-ENC-TS-ENC, and the AS-REP has an encrypted response structure called EncASRepPart.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/04/21/mungsul/NTLM_Part2/en/4.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;RC4 does an XOR with the generated stream key, so if you know the ciphertext and the plaintext, you know the stream key. This is computable except when both sides are yellow in the above figure:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The RC4-MD4 method generates and uses a 16-byte key, where only the first 5 bytes are random and the 11th byte is fixed at 0xAB.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The green markings are values we know or can compute because they are ASN.1 structures. We&amp;#x2019;re lucky enough to have about 4 bytes of the session key overlap, so we can decrypt it, and 1 byte needs to be brute-forced. Bruteforcing can be done by requesting a service ticket from the KDC 256 times to get a legitimate service ticket.  This allows him to obtain the session key, decrypt the ticket, and take over the user&amp;#x2019;s privileges.&lt;/p&gt;
+&lt;p&gt;The case of CVE-2022-33679 occurs when pre-authentication in Keberos is disabled. If an account has pre-authentication disabled, an attacker can send an AS-REQ request directly to the KDC for that account to request a TGT over RC4-MD4. Because pre-authentication is turned off, the KDC will return the RC4-encrypted TGT and session key via AS-REP even though the user has not proven their password.&lt;/p&gt;
+&lt;p&gt;To exploit this vulnerability, instead of obtaining the session key, we use oracle padding to append a null value to the back of the timestamp and obtain the key if the KDC responds with a valid response.&lt;/p&gt;
+&lt;h2 id=&#34;CVE-2022-37966&#34;&gt;&lt;a href=&#34;#CVE-2022-37966&#34; class=&#34;headerlink&#34; title=&#34;CVE-2022-37966&#34;&gt;&lt;/a&gt;CVE-2022-37966&lt;/h2&gt;&lt;p&gt;CVE-2022-37966 is a vulnerability announced at Black Hat Europe 2022 that allows verification bypass via MD5 collision after PAC tampering when using the RC4_HMAC_MD5 algorithm, which was natively supported in Kerberos at the time.&lt;/p&gt;
+&lt;p&gt;There is no controllable field in the PAC that can be used to insert arbitrary bytes, but the LogonScript field can be used to insert a long UTF-16 string, which can be used to trigger an MD5 collision.&lt;/p&gt;
+&lt;p&gt;To exploit this vulnerability, you need to create a PAC with domain administrator privileges that has the same MD5 hash, which in our research took about 7 hours with HashClash. Once created, you can get domain administrator privileges, so it seems to be worth the time.&lt;/p&gt;
+&lt;h2 id=&#34;CVE-2024-43639&#34;&gt;&lt;a href=&#34;#CVE-2024-43639&#34; class=&#34;headerlink&#34; title=&#34;CVE-2024-43639&#34;&gt;&lt;/a&gt;CVE-2024-43639&lt;/h2&gt;&lt;p&gt;CVE-2024-43639 is a vulnerability reported to ZDI, which is a Heap Overflow vulnerability due to Integer Overflow in KDC Proxy (kdcsvc).&lt;/p&gt;
+&lt;p&gt;Windows KDC Proxy is a Windows Server component that proxies Kerberos protocol messages over HTTP. It occurs in kpssvc.dll, which runs a service called kdcsvc.&lt;/p&gt;
+&lt;p&gt;I&amp;#x2019;ve been looking at Kerberos protocol logical bugs all the time, so it&amp;#x2019;s kind of refreshing to see a memory corruption bug.&lt;/p&gt;
+&lt;h1 id=&#34;Conclusion&#34;&gt;&lt;a href=&#34;#Conclusion&#34; class=&#34;headerlink&#34; title=&#34;Conclusion&#34;&gt;&lt;/a&gt;&lt;strong&gt;Conclusion&lt;/strong&gt;&lt;/h1&gt;&lt;p&gt;We&amp;#x2019;ve covered how Kerberos works, the Windows implementation, and related attacks and vulnerabilities. Kerberos is a strong authentication protocol, but misconfigurations and implementation gaps can expose it to a variety of attacks and vulnerabilities. The topic for the next installment is still undecided, but we&amp;#x2019;ll be back with something interesting. Thanks for reading &amp;#x1F642;&lt;/p&gt;
+&lt;h1 id=&#34;References&#34;&gt;&lt;a href=&#34;#References&#34; class=&#34;headerlink&#34; title=&#34;References&#34;&gt;&lt;/a&gt;References&lt;/h1&gt;&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://en.wikipedia.org/wiki/Kerberos_(protocol&#34;&gt;https://en.wikipedia.org/wiki/Kerberos_(protocol)&lt;/a&gt;)&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://www.ibm.com/docs/ko/db2/11.5?topic=details-kerberos-authentication&#34;&gt;https://www.ibm.com/docs/ko/db2/11.5?topic=details-kerberos-authentication&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://www.varonis.com/blog/kerberos-attack-silver-ticket&#34;&gt;https://www.varonis.com/blog/kerberos-attack-silver-ticket&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-apds/1d1f2b0c-8e8a-4d2a-8665-508d04976f84&#34;&gt;https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-apds/1d1f2b0c-8e8a-4d2a-8665-508d04976f84&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://learn.microsoft.com/ko-kr/openspecs/windows_protocols/ms-apds/a00d0b83-97e3-44ad-ba2d-1221d4f51a35#gt_26456104-0afb-4afe-a92e-ac160a9efdf8&#34;&gt;https://learn.microsoft.com/ko-kr/openspecs/windows_protocols/ms-apds/a00d0b83-97e3-44ad-ba2d-1221d4f51a35#gt_26456104-0afb-4afe-a92e-ac160a9efdf8&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://learn.microsoft.com/ko-kr/windows-server/security/credentials-protection-and-management/authentication-policies-and-authentication-policy-silos&#34;&gt;https://learn.microsoft.com/ko-kr/windows-server/security/credentials-protection-and-management/authentication-policies-and-authentication-policy-silos&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://blog.sunggwanchoi.com/kor-keobeoroseuting-kerberoasting/&#34;&gt;https://blog.sunggwanchoi.com/kor-keobeoroseuting-kerberoasting/&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://www.hackthebox.com/blog/as-rep-roasting-detection&#34;&gt;https://www.hackthebox.com/blog/as-rep-roasting-detection&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://www.microsoft.com/en-us/security/blog/2024/10/11/microsofts-guidance-to-help-mitigate-kerberoasting/&#34;&gt;https://www.microsoft.com/en-us/security/blog/2024/10/11/microsofts-guidance-to-help-mitigate-kerberoasting/&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://googleprojectzero.blogspot.com/2022/10/rc4-is-still-considered-harmful.html&#34;&gt;https://googleprojectzero.blogspot.com/2022/10/rc4-is-still-considered-harmful.html&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://syfuhs.net/a-bit-about-kerberos&#34;&gt;https://syfuhs.net/a-bit-about-kerberos&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://i.blackhat.com/EU-22/Thursday-Briefings/EU-22-Tervoort-Breaking-Kerberos-RC4-Cipher-and-Spoofing-Windows-PACs-wp.pdf&#34;&gt;https://i.blackhat.com/EU-22/Thursday-Briefings/EU-22-Tervoort-Breaking-Kerberos-RC4-Cipher-and-Spoofing-Windows-PACs-wp.pdf&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://www.thehacker.recipes/ad/movement/kerberos/&#34;&gt;https://www.thehacker.recipes/ad/movement/kerberos/&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://en.hackndo.com/kerberos-silver-golden-tickets/&#34;&gt;https://en.hackndo.com/kerberos-silver-golden-tickets/&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://www.netspi.com/blog/technical-blog/network-pentesting/cve-2020-17049-kerberos-bronze-bit-theory/&#34;&gt;https://www.netspi.com/blog/technical-blog/network-pentesting/cve-2020-17049-kerberos-bronze-bit-theory/&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-sfu/3bff5864-8135-400e-bdd9-33b552051d94&#34;&gt;https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-sfu/3bff5864-8135-400e-bdd9-33b552051d94&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://learn.microsoft.com/en-us/windows-server/security/kerberos/kerberos-constrained-delegation-overview&#34;&gt;https://learn.microsoft.com/en-us/windows-server/security/kerberos/kerberos-constrained-delegation-overview&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2020/12/11/l0ch/2020-12-11/&#34;&gt;https://hackyboiz.github.io/2020/12/11/l0ch/2020-12-11/&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-kile/4ce3ddc0-aaaa-4a1b-b48b-62a07e906926&#34;&gt;https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-kile/4ce3ddc0-aaaa-4a1b-b48b-62a07e906926&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;a href=&#34;https://www.zerodayinitiative.com/blog/2025/3/3/cve-2024-43639&#34;&gt;https://www.zerodayinitiative.com/blog/2025/3/3/cve-2024-43639&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/04/21/mungsul/NTLM_Part2/en/thumbnail.jpg">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/04/21/mungsul/ntlm_part2/en/">
+
+  <title>[Research] Windows Authentication Series (Part2. Kerberos)(EN) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-04-21 23:00" pubdate>
+      2025년 4월 21일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      2.8k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      55
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] Windows Authentication Series (Part2. Kerberos)(EN)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <h1 id="Introduction"><a href="#Introduction" class="headerlink" title="Introduction"></a>Introduction</h1><p>hello. Welcome back to the Windows Authentication Series. In Part 1 NTLM, I said that we would look at NTLM-related CVEs in Part 2. While it&#x2019;s good to cover NTLM-related CVEs, I thought it would be a good idea to cover the Kerberos authentication protocol, which is mainly used in Windows, first.</p>
+<p>In this article, I&#x2019;ll show you how Kerberos works, how it&#x2019;s implemented in the Windows environment, and analyze some Kerberos-related attacks and CVE vulnerabilities.</p>
+<h1 id="Kerberos-Authentication"><a href="#Kerberos-Authentication" class="headerlink" title="Kerberos Authentication"></a>Kerberos Authentication</h1><p>Kerberos is a ticket-based authentication protocol that allows users and services to authenticate each other without exposing the passwords themselves to the network by issuing tickets based on symmetric key cryptography through a KDC.</p>
+<p>This authentication structure features the following elements</p>
+<ul>
+<li>Key Distribution Center (KDC): The key distribution center, a composite of the AS and TGS, provides authentication services and generates and distributes session keys.</li>
+<li>AS (Authentication Server): Authentication server, performs client authentication and issues TGTs to clients encrypted with the TGS&#x2019;s secret key.</li>
+<li>Ticket Granting Server (TGS): A ticket granting server that issues STs and session keys when a client sends a TGT to the TGS.</li>
+<li>TGT (Ticket Granting Ticket): A ticket granting ticket, which allows a ticket to be issued by the TGS.</li>
+<li>ST (Service Ticket): A ticket that allows you to use a service.</li>
+<li>SS (Service Server): The server that provides the service.</li>
+</ul>
+<p>The Kerberos authentication process can be summarized as follows:</p>
+<ol>
+<li>The client makes an authentication request to the AS.</li>
+<li>the AS issues a TGT to the client.<ol>
+<li>The TGT is encrypted with the secret key of the TGS.</li>
+<li>the AS and TGS typically share the same host as the KDC.</li>
+</ol>
+</li>
+<li>The client communicates the TGT and the ID of the service to be requested to the TGS.</li>
+<li>the TGS issues an ST to the client.<br>The service the client is requesting access to must be registered with the TGS with a Service Principal Name (SPN).</li>
+<li>The client forwards the ST to the server.</li>
+<li>Perform the communication.</li>
+</ol>
+<p>The above process is schematized in the following figure.</p>
+<p><img src="/2025/04/21/mungsul/NTLM_Part2/en/1.png" srcset="/img/loading.gif" alt></p>
+<h2 id="Kerberos-authentication-on-Windows"><a href="#Kerberos-authentication-on-Windows" class="headerlink" title="Kerberos authentication on Windows"></a>Kerberos authentication on Windows</h2><p>In the Windows Kerberos implementation, tickets include something called a Privilege Attribute Certificate (PAC). The PAC contains the user&#x2019;s group information and authorization data, among other things. The KDC signs this information to issue the ticket. When a ticket comes in, the service server looks at the PAC, checks the permissions, and either grants or denies access.</p>
+<p>Now, in Windows, the Kerberos authentication process outlined above looks like this:</p>
+<p>It&#x2019;s a bit of a headache, but let&#x2019;s go through it one by one.</p>
+<p><img src="/2025/04/21/mungsul/NTLM_Part2/en/2.png" srcset="/img/loading.gif" alt></p>
+<p><strong>1) AS-REQ</strong></p>
+<p>In an AS-REQ, the client requests a ticket with its identity from the KDC&#x2019;s authentication service. By Windows default, with preauthentication, the user sends the current time encrypted with their secret key (NTLM hash). The KDC decrypts this with the user&#x2019;s NTLM hash, which is stored in the domain controller (DC), to authenticate the user.</p>
+<p><strong>2) AS-REP</strong> </p>
+<p>If the verification in AS-REQ is successful, the client is issued a TGT and a session key (client-TGS) in the AS-REP response. The session key is encrypted with the user&#x2019;s NTLM hash, and the TGT is encrypted with the KDC&#x2019;s master key (the NTLM hash of the krbtgt account), so the client cannot decrypt the TGT.</p>
+<p><strong>3) TGS-REQ</strong> </p>
+<p>When a client needs access to a service server, it sends the TGT in a TGS-REQ message to the TGS in the KDC. The request also includes the SPN of the target service and the previously issued client-TGS session key.</p>
+<p><strong>4) TGS-REP</strong></p>
+<p>The KDC receives the TGS-REQ and verifies that the TGT is valid. The TGT is encrypted with the KDC&#x2019;s master key, so the KDC can decrypt it and verify it.</p>
+<p>And if the user is authorized to access the requested service and there are no problems, it sends a TGS-REP response to the client.</p>
+<p>This includes a session key (client-service server) and a service ticket (ST).</p>
+<p>The service ticket is encrypted with the secret key of the service account (the NTLM hash of the service account), so only the <strong>service</strong> can decrypt and view it, the client does not know the contents. The client will keep this ST and use it to access the actual service.</p>
+<p><strong>5) AP-REQ</strong></p>
+<p>Finally, the client tries to connect by presenting the AP-REQ to the target server (service) with the service ticket. To prove its identity, the client also sends the authenticator (Authenticator, timestamp, etc.) encrypted with the service session key it received earlier.</p>
+<p>The server sends a KERB_VERIFY_PAC message to the domain controller to validate the signature of the PAC in the service ticket. This PAC is protected by the KDC&#x2019;s signature, and the service verifies the integrity of the PAC when validating the ticket so that it can trust the user&#x2019;s authorization in the domain.</p>
+<p><img src="/2025/04/21/mungsul/NTLM_Part2/en/3.png" srcset="/img/loading.gif" alt></p>
+<p><strong>6) AP-REP</strong> </p>
+<p>The service server verifies the PAC of the service ticket presented by the client, and if the verification is successful, the server sends a response to the client in an AP-REP message to complete the session key negotiation. The client is then allowed to access the service.</p>
+<hr>
+<p>As you can see from the description, Kerberos authentication on Windows is based on the fact that the secret key shared with each other is the user&#x2019;s NTLM hash, the authorization information, called the PAC, is contained in the ticket, and the PAC is signed by the KDC to ensure its integrity.</p>
+<h1 id="Kerberos-related-attacks"><a href="#Kerberos-related-attacks" class="headerlink" title="Kerberos-related attacks"></a>Kerberos-related attacks</h1><p>The Kerberos protocol itself is designed to be secure, but various attack techniques have been studied depending on the implementation settings and operating environment. Let&#x2019;s take a look at the most common attacks in the Windows Kerberos environment.</p>
+<h2 id="Kerberoasting"><a href="#Kerberoasting" class="headerlink" title="Kerberoasting"></a>Kerberoasting</h2><p>Kerberoasting is an attack technique that uses a legitimate domain user account to request a Kerberos ticket for a <strong>service account</strong> and then cracks the encrypted information contained in the ticket to steal the service account&#x2019;s password.</p>
+<p>Any user inside an AD domain can request a service ticket via TGS-REQ for an account with an SPN attribute, which means that an attacker can use this technique if they have already penetrated the domain.</p>
+<p>The service ticket is encrypted with an NTLM hash, so if the crack is successful, the NTLM hash is obtained, which is no different than obtaining a password in a Windows environment.</p>
+<h2 id="AS-REP-Roasting"><a href="#AS-REP-Roasting" class="headerlink" title="AS-REP Roasting"></a>AS-REP Roasting</h2><p><strong>AS-REP Roasting</strong> is a technique similar to Kerberoasting, but targets users who have Kerberos Pre-Authentication disabled.</p>
+<p>Pre-authentication is the process of verifying that the client knows the shared key before a TGT is issued.</p>
+<p>If the option &#x201C;Do not require Kerberos pre-authentication&#x201D; is set in the AD account properties, TGTs are issued without pre-authentication, meaning that a password is not required to obtain a TGT.</p>
+<p>The TGT is encrypted with the master key of the KDC, which is the NTLM hash of the krbtgt account, so if you successfully crack the TGT, you can take over the privileges of the krbtgt account.</p>
+<h2 id="Silver-Ticket"><a href="#Silver-Ticket" class="headerlink" title="Silver Ticket"></a>Silver Ticket</h2><p>If you have the NTLM hash of a specific service account, you can use it to create another service ticket that manipulates the PAC.</p>
+<p>Service tickets are originally issued by TGS, but it is possible to create service tickets without going through TGS.</p>
+<p>The PAC in the service ticket is signed with two keys: the service account secret key and the krbtgt account secret key, but in some cases, only the service account secret key signature is verified.</p>
+<p>For example, an account with the SeTcbPrivilege privilege is eligible for a Silver Ticket because only the service account secret key signature is verified.</p>
+<h2 id="Golden-Ticket"><a href="#Golden-Ticket" class="headerlink" title="Golden Ticket"></a>Golden Ticket</h2><p>Once you have the NTLM hash of the krbtgt account, you can create a TGT. This TGT also contains a PAC, and while the Silver Ticket manipulated the PAC of the service ticket, the Golden Ticket manipulates the PAC of the TGT.</p>
+<p>When the TGT with the manipulated PAC is delivered to the TGS, the service ticket is issued with the corresponding privilege, so it can be used to elevate to higher privileges, such as domain administrator.</p>
+<h1 id="Kerberos-related-vulnerabilities"><a href="#Kerberos-related-vulnerabilities" class="headerlink" title="Kerberos-related vulnerabilities"></a>Kerberos-related vulnerabilities</h1><p>The Kerberos protocol is very complex and it is difficult to introduce all the related features implemented in Windows. Therefore, let&#x2019;s take a look at a few CVEs to understand the details and the vulnerabilities that occurred.</p>
+<h2 id="CVE-2020-17049"><a href="#CVE-2020-17049" class="headerlink" title="CVE-2020-17049"></a>CVE-2020-17049</h2><p>CVE-2020-17049 is a security vulnerability found in the Kerberos Delegation mechanism, known as a &#x201C;Bronze Bit&#x201D; attack.</p>
+<p>Delegation is literally a delegation. For example, let&#x2019;s say a user authenticates to a web application, and the web application needs to access a database based on the user&#x2019;s permissions. There are several implementations of Kerberos Delegation to support this (Unconstrained Delegation, Constrained Delegation, Do Not Delegate, etc.)</p>
+<p>The AllowedToDelegateTo property, which specifies the services that can be delegated to, is used to store information that a service A can delegate to another service B. This is called the Forwardable Flag in the service ticket.</p>
+<p>The Forwardable Flag in a service ticket is a bit that indicates whether this ticket is relayable, and if Forwardable is 1, it means that the authorization can be delegated. So if the Kerberos Delegation option is Do Not Delegate or AllowedToDelegateTo is not defined, Forwardable is 0.</p>
+<p>But the Forwardable bit is not protected by the KDC&#x2019;s signature, the service&#x2019;s signature, or anything else, so it can be tampered with.</p>
+<p>At this point, do you have any idea what this CVE is?</p>
+<p>If you manipulate the Forwardable Flag in a service ticket and send it to a service, you can force the service to delegate privileges even if it is not delegating privileges, which can lead to a privilege takeover.</p>
+<p>In Windows, Kerberos Contained Delegation (MS-SFU) implements authorization delegation with the S4U2proxy protocol. If service A is delegated to service B, it is impossible to make a request to service B using only A&#x2019;s service ticket. You need to present the A service ticket to the KDC via S4U2proxy and get the B service ticket.</p>
+<p>This is a vulnerability that can be exploited by setting the Forwardable flag to 1 to force delegation of authorization.</p>
+<h2 id="CVE-2022-33647-amp-CVE-2022-33679"><a href="#CVE-2022-33647-amp-CVE-2022-33679" class="headerlink" title="CVE-2022-33647 &amp; CVE-2022-33679"></a>CVE-2022-33647 &amp; CVE-2022-33679</h2><p><strong>CVE-2022-33647</strong> and <strong>CVE-2022-33679</strong> are vulnerabilities discovered by James Forshaw of Google&#x2019;s Project Zero that allow the use of RC4 encryption during the Kerberos authentication process, which can be used to decrypt session keys and gain privileges using methods such as brute force. The vulnerability trigger forces the use of RC4 because Kerberos natively prefers AES-based encryption but supports the RC4-HMAC (MD4) method due to backward compatibility.</p>
+<p>When a client passes an AS-REQ to a KDC, it can use an integer field called etype to specify the supported encryption algorithms. The server will check for supported ciphers and, if available, will use the cipher specified by the client.</p>
+<p>The idea Forshaw used to exploit CVE-2022-33647 is amazing, let&#x2019;s take a look:</p>
+<p>When a client authenticates, it typically sends a request to the KDC without a pre-authentication timestamp. The KDC then returns with an error code called KDC_ERR_PREAUTH_REQUIRED. This error response includes a list of required ciphers so that the client can perform the appropriate encryption. MITM intercepts the client&#x2019;s AS-REQ and returns an error, and includes information about RC4-MD4 in the error to force the client to use RC4-MD4. Relay the RC4-enabled AS-REQ to the KDC to receive the AS-REP.</p>
+<p>Now, the attacker has the RC4-enabled AS-REQ and the encrypted session key and TGT contained in the AS-REP. The AS-REQ has a timestamped structure called PA-ENC-TS-ENC, and the AS-REP has an encrypted response structure called EncASRepPart.</p>
+<p><img src="/2025/04/21/mungsul/NTLM_Part2/en/4.png" srcset="/img/loading.gif" alt></p>
+<p>RC4 does an XOR with the generated stream key, so if you know the ciphertext and the plaintext, you know the stream key. This is computable except when both sides are yellow in the above figure:</p>
+<ul>
+<li>The RC4-MD4 method generates and uses a 16-byte key, where only the first 5 bytes are random and the 11th byte is fixed at 0xAB.</li>
+</ul>
+<p>The green markings are values we know or can compute because they are ASN.1 structures. We&#x2019;re lucky enough to have about 4 bytes of the session key overlap, so we can decrypt it, and 1 byte needs to be brute-forced. Bruteforcing can be done by requesting a service ticket from the KDC 256 times to get a legitimate service ticket.  This allows him to obtain the session key, decrypt the ticket, and take over the user&#x2019;s privileges.</p>
+<p>The case of CVE-2022-33679 occurs when pre-authentication in Keberos is disabled. If an account has pre-authentication disabled, an attacker can send an AS-REQ request directly to the KDC for that account to request a TGT over RC4-MD4. Because pre-authentication is turned off, the KDC will return the RC4-encrypted TGT and session key via AS-REP even though the user has not proven their password.</p>
+<p>To exploit this vulnerability, instead of obtaining the session key, we use oracle padding to append a null value to the back of the timestamp and obtain the key if the KDC responds with a valid response.</p>
+<h2 id="CVE-2022-37966"><a href="#CVE-2022-37966" class="headerlink" title="CVE-2022-37966"></a>CVE-2022-37966</h2><p>CVE-2022-37966 is a vulnerability announced at Black Hat Europe 2022 that allows verification bypass via MD5 collision after PAC tampering when using the RC4_HMAC_MD5 algorithm, which was natively supported in Kerberos at the time.</p>
+<p>There is no controllable field in the PAC that can be used to insert arbitrary bytes, but the LogonScript field can be used to insert a long UTF-16 string, which can be used to trigger an MD5 collision.</p>
+<p>To exploit this vulnerability, you need to create a PAC with domain administrator privileges that has the same MD5 hash, which in our research took about 7 hours with HashClash. Once created, you can get domain administrator privileges, so it seems to be worth the time.</p>
+<h2 id="CVE-2024-43639"><a href="#CVE-2024-43639" class="headerlink" title="CVE-2024-43639"></a>CVE-2024-43639</h2><p>CVE-2024-43639 is a vulnerability reported to ZDI, which is a Heap Overflow vulnerability due to Integer Overflow in KDC Proxy (kdcsvc).</p>
+<p>Windows KDC Proxy is a Windows Server component that proxies Kerberos protocol messages over HTTP. It occurs in kpssvc.dll, which runs a service called kdcsvc.</p>
+<p>I&#x2019;ve been looking at Kerberos protocol logical bugs all the time, so it&#x2019;s kind of refreshing to see a memory corruption bug.</p>
+<h1 id="Conclusion"><a href="#Conclusion" class="headerlink" title="Conclusion"></a><strong>Conclusion</strong></h1><p>We&#x2019;ve covered how Kerberos works, the Windows implementation, and related attacks and vulnerabilities. Kerberos is a strong authentication protocol, but misconfigurations and implementation gaps can expose it to a variety of attacks and vulnerabilities. The topic for the next installment is still undecided, but we&#x2019;ll be back with something interesting. Thanks for reading &#x1F642;</p>
+<h1 id="References"><a href="#References" class="headerlink" title="References"></a>References</h1><ul>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://en.wikipedia.org/wiki/Kerberos_(protocol">https://en.wikipedia.org/wiki/Kerberos_(protocol)</a>)</p>
+</li>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.ibm.com/docs/ko/db2/11.5?topic=details-kerberos-authentication">https://www.ibm.com/docs/ko/db2/11.5?topic=details-kerberos-authentication</a></p>
+</li>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.varonis.com/blog/kerberos-attack-silver-ticket">https://www.varonis.com/blog/kerberos-attack-silver-ticket</a></p>
+</li>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-apds/1d1f2b0c-8e8a-4d2a-8665-508d04976f84">https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-apds/1d1f2b0c-8e8a-4d2a-8665-508d04976f84</a></p>
+</li>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://learn.microsoft.com/ko-kr/openspecs/windows_protocols/ms-apds/a00d0b83-97e3-44ad-ba2d-1221d4f51a35#gt_26456104-0afb-4afe-a92e-ac160a9efdf8">https://learn.microsoft.com/ko-kr/openspecs/windows_protocols/ms-apds/a00d0b83-97e3-44ad-ba2d-1221d4f51a35#gt_26456104-0afb-4afe-a92e-ac160a9efdf8</a></p>
+</li>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://learn.microsoft.com/ko-kr/windows-server/security/credentials-protection-and-management/authentication-policies-and-authentication-policy-silos">https://learn.microsoft.com/ko-kr/windows-server/security/credentials-protection-and-management/authentication-policies-and-authentication-policy-silos</a></p>
+</li>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://blog.sunggwanchoi.com/kor-keobeoroseuting-kerberoasting/">https://blog.sunggwanchoi.com/kor-keobeoroseuting-kerberoasting/</a></p>
+</li>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.hackthebox.com/blog/as-rep-roasting-detection">https://www.hackthebox.com/blog/as-rep-roasting-detection</a></p>
+</li>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.microsoft.com/en-us/security/blog/2024/10/11/microsofts-guidance-to-help-mitigate-kerberoasting/">https://www.microsoft.com/en-us/security/blog/2024/10/11/microsofts-guidance-to-help-mitigate-kerberoasting/</a></p>
+</li>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://googleprojectzero.blogspot.com/2022/10/rc4-is-still-considered-harmful.html">https://googleprojectzero.blogspot.com/2022/10/rc4-is-still-considered-harmful.html</a></p>
+</li>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://syfuhs.net/a-bit-about-kerberos">https://syfuhs.net/a-bit-about-kerberos</a></p>
+</li>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://i.blackhat.com/EU-22/Thursday-Briefings/EU-22-Tervoort-Breaking-Kerberos-RC4-Cipher-and-Spoofing-Windows-PACs-wp.pdf">https://i.blackhat.com/EU-22/Thursday-Briefings/EU-22-Tervoort-Breaking-Kerberos-RC4-Cipher-and-Spoofing-Windows-PACs-wp.pdf</a></p>
+</li>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.thehacker.recipes/ad/movement/kerberos/">https://www.thehacker.recipes/ad/movement/kerberos/</a></p>
+</li>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://en.hackndo.com/kerberos-silver-golden-tickets/">https://en.hackndo.com/kerberos-silver-golden-tickets/</a></p>
+</li>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.netspi.com/blog/technical-blog/network-pentesting/cve-2020-17049-kerberos-bronze-bit-theory/">https://www.netspi.com/blog/technical-blog/network-pentesting/cve-2020-17049-kerberos-bronze-bit-theory/</a></p>
+</li>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-sfu/3bff5864-8135-400e-bdd9-33b552051d94">https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-sfu/3bff5864-8135-400e-bdd9-33b552051d94</a></p>
+</li>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://learn.microsoft.com/en-us/windows-server/security/kerberos/kerberos-constrained-delegation-overview">https://learn.microsoft.com/en-us/windows-server/security/kerberos/kerberos-constrained-delegation-overview</a></p>
+</li>
+<li><p><a href="https://hackyboiz.github.io/2020/12/11/l0ch/2020-12-11/">https://hackyboiz.github.io/2020/12/11/l0ch/2020-12-11/</a></p>
+</li>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-kile/4ce3ddc0-aaaa-4a1b-b48b-62a07e906926">https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-kile/4ce3ddc0-aaaa-4a1b-b48b-62a07e906926</a></p>
+</li>
+<li><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.zerodayinitiative.com/blog/2025/3/3/cve-2024-43639">https://www.zerodayinitiative.com/blog/2025/3/3/cve-2024-43639</a></p>
+</li>
+</ul>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/Windows/">Windows</a>
+                  
+                  <a class="hover-with-bg" href="/tags/mungsul/">mungsul</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Authentication/">Authentication</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Kerberos/">Kerberos</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_mungsul.jpg" srcset="/img/loading.gif" alt="mungsul">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">mungsul</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/mungsul">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/04/21/mungsul/NTLM_Part2/ko/">
+                    <span class="hidden-mobile">[Research] Windows Authentication Series (Part2. Kerberos)(KR)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/04/21/mungsul/NTLM_Part2/en/';
+        this.page.identifier = '/2025/04/21/mungsul/NTLM_Part2/en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] Windows Authentication Series (Part2. Kerberos)(EN)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
