@@ -103,9 +103,7 @@ Binary obfuscation is **crucial for protecting actual distributed products.** Si
 > Technically, malware is also a kind of “product”… and yes, binary obfuscation is heavily used in malware as well.
 > 
 
-Binary obfuscation aims to disrupt static analysis tools like IDA and Ghidra, confuse debugging attempts, and in some cases, ensure that the code is only decrypted during execution. Common techniques include **control flow flattening**, **string encryption**, **inserting junk code**, **name manglin**
-
-, and **indirect jumps/calls**.
+Binary obfuscation aims to disrupt static analysis tools like IDA and Ghidra, confuse debugging attempts, and in some cases, ensure that the code is only decrypted during execution. Common techniques include **control flow flattening**, **string encryption**, **inserting junk code**, **name mangling**, and **indirect jumps/calls**.
 
 ### 1.4 Focus on Binary Obfuscation
 
