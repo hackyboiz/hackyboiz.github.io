@@ -10,7 +10,7 @@ index_img: /2025/04/28/OUYA77/Anti_part3/kr/image.png
 
 Hello, this is OUYA77! 🙂
 
-List time, I mentioned that I might cover obfuscation on the blog if the opportunity came up — and well, here we are with Part 3!
+Last time, I mentioned that I might cover obfuscation on the blog if the opportunity came up — and well, here we are with Part 3!
 
 In Part 1, we explored debugging and anti-debugging techniques. Then in Part 2, we looked at ways to **bypass anti-debugging**, which acts like a "trap card" trying to block certain actions.
 
