@@ -1,0 +1,1472 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;Hello, this is OUYA77! &amp;#x1F642;&lt;/p&gt;
+&lt;p&gt;Last time, I mentioned that I might cover obfuscation on the blog if the opportunity came up &amp;#x2014; and well, here we are with Part 3!&lt;/p&gt;
+&lt;p&gt;In Part 1, we explored debugging and anti-debugging techniques. Then in Part 2, we looked at ways to &lt;strong&gt;bypass anti-debugging&lt;/strong&gt;, which acts like a &amp;#x201C;trap card&amp;#x201D; trying to block certain actions.&lt;/p&gt;
+&lt;p&gt;(If you haven&amp;#x2019;t checked them out yet, here&amp;#x2019;s a quick link &amp;#x1F447; haha &lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Check out the previous parts:&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2024/12/29/OUYA77/Anti_part1/en/&#34;&gt;[Research] Anti-Debugging Part 1 (EN)&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2025/03/24/OUYA77/Anti_part2/en/&#34;&gt;[Research] Anti-Debugging Part 2 (EN)&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Since this series has been a bit of long journey, it&amp;#x2019;s totally understandable if some details have slipped your mind.&lt;/p&gt;
+&lt;p&gt;Just in case, I even prepared a little cartoon (!) to sum things up. &lt;del&gt;I swear there was no my hope while making it. It&amp;#x2019;s also a &lt;em&gt;total secret&lt;/em&gt; that I had to call in an expert for help with the framing because it turned out way harder than I thought&amp;#x2026;&lt;/del&gt;&lt;/p&gt;
+&lt;h2 id=&#34;Anti-Debugging-Part-Summary&#34;&gt;&lt;a href=&#34;#Anti-Debugging-Part-Summary&#34; class=&#34;headerlink&#34; title=&#34;Anti-Debugging Part Summary&#34;&gt;&lt;/a&gt;Anti-Debugging Part Summary&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;image%201.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%202.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%203.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;As you saw in the cartoon, anti-debugging techniques were developed to block debugging &amp;#x2014; and bypassing techniques were invented to counter them. Through Part 1 and Part 2, we saw that anti-debugging has its limits: ultimately, a program must be loaded into memory to run, and the final binary must be delivered to the user. This means that if a user analyzes the binary and understands the anti-debugging logic, they can patch it or find ways around it.&lt;/p&gt;
+&lt;p&gt;That&amp;#x2019;s when the legendary Chef Gordon Ramsay shows up and yells,&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;&amp;#x201C;You need to &lt;em&gt;hide&lt;/em&gt; these ingredients (anti-debugging logic) better!&amp;#x201D;&lt;/strong&gt; &amp;#x1F525;&amp;#x1F468;&amp;#x200D;&amp;#x1F373;&lt;/p&gt;
+&lt;p&gt;&amp;#x2014; And thus, &lt;strong&gt;obfuscation&lt;/strong&gt; must be applied.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;In Part 2&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%204.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;???: So why not just hide it? / 000: How!!&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;When anti-debugging is combined with &lt;strong&gt;obfuscation&lt;/strong&gt;, it becomes extremely difficult to identify which parts of a program contain anti-debugging logic, making the analysis process even more challenging. That&amp;#x2019;s why in &lt;strong&gt;Part 3&lt;/strong&gt;, we will take a deep dive into this fascinating technique called &lt;strong&gt;obfuscation&lt;/strong&gt;!&lt;/p&gt;
+&lt;h2 id=&#34;1-Obfuscation&#34;&gt;&lt;a href=&#34;#1-Obfuscation&#34; class=&#34;headerlink&#34; title=&#34;1. Obfuscation&#34;&gt;&lt;/a&gt;1. Obfuscation&lt;/h2&gt;&lt;h3 id=&#34;1-1-Introduction&#34;&gt;&lt;a href=&#34;#1-1-Introduction&#34; class=&#34;headerlink&#34; title=&#34;1.1 Introduction&#34;&gt;&lt;/a&gt;1.1 Introduction&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Obfuscation&lt;/strong&gt; is a technique that intentionally makes a program&amp;#x2019;s code difficult to read.&lt;br&gt;Wikipedia defines it as:&lt;/li&gt;
+&lt;/ul&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&amp;#x201C;In software development, obfuscation is the practice of creating source or machine code that is intentionally difficult for humans or computers to understand.&amp;#x201D;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Obfuscation goes beyond simply making code less readable &amp;#x2014; it is used to &lt;strong&gt;hinder reverse engineering, debugging, and static analysis&lt;/strong&gt;, and serves various purposes such as intellectual property protection, security enhancement, and evading malware analysis.&lt;/p&gt;
+&lt;h3 id=&#34;1-2-Purpose&#34;&gt;&lt;a href=&#34;#1-2-Purpose&#34; class=&#34;headerlink&#34; title=&#34;1.2 Purpose&#34;&gt;&lt;/a&gt;1.2 Purpose&lt;/h3&gt;&lt;p&gt;Obfuscation achieves the following defensive goals without changing the actual behavior of a program:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Reduced readability&lt;/strong&gt;: Hides the logical structure and meaning of the code to obstruct understanding.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Increased structural complexity&lt;/strong&gt;: Introduces unnecessary operations, nonlinear flows, random-based conditions, etc.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Evasion of pattern detection&lt;/strong&gt;: Tricks signature-based detection tools or causes false positives/negatives.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;In short, if an analyst looks at the program and thinks,&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;&amp;#x201C;Ugh&amp;#x2026; this is going to be a headache ;;&amp;#x201D;&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;&amp;#x2014; then the obfuscation has already succeeded to some degree.&lt;/p&gt;
+&lt;h3 id=&#34;1-3-Types-of-Obfuscation&#34;&gt;&lt;a href=&#34;#1-3-Types-of-Obfuscation&#34; class=&#34;headerlink&#34; title=&#34;1.3 Types of Obfuscation&#34;&gt;&lt;/a&gt;1.3 Types of Obfuscation&lt;/h3&gt;&lt;p&gt;Obfuscation can largely be divided into two categories:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Source Code Obfuscation&lt;/strong&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Target&lt;/strong&gt;: High-level source code (Java, JavaScript, Python, etc.)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Applied at&lt;/strong&gt;: Before compilation&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Purpose&lt;/strong&gt;: To secure internal code and protect flow when partially disclosing code to outsourcing partners or clients&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Source code obfuscation is often used when a company needs to provide part of its code to third parties, ensuring that the overall structure or algorithms are not easily understood. Common techniques include &lt;strong&gt;renaming identifiers&lt;/strong&gt;, &lt;strong&gt;rearranging code blocks&lt;/strong&gt;, &lt;strong&gt;control flow obfuscation&lt;/strong&gt;, and &lt;strong&gt;string encoding&lt;/strong&gt;.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Binary Obfuscation&lt;/strong&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Target&lt;/strong&gt;: Compiled executables (C, C++, Go, etc.)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Applied at&lt;/strong&gt;: During or after compilation&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Purpose&lt;/strong&gt;: Product protection, algorithm safeguarding, crack/reverse engineering prevention&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Binary obfuscation is &lt;strong&gt;crucial for protecting actual distributed products.&lt;/strong&gt; Since most commercial software is distributed in binary form &amp;#x2014; containing valuable algorithms, licensing logic, and authentication mechanisms &amp;#x2014; protecting it is essential. Otherwise, attackers or even customers could reverse engineer or crack the software.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Technically, malware is also a kind of &amp;#x201C;product&amp;#x201D;&amp;#x2026; and yes, binary obfuscation is heavily used in malware as well.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Binary obfuscation aims to disrupt static analysis tools like IDA and Ghidra, confuse debugging attempts, and in some cases, ensure that the code is only decrypted during execution. Common techniques include &lt;strong&gt;control flow flattening&lt;/strong&gt;, &lt;strong&gt;string encryption&lt;/strong&gt;, &lt;strong&gt;inserting junk code&lt;/strong&gt;, &lt;strong&gt;name mangling&lt;/strong&gt;, and &lt;strong&gt;indirect jumps/calls&lt;/strong&gt;.&lt;/p&gt;
+&lt;h3 id=&#34;1-4-Focus-on-Binary-Obfuscation&#34;&gt;&lt;a href=&#34;#1-4-Focus-on-Binary-Obfuscation&#34; class=&#34;headerlink&#34; title=&#34;1.4 Focus on Binary Obfuscation&#34;&gt;&lt;/a&gt;1.4 Focus on Binary Obfuscation&lt;/h3&gt;&lt;p&gt;In this part, we will especially focus on binary obfuscation. Why is it so important? Simple: Because most of the programs we use are ultimately delivered as binaries, containing the company&amp;#x2019;s key know-how, algorithms, licensing mechanisms, and more. Without proper protection, it can lead not just to technical attacks like cracking and reverse engineering, but also serious business damage like illegal redistribution and intellectual property theft. That&amp;#x2019;s why we need anti-reversing techniques &amp;#x2014; and that&amp;#x2019;s what we have been exploring since Part 1.&lt;/p&gt;
+&lt;p&gt;If anti-debugging mainly disrupts dynamic analysis (trying to observe the program at runtime),&lt;br&gt;then obfuscation focuses on obstructing static analysis (analyzing the code without running it).&lt;br&gt;When both techniques are combined, the analyst is essentially facing a near-invincible defense system.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;del&gt;(Though, even an &amp;#x201C;invincible shield&amp;#x201D; can meet an &amp;#x201C;unstoppable spear&amp;#x201D; someday&amp;#x2026;)&lt;/del&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2 id=&#34;2-The-Three-Pillars-of-Binary-Obfuscation&#34;&gt;&lt;a href=&#34;#2-The-Three-Pillars-of-Binary-Obfuscation&#34; class=&#34;headerlink&#34; title=&#34;2. The Three Pillars of Binary Obfuscation&#34;&gt;&lt;/a&gt;2. The Three Pillars of Binary Obfuscation&lt;/h2&gt;&lt;p&gt;Binary obfuscation is generally classified into the following three categories.&lt;/p&gt;
+&lt;p&gt;(&lt;em&gt;Some parts will be covered briefly.&lt;/em&gt;)&lt;/p&gt;
+&lt;h3 id=&#34;2-1-Structural-Obfuscation&#34;&gt;&lt;a href=&#34;#2-1-Structural-Obfuscation&#34; class=&#34;headerlink&#34; title=&#34;2.1 Structural Obfuscation&#34;&gt;&lt;/a&gt;2.1 Structural Obfuscation&lt;/h3&gt;&lt;blockquote&gt;
+&lt;p&gt;Obfuscation that twists the structure of the code&amp;#x2019;s control flow itself, making analysis much harder.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;This category mainly targets &lt;strong&gt;static analysis tools&lt;/strong&gt; that attempt to understand the program at the function or block level, making it difficult to grasp the overall structure.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Control Flow Flattening&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;  &lt;img src=&#34;image%205.png&#34; alt=&#34;ref. https://gosecure.github.io/presentations/2020-05-15-advanced-binary-analysis/&#34;&gt;&lt;/p&gt;
+&lt;p&gt;  ref. &lt;a href=&#34;https://gosecure.github.io/presentations/2020-05-15-advanced-binary-analysis/&#34;&gt;https://gosecure.github.io/presentations/2020-05-15-advanced-binary-analysis/&lt;/a&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Originally, logical flows like &lt;code&gt;if&lt;/code&gt;, &lt;code&gt;while&lt;/code&gt;, and &lt;code&gt;switch&lt;/code&gt; are flattened into a single &lt;code&gt;dispatcher&lt;/code&gt; loop. The next block to execute is determined based on a &lt;strong&gt;state variable&lt;/strong&gt;.&lt;ul&gt;
+&lt;li&gt;As a result, the control flow is obfuscated into a non-intuitive form, neutralizing the control flow tree analysis of static tools.&lt;/li&gt;
+&lt;li&gt;We&amp;#x2019;ll take a closer look at this later with an example from Obfuscator-LLVM (OLLVM)!&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Junk / Dead Code Insertion&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Inserts meaningless operations (Junk Code) or never-executed code (Dead Code) into the program.&lt;/li&gt;
+&lt;li&gt;Typical examples:&lt;ul&gt;
+&lt;li&gt;No-op operations (&lt;code&gt;x = x;&lt;/code&gt;, &lt;code&gt;add eax, 0;&lt;/code&gt;)&lt;/li&gt;
+&lt;li&gt;Unreachable branches (&lt;code&gt;if (false) { ... }&lt;/code&gt;)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Indirect Branching / Calling&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Jumps or calls are made through calculated addresses (e.g., &lt;code&gt;jmp eax&lt;/code&gt;, &lt;code&gt;call [ecx+0x10]&lt;/code&gt;).&lt;/li&gt;
+&lt;li&gt;This makes tracing the code flow extremely difficult (especially for API resolution).&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Opaque Predicate&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Branches are inserted with conditions that are always true/false (e.g., &lt;code&gt;if ((x*x) &amp;gt;= 0)&lt;/code&gt;).&lt;/li&gt;
+&lt;li&gt;Harmless at runtime but significantly obstruct static flow analysis.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Important Note:&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Compiler optimization options like &lt;code&gt;O2&lt;/code&gt;, &lt;code&gt;O3&lt;/code&gt; may eliminate meaningless code during build.&lt;/li&gt;
+&lt;li&gt;Therefore, it&amp;#x2019;s critical to &lt;strong&gt;disable optimization options&lt;/strong&gt; or &lt;strong&gt;use runtime-dependent variables&lt;/strong&gt; to prevent removal during obfuscation.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Effect:&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Analysts are forced to wade through unnecessary loops and branches, leading to psychological exhaustion. As shown below, inserting just a few dummy codes can make the control flow graph dramatically more complex.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image%206.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&amp;#x1F50D; &lt;em&gt;Structural obfuscation mainly aims to neutralize CFG (Control Flow Graph) analysis and flow tracking.&lt;/em&gt;&lt;/p&gt;
+&lt;h3 id=&#34;2-2-Data-Obfuscation&#34;&gt;&lt;a href=&#34;#2-2-Data-Obfuscation&#34; class=&#34;headerlink&#34; title=&#34;2.2 Data Obfuscation&#34;&gt;&lt;/a&gt;2.2 Data Obfuscation&lt;/h3&gt;&lt;blockquote&gt;
+&lt;p&gt;Obfuscation that hides or alters data to make it difficult to infer its meaning.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;This category focuses on removing or hiding &lt;strong&gt;valuable clues&lt;/strong&gt; such as strings, constants, and API names.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;String Encryption&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Critical strings are encrypted and only decrypted at runtime.&lt;/li&gt;
+&lt;li&gt;Static analysis won&amp;#x2019;t reveal strings like &lt;code&gt;&amp;quot;CreateProcess&amp;quot;&lt;/code&gt; anymore.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Constant Encoding&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Constant values are represented indirectly (e.g., &lt;code&gt;1337&lt;/code&gt; &amp;#x2192; &lt;code&gt;1000 + 337&lt;/code&gt;).&lt;/li&gt;
+&lt;li&gt;This complicates understanding the program&amp;#x2019;s purpose and logic during decompilation.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;API Call Obfuscation/ Import Hiding&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;API names are hidden using hashing or encryption, loaded dynamically via &lt;code&gt;LoadLibrary&lt;/code&gt; and &lt;code&gt;GetProcAddress&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;Completely neutralizes IAT-based automatic analysis.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&amp;#x1F50D; &lt;em&gt;Data obfuscation prevents analysts and tools from extracting meaningful information (identifiers, strings, APIs).&lt;/em&gt;&lt;/p&gt;
+&lt;h3 id=&#34;2-3-Algorithm-Obfuscation&#34;&gt;&lt;a href=&#34;#2-3-Algorithm-Obfuscation&#34; class=&#34;headerlink&#34; title=&#34;2.3 Algorithm Obfuscation&#34;&gt;&lt;/a&gt;2.3 Algorithm Obfuscation&lt;/h3&gt;&lt;blockquote&gt;
+&lt;p&gt;Obfuscation that makes the actual functionality and logic of the program harder to understand.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;This category twists the &lt;strong&gt;behavior itself&lt;/strong&gt;, making it difficult to understand &amp;#x201C;what&amp;#x201D; the program actually does, even after disassembling it.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Name Mangling &amp;amp; Symbol Stripping&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Debugging symbols are removed, and function/variable names are replaced with random strings.&lt;/li&gt;
+&lt;li&gt;This makes understanding the overall logic and functionality much harder.&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;Below is an example from &lt;em&gt;Hack The Drone 2024 (Final)&lt;/em&gt; where LFSR Galois algorithm was used for packet encoding.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%207.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;As shown, original function and parameter names reveal a lot about the algorithm.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%208.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;However, with name mangling applied, it becomes much harder to quickly figure out what the algorithm does.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;em&gt;(Although nowadays, tools like GPT can deduce the logic pretty quickly&amp;#x2026;)&lt;/em&gt; &amp;#x1F605;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Self-Modifying Code&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;The program modifies its own code during execution.&lt;/li&gt;
+&lt;li&gt;This makes static analysis practically impossible.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Virtualization Obfuscation&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;A custom virtual ISA (instruction set architecture) is created, and the original code is transformed into bytecode.&lt;/li&gt;
+&lt;li&gt;Without reverse-engineering the VM interpreter, understanding the logic is nearly impossible.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&amp;#x1F50D; &lt;em&gt;Algorithm obfuscation makes it extremely difficult to understand &lt;strong&gt;what the program actually does&lt;/strong&gt;.&lt;/em&gt;&lt;/p&gt;
+&lt;h2 id=&#34;3-Hands-on-with-Obfuscator-LLVM&#34;&gt;&lt;a href=&#34;#3-Hands-on-with-Obfuscator-LLVM&#34; class=&#34;headerlink&#34; title=&#34;3. Hands-on with Obfuscator-LLVM&#34;&gt;&lt;/a&gt;3. Hands-on with Obfuscator-LLVM&lt;/h2&gt;&lt;p&gt;&lt;strong&gt;OLLVM (Obfuscator-LLVM)&lt;/strong&gt; is an obfuscation-enhanced version of the open-source compiler framework &lt;strong&gt;LLVM&lt;/strong&gt;. While LLVM was originally designed to generate &amp;#x201C;clean&amp;#x201D; and optimized code, researchers noticed how flexible its architecture was &amp;#x2014; and decided to extend it by adding &lt;strong&gt;heavy-duty code obfuscation&lt;/strong&gt; capabilities. That&amp;#x2019;s how OLLVM was born.&lt;/p&gt;
+&lt;p&gt;OLLVM automatically transforms code during the &lt;strong&gt;compilation process&lt;/strong&gt;, by inserting dedicated &lt;strong&gt;obfuscation passes&lt;/strong&gt;. Thanks to this, developers don&amp;#x2019;t need to manually modify their source code &amp;#x2014; they just need to compile it differently to produce heavily obfuscated binaries.&lt;/p&gt;
+&lt;h3 id=&#34;3-1-How-to-Build-Clang-for-OLLVM&#34;&gt;&lt;a href=&#34;#3-1-How-to-Build-Clang-for-OLLVM&#34; class=&#34;headerlink&#34; title=&#34;3.1 How to Build Clang for OLLVM&#34;&gt;&lt;/a&gt;3.1 How to Build Clang for OLLVM&lt;/h3&gt;&lt;p&gt;&lt;a href=&#34;https://github.com/obfuscator-llvm/obfuscator/wiki/Installation&#34;&gt;https://github.com/obfuscator-llvm/obfuscator/wiki/Installation&lt;/a&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;$ git &lt;span class=&#34;hljs-built_in&#34;&gt;clone&lt;/span&gt; -b llvm-4.0 https://github.com/obfuscator-llvm/obfuscator.git
+$ mkdir build &amp;amp;&amp;amp; &lt;span class=&#34;hljs-built_in&#34;&gt;cd&lt;/span&gt; build
+$ cmake -DCMAKE_BUILD_TYPE=Release ../obfuscator/
+$ make -j7&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In my case, I encountered a few errors during the build process, so I had to patch the source code manually. If you run into similar issues, check your build logs and troubleshoot accordingly.&lt;/p&gt;
+&lt;p&gt;Here are the fixes I made:&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;In&lt;/strong&gt; &lt;code&gt;obfuscator/tools/clang/lib/CodeGen/CGOpenMPRuntime.cpp&lt;/code&gt; &lt;strong&gt;(lines 6275, 6321, 6400):&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;error:lambda parameter &amp;#x2018;CGF&amp;#x2019; previously declared as a capture&lt;/code&gt; &lt;/p&gt;
+&lt;p&gt;&amp;#x2192; Simply remove the redundant &lt;code&gt;&amp;amp;CFG&lt;/code&gt; capture.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;auto&lt;/span&gt; &amp;amp;&amp;amp;BeginThenGen = [&amp;amp;D, &amp;amp;CGF, Device, &amp;amp;Info, &amp;amp;CodeGen, &amp;amp;NoPrivAction](...)
+&amp;#x2193;
+&lt;span class=&#34;hljs-keyword&#34;&gt;auto&lt;/span&gt; &amp;amp;&amp;amp;BeginThenGen = [&amp;amp;D, Device, &amp;amp;Info, &amp;amp;CodeGen, &amp;amp;NoPrivAction](...)&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;In&lt;/strong&gt; &lt;code&gt;obfuscator/include/llvm/ExecutionEngine/Orc/OrcRemoteTargetClient.h&lt;/code&gt; &lt;strong&gt;(line 696):&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;code&gt;error: cannot convert&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;&amp;#x2192; Change the return type from &lt;code&gt;char&lt;/code&gt; to &lt;code&gt;uint8_t&lt;/code&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;Expected&amp;lt;&lt;span class=&#34;hljs-built_in&#34;&gt;std&lt;/span&gt;::&lt;span class=&#34;hljs-built_in&#34;&gt;vector&lt;/span&gt;&amp;lt;&lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt;&amp;gt;&amp;gt; &lt;span class=&#34;hljs-title&#34;&gt;readMem&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(...)&lt;/span&gt; &lt;/span&gt;{ ... }
+&amp;#x2193;
+&lt;span class=&#34;hljs-function&#34;&gt;Expected&amp;lt;&lt;span class=&#34;hljs-built_in&#34;&gt;std&lt;/span&gt;::&lt;span class=&#34;hljs-built_in&#34;&gt;vector&lt;/span&gt;&amp;lt;&lt;span class=&#34;hljs-keyword&#34;&gt;uint8_t&lt;/span&gt;&amp;gt;&amp;gt; &lt;span class=&#34;hljs-title&#34;&gt;readMem&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(...)&lt;/span&gt; &lt;/span&gt;{ ... }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;image%209.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;If everything goes well, you should see the custom OLLVM-enabled &lt;code&gt;clang&lt;/code&gt; binary built successfully!&lt;/p&gt;
+&lt;h3 id=&#34;3-2-How-to-Use-OLLVM&#34;&gt;&lt;a href=&#34;#3-2-How-to-Use-OLLVM&#34; class=&#34;headerlink&#34; title=&#34;3.2 How to Use OLLVM&#34;&gt;&lt;/a&gt;3.2 How to Use OLLVM&lt;/h3&gt;&lt;p&gt;The easiest way to use Obfuscator-LLVM is to pass specific flags to the LLVM backend via Clang using the &lt;code&gt;-mllvm&lt;/code&gt; option.&lt;/p&gt;
+&lt;p&gt;The main available flags are:&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/obfuscator-llvm/obfuscator/wiki/Features&#34;&gt;https://github.com/obfuscator-llvm/obfuscator/wiki/Features&lt;/a&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;fla&lt;/code&gt;: Control Flow Flattening&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;sub&lt;/code&gt;: Instruction Substitution&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;bcf&lt;/code&gt;: Bogus Control Flow&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;If you want to apply obfuscation selectively to specific functions, you can also use &lt;a href=&#34;https://github.com/obfuscator-llvm/obfuscator/wiki/Functions-annotations&#34;&gt;function annotations&lt;/a&gt;.&lt;/p&gt;
+&lt;h3 id=&#34;3-3-Practice&#34;&gt;&lt;a href=&#34;#3-3-Practice&#34; class=&#34;headerlink&#34; title=&#34;3.3 Practice&#34;&gt;&lt;/a&gt;3.3 Practice&lt;/h3&gt;&lt;p&gt;Let&amp;#x2019;s start with a simple program:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// flatten_example.c&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;stdio.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;secret_function&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; x)&lt;/span&gt; &lt;/span&gt;{
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (x &amp;gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;) {
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; x * &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;;
+    } &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; x - &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;;
+    }
+}
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;main&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;()&lt;/span&gt; &lt;/span&gt;{
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; value = &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; result = secret_function(value);
+    &lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Result: %d\n&amp;quot;&lt;/span&gt;, result);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;First, compile it normally and then compile it with obfuscation enabled:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;$ clang flatten_example.c -o flatten_example_norm
+$ path_to_the/build/bin/clang -mllvm -fla flatten_example.c -o flatten_example_obf&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Now, let&amp;#x2019;s analyze both binaries using IDA.&lt;/p&gt;
+&lt;p&gt;On the left is &lt;code&gt;flatten_example_norm&lt;/code&gt;, and on the right is &lt;code&gt;flatten_example_obf&lt;/code&gt; .&lt;/p&gt;
+&lt;p&gt;Here&amp;#x2019;s the disassembled &lt;code&gt;secret_function&lt;/code&gt;:&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%2010.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;And the control flow graph (CFG) of &lt;code&gt;secret_function&lt;/code&gt;:&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%2011.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;You can already see a stark difference &amp;#x2014; even though the original code was simple!&lt;/p&gt;
+&lt;p&gt;Of course, despite all the added complexity, the execution result remains exactly the same:&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%2012.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;h2 id=&#34;4-Conclusion&#34;&gt;&lt;a href=&#34;#4-Conclusion&#34; class=&#34;headerlink&#34; title=&#34;4. Conclusion&#34;&gt;&lt;/a&gt;4. Conclusion&lt;/h2&gt;&lt;h3 id=&#34;Limitations&#34;&gt;&lt;a href=&#34;#Limitations&#34; class=&#34;headerlink&#34; title=&#34;Limitations&#34;&gt;&lt;/a&gt;Limitations&lt;/h3&gt;&lt;p&gt;Of course, obfuscation also comes with clear limitations.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Performance Degradation:&lt;/strong&gt; The insertion of unnecessary logic and complex branching during obfuscation can significantly reduce program performance.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Counterattack by Evolving Tools:&lt;/strong&gt; Static analyzers, deobfuscators, and other analysis tools continue to advance, allowing certain obfuscation techniques to be bypassed relatively easily.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Legal and Ethical Issues:&lt;/strong&gt; Applying excessive obfuscation to commercial software can undermine user trust, and in some cases, lead to legal disputes.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;Significance&#34;&gt;&lt;a href=&#34;#Significance&#34; class=&#34;headerlink&#34; title=&#34;Significance&#34;&gt;&lt;/a&gt;Significance&lt;/h3&gt;&lt;p&gt;As we have seen so far, obfuscation techniques can be broadly categorized into &lt;strong&gt;Structural&lt;/strong&gt;, &lt;strong&gt;Data&lt;/strong&gt;, and &lt;strong&gt;Algorithmic&lt;/strong&gt; aspects based on their working mechanisms. However, in real-world software analysis, these categories are not isolated. In practice, all three aspects are often combined, and furthermore, numerous variants and modifications&amp;#x2014;along with entirely new ideas&amp;#x2014;continue to emerge, making analysis even more complex.&lt;/p&gt;
+&lt;p&gt;For example, let&amp;#x2019;s briefly look at the obfuscation techniques used by DJI, a commercial drone company well-known for its heavy obfuscation.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Structural Obfuscation:&lt;/strong&gt; Splitting eight DEX files into 128KB chunks and encrypting each chunk with &lt;strong&gt;AES-256&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Data Obfuscation:&lt;/strong&gt; Generating an &lt;strong&gt;XOR-based key&lt;/strong&gt; by combining the string &lt;code&gt;com.dji.industry.pilot&lt;/code&gt; with hardcoded constants.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Algorithmic Obfuscation:&lt;/strong&gt; Redirecting JNI calls through a &lt;strong&gt;three-stage trampoline function&lt;/strong&gt; before reaching the actual native function.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Modern obfuscation technologies no longer rely on single-layer techniques. Instead, they adopt &lt;strong&gt;multi-layered, modular defense systems&lt;/strong&gt;, incorporating new variants every year to complicate analysis even further. Some experimental approaches are also emerging, such as using AI-generated fake code patterns or leveraging quantum cryptography for key exchanges&amp;#x2014;highlighting how obfuscation evolves alongside technological advancement.&lt;/p&gt;
+&lt;p&gt;As we&amp;#x2019;ve repeatedly discussed in Parts 1, 2, and 3:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&amp;#x201C;Every protection layer is merely a device to buy time &amp;#x2014; it can never guarantee absolute safety.&amp;#x201D;&lt;/p&gt;
+&lt;p&gt;&amp;#x2013; Quarkslab Research Team&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Obfuscation and anti-debugging techniques are ultimately part of the &lt;strong&gt;ongoing battle to protect code&lt;/strong&gt;. In the endless tug-of-war between reverse engineers and developers, technology continues to evolve&amp;#x2014;and through that struggle, the entire field of security moves forward. Obfuscation today is not only crucial for legitimate software protection but also actively used in &lt;strong&gt;malware&lt;/strong&gt; to evade detection and delay analysis. It has become a &lt;strong&gt;fundamental technique on both sides&lt;/strong&gt; of the attack and defense landscape.&lt;/p&gt;
+&lt;p&gt;Obfuscation is a means to &lt;strong&gt;delay attacks and buy time for defense&lt;/strong&gt;, but no shield is ever perfect. Analysts will persistently trace the flow and improve their tools, while developers will devise new obfuscation techniques to reinforce their defenses.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;This battle will never end.&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;Because as technology evolves, so too will the methods of attack and defense. Rather than seeing obfuscation as merely an obstacle, we should recognize it as &lt;strong&gt;an essential part of the evolutionary process toward a more secure environment&lt;/strong&gt;. Even amid the endless clash of spear and shield, our goal remains the same.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%2013.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&amp;#x201C;The game goes on. And for our own reasons, we each dive into this never-ending game.&amp;#x201D;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h3 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h3&gt;&lt;p&gt;&amp;#xB9AC;&amp;#xBC84;&amp;#xC2F1; &amp;#xD575;&amp;#xC2EC; &amp;#xC6D0;&amp;#xB9AC;: &amp;#xC545;&amp;#xC131; &amp;#xCF54;&amp;#xB4DC; &amp;#xBD84;&amp;#xC11D;&amp;#xAC00;&amp;#xC758; &amp;#xB9AC;&amp;#xBC84;&amp;#xC2F1; &amp;#xC774;&amp;#xC57C;&amp;#xAE30;(&amp;#xC800;&amp;#xC790; &amp;#xC774;&amp;#xC2B9;&amp;#xC6D0;)&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://m.blog.naver.com/choijo2/60196192627&#34;&gt;https://m.blog.naver.com/choijo2/60196192627&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;http://en.wikipedia.org/wiki/Obfuscation_(software&#34;&gt;http://en.wikipedia.org/wiki/Obfuscation_(software)&lt;/a&gt;)&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://blog.quarkslab.com/dji-the-art-of-obfuscation.html&#34;&gt;https://blog.quarkslab.com/dji-the-art-of-obfuscation.html&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://gosecure.github.io/presentations/2020-05-15-advanced-binary-analysis/&#34;&gt;https://gosecure.github.io/presentations/2020-05-15-advanced-binary-analysis/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/obfuscator-llvm/obfuscator&#34;&gt;https://github.com/obfuscator-llvm/obfuscator&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] Anti-Debugging Part 3(EN) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;Hello, this is OUYA77! &amp;#x1F642;&lt;/p&gt;
+&lt;p&gt;Last time, I mentioned that I might cover obfuscation on the blog if the opportunity came up &amp;#x2014; and well, here we are with Part 3!&lt;/p&gt;
+&lt;p&gt;In Part 1, we explored debugging and anti-debugging techniques. Then in Part 2, we looked at ways to &lt;strong&gt;bypass anti-debugging&lt;/strong&gt;, which acts like a &amp;#x201C;trap card&amp;#x201D; trying to block certain actions.&lt;/p&gt;
+&lt;p&gt;(If you haven&amp;#x2019;t checked them out yet, here&amp;#x2019;s a quick link &amp;#x1F447; haha &lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Check out the previous parts:&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2024/12/29/OUYA77/Anti_part1/en/&#34;&gt;[Research] Anti-Debugging Part 1 (EN)&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2025/03/24/OUYA77/Anti_part2/en/&#34;&gt;[Research] Anti-Debugging Part 2 (EN)&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Since this series has been a bit of long journey, it&amp;#x2019;s totally understandable if some details have slipped your mind.&lt;/p&gt;
+&lt;p&gt;Just in case, I even prepared a little cartoon (!) to sum things up. &lt;del&gt;I swear there was no my hope while making it. It&amp;#x2019;s also a &lt;em&gt;total secret&lt;/em&gt; that I had to call in an expert for help with the framing because it turned out way harder than I thought&amp;#x2026;&lt;/del&gt;&lt;/p&gt;
+&lt;h2 id=&#34;Anti-Debugging-Part-Summary&#34;&gt;&lt;a href=&#34;#Anti-Debugging-Part-Summary&#34; class=&#34;headerlink&#34; title=&#34;Anti-Debugging Part Summary&#34;&gt;&lt;/a&gt;Anti-Debugging Part Summary&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;image%201.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%202.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%203.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;As you saw in the cartoon, anti-debugging techniques were developed to block debugging &amp;#x2014; and bypassing techniques were invented to counter them. Through Part 1 and Part 2, we saw that anti-debugging has its limits: ultimately, a program must be loaded into memory to run, and the final binary must be delivered to the user. This means that if a user analyzes the binary and understands the anti-debugging logic, they can patch it or find ways around it.&lt;/p&gt;
+&lt;p&gt;That&amp;#x2019;s when the legendary Chef Gordon Ramsay shows up and yells,&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;&amp;#x201C;You need to &lt;em&gt;hide&lt;/em&gt; these ingredients (anti-debugging logic) better!&amp;#x201D;&lt;/strong&gt; &amp;#x1F525;&amp;#x1F468;&amp;#x200D;&amp;#x1F373;&lt;/p&gt;
+&lt;p&gt;&amp;#x2014; And thus, &lt;strong&gt;obfuscation&lt;/strong&gt; must be applied.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;In Part 2&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%204.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;???: So why not just hide it? / 000: How!!&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;When anti-debugging is combined with &lt;strong&gt;obfuscation&lt;/strong&gt;, it becomes extremely difficult to identify which parts of a program contain anti-debugging logic, making the analysis process even more challenging. That&amp;#x2019;s why in &lt;strong&gt;Part 3&lt;/strong&gt;, we will take a deep dive into this fascinating technique called &lt;strong&gt;obfuscation&lt;/strong&gt;!&lt;/p&gt;
+&lt;h2 id=&#34;1-Obfuscation&#34;&gt;&lt;a href=&#34;#1-Obfuscation&#34; class=&#34;headerlink&#34; title=&#34;1. Obfuscation&#34;&gt;&lt;/a&gt;1. Obfuscation&lt;/h2&gt;&lt;h3 id=&#34;1-1-Introduction&#34;&gt;&lt;a href=&#34;#1-1-Introduction&#34; class=&#34;headerlink&#34; title=&#34;1.1 Introduction&#34;&gt;&lt;/a&gt;1.1 Introduction&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Obfuscation&lt;/strong&gt; is a technique that intentionally makes a program&amp;#x2019;s code difficult to read.&lt;br&gt;Wikipedia defines it as:&lt;/li&gt;
+&lt;/ul&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&amp;#x201C;In software development, obfuscation is the practice of creating source or machine code that is intentionally difficult for humans or computers to understand.&amp;#x201D;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Obfuscation goes beyond simply making code less readable &amp;#x2014; it is used to &lt;strong&gt;hinder reverse engineering, debugging, and static analysis&lt;/strong&gt;, and serves various purposes such as intellectual property protection, security enhancement, and evading malware analysis.&lt;/p&gt;
+&lt;h3 id=&#34;1-2-Purpose&#34;&gt;&lt;a href=&#34;#1-2-Purpose&#34; class=&#34;headerlink&#34; title=&#34;1.2 Purpose&#34;&gt;&lt;/a&gt;1.2 Purpose&lt;/h3&gt;&lt;p&gt;Obfuscation achieves the following defensive goals without changing the actual behavior of a program:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Reduced readability&lt;/strong&gt;: Hides the logical structure and meaning of the code to obstruct understanding.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Increased structural complexity&lt;/strong&gt;: Introduces unnecessary operations, nonlinear flows, random-based conditions, etc.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Evasion of pattern detection&lt;/strong&gt;: Tricks signature-based detection tools or causes false positives/negatives.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;In short, if an analyst looks at the program and thinks,&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;&amp;#x201C;Ugh&amp;#x2026; this is going to be a headache ;;&amp;#x201D;&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;&amp;#x2014; then the obfuscation has already succeeded to some degree.&lt;/p&gt;
+&lt;h3 id=&#34;1-3-Types-of-Obfuscation&#34;&gt;&lt;a href=&#34;#1-3-Types-of-Obfuscation&#34; class=&#34;headerlink&#34; title=&#34;1.3 Types of Obfuscation&#34;&gt;&lt;/a&gt;1.3 Types of Obfuscation&lt;/h3&gt;&lt;p&gt;Obfuscation can largely be divided into two categories:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Source Code Obfuscation&lt;/strong&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Target&lt;/strong&gt;: High-level source code (Java, JavaScript, Python, etc.)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Applied at&lt;/strong&gt;: Before compilation&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Purpose&lt;/strong&gt;: To secure internal code and protect flow when partially disclosing code to outsourcing partners or clients&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Source code obfuscation is often used when a company needs to provide part of its code to third parties, ensuring that the overall structure or algorithms are not easily understood. Common techniques include &lt;strong&gt;renaming identifiers&lt;/strong&gt;, &lt;strong&gt;rearranging code blocks&lt;/strong&gt;, &lt;strong&gt;control flow obfuscation&lt;/strong&gt;, and &lt;strong&gt;string encoding&lt;/strong&gt;.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Binary Obfuscation&lt;/strong&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Target&lt;/strong&gt;: Compiled executables (C, C++, Go, etc.)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Applied at&lt;/strong&gt;: During or after compilation&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Purpose&lt;/strong&gt;: Product protection, algorithm safeguarding, crack/reverse engineering prevention&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Binary obfuscation is &lt;strong&gt;crucial for protecting actual distributed products.&lt;/strong&gt; Since most commercial software is distributed in binary form &amp;#x2014; containing valuable algorithms, licensing logic, and authentication mechanisms &amp;#x2014; protecting it is essential. Otherwise, attackers or even customers could reverse engineer or crack the software.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Technically, malware is also a kind of &amp;#x201C;product&amp;#x201D;&amp;#x2026; and yes, binary obfuscation is heavily used in malware as well.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Binary obfuscation aims to disrupt static analysis tools like IDA and Ghidra, confuse debugging attempts, and in some cases, ensure that the code is only decrypted during execution. Common techniques include &lt;strong&gt;control flow flattening&lt;/strong&gt;, &lt;strong&gt;string encryption&lt;/strong&gt;, &lt;strong&gt;inserting junk code&lt;/strong&gt;, &lt;strong&gt;name mangling&lt;/strong&gt;, and &lt;strong&gt;indirect jumps/calls&lt;/strong&gt;.&lt;/p&gt;
+&lt;h3 id=&#34;1-4-Focus-on-Binary-Obfuscation&#34;&gt;&lt;a href=&#34;#1-4-Focus-on-Binary-Obfuscation&#34; class=&#34;headerlink&#34; title=&#34;1.4 Focus on Binary Obfuscation&#34;&gt;&lt;/a&gt;1.4 Focus on Binary Obfuscation&lt;/h3&gt;&lt;p&gt;In this part, we will especially focus on binary obfuscation. Why is it so important? Simple: Because most of the programs we use are ultimately delivered as binaries, containing the company&amp;#x2019;s key know-how, algorithms, licensing mechanisms, and more. Without proper protection, it can lead not just to technical attacks like cracking and reverse engineering, but also serious business damage like illegal redistribution and intellectual property theft. That&amp;#x2019;s why we need anti-reversing techniques &amp;#x2014; and that&amp;#x2019;s what we have been exploring since Part 1.&lt;/p&gt;
+&lt;p&gt;If anti-debugging mainly disrupts dynamic analysis (trying to observe the program at runtime),&lt;br&gt;then obfuscation focuses on obstructing static analysis (analyzing the code without running it).&lt;br&gt;When both techniques are combined, the analyst is essentially facing a near-invincible defense system.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;del&gt;(Though, even an &amp;#x201C;invincible shield&amp;#x201D; can meet an &amp;#x201C;unstoppable spear&amp;#x201D; someday&amp;#x2026;)&lt;/del&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2 id=&#34;2-The-Three-Pillars-of-Binary-Obfuscation&#34;&gt;&lt;a href=&#34;#2-The-Three-Pillars-of-Binary-Obfuscation&#34; class=&#34;headerlink&#34; title=&#34;2. The Three Pillars of Binary Obfuscation&#34;&gt;&lt;/a&gt;2. The Three Pillars of Binary Obfuscation&lt;/h2&gt;&lt;p&gt;Binary obfuscation is generally classified into the following three categories.&lt;/p&gt;
+&lt;p&gt;(&lt;em&gt;Some parts will be covered briefly.&lt;/em&gt;)&lt;/p&gt;
+&lt;h3 id=&#34;2-1-Structural-Obfuscation&#34;&gt;&lt;a href=&#34;#2-1-Structural-Obfuscation&#34; class=&#34;headerlink&#34; title=&#34;2.1 Structural Obfuscation&#34;&gt;&lt;/a&gt;2.1 Structural Obfuscation&lt;/h3&gt;&lt;blockquote&gt;
+&lt;p&gt;Obfuscation that twists the structure of the code&amp;#x2019;s control flow itself, making analysis much harder.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;This category mainly targets &lt;strong&gt;static analysis tools&lt;/strong&gt; that attempt to understand the program at the function or block level, making it difficult to grasp the overall structure.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Control Flow Flattening&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;  &lt;img src=&#34;image%205.png&#34; alt=&#34;ref. https://gosecure.github.io/presentations/2020-05-15-advanced-binary-analysis/&#34;&gt;&lt;/p&gt;
+&lt;p&gt;  ref. &lt;a href=&#34;https://gosecure.github.io/presentations/2020-05-15-advanced-binary-analysis/&#34;&gt;https://gosecure.github.io/presentations/2020-05-15-advanced-binary-analysis/&lt;/a&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Originally, logical flows like &lt;code&gt;if&lt;/code&gt;, &lt;code&gt;while&lt;/code&gt;, and &lt;code&gt;switch&lt;/code&gt; are flattened into a single &lt;code&gt;dispatcher&lt;/code&gt; loop. The next block to execute is determined based on a &lt;strong&gt;state variable&lt;/strong&gt;.&lt;ul&gt;
+&lt;li&gt;As a result, the control flow is obfuscated into a non-intuitive form, neutralizing the control flow tree analysis of static tools.&lt;/li&gt;
+&lt;li&gt;We&amp;#x2019;ll take a closer look at this later with an example from Obfuscator-LLVM (OLLVM)!&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Junk / Dead Code Insertion&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Inserts meaningless operations (Junk Code) or never-executed code (Dead Code) into the program.&lt;/li&gt;
+&lt;li&gt;Typical examples:&lt;ul&gt;
+&lt;li&gt;No-op operations (&lt;code&gt;x = x;&lt;/code&gt;, &lt;code&gt;add eax, 0;&lt;/code&gt;)&lt;/li&gt;
+&lt;li&gt;Unreachable branches (&lt;code&gt;if (false) { ... }&lt;/code&gt;)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Indirect Branching / Calling&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Jumps or calls are made through calculated addresses (e.g., &lt;code&gt;jmp eax&lt;/code&gt;, &lt;code&gt;call [ecx+0x10]&lt;/code&gt;).&lt;/li&gt;
+&lt;li&gt;This makes tracing the code flow extremely difficult (especially for API resolution).&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Opaque Predicate&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Branches are inserted with conditions that are always true/false (e.g., &lt;code&gt;if ((x*x) &amp;gt;= 0)&lt;/code&gt;).&lt;/li&gt;
+&lt;li&gt;Harmless at runtime but significantly obstruct static flow analysis.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Important Note:&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Compiler optimization options like &lt;code&gt;O2&lt;/code&gt;, &lt;code&gt;O3&lt;/code&gt; may eliminate meaningless code during build.&lt;/li&gt;
+&lt;li&gt;Therefore, it&amp;#x2019;s critical to &lt;strong&gt;disable optimization options&lt;/strong&gt; or &lt;strong&gt;use runtime-dependent variables&lt;/strong&gt; to prevent removal during obfuscation.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Effect:&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Analysts are forced to wade through unnecessary loops and branches, leading to psychological exhaustion. As shown below, inserting just a few dummy codes can make the control flow graph dramatically more complex.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image%206.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&amp;#x1F50D; &lt;em&gt;Structural obfuscation mainly aims to neutralize CFG (Control Flow Graph) analysis and flow tracking.&lt;/em&gt;&lt;/p&gt;
+&lt;h3 id=&#34;2-2-Data-Obfuscation&#34;&gt;&lt;a href=&#34;#2-2-Data-Obfuscation&#34; class=&#34;headerlink&#34; title=&#34;2.2 Data Obfuscation&#34;&gt;&lt;/a&gt;2.2 Data Obfuscation&lt;/h3&gt;&lt;blockquote&gt;
+&lt;p&gt;Obfuscation that hides or alters data to make it difficult to infer its meaning.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;This category focuses on removing or hiding &lt;strong&gt;valuable clues&lt;/strong&gt; such as strings, constants, and API names.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;String Encryption&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Critical strings are encrypted and only decrypted at runtime.&lt;/li&gt;
+&lt;li&gt;Static analysis won&amp;#x2019;t reveal strings like &lt;code&gt;&amp;quot;CreateProcess&amp;quot;&lt;/code&gt; anymore.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Constant Encoding&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Constant values are represented indirectly (e.g., &lt;code&gt;1337&lt;/code&gt; &amp;#x2192; &lt;code&gt;1000 + 337&lt;/code&gt;).&lt;/li&gt;
+&lt;li&gt;This complicates understanding the program&amp;#x2019;s purpose and logic during decompilation.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;API Call Obfuscation/ Import Hiding&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;API names are hidden using hashing or encryption, loaded dynamically via &lt;code&gt;LoadLibrary&lt;/code&gt; and &lt;code&gt;GetProcAddress&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;Completely neutralizes IAT-based automatic analysis.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&amp;#x1F50D; &lt;em&gt;Data obfuscation prevents analysts and tools from extracting meaningful information (identifiers, strings, APIs).&lt;/em&gt;&lt;/p&gt;
+&lt;h3 id=&#34;2-3-Algorithm-Obfuscation&#34;&gt;&lt;a href=&#34;#2-3-Algorithm-Obfuscation&#34; class=&#34;headerlink&#34; title=&#34;2.3 Algorithm Obfuscation&#34;&gt;&lt;/a&gt;2.3 Algorithm Obfuscation&lt;/h3&gt;&lt;blockquote&gt;
+&lt;p&gt;Obfuscation that makes the actual functionality and logic of the program harder to understand.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;This category twists the &lt;strong&gt;behavior itself&lt;/strong&gt;, making it difficult to understand &amp;#x201C;what&amp;#x201D; the program actually does, even after disassembling it.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Name Mangling &amp;amp; Symbol Stripping&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Debugging symbols are removed, and function/variable names are replaced with random strings.&lt;/li&gt;
+&lt;li&gt;This makes understanding the overall logic and functionality much harder.&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;Below is an example from &lt;em&gt;Hack The Drone 2024 (Final)&lt;/em&gt; where LFSR Galois algorithm was used for packet encoding.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%207.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;As shown, original function and parameter names reveal a lot about the algorithm.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%208.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;However, with name mangling applied, it becomes much harder to quickly figure out what the algorithm does.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;em&gt;(Although nowadays, tools like GPT can deduce the logic pretty quickly&amp;#x2026;)&lt;/em&gt; &amp;#x1F605;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Self-Modifying Code&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;The program modifies its own code during execution.&lt;/li&gt;
+&lt;li&gt;This makes static analysis practically impossible.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Virtualization Obfuscation&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;A custom virtual ISA (instruction set architecture) is created, and the original code is transformed into bytecode.&lt;/li&gt;
+&lt;li&gt;Without reverse-engineering the VM interpreter, understanding the logic is nearly impossible.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&amp;#x1F50D; &lt;em&gt;Algorithm obfuscation makes it extremely difficult to understand &lt;strong&gt;what the program actually does&lt;/strong&gt;.&lt;/em&gt;&lt;/p&gt;
+&lt;h2 id=&#34;3-Hands-on-with-Obfuscator-LLVM&#34;&gt;&lt;a href=&#34;#3-Hands-on-with-Obfuscator-LLVM&#34; class=&#34;headerlink&#34; title=&#34;3. Hands-on with Obfuscator-LLVM&#34;&gt;&lt;/a&gt;3. Hands-on with Obfuscator-LLVM&lt;/h2&gt;&lt;p&gt;&lt;strong&gt;OLLVM (Obfuscator-LLVM)&lt;/strong&gt; is an obfuscation-enhanced version of the open-source compiler framework &lt;strong&gt;LLVM&lt;/strong&gt;. While LLVM was originally designed to generate &amp;#x201C;clean&amp;#x201D; and optimized code, researchers noticed how flexible its architecture was &amp;#x2014; and decided to extend it by adding &lt;strong&gt;heavy-duty code obfuscation&lt;/strong&gt; capabilities. That&amp;#x2019;s how OLLVM was born.&lt;/p&gt;
+&lt;p&gt;OLLVM automatically transforms code during the &lt;strong&gt;compilation process&lt;/strong&gt;, by inserting dedicated &lt;strong&gt;obfuscation passes&lt;/strong&gt;. Thanks to this, developers don&amp;#x2019;t need to manually modify their source code &amp;#x2014; they just need to compile it differently to produce heavily obfuscated binaries.&lt;/p&gt;
+&lt;h3 id=&#34;3-1-How-to-Build-Clang-for-OLLVM&#34;&gt;&lt;a href=&#34;#3-1-How-to-Build-Clang-for-OLLVM&#34; class=&#34;headerlink&#34; title=&#34;3.1 How to Build Clang for OLLVM&#34;&gt;&lt;/a&gt;3.1 How to Build Clang for OLLVM&lt;/h3&gt;&lt;p&gt;&lt;a href=&#34;https://github.com/obfuscator-llvm/obfuscator/wiki/Installation&#34;&gt;https://github.com/obfuscator-llvm/obfuscator/wiki/Installation&lt;/a&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;$ git &lt;span class=&#34;hljs-built_in&#34;&gt;clone&lt;/span&gt; -b llvm-4.0 https://github.com/obfuscator-llvm/obfuscator.git
+$ mkdir build &amp;amp;&amp;amp; &lt;span class=&#34;hljs-built_in&#34;&gt;cd&lt;/span&gt; build
+$ cmake -DCMAKE_BUILD_TYPE=Release ../obfuscator/
+$ make -j7&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In my case, I encountered a few errors during the build process, so I had to patch the source code manually. If you run into similar issues, check your build logs and troubleshoot accordingly.&lt;/p&gt;
+&lt;p&gt;Here are the fixes I made:&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;In&lt;/strong&gt; &lt;code&gt;obfuscator/tools/clang/lib/CodeGen/CGOpenMPRuntime.cpp&lt;/code&gt; &lt;strong&gt;(lines 6275, 6321, 6400):&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;error:lambda parameter &amp;#x2018;CGF&amp;#x2019; previously declared as a capture&lt;/code&gt; &lt;/p&gt;
+&lt;p&gt;&amp;#x2192; Simply remove the redundant &lt;code&gt;&amp;amp;CFG&lt;/code&gt; capture.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;auto&lt;/span&gt; &amp;amp;&amp;amp;BeginThenGen = [&amp;amp;D, &amp;amp;CGF, Device, &amp;amp;Info, &amp;amp;CodeGen, &amp;amp;NoPrivAction](...)
+&amp;#x2193;
+&lt;span class=&#34;hljs-keyword&#34;&gt;auto&lt;/span&gt; &amp;amp;&amp;amp;BeginThenGen = [&amp;amp;D, Device, &amp;amp;Info, &amp;amp;CodeGen, &amp;amp;NoPrivAction](...)&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;In&lt;/strong&gt; &lt;code&gt;obfuscator/include/llvm/ExecutionEngine/Orc/OrcRemoteTargetClient.h&lt;/code&gt; &lt;strong&gt;(line 696):&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;code&gt;error: cannot convert&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;&amp;#x2192; Change the return type from &lt;code&gt;char&lt;/code&gt; to &lt;code&gt;uint8_t&lt;/code&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;Expected&amp;lt;&lt;span class=&#34;hljs-built_in&#34;&gt;std&lt;/span&gt;::&lt;span class=&#34;hljs-built_in&#34;&gt;vector&lt;/span&gt;&amp;lt;&lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt;&amp;gt;&amp;gt; &lt;span class=&#34;hljs-title&#34;&gt;readMem&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(...)&lt;/span&gt; &lt;/span&gt;{ ... }
+&amp;#x2193;
+&lt;span class=&#34;hljs-function&#34;&gt;Expected&amp;lt;&lt;span class=&#34;hljs-built_in&#34;&gt;std&lt;/span&gt;::&lt;span class=&#34;hljs-built_in&#34;&gt;vector&lt;/span&gt;&amp;lt;&lt;span class=&#34;hljs-keyword&#34;&gt;uint8_t&lt;/span&gt;&amp;gt;&amp;gt; &lt;span class=&#34;hljs-title&#34;&gt;readMem&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(...)&lt;/span&gt; &lt;/span&gt;{ ... }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;image%209.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;If everything goes well, you should see the custom OLLVM-enabled &lt;code&gt;clang&lt;/code&gt; binary built successfully!&lt;/p&gt;
+&lt;h3 id=&#34;3-2-How-to-Use-OLLVM&#34;&gt;&lt;a href=&#34;#3-2-How-to-Use-OLLVM&#34; class=&#34;headerlink&#34; title=&#34;3.2 How to Use OLLVM&#34;&gt;&lt;/a&gt;3.2 How to Use OLLVM&lt;/h3&gt;&lt;p&gt;The easiest way to use Obfuscator-LLVM is to pass specific flags to the LLVM backend via Clang using the &lt;code&gt;-mllvm&lt;/code&gt; option.&lt;/p&gt;
+&lt;p&gt;The main available flags are:&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/obfuscator-llvm/obfuscator/wiki/Features&#34;&gt;https://github.com/obfuscator-llvm/obfuscator/wiki/Features&lt;/a&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;fla&lt;/code&gt;: Control Flow Flattening&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;sub&lt;/code&gt;: Instruction Substitution&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;bcf&lt;/code&gt;: Bogus Control Flow&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;If you want to apply obfuscation selectively to specific functions, you can also use &lt;a href=&#34;https://github.com/obfuscator-llvm/obfuscator/wiki/Functions-annotations&#34;&gt;function annotations&lt;/a&gt;.&lt;/p&gt;
+&lt;h3 id=&#34;3-3-Practice&#34;&gt;&lt;a href=&#34;#3-3-Practice&#34; class=&#34;headerlink&#34; title=&#34;3.3 Practice&#34;&gt;&lt;/a&gt;3.3 Practice&lt;/h3&gt;&lt;p&gt;Let&amp;#x2019;s start with a simple program:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// flatten_example.c&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;stdio.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;secret_function&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; x)&lt;/span&gt; &lt;/span&gt;{
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (x &amp;gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;) {
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; x * &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;;
+    } &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; x - &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;;
+    }
+}
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;main&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;()&lt;/span&gt; &lt;/span&gt;{
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; value = &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; result = secret_function(value);
+    &lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Result: %d\n&amp;quot;&lt;/span&gt;, result);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;First, compile it normally and then compile it with obfuscation enabled:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;$ clang flatten_example.c -o flatten_example_norm
+$ path_to_the/build/bin/clang -mllvm -fla flatten_example.c -o flatten_example_obf&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Now, let&amp;#x2019;s analyze both binaries using IDA.&lt;/p&gt;
+&lt;p&gt;On the left is &lt;code&gt;flatten_example_norm&lt;/code&gt;, and on the right is &lt;code&gt;flatten_example_obf&lt;/code&gt; .&lt;/p&gt;
+&lt;p&gt;Here&amp;#x2019;s the disassembled &lt;code&gt;secret_function&lt;/code&gt;:&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%2010.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;And the control flow graph (CFG) of &lt;code&gt;secret_function&lt;/code&gt;:&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%2011.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;You can already see a stark difference &amp;#x2014; even though the original code was simple!&lt;/p&gt;
+&lt;p&gt;Of course, despite all the added complexity, the execution result remains exactly the same:&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%2012.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;h2 id=&#34;4-Conclusion&#34;&gt;&lt;a href=&#34;#4-Conclusion&#34; class=&#34;headerlink&#34; title=&#34;4. Conclusion&#34;&gt;&lt;/a&gt;4. Conclusion&lt;/h2&gt;&lt;h3 id=&#34;Limitations&#34;&gt;&lt;a href=&#34;#Limitations&#34; class=&#34;headerlink&#34; title=&#34;Limitations&#34;&gt;&lt;/a&gt;Limitations&lt;/h3&gt;&lt;p&gt;Of course, obfuscation also comes with clear limitations.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Performance Degradation:&lt;/strong&gt; The insertion of unnecessary logic and complex branching during obfuscation can significantly reduce program performance.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Counterattack by Evolving Tools:&lt;/strong&gt; Static analyzers, deobfuscators, and other analysis tools continue to advance, allowing certain obfuscation techniques to be bypassed relatively easily.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Legal and Ethical Issues:&lt;/strong&gt; Applying excessive obfuscation to commercial software can undermine user trust, and in some cases, lead to legal disputes.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;Significance&#34;&gt;&lt;a href=&#34;#Significance&#34; class=&#34;headerlink&#34; title=&#34;Significance&#34;&gt;&lt;/a&gt;Significance&lt;/h3&gt;&lt;p&gt;As we have seen so far, obfuscation techniques can be broadly categorized into &lt;strong&gt;Structural&lt;/strong&gt;, &lt;strong&gt;Data&lt;/strong&gt;, and &lt;strong&gt;Algorithmic&lt;/strong&gt; aspects based on their working mechanisms. However, in real-world software analysis, these categories are not isolated. In practice, all three aspects are often combined, and furthermore, numerous variants and modifications&amp;#x2014;along with entirely new ideas&amp;#x2014;continue to emerge, making analysis even more complex.&lt;/p&gt;
+&lt;p&gt;For example, let&amp;#x2019;s briefly look at the obfuscation techniques used by DJI, a commercial drone company well-known for its heavy obfuscation.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Structural Obfuscation:&lt;/strong&gt; Splitting eight DEX files into 128KB chunks and encrypting each chunk with &lt;strong&gt;AES-256&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Data Obfuscation:&lt;/strong&gt; Generating an &lt;strong&gt;XOR-based key&lt;/strong&gt; by combining the string &lt;code&gt;com.dji.industry.pilot&lt;/code&gt; with hardcoded constants.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Algorithmic Obfuscation:&lt;/strong&gt; Redirecting JNI calls through a &lt;strong&gt;three-stage trampoline function&lt;/strong&gt; before reaching the actual native function.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Modern obfuscation technologies no longer rely on single-layer techniques. Instead, they adopt &lt;strong&gt;multi-layered, modular defense systems&lt;/strong&gt;, incorporating new variants every year to complicate analysis even further. Some experimental approaches are also emerging, such as using AI-generated fake code patterns or leveraging quantum cryptography for key exchanges&amp;#x2014;highlighting how obfuscation evolves alongside technological advancement.&lt;/p&gt;
+&lt;p&gt;As we&amp;#x2019;ve repeatedly discussed in Parts 1, 2, and 3:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&amp;#x201C;Every protection layer is merely a device to buy time &amp;#x2014; it can never guarantee absolute safety.&amp;#x201D;&lt;/p&gt;
+&lt;p&gt;&amp;#x2013; Quarkslab Research Team&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Obfuscation and anti-debugging techniques are ultimately part of the &lt;strong&gt;ongoing battle to protect code&lt;/strong&gt;. In the endless tug-of-war between reverse engineers and developers, technology continues to evolve&amp;#x2014;and through that struggle, the entire field of security moves forward. Obfuscation today is not only crucial for legitimate software protection but also actively used in &lt;strong&gt;malware&lt;/strong&gt; to evade detection and delay analysis. It has become a &lt;strong&gt;fundamental technique on both sides&lt;/strong&gt; of the attack and defense landscape.&lt;/p&gt;
+&lt;p&gt;Obfuscation is a means to &lt;strong&gt;delay attacks and buy time for defense&lt;/strong&gt;, but no shield is ever perfect. Analysts will persistently trace the flow and improve their tools, while developers will devise new obfuscation techniques to reinforce their defenses.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;This battle will never end.&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;Because as technology evolves, so too will the methods of attack and defense. Rather than seeing obfuscation as merely an obstacle, we should recognize it as &lt;strong&gt;an essential part of the evolutionary process toward a more secure environment&lt;/strong&gt;. Even amid the endless clash of spear and shield, our goal remains the same.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%2013.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&amp;#x201C;The game goes on. And for our own reasons, we each dive into this never-ending game.&amp;#x201D;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h3 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h3&gt;&lt;p&gt;&amp;#xB9AC;&amp;#xBC84;&amp;#xC2F1; &amp;#xD575;&amp;#xC2EC; &amp;#xC6D0;&amp;#xB9AC;: &amp;#xC545;&amp;#xC131; &amp;#xCF54;&amp;#xB4DC; &amp;#xBD84;&amp;#xC11D;&amp;#xAC00;&amp;#xC758; &amp;#xB9AC;&amp;#xBC84;&amp;#xC2F1; &amp;#xC774;&amp;#xC57C;&amp;#xAE30;(&amp;#xC800;&amp;#xC790; &amp;#xC774;&amp;#xC2B9;&amp;#xC6D0;)&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://m.blog.naver.com/choijo2/60196192627&#34;&gt;https://m.blog.naver.com/choijo2/60196192627&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;http://en.wikipedia.org/wiki/Obfuscation_(software&#34;&gt;http://en.wikipedia.org/wiki/Obfuscation_(software)&lt;/a&gt;)&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://blog.quarkslab.com/dji-the-art-of-obfuscation.html&#34;&gt;https://blog.quarkslab.com/dji-the-art-of-obfuscation.html&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://gosecure.github.io/presentations/2020-05-15-advanced-binary-analysis/&#34;&gt;https://gosecure.github.io/presentations/2020-05-15-advanced-binary-analysis/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/obfuscator-llvm/obfuscator&#34;&gt;https://github.com/obfuscator-llvm/obfuscator&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/04/28/OUYA77/Anti_part3/kr/image.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/04/28/ouya77/anti_part3/en/">
+
+  <title>[Research] Anti-Debugging Part 3(EN) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-04-28 22:15" pubdate>
+      2025년 4월 28일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      2.6k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      52
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] Anti-Debugging Part 3(EN)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p>Hello, this is OUYA77! &#x1F642;</p>
+<p>Last time, I mentioned that I might cover obfuscation on the blog if the opportunity came up &#x2014; and well, here we are with Part 3!</p>
+<p>In Part 1, we explored debugging and anti-debugging techniques. Then in Part 2, we looked at ways to <strong>bypass anti-debugging</strong>, which acts like a &#x201C;trap card&#x201D; trying to block certain actions.</p>
+<p>(If you haven&#x2019;t checked them out yet, here&#x2019;s a quick link &#x1F447; haha </p>
+<blockquote>
+<p>Check out the previous parts:</p>
+<p><a href="https://hackyboiz.github.io/2024/12/29/OUYA77/Anti_part1/en/">[Research] Anti-Debugging Part 1 (EN)</a></p>
+<p><a href="https://hackyboiz.github.io/2025/03/24/OUYA77/Anti_part2/en/">[Research] Anti-Debugging Part 2 (EN)</a></p>
+</blockquote>
+<p>Since this series has been a bit of long journey, it&#x2019;s totally understandable if some details have slipped your mind.</p>
+<p>Just in case, I even prepared a little cartoon (!) to sum things up. <del>I swear there was no my hope while making it. It&#x2019;s also a <em>total secret</em> that I had to call in an expert for help with the framing because it turned out way harder than I thought&#x2026;</del></p>
+<h2 id="Anti-Debugging-Part-Summary"><a href="#Anti-Debugging-Part-Summary" class="headerlink" title="Anti-Debugging Part Summary"></a>Anti-Debugging Part Summary</h2><p><img src="image%201.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p><img src="image%202.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p><img src="image%203.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>As you saw in the cartoon, anti-debugging techniques were developed to block debugging &#x2014; and bypassing techniques were invented to counter them. Through Part 1 and Part 2, we saw that anti-debugging has its limits: ultimately, a program must be loaded into memory to run, and the final binary must be delivered to the user. This means that if a user analyzes the binary and understands the anti-debugging logic, they can patch it or find ways around it.</p>
+<p>That&#x2019;s when the legendary Chef Gordon Ramsay shows up and yells,</p>
+<p><strong>&#x201C;You need to <em>hide</em> these ingredients (anti-debugging logic) better!&#x201D;</strong> &#x1F525;&#x1F468;&#x200D;&#x1F373;</p>
+<p>&#x2014; And thus, <strong>obfuscation</strong> must be applied.</p>
+<blockquote>
+<p>In Part 2&#x2026;</p>
+<p><img src="image%204.png" srcset="/img/loading.gif" alt="image.png"></p>
+<blockquote>
+<p>???: So why not just hide it? / 000: How!!</p>
+</blockquote>
+</blockquote>
+<p>When anti-debugging is combined with <strong>obfuscation</strong>, it becomes extremely difficult to identify which parts of a program contain anti-debugging logic, making the analysis process even more challenging. That&#x2019;s why in <strong>Part 3</strong>, we will take a deep dive into this fascinating technique called <strong>obfuscation</strong>!</p>
+<h2 id="1-Obfuscation"><a href="#1-Obfuscation" class="headerlink" title="1. Obfuscation"></a>1. Obfuscation</h2><h3 id="1-1-Introduction"><a href="#1-1-Introduction" class="headerlink" title="1.1 Introduction"></a>1.1 Introduction</h3><ul>
+<li><strong>Obfuscation</strong> is a technique that intentionally makes a program&#x2019;s code difficult to read.<br>Wikipedia defines it as:</li>
+</ul>
+<blockquote>
+<p>&#x201C;In software development, obfuscation is the practice of creating source or machine code that is intentionally difficult for humans or computers to understand.&#x201D;</p>
+</blockquote>
+<p>Obfuscation goes beyond simply making code less readable &#x2014; it is used to <strong>hinder reverse engineering, debugging, and static analysis</strong>, and serves various purposes such as intellectual property protection, security enhancement, and evading malware analysis.</p>
+<h3 id="1-2-Purpose"><a href="#1-2-Purpose" class="headerlink" title="1.2 Purpose"></a>1.2 Purpose</h3><p>Obfuscation achieves the following defensive goals without changing the actual behavior of a program:</p>
+<ul>
+<li><strong>Reduced readability</strong>: Hides the logical structure and meaning of the code to obstruct understanding.</li>
+<li><strong>Increased structural complexity</strong>: Introduces unnecessary operations, nonlinear flows, random-based conditions, etc.</li>
+<li><strong>Evasion of pattern detection</strong>: Tricks signature-based detection tools or causes false positives/negatives.</li>
+</ul>
+<p>In short, if an analyst looks at the program and thinks,</p>
+<p><em>&#x201C;Ugh&#x2026; this is going to be a headache ;;&#x201D;</em></p>
+<p>&#x2014; then the obfuscation has already succeeded to some degree.</p>
+<h3 id="1-3-Types-of-Obfuscation"><a href="#1-3-Types-of-Obfuscation" class="headerlink" title="1.3 Types of Obfuscation"></a>1.3 Types of Obfuscation</h3><p>Obfuscation can largely be divided into two categories:</p>
+<ol>
+<li><strong>Source Code Obfuscation</strong></li>
+</ol>
+<ul>
+<li><strong>Target</strong>: High-level source code (Java, JavaScript, Python, etc.)</li>
+<li><strong>Applied at</strong>: Before compilation</li>
+<li><strong>Purpose</strong>: To secure internal code and protect flow when partially disclosing code to outsourcing partners or clients</li>
+</ul>
+<p>Source code obfuscation is often used when a company needs to provide part of its code to third parties, ensuring that the overall structure or algorithms are not easily understood. Common techniques include <strong>renaming identifiers</strong>, <strong>rearranging code blocks</strong>, <strong>control flow obfuscation</strong>, and <strong>string encoding</strong>.</p>
+<ol>
+<li><strong>Binary Obfuscation</strong></li>
+</ol>
+<ul>
+<li><strong>Target</strong>: Compiled executables (C, C++, Go, etc.)</li>
+<li><strong>Applied at</strong>: During or after compilation</li>
+<li><strong>Purpose</strong>: Product protection, algorithm safeguarding, crack/reverse engineering prevention</li>
+</ul>
+<p>Binary obfuscation is <strong>crucial for protecting actual distributed products.</strong> Since most commercial software is distributed in binary form &#x2014; containing valuable algorithms, licensing logic, and authentication mechanisms &#x2014; protecting it is essential. Otherwise, attackers or even customers could reverse engineer or crack the software.</p>
+<blockquote>
+<p>Technically, malware is also a kind of &#x201C;product&#x201D;&#x2026; and yes, binary obfuscation is heavily used in malware as well.</p>
+</blockquote>
+<p>Binary obfuscation aims to disrupt static analysis tools like IDA and Ghidra, confuse debugging attempts, and in some cases, ensure that the code is only decrypted during execution. Common techniques include <strong>control flow flattening</strong>, <strong>string encryption</strong>, <strong>inserting junk code</strong>, <strong>name mangling</strong>, and <strong>indirect jumps/calls</strong>.</p>
+<h3 id="1-4-Focus-on-Binary-Obfuscation"><a href="#1-4-Focus-on-Binary-Obfuscation" class="headerlink" title="1.4 Focus on Binary Obfuscation"></a>1.4 Focus on Binary Obfuscation</h3><p>In this part, we will especially focus on binary obfuscation. Why is it so important? Simple: Because most of the programs we use are ultimately delivered as binaries, containing the company&#x2019;s key know-how, algorithms, licensing mechanisms, and more. Without proper protection, it can lead not just to technical attacks like cracking and reverse engineering, but also serious business damage like illegal redistribution and intellectual property theft. That&#x2019;s why we need anti-reversing techniques &#x2014; and that&#x2019;s what we have been exploring since Part 1.</p>
+<p>If anti-debugging mainly disrupts dynamic analysis (trying to observe the program at runtime),<br>then obfuscation focuses on obstructing static analysis (analyzing the code without running it).<br>When both techniques are combined, the analyst is essentially facing a near-invincible defense system.</p>
+<p><img src="image.png" srcset="/img/loading.gif" alt="image.png"></p>
+<blockquote>
+<p><del>(Though, even an &#x201C;invincible shield&#x201D; can meet an &#x201C;unstoppable spear&#x201D; someday&#x2026;)</del></p>
+</blockquote>
+<h2 id="2-The-Three-Pillars-of-Binary-Obfuscation"><a href="#2-The-Three-Pillars-of-Binary-Obfuscation" class="headerlink" title="2. The Three Pillars of Binary Obfuscation"></a>2. The Three Pillars of Binary Obfuscation</h2><p>Binary obfuscation is generally classified into the following three categories.</p>
+<p>(<em>Some parts will be covered briefly.</em>)</p>
+<h3 id="2-1-Structural-Obfuscation"><a href="#2-1-Structural-Obfuscation" class="headerlink" title="2.1 Structural Obfuscation"></a>2.1 Structural Obfuscation</h3><blockquote>
+<p>Obfuscation that twists the structure of the code&#x2019;s control flow itself, making analysis much harder.</p>
+</blockquote>
+<p>This category mainly targets <strong>static analysis tools</strong> that attempt to understand the program at the function or block level, making it difficult to grasp the overall structure.</p>
+<ul>
+<li><p><strong>Control Flow Flattening</strong></p>
+<p>  <img src="image%205.png" srcset="/img/loading.gif" alt="ref. https://gosecure.github.io/presentations/2020-05-15-advanced-binary-analysis/"></p>
+<p>  ref. <a target="_blank" rel="external nofollow noopener noreferrer" href="https://gosecure.github.io/presentations/2020-05-15-advanced-binary-analysis/">https://gosecure.github.io/presentations/2020-05-15-advanced-binary-analysis/</a></p>
+<ul>
+<li>Originally, logical flows like <code>if</code>, <code>while</code>, and <code>switch</code> are flattened into a single <code>dispatcher</code> loop. The next block to execute is determined based on a <strong>state variable</strong>.<ul>
+<li>As a result, the control flow is obfuscated into a non-intuitive form, neutralizing the control flow tree analysis of static tools.</li>
+<li>We&#x2019;ll take a closer look at this later with an example from Obfuscator-LLVM (OLLVM)!</li>
+</ul>
+</li>
+</ul>
+</li>
+<li><strong>Junk / Dead Code Insertion</strong><ul>
+<li>Inserts meaningless operations (Junk Code) or never-executed code (Dead Code) into the program.</li>
+<li>Typical examples:<ul>
+<li>No-op operations (<code>x = x;</code>, <code>add eax, 0;</code>)</li>
+<li>Unreachable branches (<code>if (false) { ... }</code>)</li>
+</ul>
+</li>
+</ul>
+</li>
+<li><strong>Indirect Branching / Calling</strong><ul>
+<li>Jumps or calls are made through calculated addresses (e.g., <code>jmp eax</code>, <code>call [ecx+0x10]</code>).</li>
+<li>This makes tracing the code flow extremely difficult (especially for API resolution).</li>
+</ul>
+</li>
+<li><strong>Opaque Predicate</strong><ul>
+<li>Branches are inserted with conditions that are always true/false (e.g., <code>if ((x*x) &gt;= 0)</code>).</li>
+<li>Harmless at runtime but significantly obstruct static flow analysis.</li>
+</ul>
+</li>
+<li><strong>Important Note:</strong><ul>
+<li>Compiler optimization options like <code>O2</code>, <code>O3</code> may eliminate meaningless code during build.</li>
+<li>Therefore, it&#x2019;s critical to <strong>disable optimization options</strong> or <strong>use runtime-dependent variables</strong> to prevent removal during obfuscation.</li>
+</ul>
+</li>
+<li><strong>Effect:</strong><ul>
+<li>Analysts are forced to wade through unnecessary loops and branches, leading to psychological exhaustion. As shown below, inserting just a few dummy codes can make the control flow graph dramatically more complex.</li>
+</ul>
+</li>
+</ul>
+<p><img src="image%206.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>&#x1F50D; <em>Structural obfuscation mainly aims to neutralize CFG (Control Flow Graph) analysis and flow tracking.</em></p>
+<h3 id="2-2-Data-Obfuscation"><a href="#2-2-Data-Obfuscation" class="headerlink" title="2.2 Data Obfuscation"></a>2.2 Data Obfuscation</h3><blockquote>
+<p>Obfuscation that hides or alters data to make it difficult to infer its meaning.</p>
+</blockquote>
+<p>This category focuses on removing or hiding <strong>valuable clues</strong> such as strings, constants, and API names.</p>
+<ul>
+<li><strong>String Encryption</strong><ul>
+<li>Critical strings are encrypted and only decrypted at runtime.</li>
+<li>Static analysis won&#x2019;t reveal strings like <code>&quot;CreateProcess&quot;</code> anymore.</li>
+</ul>
+</li>
+<li><strong>Constant Encoding</strong><ul>
+<li>Constant values are represented indirectly (e.g., <code>1337</code> &#x2192; <code>1000 + 337</code>).</li>
+<li>This complicates understanding the program&#x2019;s purpose and logic during decompilation.</li>
+</ul>
+</li>
+<li><strong>API Call Obfuscation/ Import Hiding</strong><ul>
+<li>API names are hidden using hashing or encryption, loaded dynamically via <code>LoadLibrary</code> and <code>GetProcAddress</code>.</li>
+<li>Completely neutralizes IAT-based automatic analysis.</li>
+</ul>
+</li>
+</ul>
+<p>&#x1F50D; <em>Data obfuscation prevents analysts and tools from extracting meaningful information (identifiers, strings, APIs).</em></p>
+<h3 id="2-3-Algorithm-Obfuscation"><a href="#2-3-Algorithm-Obfuscation" class="headerlink" title="2.3 Algorithm Obfuscation"></a>2.3 Algorithm Obfuscation</h3><blockquote>
+<p>Obfuscation that makes the actual functionality and logic of the program harder to understand.</p>
+</blockquote>
+<p>This category twists the <strong>behavior itself</strong>, making it difficult to understand &#x201C;what&#x201D; the program actually does, even after disassembling it.</p>
+<ul>
+<li><p><strong>Name Mangling &amp; Symbol Stripping</strong></p>
+<ul>
+<li>Debugging symbols are removed, and function/variable names are replaced with random strings.</li>
+<li>This makes understanding the overall logic and functionality much harder.</li>
+<li><p>Below is an example from <em>Hack The Drone 2024 (Final)</em> where LFSR Galois algorithm was used for packet encoding.</p>
+<p><img src="image%207.png" srcset="/img/loading.gif" alt="image.png"></p>
+</li>
+<li><p>As shown, original function and parameter names reveal a lot about the algorithm.</p>
+<p><img src="image%208.png" srcset="/img/loading.gif" alt="image.png"></p>
+</li>
+<li><p>However, with name mangling applied, it becomes much harder to quickly figure out what the algorithm does.</p>
+<ul>
+<li><em>(Although nowadays, tools like GPT can deduce the logic pretty quickly&#x2026;)</em> &#x1F605;</li>
+</ul>
+</li>
+</ul>
+</li>
+<li><strong>Self-Modifying Code</strong><ul>
+<li>The program modifies its own code during execution.</li>
+<li>This makes static analysis practically impossible.</li>
+</ul>
+</li>
+<li><strong>Virtualization Obfuscation</strong><ul>
+<li>A custom virtual ISA (instruction set architecture) is created, and the original code is transformed into bytecode.</li>
+<li>Without reverse-engineering the VM interpreter, understanding the logic is nearly impossible.</li>
+</ul>
+</li>
+</ul>
+<p>&#x1F50D; <em>Algorithm obfuscation makes it extremely difficult to understand <strong>what the program actually does</strong>.</em></p>
+<h2 id="3-Hands-on-with-Obfuscator-LLVM"><a href="#3-Hands-on-with-Obfuscator-LLVM" class="headerlink" title="3. Hands-on with Obfuscator-LLVM"></a>3. Hands-on with Obfuscator-LLVM</h2><p><strong>OLLVM (Obfuscator-LLVM)</strong> is an obfuscation-enhanced version of the open-source compiler framework <strong>LLVM</strong>. While LLVM was originally designed to generate &#x201C;clean&#x201D; and optimized code, researchers noticed how flexible its architecture was &#x2014; and decided to extend it by adding <strong>heavy-duty code obfuscation</strong> capabilities. That&#x2019;s how OLLVM was born.</p>
+<p>OLLVM automatically transforms code during the <strong>compilation process</strong>, by inserting dedicated <strong>obfuscation passes</strong>. Thanks to this, developers don&#x2019;t need to manually modify their source code &#x2014; they just need to compile it differently to produce heavily obfuscated binaries.</p>
+<h3 id="3-1-How-to-Build-Clang-for-OLLVM"><a href="#3-1-How-to-Build-Clang-for-OLLVM" class="headerlink" title="3.1 How to Build Clang for OLLVM"></a>3.1 How to Build Clang for OLLVM</h3><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/obfuscator-llvm/obfuscator/wiki/Installation">https://github.com/obfuscator-llvm/obfuscator/wiki/Installation</a></p>
+<pre><code class="hljs bash">$ git <span class="hljs-built_in">clone</span> -b llvm-4.0 https://github.com/obfuscator-llvm/obfuscator.git
+$ mkdir build &amp;&amp; <span class="hljs-built_in">cd</span> build
+$ cmake -DCMAKE_BUILD_TYPE=Release ../obfuscator/
+$ make -j7</code></pre>
+<p>In my case, I encountered a few errors during the build process, so I had to patch the source code manually. If you run into similar issues, check your build logs and troubleshoot accordingly.</p>
+<p>Here are the fixes I made:</p>
+<p><strong>In</strong> <code>obfuscator/tools/clang/lib/CodeGen/CGOpenMPRuntime.cpp</code> <strong>(lines 6275, 6321, 6400):</strong></p>
+<p><code>error:lambda parameter &#x2018;CGF&#x2019; previously declared as a capture</code> </p>
+<p>&#x2192; Simply remove the redundant <code>&amp;CFG</code> capture.</p>
+<pre><code class="hljs c"><span class="hljs-keyword">auto</span> &amp;&amp;BeginThenGen = [&amp;D, &amp;CGF, Device, &amp;Info, &amp;CodeGen, &amp;NoPrivAction](...)
+&#x2193;
+<span class="hljs-keyword">auto</span> &amp;&amp;BeginThenGen = [&amp;D, Device, &amp;Info, &amp;CodeGen, &amp;NoPrivAction](...)</code></pre>
+<ul>
+<li><strong>In</strong> <code>obfuscator/include/llvm/ExecutionEngine/Orc/OrcRemoteTargetClient.h</code> <strong>(line 696):</strong></li>
+</ul>
+<p><code>error: cannot convert</code></p>
+<p>&#x2192; Change the return type from <code>char</code> to <code>uint8_t</code>.</p>
+<pre><code class="hljs c"><span class="hljs-function">Expected&lt;<span class="hljs-built_in">std</span>::<span class="hljs-built_in">vector</span>&lt;<span class="hljs-keyword">char</span>&gt;&gt; <span class="hljs-title">readMem</span><span class="hljs-params">(...)</span> </span>{ ... }
+&#x2193;
+<span class="hljs-function">Expected&lt;<span class="hljs-built_in">std</span>::<span class="hljs-built_in">vector</span>&lt;<span class="hljs-keyword">uint8_t</span>&gt;&gt; <span class="hljs-title">readMem</span><span class="hljs-params">(...)</span> </span>{ ... }
+</code></pre>
+<p><img src="image%209.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>If everything goes well, you should see the custom OLLVM-enabled <code>clang</code> binary built successfully!</p>
+<h3 id="3-2-How-to-Use-OLLVM"><a href="#3-2-How-to-Use-OLLVM" class="headerlink" title="3.2 How to Use OLLVM"></a>3.2 How to Use OLLVM</h3><p>The easiest way to use Obfuscator-LLVM is to pass specific flags to the LLVM backend via Clang using the <code>-mllvm</code> option.</p>
+<p>The main available flags are:</p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/obfuscator-llvm/obfuscator/wiki/Features">https://github.com/obfuscator-llvm/obfuscator/wiki/Features</a></p>
+<ul>
+<li><code>fla</code>: Control Flow Flattening</li>
+<li><code>sub</code>: Instruction Substitution</li>
+<li><code>bcf</code>: Bogus Control Flow</li>
+</ul>
+<p>If you want to apply obfuscation selectively to specific functions, you can also use <a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/obfuscator-llvm/obfuscator/wiki/Functions-annotations">function annotations</a>.</p>
+<h3 id="3-3-Practice"><a href="#3-3-Practice" class="headerlink" title="3.3 Practice"></a>3.3 Practice</h3><p>Let&#x2019;s start with a simple program:</p>
+<pre><code class="hljs c"><span class="hljs-comment">// flatten_example.c</span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;stdio.h&gt;</span></span>
+
+<span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">secret_function</span><span class="hljs-params">(<span class="hljs-keyword">int</span> x)</span> </span>{
+    <span class="hljs-keyword">if</span> (x &gt; <span class="hljs-number">0</span>) {
+        <span class="hljs-keyword">return</span> x * <span class="hljs-number">2</span>;
+    } <span class="hljs-keyword">else</span> {
+        <span class="hljs-keyword">return</span> x - <span class="hljs-number">2</span>;
+    }
+}
+
+<span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">main</span><span class="hljs-params">()</span> </span>{
+    <span class="hljs-keyword">int</span> value = <span class="hljs-number">5</span>;
+    <span class="hljs-keyword">int</span> result = secret_function(value);
+    <span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;Result: %d\n&quot;</span>, result);
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}</code></pre>
+<p>First, compile it normally and then compile it with obfuscation enabled:</p>
+<pre><code class="hljs bash">$ clang flatten_example.c -o flatten_example_norm
+$ path_to_the/build/bin/clang -mllvm -fla flatten_example.c -o flatten_example_obf</code></pre>
+<p>Now, let&#x2019;s analyze both binaries using IDA.</p>
+<p>On the left is <code>flatten_example_norm</code>, and on the right is <code>flatten_example_obf</code> .</p>
+<p>Here&#x2019;s the disassembled <code>secret_function</code>:</p>
+<p><img src="image%2010.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>And the control flow graph (CFG) of <code>secret_function</code>:</p>
+<p><img src="image%2011.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>You can already see a stark difference &#x2014; even though the original code was simple!</p>
+<p>Of course, despite all the added complexity, the execution result remains exactly the same:</p>
+<p><img src="image%2012.png" srcset="/img/loading.gif" alt="image.png"></p>
+<h2 id="4-Conclusion"><a href="#4-Conclusion" class="headerlink" title="4. Conclusion"></a>4. Conclusion</h2><h3 id="Limitations"><a href="#Limitations" class="headerlink" title="Limitations"></a>Limitations</h3><p>Of course, obfuscation also comes with clear limitations.</p>
+<ul>
+<li><strong>Performance Degradation:</strong> The insertion of unnecessary logic and complex branching during obfuscation can significantly reduce program performance.</li>
+<li><strong>Counterattack by Evolving Tools:</strong> Static analyzers, deobfuscators, and other analysis tools continue to advance, allowing certain obfuscation techniques to be bypassed relatively easily.</li>
+<li><strong>Legal and Ethical Issues:</strong> Applying excessive obfuscation to commercial software can undermine user trust, and in some cases, lead to legal disputes.</li>
+</ul>
+<h3 id="Significance"><a href="#Significance" class="headerlink" title="Significance"></a>Significance</h3><p>As we have seen so far, obfuscation techniques can be broadly categorized into <strong>Structural</strong>, <strong>Data</strong>, and <strong>Algorithmic</strong> aspects based on their working mechanisms. However, in real-world software analysis, these categories are not isolated. In practice, all three aspects are often combined, and furthermore, numerous variants and modifications&#x2014;along with entirely new ideas&#x2014;continue to emerge, making analysis even more complex.</p>
+<p>For example, let&#x2019;s briefly look at the obfuscation techniques used by DJI, a commercial drone company well-known for its heavy obfuscation.</p>
+<ul>
+<li><strong>Structural Obfuscation:</strong> Splitting eight DEX files into 128KB chunks and encrypting each chunk with <strong>AES-256</strong>.</li>
+<li><strong>Data Obfuscation:</strong> Generating an <strong>XOR-based key</strong> by combining the string <code>com.dji.industry.pilot</code> with hardcoded constants.</li>
+<li><strong>Algorithmic Obfuscation:</strong> Redirecting JNI calls through a <strong>three-stage trampoline function</strong> before reaching the actual native function.</li>
+</ul>
+<p>Modern obfuscation technologies no longer rely on single-layer techniques. Instead, they adopt <strong>multi-layered, modular defense systems</strong>, incorporating new variants every year to complicate analysis even further. Some experimental approaches are also emerging, such as using AI-generated fake code patterns or leveraging quantum cryptography for key exchanges&#x2014;highlighting how obfuscation evolves alongside technological advancement.</p>
+<p>As we&#x2019;ve repeatedly discussed in Parts 1, 2, and 3:</p>
+<blockquote>
+<p>&#x201C;Every protection layer is merely a device to buy time &#x2014; it can never guarantee absolute safety.&#x201D;</p>
+<p>&#x2013; Quarkslab Research Team</p>
+</blockquote>
+<p>Obfuscation and anti-debugging techniques are ultimately part of the <strong>ongoing battle to protect code</strong>. In the endless tug-of-war between reverse engineers and developers, technology continues to evolve&#x2014;and through that struggle, the entire field of security moves forward. Obfuscation today is not only crucial for legitimate software protection but also actively used in <strong>malware</strong> to evade detection and delay analysis. It has become a <strong>fundamental technique on both sides</strong> of the attack and defense landscape.</p>
+<p>Obfuscation is a means to <strong>delay attacks and buy time for defense</strong>, but no shield is ever perfect. Analysts will persistently trace the flow and improve their tools, while developers will devise new obfuscation techniques to reinforce their defenses.</p>
+<p><strong>This battle will never end.</strong></p>
+<p>Because as technology evolves, so too will the methods of attack and defense. Rather than seeing obfuscation as merely an obstacle, we should recognize it as <strong>an essential part of the evolutionary process toward a more secure environment</strong>. Even amid the endless clash of spear and shield, our goal remains the same.</p>
+<p><img src="image%2013.png" srcset="/img/loading.gif" alt="image.png"></p>
+<blockquote>
+<p>&#x201C;The game goes on. And for our own reasons, we each dive into this never-ending game.&#x201D;</p>
+</blockquote>
+<h3 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a>Reference</h3><p>&#xB9AC;&#xBC84;&#xC2F1; &#xD575;&#xC2EC; &#xC6D0;&#xB9AC;: &#xC545;&#xC131; &#xCF54;&#xB4DC; &#xBD84;&#xC11D;&#xAC00;&#xC758; &#xB9AC;&#xBC84;&#xC2F1; &#xC774;&#xC57C;&#xAE30;(&#xC800;&#xC790; &#xC774;&#xC2B9;&#xC6D0;)</p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://m.blog.naver.com/choijo2/60196192627">https://m.blog.naver.com/choijo2/60196192627</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="http://en.wikipedia.org/wiki/Obfuscation_(software">http://en.wikipedia.org/wiki/Obfuscation_(software)</a>)</p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://blog.quarkslab.com/dji-the-art-of-obfuscation.html">https://blog.quarkslab.com/dji-the-art-of-obfuscation.html</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://gosecure.github.io/presentations/2020-05-15-advanced-binary-analysis/">https://gosecure.github.io/presentations/2020-05-15-advanced-binary-analysis/</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/obfuscator-llvm/obfuscator">https://github.com/obfuscator-llvm/obfuscator</a></p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/OUYA77/">OUYA77</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Anti-Debugging/">Anti-Debugging</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Debugging/">Debugging</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Malware/">Malware</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Reverse-Engineering/">Reverse Engineering</a>
+                  
+                  <a class="hover-with-bg" href="/tags/OLLVM/">OLLVM</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Obfuscation/">Obfuscation</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_OUYA77.jpg" srcset="/img/loading.gif" alt="OUYA77">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">OUYA77</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/OUYA77">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/04/30/clalxk/CVE-2025-1094/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2025-1094: PostgreSQL 14.15의 SQL 인젝션 취약점으로 인한 RCE</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/04/28/OUYA77/Anti_part3/kr/">
+                    <span class="hidden-mobile">[Research] Anti-Debugging Part 3(KR)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/04/28/OUYA77/Anti_part3/en/';
+        this.page.identifier = '/2025/04/28/OUYA77/Anti_part3/en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] Anti-Debugging Part 3(EN)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
