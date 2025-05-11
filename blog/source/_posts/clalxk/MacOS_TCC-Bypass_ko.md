@@ -1,5 +1,5 @@
 ---
-title: "[Research] MacOS TCC Bypass (ko)"
+title: "[Research] macOS: Part0 - TCC Bypass (ko)"
 author: clalxk
 tags: [MacOS, TCC Bypass, clalxk]
 categories: [Research]
