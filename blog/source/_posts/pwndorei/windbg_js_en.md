@@ -1,5 +1,5 @@
 ---
-title: "[Research] windbg에 js를 싸먹어보세요"
+title: "[Research] A spoonful of javascript for windbg"
 author: pwndorei
 tags: [pwndorei, windbg, TTD, Debugging]
 categories: [Research]
