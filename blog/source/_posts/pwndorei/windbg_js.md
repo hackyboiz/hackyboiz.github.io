@@ -1,8 +1,12 @@
-# [Research] windbg에 js를 싸먹어 보세요
-
-author: 이준수
-cc: No
-date: 2025년 6월 1일
+---
+title: "[Research] windbg에 js를 싸먹어보세요"
+author: pwndorei
+tags: [pwndorei, windbg, TTD, Debugging]
+categories: [Research]
+date: 2025-06-01 23:00:00
+cc: true
+index_img: /2025/06/01/pwndorei/windbg_js/image%206.png
+---
 
 # Introduction
 
@@ -468,36 +472,7 @@ JavaScript script successfully loaded from 'D:\windbg_Ext\utils.js'
 그럼 이제 Calls와 Memory를 사용할 때 아래처럼 접근하는 것이 가능해집니다.
 
 ```
-0:000> !calls "kernelbase!CreateFileW"
-@$calls("kernelbase!CreateFileW")                
-    [0x0]           
-    [0x1]           
-    [0x2]           
-    [0x3]           
-    [0x4]           
-    [0x5]           
-    [0x6]           
-    [0x7]           
-    [0x8]           
-    [0x9]           
-    [0xa]           
-    [0xb]           
-    [0xc]
-	  ...
-0:000> dx @$calls("kernelbase!CreateFileW")
-@$calls("kernelbase!CreateFileW")[0]                
-    EventType        : 0x0
-    ThreadId         : 0xe5c
-    UniqueThreadId   : 0x2
-    TimeStart        : 6F4F:1742 [Time Travel]
-    TimeEnd          : 6F57:7E3 [Time Travel]
-    Function         : kernelbase!CreateFileW
-    FunctionAddress  : 0x7ffbf27f05f0
-    ReturnAddress    : 0x7ffbf2835846
-    ReturnValue      : 0x31c
-    Parameters      
-    SystemTimeStart  : 2025년 5월 30일 금요일 09:13:24.782
-    SystemTimeEnd    : 2025년 5월 30일 금요일 09:13:24.782
+https://hackyboiz.github.io/2021/03/14/fabu1ous/ttd-3/#Filtering-in-a-query
 ```
 
 `!calls`를 쓰면 커맨드에서 리턴된 배열에 바로 접근할 수가 없어서 저는  `dx @$calls`를 더 자주 활용하는 편입니다.
@@ -613,7 +588,7 @@ TTDCalls!std::make_unique [C:\Program Files\Microsoft Visual Studio\2022\Communi
     [0x9]      
 ```
 
-그런데 Memory를 사용하게 되면 Calls와 달리 해당 시점으로 이동해야 사용된 파라미터나 반환값을 확인할 수 있는데요? 지금같은 상황에서는 `00007ff7`84d91265`라는 주소에서 호출된 `operator new`는 `ReturnAddress`가 `00007ff7`84d9126a`일테니 이를 활용하는 것도 방법입니다.
+그런데 Memory를 사용하게 되면 Calls와 달리 해당 시점으로 이동해야 사용된 파라미터나 반환값을 확인할 수 있는데요? 지금같은 상황에서는 `00007ff784d91265`라는 주소에서 호출된 `operator new`는 `ReturnAddress`가 `00007ff784d9126a`일테니 이를 활용하는 것도 방법입니다.
 
 ```
 0:000> dx @$calls("TTDCalls!operator new").Where(x => x.ReturnAddress == 0x7ff784d9126a)
