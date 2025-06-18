@@ -1,0 +1,1309 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;&lt;img src=&#34;/2025/06/15/j0ker/llm_part2/en/9xgtc2.jpg&#34; alt=&#34;index_img&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Hello! It&amp;#x2019;s been 6 months since I&amp;#x2019;ve been back to &amp;#x2026;. I&amp;#x2019;m j0ker! The reason for the lack of posts in the first half of 2025 is&amp;#x2026; I was too busy&amp;#x2026; lol Even while I was busy, I was slowly following up on LLM-related trends, but as more and more papers and technologies come out, it&amp;#x2019;s hard to keep up&amp;#x2026; For God&amp;#x2019;s sake&amp;#x2026; When do you get to work?&lt;/p&gt;
+&lt;p&gt;So, rather than summarise the overall trend, I&amp;#x2019;ll just summarise what I&amp;#x2019;ve been reading for the time being. Today&amp;#x2019;s paper is &amp;#x201C;VulBinLLM: LLM-powered Vulnerability Detection for Stripped Binaries&amp;#x201D;. I started reading the paper with the thought that it&amp;#x2019;s about finding stripped binary vulnerabilities with LLM&amp;#x2026; is this really possible?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/06/15/j0ker/llm_part2/en/9xgth1.jpg&#34; alt=&#34;image.jpg&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Try your best, LLM&amp;#x2026;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2 id=&#34;1-Can-LLM-be-used-to-find-vulnerabilities&#34;&gt;&lt;a href=&#34;#1-Can-LLM-be-used-to-find-vulnerabilities&#34; class=&#34;headerlink&#34; title=&#34;1. Can LLM be used to find vulnerabilities?&#34;&gt;&lt;/a&gt;1. Can LLM be used to find vulnerabilities?&lt;/h2&gt;&lt;p&gt;This is the topic that fandu presented at the Hackyboiz Open Seminar a few days ago. It&amp;#x2019;s a very simple but powerful idea: &amp;#x201C;Hey, can we LLM this because it&amp;#x2019;s hard for humans to read?&amp;#x201D; Team Atlanta found a zero-day vulnerability in SQLite at AIxCC last year, Project0 found a vulnerability&amp;#x2026; and now X also found a zero-day vulnerability in Linux SMB using LLM.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://sean.heelan.io/2025/05/22/how-i-used-o3-to-find-cve-2025-37899-a-remote-zeroday-vulnerability-in-the-linux-kernels-smb-implementation/&#34;&gt;How I used o3 to find CVE-2025-37899, a remote zeroday vulnerability in the Linux kernel&amp;#x2019;s SMB implementation&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;This article caused quite a stir on X (formerly Twitter).&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/06/15/j0ker/llm_part2/en/x_1.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Tons of likes and retweets&amp;#x2026;. Give our team account a lot of love too&amp;#x2026;! &lt;a href=&#34;https://x.com/hackyboiz&#34;&gt;@hackyboiz&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;It seems too obvious that we can use LLMs to find zero-days.&lt;/p&gt;
+&lt;h2 id=&#34;2-Stripped-Binary&#34;&gt;&lt;a href=&#34;#2-Stripped-Binary&#34; class=&#34;headerlink&#34; title=&#34;2. Stripped Binary&#34;&gt;&lt;/a&gt;2. Stripped Binary&lt;/h2&gt;&lt;p&gt;First of all, you should know what a &amp;#x2018;Stripped Binary&amp;#x2019; is, right? When we usually write C or C++ code and compile it, we get an executable (binary) file, right? When debugging, it&amp;#x2019;s easy to analyse because it contains all the information (symbols) like function names and variable names.&lt;br&gt;But when it&amp;#x2019;s deployed, it&amp;#x2019;s stripped of all this information to reduce the size and make it harder for hackers like us to analyse. This is what Stripped Binary is: function names are changed to &lt;code&gt;sub_401000&lt;/code&gt; or something like that, you don&amp;#x2019;t even know what the variables are&amp;#x2026; and analysing them is a real nightmare. When I was first doing CTF or bug hunting, I had a chance to analyse an open source vulnerability by looking at a stripped binary, and it was a new world&amp;#x2026; No, it&amp;#x2019;s so easy to analyse? (That&amp;#x2019;s why I&amp;#x2019;ve been looking for vulnerabilities in open source since then&amp;#x2026;)&lt;/p&gt;
+&lt;h2 id=&#34;3-So-how-are-you-going-to-find-vulnerabilities-with-LLM&#34;&gt;&lt;a href=&#34;#3-So-how-are-you-going-to-find-vulnerabilities-with-LLM&#34; class=&#34;headerlink&#34; title=&#34;3. So how are you going to find vulnerabilities with LLM?&#34;&gt;&lt;/a&gt;3. So how are you going to find vulnerabilities with LLM?&lt;/h2&gt;&lt;p&gt;The main goal of this thesis is to create VulBinLLM, a system that uses LLM to automatically find vulnerabilities in stripped binaries. But can we just paste the decompiled code and tell LLM &amp;#x201C;hey, find vulnerabilities&amp;#x201D; and it will work? Yes, for simple code. But on larger, more massive chunks of code? If it&amp;#x2019;s stripped binary and doesn&amp;#x2019;t even have proper function and variable names? It&amp;#x2019;s a recipe for bullshit. The real contribution of this paper is how to solve that &amp;#x201C;how?&amp;#x201D;.&lt;/p&gt;
+&lt;p&gt;In the thesis, we designed the following systematic structure to solve this problem.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/06/15/j0ker/llm_part2/en/figure1.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Instead of just putting binaries into LLM, we built a clear pipeline: &lt;strong&gt;Decompilation -&amp;gt; Optimisation -&amp;gt; Long-term memory generation -&amp;gt; LLM analysis&lt;/strong&gt;. In particular, the &amp;#x2018;optimisation&amp;#x2019; and &amp;#x2018;long-term memory&amp;#x2019; parts are the core of this research.&lt;/p&gt;
+&lt;h3 id=&#34;1-Decompilation-Optimisation-Refining-code-for-LLM&#34;&gt;&lt;a href=&#34;#1-Decompilation-Optimisation-Refining-code-for-LLM&#34; class=&#34;headerlink&#34; title=&#34;1) Decompilation Optimisation: Refining code for LLM&#34;&gt;&lt;/a&gt;1) Decompilation Optimisation: Refining code for LLM&lt;/h3&gt;&lt;p&gt;The first key is &amp;#x2018;decompilation optimisation&amp;#x2019;. The example below illustrates this process very clearly.&lt;/p&gt;
+&lt;p&gt;Before Optimisation (Ghidra):&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;multiplyMatrix&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; param_1, &lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; param_2)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+	local_10 = *(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; *)(in_FS_OFFSET + &lt;span class=&#34;hljs-number&#34;&gt;0x28&lt;/span&gt;);
+	&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (*(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; *)local_34 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; *(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; *)local_34 &amp;lt; R1; local_34++) {
+		&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (local_30 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; local_30 &amp;lt; C2; local_30++) {
+			(auStack_28)[(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_34 * C2 + (&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_30] = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+			&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (local_2c = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; local_2c &amp;lt; R2; local_2c++) {
+				auStack_28[(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_34 * C2 + (&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_30] += *(&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *)((&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_2c * &lt;span class=&#34;hljs-number&#34;&gt;0xc&lt;/span&gt; + param_2 + (&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_30 * &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;)* *(&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *)((&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_34 * &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt; + param_1 + (&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_2c * &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;);
+			}
+		}
+	}
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;As you can see, the variable names don&amp;#x2019;t make sense, like &lt;code&gt;param_1&lt;/code&gt;, &lt;code&gt;local_34&lt;/code&gt;, and &lt;code&gt;R2&lt;/code&gt;, and although there are several loop statements used, it&amp;#x2019;s not immediately obvious what&amp;#x2019;s going on.&lt;/p&gt;
+&lt;p&gt;After optimisation (VulBinLLM):&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;multiplyMatrix&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; input_matrix_1, &lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; input_matrix_2)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+	&lt;span class=&#34;hljs-comment&#34;&gt;// Initialize a matrix to store the result of matrix multiplication&lt;/span&gt;
+	&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; result_matrix[row_1][column_2] = {&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;};
+	&lt;span class=&#34;hljs-comment&#34;&gt;// Iterate over each row and column of the result matrix&lt;/span&gt;
+	&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; current_row = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; current_row &amp;lt; row_1; current_row++) {
+		&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; current_col = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; current_col &amp;lt; column_2; current_col++) {
+			&lt;span class=&#34;hljs-comment&#34;&gt;// Perform matrix multiplication by iterating over the shared dimension&lt;/span&gt;
+			&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; shared_dim = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; shared_dim &amp;lt; row_2; shared_dim++) {
+				&lt;span class=&#34;hljs-comment&#34;&gt;// Vulnerability: Potential pointer arithmetic issue if column_1 and row_2 are not properly allocated&lt;/span&gt;
+				&lt;span class=&#34;hljs-comment&#34;&gt;// Multiply corresponding elements from the input matrices and accumulate the result&lt;/span&gt;
+				result_matrix[current_row][current_col] += *((&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *)(input_matrix_2 + shared_dim * &lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt; + current_col * &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;)) * *((&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *)(input_matrix_1 + current_row * &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt; + shared_dim * &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;));
+			}
+		}
+	}
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;After the optimisation, the code looks completely different: local_10 becomes result_matrix and comments are added, making it easier to see the full context of the function. They also provide information about potential vulnerabilities.&lt;/p&gt;
+&lt;p&gt;Unfortunately, the paper doesn&amp;#x2019;t provide how the prompts were created in this process, but if we reverse this back to LLM and ask him to create the prompts, it looks like this&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;You are a &lt;strong&gt;world-class cybersecurity expert specializing in reverse engineering&lt;/strong&gt;. Your primary task is to analyze raw C code decompiled by Ghidra from a &lt;strong&gt;stripped binary&lt;/strong&gt;. You need to refactor this code to maximize readability and, most importantly, &lt;strong&gt;identify and annotate potential security vulnerabilities&lt;/strong&gt; for a security audit.&lt;/p&gt;
+&lt;p&gt;The input code will lack original symbols, have generic variable names (e.g., &lt;code&gt;param_1&lt;/code&gt;, &lt;code&gt;local_10&lt;/code&gt;), and use complex pointer arithmetic. Your job is to semantically reconstruct the original developer&amp;#x2019;s intent and analyze it from a security perspective.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Follow these steps precisely:&lt;/strong&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Semantic Analysis &amp;amp; Renaming:&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Infer the high-level purpose of the function (e.g., string copy, matrix multiplication, network packet processing).&lt;/li&gt;
+&lt;li&gt;Rename the function and its parameters (&lt;code&gt;param_1&lt;/code&gt;, &lt;code&gt;param_2&lt;/code&gt;, etc.) to reflect their inferred purpose (e.g., &lt;code&gt;multiplyMatrix&lt;/code&gt;, &lt;code&gt;input_matrix_1&lt;/code&gt;, &lt;code&gt;input_matrix_2&lt;/code&gt;).&lt;/li&gt;
+&lt;li&gt;Rename local variables (&lt;code&gt;local_...&lt;/code&gt;, &lt;code&gt;auStack_...&lt;/code&gt;) to descriptive names based on their usage (e.g., &lt;code&gt;result_matrix&lt;/code&gt;, &lt;code&gt;current_row&lt;/code&gt;, &lt;code&gt;current_col&lt;/code&gt;).&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Code Refactoring for Readability:&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Convert complex pointer arithmetic into more intuitive array or struct notation. For example, transform &lt;code&gt;*(int *)((long)local_2c * 0xc + param_2 + (long)local_30 * 4)&lt;/code&gt; into a clearer form like &lt;code&gt;input_matrix_2[shared_dim][current_col]&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;Reconstruct data structures. If memory access patterns suggest a multi-dimensional array, represent it as such.&lt;/li&gt;
+&lt;li&gt;Simplify control flow and logic where possible without changing the functionality.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Vulnerability Identification &amp;amp; Annotation:&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Scrutinize the code for common C/C++ vulnerabilities, including but not limited to:&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Buffer Overflows/Underflows:&lt;/strong&gt; Unchecked indexing or pointer arithmetic.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Integer Overflows/Underflows:&lt;/strong&gt; Operations that could lead to wrapping.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Null Pointer Dereferences:&lt;/strong&gt; Use of pointers that could be null.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Use-After-Free:&lt;/strong&gt; Accessing memory after it has been freed.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Information Leakage:&lt;/strong&gt; Exposing sensitive data.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;For &lt;strong&gt;each potential vulnerability found&lt;/strong&gt;, insert a comment in the line immediately preceding the vulnerable code. The comment must start with &lt;code&gt;// Vulnerability:&lt;/code&gt; and provide a concise explanation of the potential risk.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Add Explanatory Comments:&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Add a high-level comment at the beginning of the function explaining its overall purpose.&lt;/li&gt;
+&lt;li&gt;Add comments to explain complex or non-obvious parts of the algorithm.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&lt;strong&gt;Here is an example of the desired transformation:&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;[INPUT] Raw Decompiled Code from Ghidra:&lt;/strong&gt;&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs C&#34;&gt;&amp;gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;multiplyMatrix&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; param_1, &lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; param_2)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&amp;gt;&lt;/span&gt;{
+local_10 = *(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; *)(in_FS_OFFSET + &lt;span class=&#34;hljs-number&#34;&gt;0x28&lt;/span&gt;);
+&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (*(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; *)local_34 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; *(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; *)local_34 &amp;lt; R1; local_34++) {
+	&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (local_30 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; local_30 &amp;lt; C2; local_30++) {
+		(auStack_28)[(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_34 * C2 + (&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_30] = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+		&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (local_2c = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; local_2c &amp;lt; R2; local_2c++) {
+			auStack_28[(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_34 * C2 + (&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_30] += *(&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *)((&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_2c * &lt;span class=&#34;hljs-number&#34;&gt;0xc&lt;/span&gt; + param_2 + (&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_30 * &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;)* *(&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *)((&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_34 * &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt; + param_1 + (&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_2c * &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;);
+		}
+	}
+}
+&amp;gt;}&lt;/code&gt;&lt;/pre&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;[OUTPUT] Optimized Code for Vulnerability Analysis:&lt;/strong&gt;&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs C&#34;&gt;&amp;gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;multiplyMatrix&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; input_matrix_1, &lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; input_matrix_2)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&amp;gt;&lt;/span&gt;{
+&lt;span class=&#34;hljs-comment&#34;&gt;// Initialize a matrix to store the result of matrix multiplication&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; result_matrix[row_1][column_2] = {&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;};
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// Iterate over each row and column of the result matrix&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; current_row = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; current_row &amp;lt; row_1; current_row++) {
+	&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; current_col = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; current_col &amp;lt; column_2; current_col++) {
+		&lt;span class=&#34;hljs-comment&#34;&gt;// Perform matrix multiplication by iterating over the shared dimension&lt;/span&gt;
+		&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; shared_dim = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; shared_dim &amp;lt; row_2; shared_dim++) {
+			&lt;span class=&#34;hljs-comment&#34;&gt;// Vulnerability: Potential out-of-bounds access if matrix dimensions (R1, C2, R2) are not validated&lt;/span&gt;
+			&lt;span class=&#34;hljs-comment&#34;&gt;// before this function call. The pointer arithmetic relies on these external constants.&lt;/span&gt;
+			&lt;span class=&#34;hljs-comment&#34;&gt;// Multiply corresponding elements from the input matrices and accumulate the result.&lt;/span&gt;
+			result_matrix[current_row][current_col] += *((&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *)(input_matrix_2 + shared_dim * &lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt; + current_col * &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;)) * *((&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *)(input_matrix_1 + current_row * &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt; + shared_dim * &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;));
+		}
+	}
+}
+&amp;gt;}&lt;/code&gt;&lt;/pre&gt;&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;Now, apply this process to the following Ghidra decompiled code. Provide ONLY the optimized C code as your output.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;[YOUR CODE TO ANALYZE GOES HERE]&lt;/strong&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;This creates a prompt, complete with an example. We need to test the prompt to make sure it works, so let&amp;#x2019;s remove the example and put it into Gemini.&lt;/p&gt;
+&lt;p&gt;Result:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;/**&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * @brief Performs matrix multiplication of matrix_A (R1 x R2) and matrix_B (R2 x C2).&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; *&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * This function reconstructs the logic for matrix multiplication. It takes pointers to two&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * matrices, `matrix_A_ptr` and `matrix_B_ptr`, and computes their product. The resulting&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * (R1 x C2) matrix is stored in a local stack variable `result_matrix`.&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; *&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * The dimensions R1 (rows of A), R2 (cols of A / rows of B), and C2 (cols of B)&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * are assumed to be externally defined constants (e.g., preprocessor macros),&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * which is a common source of vulnerabilities.&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; *&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * Based on the memory access patterns from the decompilation:&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * - matrix_A is treated as an [R1][R2] integer matrix.&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * - matrix_B is treated as an [R2][C2] integer matrix.&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; *&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * Note: The original stack canary check (`in_FS_OFFSET`) has been removed for clarity&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * as it is a compiler-generated security mechanism and not part of the original logic.&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; *&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * @param matrix_A_ptr  Pointer to the first input matrix (assumed to be flattened R1xR2).&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * @param matrix_B_ptr  Pointer to the second input matrix (assumed to be flattened R2xC2).&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; */&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;multiply_matrices&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *matrix_A_ptr, &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *matrix_B_ptr)&lt;/span&gt; &lt;/span&gt;{
+    &lt;span class=&#34;hljs-comment&#34;&gt;// Vulnerability: Null Pointer Dereference&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// The function does not check if input pointers are NULL before use. If either&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// `matrix_A_ptr` or `matrix_B_ptr` is NULL, dereferencing them inside the loops&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// will cause a segmentation fault and crash the application.&lt;/span&gt;
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;// To improve readability, we cast the flat input pointers to 2D array pointers.&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// This mirrors the structured access intended by the original developer.&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// The pointer arithmetic `(row * stride) + col_offset` is now `[row][col]`.&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// The strides inferred from Ghidra (`* 8` for A, `* 0xc` for B) suggest R2=2 and C2=3.&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; (*matrix_A)[R2] = (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; (*)[R2])matrix_A_ptr;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; (*matrix_B)[C2] = (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; (*)[C2])matrix_B_ptr;
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;// Vulnerability: Stack Buffer Overflow&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// The result matrix is allocated on the stack with a size fixed at compile time&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// via the macros R1 and C2. If the actual dimensions of the input matrices&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// (determined by the caller) are larger than these compiled constants, the loops&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// will write past the bounds of `result_matrix`, corrupting the stack.&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; result_matrix[R1][C2];
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;// Iterate over each row of the first matrix (matrix_A).&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; current_row = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; current_row &amp;lt; R1; current_row++) {
+        &lt;span class=&#34;hljs-comment&#34;&gt;// Iterate over each column of the second matrix (matrix_B).&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; current_col = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; current_col &amp;lt; C2; current_col++) {
+            
+            &lt;span class=&#34;hljs-comment&#34;&gt;// Initialize the target cell in the result matrix.&lt;/span&gt;
+            result_matrix[current_row][current_col] = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+
+            &lt;span class=&#34;hljs-comment&#34;&gt;// Calculate the dot product for the cell (current_row, current_col).&lt;/span&gt;
+            &lt;span class=&#34;hljs-comment&#34;&gt;// This loop iterates over the shared dimension (columns of A and rows of B).&lt;/span&gt;
+            &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; shared_dim = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; shared_dim &amp;lt; R2; shared_dim++) {
+                
+                &lt;span class=&#34;hljs-comment&#34;&gt;// Vulnerability: Integer Overflow&lt;/span&gt;
+                &lt;span class=&#34;hljs-comment&#34;&gt;// The multiplication of two matrix elements can exceed the maximum value for an `int`,&lt;/span&gt;
+                &lt;span class=&#34;hljs-comment&#34;&gt;// causing the value to wrap around (undefined behavior for signed integers).&lt;/span&gt;
+                &lt;span class=&#34;hljs-comment&#34;&gt;// The subsequent accumulation into `result_matrix` could also overflow.&lt;/span&gt;
+                
+                &lt;span class=&#34;hljs-comment&#34;&gt;// Vulnerability: Out-of-Bounds Read&lt;/span&gt;
+                &lt;span class=&#34;hljs-comment&#34;&gt;// The loops iterate based on the external constants R1, R2, and C2. If these&lt;/span&gt;
+                &lt;span class=&#34;hljs-comment&#34;&gt;// constants do not match the actual allocated sizes of the buffers pointed to&lt;/span&gt;
+                &lt;span class=&#34;hljs-comment&#34;&gt;// by `matrix_A_ptr` and `matrix_B_ptr`, this operation will read from&lt;/span&gt;
+                &lt;span class=&#34;hljs-comment&#34;&gt;// out-of-bounds memory, leading to information leakage or a crash.&lt;/span&gt;
+                result_matrix[current_row][current_col] +=
+                    matrix_A[current_row][shared_dim] * matrix_B[shared_dim][current_col];
+            }
+        }
+    }
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;// The function scope ends here. The `result_matrix` is destroyed upon returning.&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// In a real-world scenario, its contents would likely have been copied to an&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// output parameter pointer before the function returns.&lt;/span&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;It gives more details than I thought, but anyway(?) the result looks good lol I think I can fix some details like too detailed description and using English.&lt;/p&gt;
+&lt;h3 id=&#34;2-Long-term-Memory&#34;&gt;&lt;a href=&#34;#2-Long-term-Memory&#34; class=&#34;headerlink&#34; title=&#34;2) Long-term Memory&#34;&gt;&lt;/a&gt;2) Long-term Memory&lt;/h3&gt;&lt;p&gt;One of the inherent problems with LLM is the Context Window. You can&amp;#x2019;t give us the whole programme in one go, so we have to ask you in chunks, but it&amp;#x2019;s easy to lose context. It&amp;#x2019;s hard to see the complex flow of how function A calls function B, and the result affects variable C.&lt;/p&gt;
+&lt;p&gt;VulBinLLM introduces the concept of &amp;#x201C;long-term memory&amp;#x201D; to solve this problem. The idea is to store a summary of important parts of the code (e.g. function summaries, data structures, etc.) in advance, and let LLM refer to this &amp;#x2018;memory&amp;#x2019; when analysing other code fragments. According to the paper, this information includes &lt;strong&gt;a summary of the program&amp;#x2019;s purpose, key data structures, and function call graphs&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;For example, when analysing the code above, the LLM would be presented with the following additional information&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Programme Summary:** &amp;#x201C;This is a test program that accepts user input from environment variables and processes it.&amp;#x201D;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Data flow:&lt;/strong&gt; &amp;#x201C;The external input is stored in the &lt;code&gt;user_input&amp;apos; variable via the&lt;/code&gt;getenv&amp;#x2019; function, which is used as a source for the `memcpy&amp;#x2019; function.&amp;#x201D;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;With this contextual information, LLM will clearly recognise that &lt;code&gt;user_input&lt;/code&gt; is an &amp;#x2018;untrusted external input&amp;#x2019; and not just a string, and will be able to more accurately determine the vulnerability.&lt;/p&gt;
+&lt;h2 id=&#34;Wrapping-up&#34;&gt;&lt;a href=&#34;#Wrapping-up&#34; class=&#34;headerlink&#34; title=&#34;Wrapping up&#34;&gt;&lt;/a&gt;Wrapping up&lt;/h2&gt;&lt;p&gt;Today, I&amp;#x2019;ve been studying the paper &amp;#x201C;VulBinLLM: LLM-powered Vulnerability Detection for Stripped Binaries&amp;#x201D; and I&amp;#x2019;ve made a quick summary of the paper, but there are a few things that I think are missing.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;It doesn&amp;#x2019;t use the latest LLM model: This is a common shortcoming in many papers. I think it&amp;#x2019;s because the development speed of the model is so fast that they design, develop, test, and then write the paper.&lt;/li&gt;
+&lt;li&gt;Is it really a novel idea&amp;#x2026;? There are already papers on recovering stripped binary decompiled code. I&amp;#x2019;m a bit dubious about the hacky research value of this thesis.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Since there are so many LLM-related papers recently, it is not easy to pick out a really good paper and read it, so I often skim the idea. Still, if I see a paper with a good idea, I will study it again and post it lol.&lt;/p&gt;
+&lt;p&gt;Until next time&amp;#x2026; I&amp;#x2019;ll be back!&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] LLM Security &amp; Safety Part 2. VulBinLLM Review(KR) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;&lt;img src=&#34;/2025/06/15/j0ker/llm_part2/en/9xgtc2.jpg&#34; alt=&#34;index_img&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Hello! It&amp;#x2019;s been 6 months since I&amp;#x2019;ve been back to &amp;#x2026;. I&amp;#x2019;m j0ker! The reason for the lack of posts in the first half of 2025 is&amp;#x2026; I was too busy&amp;#x2026; lol Even while I was busy, I was slowly following up on LLM-related trends, but as more and more papers and technologies come out, it&amp;#x2019;s hard to keep up&amp;#x2026; For God&amp;#x2019;s sake&amp;#x2026; When do you get to work?&lt;/p&gt;
+&lt;p&gt;So, rather than summarise the overall trend, I&amp;#x2019;ll just summarise what I&amp;#x2019;ve been reading for the time being. Today&amp;#x2019;s paper is &amp;#x201C;VulBinLLM: LLM-powered Vulnerability Detection for Stripped Binaries&amp;#x201D;. I started reading the paper with the thought that it&amp;#x2019;s about finding stripped binary vulnerabilities with LLM&amp;#x2026; is this really possible?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/06/15/j0ker/llm_part2/en/9xgth1.jpg&#34; alt=&#34;image.jpg&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Try your best, LLM&amp;#x2026;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2 id=&#34;1-Can-LLM-be-used-to-find-vulnerabilities&#34;&gt;&lt;a href=&#34;#1-Can-LLM-be-used-to-find-vulnerabilities&#34; class=&#34;headerlink&#34; title=&#34;1. Can LLM be used to find vulnerabilities?&#34;&gt;&lt;/a&gt;1. Can LLM be used to find vulnerabilities?&lt;/h2&gt;&lt;p&gt;This is the topic that fandu presented at the Hackyboiz Open Seminar a few days ago. It&amp;#x2019;s a very simple but powerful idea: &amp;#x201C;Hey, can we LLM this because it&amp;#x2019;s hard for humans to read?&amp;#x201D; Team Atlanta found a zero-day vulnerability in SQLite at AIxCC last year, Project0 found a vulnerability&amp;#x2026; and now X also found a zero-day vulnerability in Linux SMB using LLM.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://sean.heelan.io/2025/05/22/how-i-used-o3-to-find-cve-2025-37899-a-remote-zeroday-vulnerability-in-the-linux-kernels-smb-implementation/&#34;&gt;How I used o3 to find CVE-2025-37899, a remote zeroday vulnerability in the Linux kernel&amp;#x2019;s SMB implementation&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;This article caused quite a stir on X (formerly Twitter).&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/06/15/j0ker/llm_part2/en/x_1.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Tons of likes and retweets&amp;#x2026;. Give our team account a lot of love too&amp;#x2026;! &lt;a href=&#34;https://x.com/hackyboiz&#34;&gt;@hackyboiz&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;It seems too obvious that we can use LLMs to find zero-days.&lt;/p&gt;
+&lt;h2 id=&#34;2-Stripped-Binary&#34;&gt;&lt;a href=&#34;#2-Stripped-Binary&#34; class=&#34;headerlink&#34; title=&#34;2. Stripped Binary&#34;&gt;&lt;/a&gt;2. Stripped Binary&lt;/h2&gt;&lt;p&gt;First of all, you should know what a &amp;#x2018;Stripped Binary&amp;#x2019; is, right? When we usually write C or C++ code and compile it, we get an executable (binary) file, right? When debugging, it&amp;#x2019;s easy to analyse because it contains all the information (symbols) like function names and variable names.&lt;br&gt;But when it&amp;#x2019;s deployed, it&amp;#x2019;s stripped of all this information to reduce the size and make it harder for hackers like us to analyse. This is what Stripped Binary is: function names are changed to &lt;code&gt;sub_401000&lt;/code&gt; or something like that, you don&amp;#x2019;t even know what the variables are&amp;#x2026; and analysing them is a real nightmare. When I was first doing CTF or bug hunting, I had a chance to analyse an open source vulnerability by looking at a stripped binary, and it was a new world&amp;#x2026; No, it&amp;#x2019;s so easy to analyse? (That&amp;#x2019;s why I&amp;#x2019;ve been looking for vulnerabilities in open source since then&amp;#x2026;)&lt;/p&gt;
+&lt;h2 id=&#34;3-So-how-are-you-going-to-find-vulnerabilities-with-LLM&#34;&gt;&lt;a href=&#34;#3-So-how-are-you-going-to-find-vulnerabilities-with-LLM&#34; class=&#34;headerlink&#34; title=&#34;3. So how are you going to find vulnerabilities with LLM?&#34;&gt;&lt;/a&gt;3. So how are you going to find vulnerabilities with LLM?&lt;/h2&gt;&lt;p&gt;The main goal of this thesis is to create VulBinLLM, a system that uses LLM to automatically find vulnerabilities in stripped binaries. But can we just paste the decompiled code and tell LLM &amp;#x201C;hey, find vulnerabilities&amp;#x201D; and it will work? Yes, for simple code. But on larger, more massive chunks of code? If it&amp;#x2019;s stripped binary and doesn&amp;#x2019;t even have proper function and variable names? It&amp;#x2019;s a recipe for bullshit. The real contribution of this paper is how to solve that &amp;#x201C;how?&amp;#x201D;.&lt;/p&gt;
+&lt;p&gt;In the thesis, we designed the following systematic structure to solve this problem.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/06/15/j0ker/llm_part2/en/figure1.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Instead of just putting binaries into LLM, we built a clear pipeline: &lt;strong&gt;Decompilation -&amp;gt; Optimisation -&amp;gt; Long-term memory generation -&amp;gt; LLM analysis&lt;/strong&gt;. In particular, the &amp;#x2018;optimisation&amp;#x2019; and &amp;#x2018;long-term memory&amp;#x2019; parts are the core of this research.&lt;/p&gt;
+&lt;h3 id=&#34;1-Decompilation-Optimisation-Refining-code-for-LLM&#34;&gt;&lt;a href=&#34;#1-Decompilation-Optimisation-Refining-code-for-LLM&#34; class=&#34;headerlink&#34; title=&#34;1) Decompilation Optimisation: Refining code for LLM&#34;&gt;&lt;/a&gt;1) Decompilation Optimisation: Refining code for LLM&lt;/h3&gt;&lt;p&gt;The first key is &amp;#x2018;decompilation optimisation&amp;#x2019;. The example below illustrates this process very clearly.&lt;/p&gt;
+&lt;p&gt;Before Optimisation (Ghidra):&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;multiplyMatrix&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; param_1, &lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; param_2)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+	local_10 = *(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; *)(in_FS_OFFSET + &lt;span class=&#34;hljs-number&#34;&gt;0x28&lt;/span&gt;);
+	&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (*(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; *)local_34 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; *(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; *)local_34 &amp;lt; R1; local_34++) {
+		&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (local_30 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; local_30 &amp;lt; C2; local_30++) {
+			(auStack_28)[(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_34 * C2 + (&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_30] = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+			&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (local_2c = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; local_2c &amp;lt; R2; local_2c++) {
+				auStack_28[(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_34 * C2 + (&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_30] += *(&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *)((&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_2c * &lt;span class=&#34;hljs-number&#34;&gt;0xc&lt;/span&gt; + param_2 + (&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_30 * &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;)* *(&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *)((&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_34 * &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt; + param_1 + (&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_2c * &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;);
+			}
+		}
+	}
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;As you can see, the variable names don&amp;#x2019;t make sense, like &lt;code&gt;param_1&lt;/code&gt;, &lt;code&gt;local_34&lt;/code&gt;, and &lt;code&gt;R2&lt;/code&gt;, and although there are several loop statements used, it&amp;#x2019;s not immediately obvious what&amp;#x2019;s going on.&lt;/p&gt;
+&lt;p&gt;After optimisation (VulBinLLM):&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;multiplyMatrix&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; input_matrix_1, &lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; input_matrix_2)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+	&lt;span class=&#34;hljs-comment&#34;&gt;// Initialize a matrix to store the result of matrix multiplication&lt;/span&gt;
+	&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; result_matrix[row_1][column_2] = {&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;};
+	&lt;span class=&#34;hljs-comment&#34;&gt;// Iterate over each row and column of the result matrix&lt;/span&gt;
+	&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; current_row = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; current_row &amp;lt; row_1; current_row++) {
+		&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; current_col = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; current_col &amp;lt; column_2; current_col++) {
+			&lt;span class=&#34;hljs-comment&#34;&gt;// Perform matrix multiplication by iterating over the shared dimension&lt;/span&gt;
+			&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; shared_dim = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; shared_dim &amp;lt; row_2; shared_dim++) {
+				&lt;span class=&#34;hljs-comment&#34;&gt;// Vulnerability: Potential pointer arithmetic issue if column_1 and row_2 are not properly allocated&lt;/span&gt;
+				&lt;span class=&#34;hljs-comment&#34;&gt;// Multiply corresponding elements from the input matrices and accumulate the result&lt;/span&gt;
+				result_matrix[current_row][current_col] += *((&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *)(input_matrix_2 + shared_dim * &lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt; + current_col * &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;)) * *((&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *)(input_matrix_1 + current_row * &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt; + shared_dim * &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;));
+			}
+		}
+	}
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;After the optimisation, the code looks completely different: local_10 becomes result_matrix and comments are added, making it easier to see the full context of the function. They also provide information about potential vulnerabilities.&lt;/p&gt;
+&lt;p&gt;Unfortunately, the paper doesn&amp;#x2019;t provide how the prompts were created in this process, but if we reverse this back to LLM and ask him to create the prompts, it looks like this&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;You are a &lt;strong&gt;world-class cybersecurity expert specializing in reverse engineering&lt;/strong&gt;. Your primary task is to analyze raw C code decompiled by Ghidra from a &lt;strong&gt;stripped binary&lt;/strong&gt;. You need to refactor this code to maximize readability and, most importantly, &lt;strong&gt;identify and annotate potential security vulnerabilities&lt;/strong&gt; for a security audit.&lt;/p&gt;
+&lt;p&gt;The input code will lack original symbols, have generic variable names (e.g., &lt;code&gt;param_1&lt;/code&gt;, &lt;code&gt;local_10&lt;/code&gt;), and use complex pointer arithmetic. Your job is to semantically reconstruct the original developer&amp;#x2019;s intent and analyze it from a security perspective.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Follow these steps precisely:&lt;/strong&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Semantic Analysis &amp;amp; Renaming:&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Infer the high-level purpose of the function (e.g., string copy, matrix multiplication, network packet processing).&lt;/li&gt;
+&lt;li&gt;Rename the function and its parameters (&lt;code&gt;param_1&lt;/code&gt;, &lt;code&gt;param_2&lt;/code&gt;, etc.) to reflect their inferred purpose (e.g., &lt;code&gt;multiplyMatrix&lt;/code&gt;, &lt;code&gt;input_matrix_1&lt;/code&gt;, &lt;code&gt;input_matrix_2&lt;/code&gt;).&lt;/li&gt;
+&lt;li&gt;Rename local variables (&lt;code&gt;local_...&lt;/code&gt;, &lt;code&gt;auStack_...&lt;/code&gt;) to descriptive names based on their usage (e.g., &lt;code&gt;result_matrix&lt;/code&gt;, &lt;code&gt;current_row&lt;/code&gt;, &lt;code&gt;current_col&lt;/code&gt;).&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Code Refactoring for Readability:&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Convert complex pointer arithmetic into more intuitive array or struct notation. For example, transform &lt;code&gt;*(int *)((long)local_2c * 0xc + param_2 + (long)local_30 * 4)&lt;/code&gt; into a clearer form like &lt;code&gt;input_matrix_2[shared_dim][current_col]&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;Reconstruct data structures. If memory access patterns suggest a multi-dimensional array, represent it as such.&lt;/li&gt;
+&lt;li&gt;Simplify control flow and logic where possible without changing the functionality.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Vulnerability Identification &amp;amp; Annotation:&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Scrutinize the code for common C/C++ vulnerabilities, including but not limited to:&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Buffer Overflows/Underflows:&lt;/strong&gt; Unchecked indexing or pointer arithmetic.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Integer Overflows/Underflows:&lt;/strong&gt; Operations that could lead to wrapping.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Null Pointer Dereferences:&lt;/strong&gt; Use of pointers that could be null.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Use-After-Free:&lt;/strong&gt; Accessing memory after it has been freed.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Information Leakage:&lt;/strong&gt; Exposing sensitive data.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;For &lt;strong&gt;each potential vulnerability found&lt;/strong&gt;, insert a comment in the line immediately preceding the vulnerable code. The comment must start with &lt;code&gt;// Vulnerability:&lt;/code&gt; and provide a concise explanation of the potential risk.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Add Explanatory Comments:&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Add a high-level comment at the beginning of the function explaining its overall purpose.&lt;/li&gt;
+&lt;li&gt;Add comments to explain complex or non-obvious parts of the algorithm.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&lt;strong&gt;Here is an example of the desired transformation:&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;[INPUT] Raw Decompiled Code from Ghidra:&lt;/strong&gt;&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs C&#34;&gt;&amp;gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;multiplyMatrix&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; param_1, &lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; param_2)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&amp;gt;&lt;/span&gt;{
+local_10 = *(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; *)(in_FS_OFFSET + &lt;span class=&#34;hljs-number&#34;&gt;0x28&lt;/span&gt;);
+&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (*(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; *)local_34 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; *(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; *)local_34 &amp;lt; R1; local_34++) {
+	&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (local_30 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; local_30 &amp;lt; C2; local_30++) {
+		(auStack_28)[(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_34 * C2 + (&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_30] = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+		&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (local_2c = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; local_2c &amp;lt; R2; local_2c++) {
+			auStack_28[(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_34 * C2 + (&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_30] += *(&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *)((&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_2c * &lt;span class=&#34;hljs-number&#34;&gt;0xc&lt;/span&gt; + param_2 + (&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_30 * &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;)* *(&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *)((&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_34 * &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt; + param_1 + (&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;)local_2c * &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;);
+		}
+	}
+}
+&amp;gt;}&lt;/code&gt;&lt;/pre&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;[OUTPUT] Optimized Code for Vulnerability Analysis:&lt;/strong&gt;&lt;br&gt;&lt;pre&gt;&lt;code class=&#34;hljs C&#34;&gt;&amp;gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;multiplyMatrix&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; input_matrix_1, &lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; input_matrix_2)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&amp;gt;&lt;/span&gt;{
+&lt;span class=&#34;hljs-comment&#34;&gt;// Initialize a matrix to store the result of matrix multiplication&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; result_matrix[row_1][column_2] = {&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;};
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// Iterate over each row and column of the result matrix&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; current_row = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; current_row &amp;lt; row_1; current_row++) {
+	&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; current_col = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; current_col &amp;lt; column_2; current_col++) {
+		&lt;span class=&#34;hljs-comment&#34;&gt;// Perform matrix multiplication by iterating over the shared dimension&lt;/span&gt;
+		&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; shared_dim = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; shared_dim &amp;lt; row_2; shared_dim++) {
+			&lt;span class=&#34;hljs-comment&#34;&gt;// Vulnerability: Potential out-of-bounds access if matrix dimensions (R1, C2, R2) are not validated&lt;/span&gt;
+			&lt;span class=&#34;hljs-comment&#34;&gt;// before this function call. The pointer arithmetic relies on these external constants.&lt;/span&gt;
+			&lt;span class=&#34;hljs-comment&#34;&gt;// Multiply corresponding elements from the input matrices and accumulate the result.&lt;/span&gt;
+			result_matrix[current_row][current_col] += *((&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *)(input_matrix_2 + shared_dim * &lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt; + current_col * &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;)) * *((&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *)(input_matrix_1 + current_row * &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt; + shared_dim * &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;));
+		}
+	}
+}
+&amp;gt;}&lt;/code&gt;&lt;/pre&gt;&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;Now, apply this process to the following Ghidra decompiled code. Provide ONLY the optimized C code as your output.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;[YOUR CODE TO ANALYZE GOES HERE]&lt;/strong&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;This creates a prompt, complete with an example. We need to test the prompt to make sure it works, so let&amp;#x2019;s remove the example and put it into Gemini.&lt;/p&gt;
+&lt;p&gt;Result:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;/**&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * @brief Performs matrix multiplication of matrix_A (R1 x R2) and matrix_B (R2 x C2).&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; *&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * This function reconstructs the logic for matrix multiplication. It takes pointers to two&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * matrices, `matrix_A_ptr` and `matrix_B_ptr`, and computes their product. The resulting&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * (R1 x C2) matrix is stored in a local stack variable `result_matrix`.&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; *&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * The dimensions R1 (rows of A), R2 (cols of A / rows of B), and C2 (cols of B)&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * are assumed to be externally defined constants (e.g., preprocessor macros),&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * which is a common source of vulnerabilities.&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; *&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * Based on the memory access patterns from the decompilation:&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * - matrix_A is treated as an [R1][R2] integer matrix.&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * - matrix_B is treated as an [R2][C2] integer matrix.&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; *&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * Note: The original stack canary check (`in_FS_OFFSET`) has been removed for clarity&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * as it is a compiler-generated security mechanism and not part of the original logic.&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; *&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * @param matrix_A_ptr  Pointer to the first input matrix (assumed to be flattened R1xR2).&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; * @param matrix_B_ptr  Pointer to the second input matrix (assumed to be flattened R2xC2).&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt; */&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;multiply_matrices&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *matrix_A_ptr, &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *matrix_B_ptr)&lt;/span&gt; &lt;/span&gt;{
+    &lt;span class=&#34;hljs-comment&#34;&gt;// Vulnerability: Null Pointer Dereference&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// The function does not check if input pointers are NULL before use. If either&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// `matrix_A_ptr` or `matrix_B_ptr` is NULL, dereferencing them inside the loops&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// will cause a segmentation fault and crash the application.&lt;/span&gt;
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;// To improve readability, we cast the flat input pointers to 2D array pointers.&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// This mirrors the structured access intended by the original developer.&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// The pointer arithmetic `(row * stride) + col_offset` is now `[row][col]`.&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// The strides inferred from Ghidra (`* 8` for A, `* 0xc` for B) suggest R2=2 and C2=3.&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; (*matrix_A)[R2] = (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; (*)[R2])matrix_A_ptr;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; (*matrix_B)[C2] = (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; (*)[C2])matrix_B_ptr;
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;// Vulnerability: Stack Buffer Overflow&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// The result matrix is allocated on the stack with a size fixed at compile time&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// via the macros R1 and C2. If the actual dimensions of the input matrices&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// (determined by the caller) are larger than these compiled constants, the loops&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// will write past the bounds of `result_matrix`, corrupting the stack.&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; result_matrix[R1][C2];
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;// Iterate over each row of the first matrix (matrix_A).&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; current_row = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; current_row &amp;lt; R1; current_row++) {
+        &lt;span class=&#34;hljs-comment&#34;&gt;// Iterate over each column of the second matrix (matrix_B).&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; current_col = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; current_col &amp;lt; C2; current_col++) {
+            
+            &lt;span class=&#34;hljs-comment&#34;&gt;// Initialize the target cell in the result matrix.&lt;/span&gt;
+            result_matrix[current_row][current_col] = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+
+            &lt;span class=&#34;hljs-comment&#34;&gt;// Calculate the dot product for the cell (current_row, current_col).&lt;/span&gt;
+            &lt;span class=&#34;hljs-comment&#34;&gt;// This loop iterates over the shared dimension (columns of A and rows of B).&lt;/span&gt;
+            &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; shared_dim = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; shared_dim &amp;lt; R2; shared_dim++) {
+                
+                &lt;span class=&#34;hljs-comment&#34;&gt;// Vulnerability: Integer Overflow&lt;/span&gt;
+                &lt;span class=&#34;hljs-comment&#34;&gt;// The multiplication of two matrix elements can exceed the maximum value for an `int`,&lt;/span&gt;
+                &lt;span class=&#34;hljs-comment&#34;&gt;// causing the value to wrap around (undefined behavior for signed integers).&lt;/span&gt;
+                &lt;span class=&#34;hljs-comment&#34;&gt;// The subsequent accumulation into `result_matrix` could also overflow.&lt;/span&gt;
+                
+                &lt;span class=&#34;hljs-comment&#34;&gt;// Vulnerability: Out-of-Bounds Read&lt;/span&gt;
+                &lt;span class=&#34;hljs-comment&#34;&gt;// The loops iterate based on the external constants R1, R2, and C2. If these&lt;/span&gt;
+                &lt;span class=&#34;hljs-comment&#34;&gt;// constants do not match the actual allocated sizes of the buffers pointed to&lt;/span&gt;
+                &lt;span class=&#34;hljs-comment&#34;&gt;// by `matrix_A_ptr` and `matrix_B_ptr`, this operation will read from&lt;/span&gt;
+                &lt;span class=&#34;hljs-comment&#34;&gt;// out-of-bounds memory, leading to information leakage or a crash.&lt;/span&gt;
+                result_matrix[current_row][current_col] +=
+                    matrix_A[current_row][shared_dim] * matrix_B[shared_dim][current_col];
+            }
+        }
+    }
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;// The function scope ends here. The `result_matrix` is destroyed upon returning.&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// In a real-world scenario, its contents would likely have been copied to an&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// output parameter pointer before the function returns.&lt;/span&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;It gives more details than I thought, but anyway(?) the result looks good lol I think I can fix some details like too detailed description and using English.&lt;/p&gt;
+&lt;h3 id=&#34;2-Long-term-Memory&#34;&gt;&lt;a href=&#34;#2-Long-term-Memory&#34; class=&#34;headerlink&#34; title=&#34;2) Long-term Memory&#34;&gt;&lt;/a&gt;2) Long-term Memory&lt;/h3&gt;&lt;p&gt;One of the inherent problems with LLM is the Context Window. You can&amp;#x2019;t give us the whole programme in one go, so we have to ask you in chunks, but it&amp;#x2019;s easy to lose context. It&amp;#x2019;s hard to see the complex flow of how function A calls function B, and the result affects variable C.&lt;/p&gt;
+&lt;p&gt;VulBinLLM introduces the concept of &amp;#x201C;long-term memory&amp;#x201D; to solve this problem. The idea is to store a summary of important parts of the code (e.g. function summaries, data structures, etc.) in advance, and let LLM refer to this &amp;#x2018;memory&amp;#x2019; when analysing other code fragments. According to the paper, this information includes &lt;strong&gt;a summary of the program&amp;#x2019;s purpose, key data structures, and function call graphs&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;For example, when analysing the code above, the LLM would be presented with the following additional information&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Programme Summary:** &amp;#x201C;This is a test program that accepts user input from environment variables and processes it.&amp;#x201D;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Data flow:&lt;/strong&gt; &amp;#x201C;The external input is stored in the &lt;code&gt;user_input&amp;apos; variable via the&lt;/code&gt;getenv&amp;#x2019; function, which is used as a source for the `memcpy&amp;#x2019; function.&amp;#x201D;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;With this contextual information, LLM will clearly recognise that &lt;code&gt;user_input&lt;/code&gt; is an &amp;#x2018;untrusted external input&amp;#x2019; and not just a string, and will be able to more accurately determine the vulnerability.&lt;/p&gt;
+&lt;h2 id=&#34;Wrapping-up&#34;&gt;&lt;a href=&#34;#Wrapping-up&#34; class=&#34;headerlink&#34; title=&#34;Wrapping up&#34;&gt;&lt;/a&gt;Wrapping up&lt;/h2&gt;&lt;p&gt;Today, I&amp;#x2019;ve been studying the paper &amp;#x201C;VulBinLLM: LLM-powered Vulnerability Detection for Stripped Binaries&amp;#x201D; and I&amp;#x2019;ve made a quick summary of the paper, but there are a few things that I think are missing.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;It doesn&amp;#x2019;t use the latest LLM model: This is a common shortcoming in many papers. I think it&amp;#x2019;s because the development speed of the model is so fast that they design, develop, test, and then write the paper.&lt;/li&gt;
+&lt;li&gt;Is it really a novel idea&amp;#x2026;? There are already papers on recovering stripped binary decompiled code. I&amp;#x2019;m a bit dubious about the hacky research value of this thesis.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Since there are so many LLM-related papers recently, it is not easy to pick out a really good paper and read it, so I often skim the idea. Still, if I see a paper with a good idea, I will study it again and post it lol.&lt;/p&gt;
+&lt;p&gt;Until next time&amp;#x2026; I&amp;#x2019;ll be back!&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/06/15/j0ker/llm_part2/en/9xgtc2.jpg">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/06/15/j0ker/llm_part2/en/">
+
+  <title>[Research] LLM Security &amp; Safety Part 2. VulBinLLM Review(KR) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-06-15 20:00" pubdate>
+      2025년 6월 15일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      2.5k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      49
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] LLM Security &amp; Safety Part 2. VulBinLLM Review(KR)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p><img src="/2025/06/15/j0ker/llm_part2/en/9xgtc2.jpg" srcset="/img/loading.gif" alt="index_img"></p>
+<p>Hello! It&#x2019;s been 6 months since I&#x2019;ve been back to &#x2026;. I&#x2019;m j0ker! The reason for the lack of posts in the first half of 2025 is&#x2026; I was too busy&#x2026; lol Even while I was busy, I was slowly following up on LLM-related trends, but as more and more papers and technologies come out, it&#x2019;s hard to keep up&#x2026; For God&#x2019;s sake&#x2026; When do you get to work?</p>
+<p>So, rather than summarise the overall trend, I&#x2019;ll just summarise what I&#x2019;ve been reading for the time being. Today&#x2019;s paper is &#x201C;VulBinLLM: LLM-powered Vulnerability Detection for Stripped Binaries&#x201D;. I started reading the paper with the thought that it&#x2019;s about finding stripped binary vulnerabilities with LLM&#x2026; is this really possible?</p>
+<p><img src="/2025/06/15/j0ker/llm_part2/en/9xgth1.jpg" srcset="/img/loading.gif" alt="image.jpg"></p>
+<blockquote>
+<p>Try your best, LLM&#x2026;</p>
+</blockquote>
+<h2 id="1-Can-LLM-be-used-to-find-vulnerabilities"><a href="#1-Can-LLM-be-used-to-find-vulnerabilities" class="headerlink" title="1. Can LLM be used to find vulnerabilities?"></a>1. Can LLM be used to find vulnerabilities?</h2><p>This is the topic that fandu presented at the Hackyboiz Open Seminar a few days ago. It&#x2019;s a very simple but powerful idea: &#x201C;Hey, can we LLM this because it&#x2019;s hard for humans to read?&#x201D; Team Atlanta found a zero-day vulnerability in SQLite at AIxCC last year, Project0 found a vulnerability&#x2026; and now X also found a zero-day vulnerability in Linux SMB using LLM.</p>
+<ul>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://sean.heelan.io/2025/05/22/how-i-used-o3-to-find-cve-2025-37899-a-remote-zeroday-vulnerability-in-the-linux-kernels-smb-implementation/">How I used o3 to find CVE-2025-37899, a remote zeroday vulnerability in the Linux kernel&#x2019;s SMB implementation</a></li>
+</ul>
+<p>This article caused quite a stir on X (formerly Twitter).</p>
+<p><img src="/2025/06/15/j0ker/llm_part2/en/x_1.png" srcset="/img/loading.gif" alt="image.png"></p>
+<blockquote>
+<p>Tons of likes and retweets&#x2026;. Give our team account a lot of love too&#x2026;! <a target="_blank" rel="external nofollow noopener noreferrer" href="https://x.com/hackyboiz">@hackyboiz</a></p>
+</blockquote>
+<p>It seems too obvious that we can use LLMs to find zero-days.</p>
+<h2 id="2-Stripped-Binary"><a href="#2-Stripped-Binary" class="headerlink" title="2. Stripped Binary"></a>2. Stripped Binary</h2><p>First of all, you should know what a &#x2018;Stripped Binary&#x2019; is, right? When we usually write C or C++ code and compile it, we get an executable (binary) file, right? When debugging, it&#x2019;s easy to analyse because it contains all the information (symbols) like function names and variable names.<br>But when it&#x2019;s deployed, it&#x2019;s stripped of all this information to reduce the size and make it harder for hackers like us to analyse. This is what Stripped Binary is: function names are changed to <code>sub_401000</code> or something like that, you don&#x2019;t even know what the variables are&#x2026; and analysing them is a real nightmare. When I was first doing CTF or bug hunting, I had a chance to analyse an open source vulnerability by looking at a stripped binary, and it was a new world&#x2026; No, it&#x2019;s so easy to analyse? (That&#x2019;s why I&#x2019;ve been looking for vulnerabilities in open source since then&#x2026;)</p>
+<h2 id="3-So-how-are-you-going-to-find-vulnerabilities-with-LLM"><a href="#3-So-how-are-you-going-to-find-vulnerabilities-with-LLM" class="headerlink" title="3. So how are you going to find vulnerabilities with LLM?"></a>3. So how are you going to find vulnerabilities with LLM?</h2><p>The main goal of this thesis is to create VulBinLLM, a system that uses LLM to automatically find vulnerabilities in stripped binaries. But can we just paste the decompiled code and tell LLM &#x201C;hey, find vulnerabilities&#x201D; and it will work? Yes, for simple code. But on larger, more massive chunks of code? If it&#x2019;s stripped binary and doesn&#x2019;t even have proper function and variable names? It&#x2019;s a recipe for bullshit. The real contribution of this paper is how to solve that &#x201C;how?&#x201D;.</p>
+<p>In the thesis, we designed the following systematic structure to solve this problem.</p>
+<p><img src="/2025/06/15/j0ker/llm_part2/en/figure1.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Instead of just putting binaries into LLM, we built a clear pipeline: <strong>Decompilation -&gt; Optimisation -&gt; Long-term memory generation -&gt; LLM analysis</strong>. In particular, the &#x2018;optimisation&#x2019; and &#x2018;long-term memory&#x2019; parts are the core of this research.</p>
+<h3 id="1-Decompilation-Optimisation-Refining-code-for-LLM"><a href="#1-Decompilation-Optimisation-Refining-code-for-LLM" class="headerlink" title="1) Decompilation Optimisation: Refining code for LLM"></a>1) Decompilation Optimisation: Refining code for LLM</h3><p>The first key is &#x2018;decompilation optimisation&#x2019;. The example below illustrates this process very clearly.</p>
+<p>Before Optimisation (Ghidra):</p>
+<pre><code class="hljs c"><span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">multiplyMatrix</span><span class="hljs-params">(<span class="hljs-keyword">long</span> param_1, <span class="hljs-keyword">long</span> param_2)</span></span>
+<span class="hljs-function"></span>{
+	local_10 = *(<span class="hljs-keyword">long</span> *)(in_FS_OFFSET + <span class="hljs-number">0x28</span>);
+	<span class="hljs-keyword">for</span> (*(<span class="hljs-keyword">long</span> *)local_34 = <span class="hljs-number">0</span>; *(<span class="hljs-keyword">long</span> *)local_34 &lt; R1; local_34++) {
+		<span class="hljs-keyword">for</span> (local_30 = <span class="hljs-number">0</span>; local_30 &lt; C2; local_30++) {
+			(auStack_28)[(<span class="hljs-keyword">long</span>)local_34 * C2 + (<span class="hljs-keyword">long</span>)local_30] = <span class="hljs-number">0</span>;
+			<span class="hljs-keyword">for</span> (local_2c = <span class="hljs-number">0</span>; local_2c &lt; R2; local_2c++) {
+				auStack_28[(<span class="hljs-keyword">long</span>)local_34 * C2 + (<span class="hljs-keyword">long</span>)local_30] += *(<span class="hljs-keyword">int</span> *)((<span class="hljs-keyword">long</span>)local_2c * <span class="hljs-number">0xc</span> + param_2 + (<span class="hljs-keyword">long</span>)local_30 * <span class="hljs-number">4</span>)* *(<span class="hljs-keyword">int</span> *)((<span class="hljs-keyword">long</span>)local_34 * <span class="hljs-number">8</span> + param_1 + (<span class="hljs-keyword">long</span>)local_2c * <span class="hljs-number">4</span>);
+			}
+		}
+	}
+}</code></pre>
+<p>As you can see, the variable names don&#x2019;t make sense, like <code>param_1</code>, <code>local_34</code>, and <code>R2</code>, and although there are several loop statements used, it&#x2019;s not immediately obvious what&#x2019;s going on.</p>
+<p>After optimisation (VulBinLLM):</p>
+<pre><code class="hljs c"><span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">multiplyMatrix</span><span class="hljs-params">(<span class="hljs-keyword">long</span> input_matrix_1, <span class="hljs-keyword">long</span> input_matrix_2)</span></span>
+<span class="hljs-function"></span>{
+	<span class="hljs-comment">// Initialize a matrix to store the result of matrix multiplication</span>
+	<span class="hljs-keyword">int</span> result_matrix[row_1][column_2] = {<span class="hljs-number">0</span>};
+	<span class="hljs-comment">// Iterate over each row and column of the result matrix</span>
+	<span class="hljs-keyword">for</span> (<span class="hljs-keyword">int</span> current_row = <span class="hljs-number">0</span>; current_row &lt; row_1; current_row++) {
+		<span class="hljs-keyword">for</span> (<span class="hljs-keyword">int</span> current_col = <span class="hljs-number">0</span>; current_col &lt; column_2; current_col++) {
+			<span class="hljs-comment">// Perform matrix multiplication by iterating over the shared dimension</span>
+			<span class="hljs-keyword">for</span> (<span class="hljs-keyword">int</span> shared_dim = <span class="hljs-number">0</span>; shared_dim &lt; row_2; shared_dim++) {
+				<span class="hljs-comment">// Vulnerability: Potential pointer arithmetic issue if column_1 and row_2 are not properly allocated</span>
+				<span class="hljs-comment">// Multiply corresponding elements from the input matrices and accumulate the result</span>
+				result_matrix[current_row][current_col] += *((<span class="hljs-keyword">int</span> *)(input_matrix_2 + shared_dim * <span class="hljs-number">12</span> + current_col * <span class="hljs-number">4</span>)) * *((<span class="hljs-keyword">int</span> *)(input_matrix_1 + current_row * <span class="hljs-number">8</span> + shared_dim * <span class="hljs-number">4</span>));
+			}
+		}
+	}
+}</code></pre>
+<p>After the optimisation, the code looks completely different: local_10 becomes result_matrix and comments are added, making it easier to see the full context of the function. They also provide information about potential vulnerabilities.</p>
+<p>Unfortunately, the paper doesn&#x2019;t provide how the prompts were created in this process, but if we reverse this back to LLM and ask him to create the prompts, it looks like this</p>
+<blockquote>
+<p>You are a <strong>world-class cybersecurity expert specializing in reverse engineering</strong>. Your primary task is to analyze raw C code decompiled by Ghidra from a <strong>stripped binary</strong>. You need to refactor this code to maximize readability and, most importantly, <strong>identify and annotate potential security vulnerabilities</strong> for a security audit.</p>
+<p>The input code will lack original symbols, have generic variable names (e.g., <code>param_1</code>, <code>local_10</code>), and use complex pointer arithmetic. Your job is to semantically reconstruct the original developer&#x2019;s intent and analyze it from a security perspective.</p>
+<p><strong>Follow these steps precisely:</strong></p>
+<ol>
+<li><p><strong>Semantic Analysis &amp; Renaming:</strong></p>
+<ul>
+<li>Infer the high-level purpose of the function (e.g., string copy, matrix multiplication, network packet processing).</li>
+<li>Rename the function and its parameters (<code>param_1</code>, <code>param_2</code>, etc.) to reflect their inferred purpose (e.g., <code>multiplyMatrix</code>, <code>input_matrix_1</code>, <code>input_matrix_2</code>).</li>
+<li>Rename local variables (<code>local_...</code>, <code>auStack_...</code>) to descriptive names based on their usage (e.g., <code>result_matrix</code>, <code>current_row</code>, <code>current_col</code>).</li>
+</ul>
+</li>
+<li><p><strong>Code Refactoring for Readability:</strong></p>
+<ul>
+<li>Convert complex pointer arithmetic into more intuitive array or struct notation. For example, transform <code>*(int *)((long)local_2c * 0xc + param_2 + (long)local_30 * 4)</code> into a clearer form like <code>input_matrix_2[shared_dim][current_col]</code>.</li>
+<li>Reconstruct data structures. If memory access patterns suggest a multi-dimensional array, represent it as such.</li>
+<li>Simplify control flow and logic where possible without changing the functionality.</li>
+</ul>
+</li>
+<li><p><strong>Vulnerability Identification &amp; Annotation:</strong></p>
+<ul>
+<li>Scrutinize the code for common C/C++ vulnerabilities, including but not limited to:<ul>
+<li><strong>Buffer Overflows/Underflows:</strong> Unchecked indexing or pointer arithmetic.</li>
+<li><strong>Integer Overflows/Underflows:</strong> Operations that could lead to wrapping.</li>
+<li><strong>Null Pointer Dereferences:</strong> Use of pointers that could be null.</li>
+<li><strong>Use-After-Free:</strong> Accessing memory after it has been freed.</li>
+<li><strong>Information Leakage:</strong> Exposing sensitive data.</li>
+</ul>
+</li>
+<li>For <strong>each potential vulnerability found</strong>, insert a comment in the line immediately preceding the vulnerable code. The comment must start with <code>// Vulnerability:</code> and provide a concise explanation of the potential risk.</li>
+</ul>
+</li>
+<li><p><strong>Add Explanatory Comments:</strong></p>
+<ul>
+<li>Add a high-level comment at the beginning of the function explaining its overall purpose.</li>
+<li>Add comments to explain complex or non-obvious parts of the algorithm.</li>
+</ul>
+</li>
+</ol>
+<p><strong>Here is an example of the desired transformation:</strong></p>
+<p><strong>[INPUT] Raw Decompiled Code from Ghidra:</strong><br><pre><code class="hljs C">&gt;<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">multiplyMatrix</span><span class="hljs-params">(<span class="hljs-keyword">long</span> param_1, <span class="hljs-keyword">long</span> param_2)</span></span>
+<span class="hljs-function">&gt;</span>{
+local_10 = *(<span class="hljs-keyword">long</span> *)(in_FS_OFFSET + <span class="hljs-number">0x28</span>);
+<span class="hljs-keyword">for</span> (*(<span class="hljs-keyword">long</span> *)local_34 = <span class="hljs-number">0</span>; *(<span class="hljs-keyword">long</span> *)local_34 &lt; R1; local_34++) {
+	<span class="hljs-keyword">for</span> (local_30 = <span class="hljs-number">0</span>; local_30 &lt; C2; local_30++) {
+		(auStack_28)[(<span class="hljs-keyword">long</span>)local_34 * C2 + (<span class="hljs-keyword">long</span>)local_30] = <span class="hljs-number">0</span>;
+		<span class="hljs-keyword">for</span> (local_2c = <span class="hljs-number">0</span>; local_2c &lt; R2; local_2c++) {
+			auStack_28[(<span class="hljs-keyword">long</span>)local_34 * C2 + (<span class="hljs-keyword">long</span>)local_30] += *(<span class="hljs-keyword">int</span> *)((<span class="hljs-keyword">long</span>)local_2c * <span class="hljs-number">0xc</span> + param_2 + (<span class="hljs-keyword">long</span>)local_30 * <span class="hljs-number">4</span>)* *(<span class="hljs-keyword">int</span> *)((<span class="hljs-keyword">long</span>)local_34 * <span class="hljs-number">8</span> + param_1 + (<span class="hljs-keyword">long</span>)local_2c * <span class="hljs-number">4</span>);
+		}
+	}
+}
+&gt;}</code></pre></p>
+<p><strong>[OUTPUT] Optimized Code for Vulnerability Analysis:</strong><br><pre><code class="hljs C">&gt;<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">multiplyMatrix</span><span class="hljs-params">(<span class="hljs-keyword">long</span> input_matrix_1, <span class="hljs-keyword">long</span> input_matrix_2)</span></span>
+<span class="hljs-function">&gt;</span>{
+<span class="hljs-comment">// Initialize a matrix to store the result of matrix multiplication</span>
+<span class="hljs-keyword">int</span> result_matrix[row_1][column_2] = {<span class="hljs-number">0</span>};
+
+<span class="hljs-comment">// Iterate over each row and column of the result matrix</span>
+<span class="hljs-keyword">for</span> (<span class="hljs-keyword">int</span> current_row = <span class="hljs-number">0</span>; current_row &lt; row_1; current_row++) {
+	<span class="hljs-keyword">for</span> (<span class="hljs-keyword">int</span> current_col = <span class="hljs-number">0</span>; current_col &lt; column_2; current_col++) {
+		<span class="hljs-comment">// Perform matrix multiplication by iterating over the shared dimension</span>
+		<span class="hljs-keyword">for</span> (<span class="hljs-keyword">int</span> shared_dim = <span class="hljs-number">0</span>; shared_dim &lt; row_2; shared_dim++) {
+			<span class="hljs-comment">// Vulnerability: Potential out-of-bounds access if matrix dimensions (R1, C2, R2) are not validated</span>
+			<span class="hljs-comment">// before this function call. The pointer arithmetic relies on these external constants.</span>
+			<span class="hljs-comment">// Multiply corresponding elements from the input matrices and accumulate the result.</span>
+			result_matrix[current_row][current_col] += *((<span class="hljs-keyword">int</span> *)(input_matrix_2 + shared_dim * <span class="hljs-number">12</span> + current_col * <span class="hljs-number">4</span>)) * *((<span class="hljs-keyword">int</span> *)(input_matrix_1 + current_row * <span class="hljs-number">8</span> + shared_dim * <span class="hljs-number">4</span>));
+		}
+	}
+}
+&gt;}</code></pre></p>
+<hr>
+<p>Now, apply this process to the following Ghidra decompiled code. Provide ONLY the optimized C code as your output.</p>
+<p><strong>[YOUR CODE TO ANALYZE GOES HERE]</strong></p>
+</blockquote>
+<p>This creates a prompt, complete with an example. We need to test the prompt to make sure it works, so let&#x2019;s remove the example and put it into Gemini.</p>
+<p>Result:</p>
+<pre><code class="hljs c"><span class="hljs-comment">/**</span>
+<span class="hljs-comment"> * @brief Performs matrix multiplication of matrix_A (R1 x R2) and matrix_B (R2 x C2).</span>
+<span class="hljs-comment"> *</span>
+<span class="hljs-comment"> * This function reconstructs the logic for matrix multiplication. It takes pointers to two</span>
+<span class="hljs-comment"> * matrices, `matrix_A_ptr` and `matrix_B_ptr`, and computes their product. The resulting</span>
+<span class="hljs-comment"> * (R1 x C2) matrix is stored in a local stack variable `result_matrix`.</span>
+<span class="hljs-comment"> *</span>
+<span class="hljs-comment"> * The dimensions R1 (rows of A), R2 (cols of A / rows of B), and C2 (cols of B)</span>
+<span class="hljs-comment"> * are assumed to be externally defined constants (e.g., preprocessor macros),</span>
+<span class="hljs-comment"> * which is a common source of vulnerabilities.</span>
+<span class="hljs-comment"> *</span>
+<span class="hljs-comment"> * Based on the memory access patterns from the decompilation:</span>
+<span class="hljs-comment"> * - matrix_A is treated as an [R1][R2] integer matrix.</span>
+<span class="hljs-comment"> * - matrix_B is treated as an [R2][C2] integer matrix.</span>
+<span class="hljs-comment"> *</span>
+<span class="hljs-comment"> * Note: The original stack canary check (`in_FS_OFFSET`) has been removed for clarity</span>
+<span class="hljs-comment"> * as it is a compiler-generated security mechanism and not part of the original logic.</span>
+<span class="hljs-comment"> *</span>
+<span class="hljs-comment"> * @param matrix_A_ptr  Pointer to the first input matrix (assumed to be flattened R1xR2).</span>
+<span class="hljs-comment"> * @param matrix_B_ptr  Pointer to the second input matrix (assumed to be flattened R2xC2).</span>
+<span class="hljs-comment"> */</span>
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">multiply_matrices</span><span class="hljs-params">(<span class="hljs-keyword">int</span> *matrix_A_ptr, <span class="hljs-keyword">int</span> *matrix_B_ptr)</span> </span>{
+    <span class="hljs-comment">// Vulnerability: Null Pointer Dereference</span>
+    <span class="hljs-comment">// The function does not check if input pointers are NULL before use. If either</span>
+    <span class="hljs-comment">// `matrix_A_ptr` or `matrix_B_ptr` is NULL, dereferencing them inside the loops</span>
+    <span class="hljs-comment">// will cause a segmentation fault and crash the application.</span>
+
+    <span class="hljs-comment">// To improve readability, we cast the flat input pointers to 2D array pointers.</span>
+    <span class="hljs-comment">// This mirrors the structured access intended by the original developer.</span>
+    <span class="hljs-comment">// The pointer arithmetic `(row * stride) + col_offset` is now `[row][col]`.</span>
+    <span class="hljs-comment">// The strides inferred from Ghidra (`* 8` for A, `* 0xc` for B) suggest R2=2 and C2=3.</span>
+    <span class="hljs-keyword">int</span> (*matrix_A)[R2] = (<span class="hljs-keyword">int</span> (*)[R2])matrix_A_ptr;
+    <span class="hljs-keyword">int</span> (*matrix_B)[C2] = (<span class="hljs-keyword">int</span> (*)[C2])matrix_B_ptr;
+
+    <span class="hljs-comment">// Vulnerability: Stack Buffer Overflow</span>
+    <span class="hljs-comment">// The result matrix is allocated on the stack with a size fixed at compile time</span>
+    <span class="hljs-comment">// via the macros R1 and C2. If the actual dimensions of the input matrices</span>
+    <span class="hljs-comment">// (determined by the caller) are larger than these compiled constants, the loops</span>
+    <span class="hljs-comment">// will write past the bounds of `result_matrix`, corrupting the stack.</span>
+    <span class="hljs-keyword">int</span> result_matrix[R1][C2];
+
+    <span class="hljs-comment">// Iterate over each row of the first matrix (matrix_A).</span>
+    <span class="hljs-keyword">for</span> (<span class="hljs-keyword">int</span> current_row = <span class="hljs-number">0</span>; current_row &lt; R1; current_row++) {
+        <span class="hljs-comment">// Iterate over each column of the second matrix (matrix_B).</span>
+        <span class="hljs-keyword">for</span> (<span class="hljs-keyword">int</span> current_col = <span class="hljs-number">0</span>; current_col &lt; C2; current_col++) {
+            
+            <span class="hljs-comment">// Initialize the target cell in the result matrix.</span>
+            result_matrix[current_row][current_col] = <span class="hljs-number">0</span>;
+
+            <span class="hljs-comment">// Calculate the dot product for the cell (current_row, current_col).</span>
+            <span class="hljs-comment">// This loop iterates over the shared dimension (columns of A and rows of B).</span>
+            <span class="hljs-keyword">for</span> (<span class="hljs-keyword">int</span> shared_dim = <span class="hljs-number">0</span>; shared_dim &lt; R2; shared_dim++) {
+                
+                <span class="hljs-comment">// Vulnerability: Integer Overflow</span>
+                <span class="hljs-comment">// The multiplication of two matrix elements can exceed the maximum value for an `int`,</span>
+                <span class="hljs-comment">// causing the value to wrap around (undefined behavior for signed integers).</span>
+                <span class="hljs-comment">// The subsequent accumulation into `result_matrix` could also overflow.</span>
+                
+                <span class="hljs-comment">// Vulnerability: Out-of-Bounds Read</span>
+                <span class="hljs-comment">// The loops iterate based on the external constants R1, R2, and C2. If these</span>
+                <span class="hljs-comment">// constants do not match the actual allocated sizes of the buffers pointed to</span>
+                <span class="hljs-comment">// by `matrix_A_ptr` and `matrix_B_ptr`, this operation will read from</span>
+                <span class="hljs-comment">// out-of-bounds memory, leading to information leakage or a crash.</span>
+                result_matrix[current_row][current_col] +=
+                    matrix_A[current_row][shared_dim] * matrix_B[shared_dim][current_col];
+            }
+        }
+    }
+
+    <span class="hljs-comment">// The function scope ends here. The `result_matrix` is destroyed upon returning.</span>
+    <span class="hljs-comment">// In a real-world scenario, its contents would likely have been copied to an</span>
+    <span class="hljs-comment">// output parameter pointer before the function returns.</span>
+}</code></pre>
+<p>It gives more details than I thought, but anyway(?) the result looks good lol I think I can fix some details like too detailed description and using English.</p>
+<h3 id="2-Long-term-Memory"><a href="#2-Long-term-Memory" class="headerlink" title="2) Long-term Memory"></a>2) Long-term Memory</h3><p>One of the inherent problems with LLM is the Context Window. You can&#x2019;t give us the whole programme in one go, so we have to ask you in chunks, but it&#x2019;s easy to lose context. It&#x2019;s hard to see the complex flow of how function A calls function B, and the result affects variable C.</p>
+<p>VulBinLLM introduces the concept of &#x201C;long-term memory&#x201D; to solve this problem. The idea is to store a summary of important parts of the code (e.g. function summaries, data structures, etc.) in advance, and let LLM refer to this &#x2018;memory&#x2019; when analysing other code fragments. According to the paper, this information includes <strong>a summary of the program&#x2019;s purpose, key data structures, and function call graphs</strong>.</p>
+<p>For example, when analysing the code above, the LLM would be presented with the following additional information</p>
+<ul>
+<li>Programme Summary:** &#x201C;This is a test program that accepts user input from environment variables and processes it.&#x201D;</li>
+<li><strong>Data flow:</strong> &#x201C;The external input is stored in the <code>user_input&apos; variable via the</code>getenv&#x2019; function, which is used as a source for the `memcpy&#x2019; function.&#x201D;</li>
+</ul>
+<p>With this contextual information, LLM will clearly recognise that <code>user_input</code> is an &#x2018;untrusted external input&#x2019; and not just a string, and will be able to more accurately determine the vulnerability.</p>
+<h2 id="Wrapping-up"><a href="#Wrapping-up" class="headerlink" title="Wrapping up"></a>Wrapping up</h2><p>Today, I&#x2019;ve been studying the paper &#x201C;VulBinLLM: LLM-powered Vulnerability Detection for Stripped Binaries&#x201D; and I&#x2019;ve made a quick summary of the paper, but there are a few things that I think are missing.</p>
+<ol>
+<li>It doesn&#x2019;t use the latest LLM model: This is a common shortcoming in many papers. I think it&#x2019;s because the development speed of the model is so fast that they design, develop, test, and then write the paper.</li>
+<li>Is it really a novel idea&#x2026;? There are already papers on recovering stripped binary decompiled code. I&#x2019;m a bit dubious about the hacky research value of this thesis.</li>
+</ol>
+<p>Since there are so many LLM-related papers recently, it is not easy to pick out a really good paper and read it, so I often skim the idea. Still, if I see a paper with a good idea, I will study it again and post it lol.</p>
+<p>Until next time&#x2026; I&#x2019;ll be back!</p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/j0ker/">j0ker</a>
+                  
+                  <a class="hover-with-bg" href="/tags/LLM/">LLM</a>
+                  
+                  <a class="hover-with-bg" href="/tags/LLM-Security/">LLM Security</a>
+                  
+                  <a class="hover-with-bg" href="/tags/LLM-Safety/">LLM Safety</a>
+                  
+                  <a class="hover-with-bg" href="/tags/VulBinLLM/">VulBinLLM</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_j0ker.jpg" srcset="/img/loading.gif" alt="j0ker">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">j0ker</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/j0ker">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/06/18/ogu123/cve-2024-49138/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2024-49138: Windows Common Log File System Driver Elevation of Privilege 취약점</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/06/15/j0ker/llm_part2/kr/">
+                    <span class="hidden-mobile">[Research] LLM Security & Safety Part 2. VulBinLLM Review(KR)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/06/15/j0ker/llm_part2/en/';
+        this.page.identifier = '/2025/06/15/j0ker/llm_part2/en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] LLM Security & Safety Part 2. VulBinLLM Review(KR)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
