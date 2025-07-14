@@ -30,7 +30,7 @@ index_img: /2025/07/13/bekim/smartcontract/ko/image.jpg
 
 스마트 컨트랙트는 일반적으로 프로그래밍 언어로 만들어지는데 동작 순서를 간단하게 설명하자면 다음과 같습니다.
 
-1. **코드 작성**
+1) **코드 작성**
 
 Solidity와 같은 언어로 정말 간단한 스마트 컨트랙트를 작성합니다.
 
@@ -130,7 +130,7 @@ function send(address receiver, uint amount) public {
 
 자신이 보유한 코인을 다른 주소로 전송할 수 있습니다. 만약 require 조건을 충족하지 못한다면 InsufficientBalance 에러가 나는 코드에요.
 
-2. **컴파일 및 배포**
+2) **컴파일 및 배포**
 
 작성한 코드는 Solidity 컴파일러를 통해 Bytecode와 Application Binary Interface (ABI)로 변환됩니다. 
 
@@ -141,7 +141,7 @@ function send(address receiver, uint amount) public {
 
 ![](ko/image1.png)
 
-3. **트랜잭션 호출**
+3) **트랜잭션 호출**
 
 ```solidity
 function send(address receiver, uint amount) public {
@@ -162,7 +162,7 @@ function send(address receiver, uint amount) public {
 
 ![](ko/image3.png)
 
-4. **스마트 컨트랙트 실행 (EVM)**
+4) **스마트 컨트랙트 실행 (EVM)**
 
 블록 생성자가 먼저 스마트 컨트랙트를 실행하고, 다른 검증 노드들은 이를 동일하게 재실행하여 블록의 정당성을 검증합니다. 블록 생성자는 트랜잭션을 처리할 때, EVM을 통해 해당 함수(send() 등)를 실행합니다. EVM은 입력값을 디코딩하여 호출할 함수를 매핑하고, require 조건문, 상태 변경, 이벤트 기록 등 컨트랙트의 로직을 실행합니다.
 
@@ -172,11 +172,11 @@ require(amount <= balances[msg.sender], InsufficientBalance(amount, balances[msg
 
 이 조건이 충족되면 계약이 이행되고, 그렇지 않으면 InsufficientBalance 오류가 나 revert되고 모든 변경이 롤백돼요.
 
-5. **가스 처리**
+5) **가스 처리**
 
 또한 EVM의 실행에는 가스(Gas)가 소모됩니다. 이는 지속적으로 네트워크를 운영하는 노드(검증자)들에게 인센티브로 주어지고, 과도한 연산을 방지할 수도 있어요. 사용자가 설정한 gasLimit과 실제 소모량에 따라 남은 가스는 환불되며, 실패한 트랜잭션도 가스는 소모됩니다.
 
-6. **결과 저장**
+6) **결과 저장**
 
 트랜잭션 실행이 성공하면, 다음과 같은 결과가 블록체인에 반영됩니다.
 
@@ -191,7 +191,7 @@ require(amount <= balances[msg.sender], InsufficientBalance(amount, balances[msg
 
 스마트 컨트랙트가 이더리움이라는 블록체인 플랫폼을 통해 처음으로 활용 기반을 갖춘 이후로, 스마트 컨트랙트는 다양한 분야로 확장되었습니다. 
 
-1. **DeFi (탈중앙화 금융)**
+1) **DeFi (탈중앙화 금융)**
 
 DeFi는 기존의 은행, 증권사 같은 중앙화된 금융기관 없이도, 블록체인을 기반으로 예금, 대출, 자산거래, 파생 상품 등을 수행할 수 있게 해주는 탈 중앙화된 금융 시스템입니다. DeFi 서비스는 모든 금융 거래 로직을 스마트 컨트랙트로 작성하고 있어요.
 
@@ -199,7 +199,7 @@ DeFi는 기존의 은행, 증권사 같은 중앙화된 금융기관 없이도, 
 
 또 다른 예로는 Uniswap이 있어요. 이 서비스는 중앙 거래소 없이도 암호화폐를 자동으로 교환할 수 있게 해주는 시스템인데, 거래는 미리 예치된 유동성 풀을 통해서 진행되고, 교환 로직 역시 스마트 컨트랙트로 처리돼요. 이와 유사하게 Curve는 스테이블 코인 간의 교환에 특화된 플랫폼으로, 거래 과정 또한 스마트 컨트랙트에 의해 자동으로 이루어집니다.
 
-2. **DAO (탈중앙화된 자율조직)**
+2) **DAO (탈중앙화된 자율조직)**
 
 DAO (Decentralized Autonomous Organization)는 전통적인 조직처럼 특정 관리자나 운영자가 아니라, 스마트 컨트랙트에 의해 규칙과 의사 결정이 자동으로 집행되는 조직 형태입니다. 구성원들은 DAO 토큰을 보유함으로써 투표에 참여하고, 제안된 안건이 일정 조건을 충족하면 스마트 컨트랙트가 그 내용을 자동으로 실행합니다.
 
@@ -207,7 +207,7 @@ DAO (Decentralized Autonomous Organization)는 전통적인 조직처럼 특정 
 
 이처럼 DAO는 사람의 개입 없이도 코드에 의해 운영이 조직될 수 있는 형태입니다. 
 
-3. **CryptoKitties**
+3) **CryptoKitties**
 
 CryptoKitties는 2017년 등장한 이더리움 기반의 블록체인 게임이에요. 이 게임은 스마트 컨트랙트를 활용해 디지털 고양이를 수집하고 교배하며 거래할 수 있는 시스템으로 구현되었어요.
 
@@ -267,12 +267,12 @@ splitDAO() 함수는 사용자가 DAO를 탈퇴하고 새로운 DAO로 이동할
 
 **Mitigation**
 
-1. **Checks-Effects-Interactions 패턴 사용**
+1) **Checks-Effects-Interactions 패턴 사용**
 스마트 컨트랙트는 외부 컨트랙트와 상호작용 하기 전에 내부 상태를 먼저 변경해야합니다. 이를 위해 checks → Effects → Interaction 순서로 코드를 작성하는 것이 중요합니다.
 - Checks: 입력값과 조건 검증
 - Effects: 상태 변수 업데이트
 - Interactions: 외부 컨트랙트 호출
-2. **ReentrancyGuard 사용**
+2) **ReentrancyGuard 사용**
 [OpenZeppelin](https://docs.openzeppelin.com/contracts/4.x/api/security#ReentrancyGuard)에서 제공하는 ReentrancyGuard는 재진입 공격을 방지하는 모듈입니다. `nonReentrant` modifier를 적용하면, 함수가 실행 중일 때 동일한 함수가 다시 호출되는 것을 차단할 수 있습니다.
 
 ### 2. Improper Access Control
@@ -324,9 +324,9 @@ contract Solidity_AccessControl is Ownable {
 
 **Mitigation**
 
-1. **권한 제어 모듈 사용**
+1) **권한 제어 모듈 사용**
 OpenZeppelin의 [`Ownable`](https://docs.openzeppelin.com/contracts/2.x/api/ownership#Ownable), `AccessControl`, `RBAC`(Role-Based Access Control) 같은 검증된 접근 제어 프레임워크를 사용합니다.
-2. **스마트 컨트랙트 내에 명확하고 체계적으로 접근 제어 매커니즘을 설계하고 구현하는 것이 중요합니다.**
+2) **스마트 컨트랙트 내에 명확하고 체계적으로 접근 제어 매커니즘을 설계하고 구현하는 것이 중요합니다.**
 
 ### 3. **Price oracle manipulation**
 
