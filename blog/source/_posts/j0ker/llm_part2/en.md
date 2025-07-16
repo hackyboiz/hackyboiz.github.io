@@ -1,5 +1,5 @@
 ---
-title: "[Research] LLM Security & Safety Part 2. VulBinLLM Review(KR)"
+title: "[Research] LLM Security & Safety Part 2. VulBinLLM Review(EN)"
 author: j0ker
 tags: [j0ker, LLM, LLM Security, LLM Safety, VulBinLLM]
 categories: [Research]
