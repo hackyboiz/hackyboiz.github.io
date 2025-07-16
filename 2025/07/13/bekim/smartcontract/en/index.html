@@ -1,0 +1,1511 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;h2 id=&#34;Introduction&#34;&gt;&lt;a href=&#34;#Introduction&#34; class=&#34;headerlink&#34; title=&#34;Introduction&#34;&gt;&lt;/a&gt;Introduction&lt;/h2&gt;&lt;p&gt;In the last post, we talked about blockchain and consensus algorithms, diving into how decentralized systems work. This time, I want to explore one of the most exciting technologies built on top of blockchain: &lt;strong&gt;smart contracts&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;You know how traditional contracts usually involve paperwork, signatures, and sometimes a middleman? Smart contracts change all that. They let us turn agreements into code that runs automatically when certain conditions are met&amp;#x2014;no lawyers, no banks, no hassle.&lt;/p&gt;
+&lt;p&gt;In this post, I&amp;#x2019;ll walk you through how smart contracts work, share some interesting use cases, and touch on a few common security issues to watch out for.&lt;/p&gt;
+&lt;h2 id=&#34;What-Is-a-Smart-Contract&#34;&gt;&lt;a href=&#34;#What-Is-a-Smart-Contract&#34; class=&#34;headerlink&#34; title=&#34;What Is a Smart Contract?&#34;&gt;&lt;/a&gt;What Is a Smart Contract?&lt;/h2&gt;&lt;p&gt;A smart contract is a piece of code designed to automatically execute a contract when predetermined conditions are met. The terms of a contract can be implemented in code and designed to execute automatically on the blockchain. Because of this, smart contracts can reduce the cost of intermediaries and fulfill contracts without a third party.&lt;/p&gt;
+&lt;p&gt;The concept of smart contracts was first proposed in 1994 by Nick Szabo (who, incidentally, is often cited as one of the alleged creators of Satoshi Nakamoto), but it was only a concept, and the technical realization came later. In 2013, Vitalik Buterin, the creator of Ethereum, published a white paper on his blog &lt;a href=&#34;https://web.archive.org/web/20131228111141/http://vbuterin.com/ethereum.html&#34;&gt;outlining the concept of a new blockchain platform based on smart contracts&lt;/a&gt;. The blockchain platform called Ethereum was officially launched in 2015, and smart contracts started to be used on real blockchains in earnest.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/13/bekim/smartcontract/en/image.jpg&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Smart contracts are currently used on a variety of blockchain platforms besides Ethereum, and most of these contracts are executed based on code written in the form of if-then conditional statements. Because blockchain is a structure where multiple participants share and validate the same information, it is considered a very suitable environment for validating and executing contract terms.&lt;/p&gt;
+&lt;h3 id=&#34;How-smart-contracts-work&#34;&gt;&lt;a href=&#34;#How-smart-contracts-work&#34; class=&#34;headerlink&#34; title=&#34;How smart contracts work&#34;&gt;&lt;/a&gt;How smart contracts work&lt;/h3&gt;&lt;p&gt;Smart contracts are typically created in a programming language, and the sequence of actions is as follows.&lt;/p&gt;
+&lt;p&gt;1) &lt;strong&gt;Write the code&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;pragma solidity ^0.8.26;
+
+contract Coin {
+    // The keyword &amp;quot;public&amp;quot; makes variables
+    // accessible from other contracts
+    address public minter;
+    mapping(address =&amp;gt; uint) public balances;
+
+    // Events allow clients to react to specific
+    // contract changes you declare
+    event Sent(address from, address to, uint amount);
+
+    // Constructor code is only run when the contract
+    // is created
+    constructor() {
+        minter = msg.sender;
+    }
+
+    // Sends an amount of newly created coins to an address
+    // Can only be called by the contract creator
+    function mint(address receiver, uint amount) public {
+        require(msg.sender == minter);
+        balances[receiver] += amount;
+    }
+
+    // Errors allow you to provide information about
+    // why an operation failed. They are returned
+    // to the caller of the function.
+    error InsufficientBalance(uint requested, uint available);
+
+    // Sends an amount of existing coins
+    // from any caller to an address
+    function send(address receiver, uint amount) public {
+        require(amount &amp;lt;= balances[msg.sender], InsufficientBalance(amount, balances[msg.sender]));
+        balances[msg.sender] -= amount;
+        balances[receiver] += amount;
+        emit Sent(msg.sender, receiver, amount);
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;A contract written like the one above introduces several concepts&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;address public minter;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This code declares a state variable minter of type address. The address type is 160 bits in size, non-mutable, and is used to store an account or contract address. Additionally, by adding the public keyword, the compiler automatically creates a getter function to retrieve this value externally.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;mapping(address =&amp;gt; uint) public balances;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This code is a mapping that stores an address as a key and the amount of coins at that address as a value. It&amp;#x2019;s also public, so we can look up balances by address externally.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;event Sent(address from, address to, uint amount);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This event is called in the last line of the send() function. When the Sent event is fired, the listener receives the sender, recipient, and amount information so they can track the transaction.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;constructor() {
+    minter = msg.sender;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The Constructor code is only executed once when the contract is deployed. msg.sender is the address where the contract was deployed, which we store as a minter.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;function mint(address receiver, uint amount) public {
+    require(msg.sender == minter);
+    balances[receiver] += amount;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Mint new coins and send them to another address. &lt;code&gt;The require(msg.sender == minter)&lt;/code&gt; condition here restricts only the distributor to call this function. And if the &lt;code&gt;balances[receiver]+amount&lt;/code&gt; operation exceeds the maximum value of uint256, the transaction will be automatically reverted according to Solidity&amp;#x2019;s built-in Checked Arithmetic safety.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;error InsufficientBalance(uint requested, uint available);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Define the error messages error and revert. For example, if a user tries to send more coins than they have, the transaction is canceled with an InsufficientBalance error.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;function send(address receiver, uint amount) public {
+    require(amount &amp;lt;= balances[msg.sender], InsufficientBalance(amount, balances[msg.sender]));
+    balances[msg.sender] -= amount;
+    balances[receiver] += amount;
+    emit Sent(msg.sender, receiver, amount);
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;You can send your own coins to another address. If the require condition is not met, the code will throw an InsufficientBalance error.&lt;/p&gt;
+&lt;p&gt;2) &lt;strong&gt;Compile and deploy&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;The code you write is converted into Bytecode and Application Binary Interface (ABI) by the Solidity compiler.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Bytecode is low-level code that can be executed by the Ethereum Virtual Machine (EVM) and is used to deploy the contract to the blockchain.&lt;/li&gt;
+&lt;li&gt;The ABI is the interface used to call the contract&amp;#x2019;s functions from the outside, defining the function name and parameter format.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The generated bytecode is then propagated on the blockchain network in the form of a transaction, and when this transaction contains a block, the contract is given a unique address and registered on the blockchain.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/13/bekim/smartcontract/en/image1.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;3) &lt;strong&gt;Call a transaction&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;function send(address receiver, uint amount) public {
+        require(amount &amp;lt;= balances[msg.sender], InsufficientBalance(amount, balances[msg.sender]));
+        balances[msg.sender] -= amount;
+        balances[receiver] += amount;
+        emit Sent(msg.sender, receiver, amount);
+    }&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;A user who wants to call a specific function of a smart contract creates a transaction containing the function call information (target contract address, ABI-based function signature, gas information, etc. As shown in the example code, when a user creates a transaction to execute Coin.sol&amp;#x2019;s send() function, the transaction is temporarily stored in the node&amp;#x2019;s mempool and is picked up by the block producer (miner or validator) and included in the block. After the transaction enters the mempool, it is processed in the order of gas price!&lt;/p&gt;
+&lt;p&gt;&amp;#x2192; mempool (Memory Pool): A place where transactions that have not yet been included in a block are temporarily stored.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/13/bekim/smartcontract/en/image2.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Broadcast this transaction to the blockchain network.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/13/bekim/smartcontract/en/image3.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;4) &lt;strong&gt;Smart Contract Execution (EVM)&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;The block producer first executes the smart contract, and other validating nodes re-run the same to verify the legitimacy of the block. When the block producer processes a transaction, it runs its functions (such as send()) through the EVM. The EVM decodes the input, maps the functions to be called, and executes the contract&amp;#x2019;s logic, including require conditional statements, state changes, and event logging.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;require(amount &amp;lt;= balances[msg.sender], InsufficientBalance(amount, balances[msg.sender]));&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;If this condition is met, the contract is fulfilled; otherwise, an InsufficientBalance error is thrown and all changes are rolled back.&lt;/p&gt;
+&lt;p&gt;5) &lt;strong&gt;Gas handling&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;EVMs also consume gas to run. This is used as an incentive for nodes (validators) to continuously run the network and to prevent excessive computation. The remaining gas is refunded according to the gasLimit set by the user and the actual consumption, and failed transactions also consume gas.&lt;/p&gt;
+&lt;p&gt;6) &lt;strong&gt;Storing results&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;When a transaction execution is successful, the following results are reflected on the blockchain&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;State changes: Internal storage changes, for example, &lt;code&gt;balances[msg.sender] -= amount&lt;/code&gt;, are reflected in a &lt;strong&gt;state trie&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;Event log: Events such as &lt;code&gt;emit Sent(...)&lt;/code&gt; are written to a separate log store (receipts).&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;These data are embedded in blocks, making them a persistent record shared by all nodes, and can be verified or queried by anyone.&lt;/p&gt;
+&lt;p&gt;This makes smart contracts much more efficient than traditional contracts, as they are automatically executed when conditions are met. They can be executed without the need for intermediaries, and they are also more reliable, as they are transparent and immutable when based on the blockchain. Thanks to these advantages, smart contracts are increasingly being used in a variety of fields&lt;/p&gt;
+&lt;h2 id=&#34;Use-cases-for-smart-contracts&#34;&gt;&lt;a href=&#34;#Use-cases-for-smart-contracts&#34; class=&#34;headerlink&#34; title=&#34;Use cases for smart contracts&#34;&gt;&lt;/a&gt;Use cases for smart contracts&lt;/h2&gt;&lt;p&gt;Since smart contracts first gained traction on the Ethereum blockchain platform, they have expanded into a variety of fields.&lt;/p&gt;
+&lt;p&gt;1) &lt;strong&gt;DeFi (Decentralized Finance)&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;DeFi is a decentralized financial system that enables deposits, loans, asset trading, derivatives, etc. to be conducted on the blockchain without the need for centralized financial institutions such as traditional banks and securities firms. DeFi services write all financial transaction logic in smart contracts.&lt;/p&gt;
+&lt;p&gt;For example, on DeFi platforms like Aave or Compound, users can deposit cryptocurrency and automatically earn interest, while other users can borrow against collateral.&lt;/p&gt;
+&lt;p&gt;Another example is Uniswap, which allows users to automatically exchange cryptocurrencies without the need for a centralized exchange: the transactions are carried out through a pool of pre-deposited liquidity, and the exchange logic is handled by smart contracts. Similarly, Curve is a platform that specializes in exchanging stablecoins, and the exchange process is also automated by smart contracts.&lt;/p&gt;
+&lt;p&gt;2) &lt;strong&gt;DAO (Decentralized Autonomous Organization)&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;A DAO (Decentralized Autonomous Organization) is a form of organization where rules and decisions are automatically enforced by smart contracts rather than by a specific manager or operator like a traditional organization. Members participate in voting by holding DAO tokens, and if a proposed agenda meets certain conditions, the smart contract automatically executes it.&lt;/p&gt;
+&lt;p&gt;A prime example is MarkerDAO. MarkerDAO is a DAO built on the Ethereum blockchain that issues and manages DAI, a decentralized stablecoin. MarkerDAO keeps the value of DAI stable, and members vote on things like interest rate adjustments and system upgrades through smart contracts.&lt;/p&gt;
+&lt;p&gt;In this way, DAOs allow operations to be organized by code without human intervention.&lt;/p&gt;
+&lt;p&gt;3) &lt;strong&gt;CryptoKitties&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;CryptoKitties is an Ethereum-based blockchain game that launched in 2017 that utilizes smart contracts to collect, breed, and trade digital cats.&lt;/p&gt;
+&lt;p&gt;In the game, cats are represented by NFTs, each with its own unique characteristics and appearance. Users can breed two cats to create a new cat, where the combination of genetic information and the outcome of the breeding is automatically determined by the smart contract. The resulting cat is registered as a new NFT, and users can sell it to other users or keep it for themselves. The game was so popular that it overloaded the Ethereum network shortly after launch.&lt;/p&gt;
+&lt;p&gt;As you can see, smart contracts are being used in a variety of fields, including finance, organizational operations, gaming, and more. While blockchain is known for being a highly secure technology, smart contracts have actually been hacked a few times. In the following, I will explain the vulnerabilities of smart contracts with real-world examples.&lt;/p&gt;
+&lt;h2 id=&#34;Vulnerabilities-of-Smart-Contract&#34;&gt;&lt;a href=&#34;#Vulnerabilities-of-Smart-Contract&#34; class=&#34;headerlink&#34; title=&#34;Vulnerabilities of Smart Contract&#34;&gt;&lt;/a&gt;Vulnerabilities of Smart Contract&lt;/h2&gt;&lt;h3 id=&#34;1-Reentrancy-Attack&#34;&gt;&lt;a href=&#34;#1-Reentrancy-Attack&#34; class=&#34;headerlink&#34; title=&#34;1. Reentrancy Attack&#34;&gt;&lt;/a&gt;1. Reentrancy Attack&lt;/h3&gt;&lt;p&gt;Reentrancy attack is a vulnerability that occurs when a smart contract makes a call to an external contract before updating its state. In this case, the external contract (if malicious) can re-enter the original function and perform actions such as withdrawal repeatedly based on the same state.&lt;/p&gt;
+&lt;p&gt;This vulnerability became a top security item to review after a 2016 DAO hack resulted in the theft of approximately $60 million.&lt;/p&gt;
+&lt;p&gt;Here&amp;#x2019;s an example&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;When a smart contract sends ETH or tokens to an external address (the smart contract), a function (fallback() or receive()) on the receiver side is automatically executed.&lt;/li&gt;
+&lt;li&gt;At this point, the code inside the function is executed, so the flow of execution goes to the external contract.&lt;/li&gt;
+&lt;li&gt;If the attacker uses this opportunity to call the original contract&amp;#x2019;s function again, the original contract will be executed again in an uncleaned state because it has not yet finished executing the previous function.&lt;/li&gt;
+&lt;li&gt;As a result, the attacker can continue to withdraw funds before balance verification.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The code below is part of splitDAO(), a function that was vulnerable to a reentry attack during the DAO hack.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;function splitDAO(uint _proposalID, address _newCurator) noEther onlyTokenholders returns (bool _success) {
+    ...
+		// [1]
+    uint fundsToBeMoved = (balances[msg.sender] * p.splitData[0].splitBalance) / p.splitData[0].totalSupply;
+    //Since the balance is never updated the attacker can pass this modifier several times 
+    // [2]
+    if (p.splitData[0].newDAO.createTokenProxy.value(fundsToBeMoved)(msg.sender) == false) throw;
+
+    ...
+
+    // Burn DAO Tokens
+    // Funds are transferred before the balance is updated
+    //[3]
+    Transfer(msg.sender, 0, balances[msg.sender]);
+    withdrawRewardFor(msg.sender); // be nice, and get his rewards
+    // Only now after the funds are transferred is the balance updated
+    totalSupply -= balances[msg.sender];
+    paidOut[msg.sender] = 0;
+    return true;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The splitDAO() function is executed when a user leaves a DAO and moves to a new DAO.&lt;/p&gt;
+&lt;p&gt;In [1], it calls &lt;code&gt;fundsToBeMoved&lt;/code&gt;, which calculates the amount of ether the user will receive. At this point, the &lt;code&gt;balances[msg.sender]&lt;/code&gt; used is not yet decremented.&lt;/p&gt;
+&lt;p&gt;In [2], sending the ether calls a function (&lt;code&gt;createTokenProxy&lt;/code&gt;) in the external contract, which can be used by a malicious contract created by the attacker to call splitDAO() again.&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;balances[msg.sender]&lt;/code&gt; will then still have the same value, allowing the same amount of funds to be withdrawn repeatedly in multiple requests.&lt;/p&gt;
+&lt;p&gt;It changes the internal state after [3], but this happens after the external call has already ended, so it&amp;#x2019;s completely ineffective as a defense.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Mitigation&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;1) &lt;strong&gt;Use the Checks-Effects-Interactions pattern&lt;/strong&gt;&lt;br&gt;The smart contract must first change its internal state before interacting with the external contract. For this, it is important to write code in the following order: checks &amp;#x2192; Effects &amp;#x2192; Interaction.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Checks: Validate inputs and conditions&lt;/li&gt;
+&lt;li&gt;Effects: Updating state variables&lt;/li&gt;
+&lt;li&gt;Interactions: call external contracts&lt;br&gt;2) &lt;strong&gt;Using ReentrancyGuard&lt;/strong&gt;&lt;br&gt;ReentrancyGuard, provided by &lt;a href=&#34;https://docs.openzeppelin.com/contracts/4.x/api/security#ReentrancyGuard&#34;&gt;OpenZeppelin&lt;/a&gt;, is a module that prevents re-entry attacks. By applying the &lt;code&gt;nonReentrant&lt;/code&gt; modifier, you can block the same function from being called again when it is running.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;2-Improper-Access-Control&#34;&gt;&lt;a href=&#34;#2-Improper-Access-Control&#34; class=&#34;headerlink&#34; title=&#34;2. Improper Access Control&#34;&gt;&lt;/a&gt;2. Improper Access Control&lt;/h3&gt;&lt;p&gt;An access control vulnerability is a vulnerability that occurs when a smart contract fails to adequately restrict access to certain functions or data.&lt;/p&gt;
+&lt;p&gt;This allows unauthorized users to access sensitive functions (e.g. token issuance, asset withdrawal, contract suspension, upgrades, etc.), threatening the security and integrity of the contract.&lt;/p&gt;
+&lt;p&gt;Below is a vulnerable version of a smart contract.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract Solidity_AccessControl {
+    mapping(address =&amp;gt; uint256) public balances;
+
+    // Burn function with no access control
+    function burn(address account, uint256 amount) public {
+        _burn(account, amount);
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In this example, anyone can call the burn function and reduce or destroy the balance of tokens at any address. This contract is a classic example of exposing sensitive functionality without permission validation.&lt;/p&gt;
+&lt;p&gt;The code below is a modified version that allows only the contract owner to call burn via the onlyOwner modifier.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+// Import the Ownable contract from OpenZeppelin to manage ownership
+import &amp;quot;@openzeppelin/contracts/access/Ownable.sol&amp;quot;;
+
+contract Solidity_AccessControl is Ownable {
+    mapping(address =&amp;gt; uint256) public balances;
+
+    // Burn function with proper access control, only accessible by the contract owner
+    function burn(address account, uint256 amount) public onlyOwner {
+        _burn(account, amount);
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;strong&gt;Real-world example&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The Parity Multisig Wallet hack in 2017 was attributed to the lack of access restrictions on the initialization function &lt;code&gt;initWallet()&lt;/code&gt;. The attacker called the function to register himself as the owner of the wallet and stole approximately 150,000 ETH (approximately $30 million at the time).&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;Mitigation&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;1) &lt;strong&gt;Use an authorization control module&lt;/strong&gt;&lt;br&gt;Use a proven access control framework such as OpenZeppelin&amp;#x2019;s &lt;a href=&#34;https://docs.openzeppelin.com/contracts/2.x/api/ownership#Ownable&#34;&gt;&lt;code&gt;Ownable&lt;/code&gt;&lt;/a&gt;, &lt;code&gt;AccessControl&lt;/code&gt;, or Role-Based Access Control (RBAC).&lt;br&gt;2) &lt;strong&gt;It is important to design and implement access control mechanisms clearly and systematically within the smart contract.&lt;/strong&gt;&lt;/p&gt;
+&lt;h3 id=&#34;3-Price-oracle-manipulation&#34;&gt;&lt;a href=&#34;#3-Price-oracle-manipulation&#34; class=&#34;headerlink&#34; title=&#34;3. Price oracle manipulation&#34;&gt;&lt;/a&gt;3. &lt;strong&gt;Price oracle manipulation&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;Smart contracts use oracles to fetch prices or other information from the outside world, especially in DeFi, where oracles are often used to fetch asset prices. If the oracle is manipulated, vulnerable, or unreliable, an attacker can inject false price information and cause the smart contract to behave incorrectly. This vulnerability can cause unauthorized withdrawals, excessive leverage, contract bankruptcy, liquidity pool depletion, and more.&lt;/p&gt;
+&lt;p&gt;The following example is sample code written to illustrate the concept.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+// [1]
+interface IPriceFeed {
+    function getLatestPrice() external view returns (int);
+}
+
+contract PriceOracleManipulation {
+    address public owner;
+    IPriceFeed public priceFeed;
+
+    constructor(address _priceFeed) {
+        owner = msg.sender;
+        priceFeed = IPriceFeed(_priceFeed);
+    }
+		// [2]
+    function borrow(uint256 amount) public {
+        int price = priceFeed.getLatestPrice();
+        require(price &amp;gt; 0, &amp;quot;Price must be positive&amp;quot;);
+	
+        // Vulnerability: No validation or protection against price manipulation
+        //[3]
+        uint256 collateralValue = uint256(price) * amount;
+
+        // Borrow logic based on manipulated price
+        // If an attacker manipulates the oracle, they could borrow more than they should
+    }
+
+    function repay(uint256 amount) public {
+        // Repayment logic
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The getLatestPrice() function in [1] gets the latest price from an external system (oracle). If this oracle can be manipulated or is untrusted, an attacker can inject false price data into the contract.&lt;/p&gt;
+&lt;p&gt;When calling borrow() with [2], we get the current price of the asset from the oracle; the price &amp;gt; 0 condition is simply a validation, and there is no defense against manipulated prices.&lt;/p&gt;
+&lt;p&gt;In [3], the collateral value is calculated by multiplying the received price value by amount, and if this value is overestimated, the attacker can borrow more funds than they actually have. If the attacker injected false price data, this could result in overborrowing against collateral and lead to system asset exfiltration.&lt;/p&gt;
+&lt;p&gt;Below is code that improves upon the vulnerable version of the smart contract shown earlier.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IPriceFeed {
+    function getLatestPrice() external view returns (int);
+}
+
+contract PriceOracleManipulation {
+    address public owner;
+    IPriceFeed public priceFeed;
+    // [1]
+    int public minPrice = 1000; // Set minimum acceptable price
+    int public maxPrice = 2000; // Set maximum acceptable price
+
+    constructor(address _priceFeed) {
+        owner = msg.sender;
+        priceFeed = IPriceFeed(_priceFeed);
+    }
+
+    function borrow(uint256 amount) public {
+        int price = priceFeed.getLatestPrice();
+        // [2]
+        require(price &amp;gt; 0 &amp;amp;&amp;amp; price &amp;gt;= minPrice &amp;amp;&amp;amp; price &amp;lt;= maxPrice, &amp;quot;Price manipulation detected&amp;quot;);
+
+        uint256 collateralValue = uint256(price) * amount;
+
+        // Borrow logic based on valid price
+    }
+
+    function repay(uint256 amount) public {
+        // Repayment logic
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;[1] set a threshold variable to prevent price manipulation, and [2] added logic for price validation.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Real-world example&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;In February 2023, the BonqDAO protocol suffered an oracle manipulation attack that caused $120 million in losses. The attacker artificially inflated the price of ALBT tokens through the oracle and over issued BEUR stablecoins as collateral. The attack was caused by the lack of oracle price validation.&lt;/li&gt;
+&lt;li&gt;In May 2023, Baby Doge tokens suffered approximately $137,000 worth of damage due to an oracle manipulation attack.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;mitigation&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Aggregating data from multiple independent oracles can reduce the risk of manipulation.&lt;/li&gt;
+&lt;li&gt;Set minimum and maximum thresholds on the price received from oracles to prevent sudden price fluctuations that could affect smart contract logic.&lt;/li&gt;
+&lt;li&gt;Introduce a time lock, whereby a delay between price updates prevents exploitation of instantaneous price fluctuations.&lt;/li&gt;
+&lt;li&gt;To ensure the authenticity of the data received from the oracle, we utilize attestation methods such as cryptographic signatures.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;In this article, we&amp;#x2019;ve covered the concept of smart contracts, how they work, and some of their most common security vulnerabilities. In fact, I initially wanted to cover more vulnerabilities of smart contracts, but due to the length of this article, I had to briefly summarize only three.&lt;/p&gt;
+&lt;p&gt;Next time, I&amp;#x2019;m thinking about covering more actual hacking cases and various vulnerabilities.&lt;/p&gt;
+&lt;p&gt;That being said, I don&amp;#x2019;t know yet if that will be my next topic &amp;#x1F605; Thanks for reading this long research post!&lt;/p&gt;
+&lt;h3 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h3&gt;&lt;p&gt;&lt;a href=&#34;https://docs.soliditylang.org/en/latest/introduction-to-smart-contracts.html&#34;&gt;https://docs.soliditylang.org/en/latest/introduction-to-smart-contracts.html&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/pcaversaccio/reentrancy-attacks&#34;&gt;https://github.com/pcaversaccio/reentrancy-attacks&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://owasp.org/www-project-smart-contract-top-10/&#34;&gt;https://owasp.org/www-project-smart-contract-top-10/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://medium.com/coinmonks/10-smart-contract-vulnerabilities-with-code-examples-38562685fca2&#34;&gt;https://medium.com/coinmonks/10-smart-contract-vulnerabilities-with-code-examples-38562685fca2&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] From Paper to Code: Smart Contract [en] - hackyboiz">
+  <meta property="og:description" content="&lt;h2 id=&#34;Introduction&#34;&gt;&lt;a href=&#34;#Introduction&#34; class=&#34;headerlink&#34; title=&#34;Introduction&#34;&gt;&lt;/a&gt;Introduction&lt;/h2&gt;&lt;p&gt;In the last post, we talked about blockchain and consensus algorithms, diving into how decentralized systems work. This time, I want to explore one of the most exciting technologies built on top of blockchain: &lt;strong&gt;smart contracts&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;You know how traditional contracts usually involve paperwork, signatures, and sometimes a middleman? Smart contracts change all that. They let us turn agreements into code that runs automatically when certain conditions are met&amp;#x2014;no lawyers, no banks, no hassle.&lt;/p&gt;
+&lt;p&gt;In this post, I&amp;#x2019;ll walk you through how smart contracts work, share some interesting use cases, and touch on a few common security issues to watch out for.&lt;/p&gt;
+&lt;h2 id=&#34;What-Is-a-Smart-Contract&#34;&gt;&lt;a href=&#34;#What-Is-a-Smart-Contract&#34; class=&#34;headerlink&#34; title=&#34;What Is a Smart Contract?&#34;&gt;&lt;/a&gt;What Is a Smart Contract?&lt;/h2&gt;&lt;p&gt;A smart contract is a piece of code designed to automatically execute a contract when predetermined conditions are met. The terms of a contract can be implemented in code and designed to execute automatically on the blockchain. Because of this, smart contracts can reduce the cost of intermediaries and fulfill contracts without a third party.&lt;/p&gt;
+&lt;p&gt;The concept of smart contracts was first proposed in 1994 by Nick Szabo (who, incidentally, is often cited as one of the alleged creators of Satoshi Nakamoto), but it was only a concept, and the technical realization came later. In 2013, Vitalik Buterin, the creator of Ethereum, published a white paper on his blog &lt;a href=&#34;https://web.archive.org/web/20131228111141/http://vbuterin.com/ethereum.html&#34;&gt;outlining the concept of a new blockchain platform based on smart contracts&lt;/a&gt;. The blockchain platform called Ethereum was officially launched in 2015, and smart contracts started to be used on real blockchains in earnest.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/13/bekim/smartcontract/en/image.jpg&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Smart contracts are currently used on a variety of blockchain platforms besides Ethereum, and most of these contracts are executed based on code written in the form of if-then conditional statements. Because blockchain is a structure where multiple participants share and validate the same information, it is considered a very suitable environment for validating and executing contract terms.&lt;/p&gt;
+&lt;h3 id=&#34;How-smart-contracts-work&#34;&gt;&lt;a href=&#34;#How-smart-contracts-work&#34; class=&#34;headerlink&#34; title=&#34;How smart contracts work&#34;&gt;&lt;/a&gt;How smart contracts work&lt;/h3&gt;&lt;p&gt;Smart contracts are typically created in a programming language, and the sequence of actions is as follows.&lt;/p&gt;
+&lt;p&gt;1) &lt;strong&gt;Write the code&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;pragma solidity ^0.8.26;
+
+contract Coin {
+    // The keyword &amp;quot;public&amp;quot; makes variables
+    // accessible from other contracts
+    address public minter;
+    mapping(address =&amp;gt; uint) public balances;
+
+    // Events allow clients to react to specific
+    // contract changes you declare
+    event Sent(address from, address to, uint amount);
+
+    // Constructor code is only run when the contract
+    // is created
+    constructor() {
+        minter = msg.sender;
+    }
+
+    // Sends an amount of newly created coins to an address
+    // Can only be called by the contract creator
+    function mint(address receiver, uint amount) public {
+        require(msg.sender == minter);
+        balances[receiver] += amount;
+    }
+
+    // Errors allow you to provide information about
+    // why an operation failed. They are returned
+    // to the caller of the function.
+    error InsufficientBalance(uint requested, uint available);
+
+    // Sends an amount of existing coins
+    // from any caller to an address
+    function send(address receiver, uint amount) public {
+        require(amount &amp;lt;= balances[msg.sender], InsufficientBalance(amount, balances[msg.sender]));
+        balances[msg.sender] -= amount;
+        balances[receiver] += amount;
+        emit Sent(msg.sender, receiver, amount);
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;A contract written like the one above introduces several concepts&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;address public minter;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This code declares a state variable minter of type address. The address type is 160 bits in size, non-mutable, and is used to store an account or contract address. Additionally, by adding the public keyword, the compiler automatically creates a getter function to retrieve this value externally.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;mapping(address =&amp;gt; uint) public balances;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This code is a mapping that stores an address as a key and the amount of coins at that address as a value. It&amp;#x2019;s also public, so we can look up balances by address externally.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;event Sent(address from, address to, uint amount);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This event is called in the last line of the send() function. When the Sent event is fired, the listener receives the sender, recipient, and amount information so they can track the transaction.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;constructor() {
+    minter = msg.sender;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The Constructor code is only executed once when the contract is deployed. msg.sender is the address where the contract was deployed, which we store as a minter.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;function mint(address receiver, uint amount) public {
+    require(msg.sender == minter);
+    balances[receiver] += amount;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Mint new coins and send them to another address. &lt;code&gt;The require(msg.sender == minter)&lt;/code&gt; condition here restricts only the distributor to call this function. And if the &lt;code&gt;balances[receiver]+amount&lt;/code&gt; operation exceeds the maximum value of uint256, the transaction will be automatically reverted according to Solidity&amp;#x2019;s built-in Checked Arithmetic safety.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;error InsufficientBalance(uint requested, uint available);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Define the error messages error and revert. For example, if a user tries to send more coins than they have, the transaction is canceled with an InsufficientBalance error.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;function send(address receiver, uint amount) public {
+    require(amount &amp;lt;= balances[msg.sender], InsufficientBalance(amount, balances[msg.sender]));
+    balances[msg.sender] -= amount;
+    balances[receiver] += amount;
+    emit Sent(msg.sender, receiver, amount);
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;You can send your own coins to another address. If the require condition is not met, the code will throw an InsufficientBalance error.&lt;/p&gt;
+&lt;p&gt;2) &lt;strong&gt;Compile and deploy&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;The code you write is converted into Bytecode and Application Binary Interface (ABI) by the Solidity compiler.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Bytecode is low-level code that can be executed by the Ethereum Virtual Machine (EVM) and is used to deploy the contract to the blockchain.&lt;/li&gt;
+&lt;li&gt;The ABI is the interface used to call the contract&amp;#x2019;s functions from the outside, defining the function name and parameter format.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The generated bytecode is then propagated on the blockchain network in the form of a transaction, and when this transaction contains a block, the contract is given a unique address and registered on the blockchain.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/13/bekim/smartcontract/en/image1.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;3) &lt;strong&gt;Call a transaction&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;function send(address receiver, uint amount) public {
+        require(amount &amp;lt;= balances[msg.sender], InsufficientBalance(amount, balances[msg.sender]));
+        balances[msg.sender] -= amount;
+        balances[receiver] += amount;
+        emit Sent(msg.sender, receiver, amount);
+    }&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;A user who wants to call a specific function of a smart contract creates a transaction containing the function call information (target contract address, ABI-based function signature, gas information, etc. As shown in the example code, when a user creates a transaction to execute Coin.sol&amp;#x2019;s send() function, the transaction is temporarily stored in the node&amp;#x2019;s mempool and is picked up by the block producer (miner or validator) and included in the block. After the transaction enters the mempool, it is processed in the order of gas price!&lt;/p&gt;
+&lt;p&gt;&amp;#x2192; mempool (Memory Pool): A place where transactions that have not yet been included in a block are temporarily stored.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/13/bekim/smartcontract/en/image2.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Broadcast this transaction to the blockchain network.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/13/bekim/smartcontract/en/image3.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;4) &lt;strong&gt;Smart Contract Execution (EVM)&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;The block producer first executes the smart contract, and other validating nodes re-run the same to verify the legitimacy of the block. When the block producer processes a transaction, it runs its functions (such as send()) through the EVM. The EVM decodes the input, maps the functions to be called, and executes the contract&amp;#x2019;s logic, including require conditional statements, state changes, and event logging.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;require(amount &amp;lt;= balances[msg.sender], InsufficientBalance(amount, balances[msg.sender]));&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;If this condition is met, the contract is fulfilled; otherwise, an InsufficientBalance error is thrown and all changes are rolled back.&lt;/p&gt;
+&lt;p&gt;5) &lt;strong&gt;Gas handling&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;EVMs also consume gas to run. This is used as an incentive for nodes (validators) to continuously run the network and to prevent excessive computation. The remaining gas is refunded according to the gasLimit set by the user and the actual consumption, and failed transactions also consume gas.&lt;/p&gt;
+&lt;p&gt;6) &lt;strong&gt;Storing results&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;When a transaction execution is successful, the following results are reflected on the blockchain&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;State changes: Internal storage changes, for example, &lt;code&gt;balances[msg.sender] -= amount&lt;/code&gt;, are reflected in a &lt;strong&gt;state trie&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;Event log: Events such as &lt;code&gt;emit Sent(...)&lt;/code&gt; are written to a separate log store (receipts).&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;These data are embedded in blocks, making them a persistent record shared by all nodes, and can be verified or queried by anyone.&lt;/p&gt;
+&lt;p&gt;This makes smart contracts much more efficient than traditional contracts, as they are automatically executed when conditions are met. They can be executed without the need for intermediaries, and they are also more reliable, as they are transparent and immutable when based on the blockchain. Thanks to these advantages, smart contracts are increasingly being used in a variety of fields&lt;/p&gt;
+&lt;h2 id=&#34;Use-cases-for-smart-contracts&#34;&gt;&lt;a href=&#34;#Use-cases-for-smart-contracts&#34; class=&#34;headerlink&#34; title=&#34;Use cases for smart contracts&#34;&gt;&lt;/a&gt;Use cases for smart contracts&lt;/h2&gt;&lt;p&gt;Since smart contracts first gained traction on the Ethereum blockchain platform, they have expanded into a variety of fields.&lt;/p&gt;
+&lt;p&gt;1) &lt;strong&gt;DeFi (Decentralized Finance)&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;DeFi is a decentralized financial system that enables deposits, loans, asset trading, derivatives, etc. to be conducted on the blockchain without the need for centralized financial institutions such as traditional banks and securities firms. DeFi services write all financial transaction logic in smart contracts.&lt;/p&gt;
+&lt;p&gt;For example, on DeFi platforms like Aave or Compound, users can deposit cryptocurrency and automatically earn interest, while other users can borrow against collateral.&lt;/p&gt;
+&lt;p&gt;Another example is Uniswap, which allows users to automatically exchange cryptocurrencies without the need for a centralized exchange: the transactions are carried out through a pool of pre-deposited liquidity, and the exchange logic is handled by smart contracts. Similarly, Curve is a platform that specializes in exchanging stablecoins, and the exchange process is also automated by smart contracts.&lt;/p&gt;
+&lt;p&gt;2) &lt;strong&gt;DAO (Decentralized Autonomous Organization)&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;A DAO (Decentralized Autonomous Organization) is a form of organization where rules and decisions are automatically enforced by smart contracts rather than by a specific manager or operator like a traditional organization. Members participate in voting by holding DAO tokens, and if a proposed agenda meets certain conditions, the smart contract automatically executes it.&lt;/p&gt;
+&lt;p&gt;A prime example is MarkerDAO. MarkerDAO is a DAO built on the Ethereum blockchain that issues and manages DAI, a decentralized stablecoin. MarkerDAO keeps the value of DAI stable, and members vote on things like interest rate adjustments and system upgrades through smart contracts.&lt;/p&gt;
+&lt;p&gt;In this way, DAOs allow operations to be organized by code without human intervention.&lt;/p&gt;
+&lt;p&gt;3) &lt;strong&gt;CryptoKitties&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;CryptoKitties is an Ethereum-based blockchain game that launched in 2017 that utilizes smart contracts to collect, breed, and trade digital cats.&lt;/p&gt;
+&lt;p&gt;In the game, cats are represented by NFTs, each with its own unique characteristics and appearance. Users can breed two cats to create a new cat, where the combination of genetic information and the outcome of the breeding is automatically determined by the smart contract. The resulting cat is registered as a new NFT, and users can sell it to other users or keep it for themselves. The game was so popular that it overloaded the Ethereum network shortly after launch.&lt;/p&gt;
+&lt;p&gt;As you can see, smart contracts are being used in a variety of fields, including finance, organizational operations, gaming, and more. While blockchain is known for being a highly secure technology, smart contracts have actually been hacked a few times. In the following, I will explain the vulnerabilities of smart contracts with real-world examples.&lt;/p&gt;
+&lt;h2 id=&#34;Vulnerabilities-of-Smart-Contract&#34;&gt;&lt;a href=&#34;#Vulnerabilities-of-Smart-Contract&#34; class=&#34;headerlink&#34; title=&#34;Vulnerabilities of Smart Contract&#34;&gt;&lt;/a&gt;Vulnerabilities of Smart Contract&lt;/h2&gt;&lt;h3 id=&#34;1-Reentrancy-Attack&#34;&gt;&lt;a href=&#34;#1-Reentrancy-Attack&#34; class=&#34;headerlink&#34; title=&#34;1. Reentrancy Attack&#34;&gt;&lt;/a&gt;1. Reentrancy Attack&lt;/h3&gt;&lt;p&gt;Reentrancy attack is a vulnerability that occurs when a smart contract makes a call to an external contract before updating its state. In this case, the external contract (if malicious) can re-enter the original function and perform actions such as withdrawal repeatedly based on the same state.&lt;/p&gt;
+&lt;p&gt;This vulnerability became a top security item to review after a 2016 DAO hack resulted in the theft of approximately $60 million.&lt;/p&gt;
+&lt;p&gt;Here&amp;#x2019;s an example&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;When a smart contract sends ETH or tokens to an external address (the smart contract), a function (fallback() or receive()) on the receiver side is automatically executed.&lt;/li&gt;
+&lt;li&gt;At this point, the code inside the function is executed, so the flow of execution goes to the external contract.&lt;/li&gt;
+&lt;li&gt;If the attacker uses this opportunity to call the original contract&amp;#x2019;s function again, the original contract will be executed again in an uncleaned state because it has not yet finished executing the previous function.&lt;/li&gt;
+&lt;li&gt;As a result, the attacker can continue to withdraw funds before balance verification.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The code below is part of splitDAO(), a function that was vulnerable to a reentry attack during the DAO hack.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;function splitDAO(uint _proposalID, address _newCurator) noEther onlyTokenholders returns (bool _success) {
+    ...
+		// [1]
+    uint fundsToBeMoved = (balances[msg.sender] * p.splitData[0].splitBalance) / p.splitData[0].totalSupply;
+    //Since the balance is never updated the attacker can pass this modifier several times 
+    // [2]
+    if (p.splitData[0].newDAO.createTokenProxy.value(fundsToBeMoved)(msg.sender) == false) throw;
+
+    ...
+
+    // Burn DAO Tokens
+    // Funds are transferred before the balance is updated
+    //[3]
+    Transfer(msg.sender, 0, balances[msg.sender]);
+    withdrawRewardFor(msg.sender); // be nice, and get his rewards
+    // Only now after the funds are transferred is the balance updated
+    totalSupply -= balances[msg.sender];
+    paidOut[msg.sender] = 0;
+    return true;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The splitDAO() function is executed when a user leaves a DAO and moves to a new DAO.&lt;/p&gt;
+&lt;p&gt;In [1], it calls &lt;code&gt;fundsToBeMoved&lt;/code&gt;, which calculates the amount of ether the user will receive. At this point, the &lt;code&gt;balances[msg.sender]&lt;/code&gt; used is not yet decremented.&lt;/p&gt;
+&lt;p&gt;In [2], sending the ether calls a function (&lt;code&gt;createTokenProxy&lt;/code&gt;) in the external contract, which can be used by a malicious contract created by the attacker to call splitDAO() again.&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;balances[msg.sender]&lt;/code&gt; will then still have the same value, allowing the same amount of funds to be withdrawn repeatedly in multiple requests.&lt;/p&gt;
+&lt;p&gt;It changes the internal state after [3], but this happens after the external call has already ended, so it&amp;#x2019;s completely ineffective as a defense.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Mitigation&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;1) &lt;strong&gt;Use the Checks-Effects-Interactions pattern&lt;/strong&gt;&lt;br&gt;The smart contract must first change its internal state before interacting with the external contract. For this, it is important to write code in the following order: checks &amp;#x2192; Effects &amp;#x2192; Interaction.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Checks: Validate inputs and conditions&lt;/li&gt;
+&lt;li&gt;Effects: Updating state variables&lt;/li&gt;
+&lt;li&gt;Interactions: call external contracts&lt;br&gt;2) &lt;strong&gt;Using ReentrancyGuard&lt;/strong&gt;&lt;br&gt;ReentrancyGuard, provided by &lt;a href=&#34;https://docs.openzeppelin.com/contracts/4.x/api/security#ReentrancyGuard&#34;&gt;OpenZeppelin&lt;/a&gt;, is a module that prevents re-entry attacks. By applying the &lt;code&gt;nonReentrant&lt;/code&gt; modifier, you can block the same function from being called again when it is running.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;2-Improper-Access-Control&#34;&gt;&lt;a href=&#34;#2-Improper-Access-Control&#34; class=&#34;headerlink&#34; title=&#34;2. Improper Access Control&#34;&gt;&lt;/a&gt;2. Improper Access Control&lt;/h3&gt;&lt;p&gt;An access control vulnerability is a vulnerability that occurs when a smart contract fails to adequately restrict access to certain functions or data.&lt;/p&gt;
+&lt;p&gt;This allows unauthorized users to access sensitive functions (e.g. token issuance, asset withdrawal, contract suspension, upgrades, etc.), threatening the security and integrity of the contract.&lt;/p&gt;
+&lt;p&gt;Below is a vulnerable version of a smart contract.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract Solidity_AccessControl {
+    mapping(address =&amp;gt; uint256) public balances;
+
+    // Burn function with no access control
+    function burn(address account, uint256 amount) public {
+        _burn(account, amount);
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In this example, anyone can call the burn function and reduce or destroy the balance of tokens at any address. This contract is a classic example of exposing sensitive functionality without permission validation.&lt;/p&gt;
+&lt;p&gt;The code below is a modified version that allows only the contract owner to call burn via the onlyOwner modifier.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+// Import the Ownable contract from OpenZeppelin to manage ownership
+import &amp;quot;@openzeppelin/contracts/access/Ownable.sol&amp;quot;;
+
+contract Solidity_AccessControl is Ownable {
+    mapping(address =&amp;gt; uint256) public balances;
+
+    // Burn function with proper access control, only accessible by the contract owner
+    function burn(address account, uint256 amount) public onlyOwner {
+        _burn(account, amount);
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;strong&gt;Real-world example&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The Parity Multisig Wallet hack in 2017 was attributed to the lack of access restrictions on the initialization function &lt;code&gt;initWallet()&lt;/code&gt;. The attacker called the function to register himself as the owner of the wallet and stole approximately 150,000 ETH (approximately $30 million at the time).&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;Mitigation&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;1) &lt;strong&gt;Use an authorization control module&lt;/strong&gt;&lt;br&gt;Use a proven access control framework such as OpenZeppelin&amp;#x2019;s &lt;a href=&#34;https://docs.openzeppelin.com/contracts/2.x/api/ownership#Ownable&#34;&gt;&lt;code&gt;Ownable&lt;/code&gt;&lt;/a&gt;, &lt;code&gt;AccessControl&lt;/code&gt;, or Role-Based Access Control (RBAC).&lt;br&gt;2) &lt;strong&gt;It is important to design and implement access control mechanisms clearly and systematically within the smart contract.&lt;/strong&gt;&lt;/p&gt;
+&lt;h3 id=&#34;3-Price-oracle-manipulation&#34;&gt;&lt;a href=&#34;#3-Price-oracle-manipulation&#34; class=&#34;headerlink&#34; title=&#34;3. Price oracle manipulation&#34;&gt;&lt;/a&gt;3. &lt;strong&gt;Price oracle manipulation&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;Smart contracts use oracles to fetch prices or other information from the outside world, especially in DeFi, where oracles are often used to fetch asset prices. If the oracle is manipulated, vulnerable, or unreliable, an attacker can inject false price information and cause the smart contract to behave incorrectly. This vulnerability can cause unauthorized withdrawals, excessive leverage, contract bankruptcy, liquidity pool depletion, and more.&lt;/p&gt;
+&lt;p&gt;The following example is sample code written to illustrate the concept.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+// [1]
+interface IPriceFeed {
+    function getLatestPrice() external view returns (int);
+}
+
+contract PriceOracleManipulation {
+    address public owner;
+    IPriceFeed public priceFeed;
+
+    constructor(address _priceFeed) {
+        owner = msg.sender;
+        priceFeed = IPriceFeed(_priceFeed);
+    }
+		// [2]
+    function borrow(uint256 amount) public {
+        int price = priceFeed.getLatestPrice();
+        require(price &amp;gt; 0, &amp;quot;Price must be positive&amp;quot;);
+	
+        // Vulnerability: No validation or protection against price manipulation
+        //[3]
+        uint256 collateralValue = uint256(price) * amount;
+
+        // Borrow logic based on manipulated price
+        // If an attacker manipulates the oracle, they could borrow more than they should
+    }
+
+    function repay(uint256 amount) public {
+        // Repayment logic
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The getLatestPrice() function in [1] gets the latest price from an external system (oracle). If this oracle can be manipulated or is untrusted, an attacker can inject false price data into the contract.&lt;/p&gt;
+&lt;p&gt;When calling borrow() with [2], we get the current price of the asset from the oracle; the price &amp;gt; 0 condition is simply a validation, and there is no defense against manipulated prices.&lt;/p&gt;
+&lt;p&gt;In [3], the collateral value is calculated by multiplying the received price value by amount, and if this value is overestimated, the attacker can borrow more funds than they actually have. If the attacker injected false price data, this could result in overborrowing against collateral and lead to system asset exfiltration.&lt;/p&gt;
+&lt;p&gt;Below is code that improves upon the vulnerable version of the smart contract shown earlier.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs solidity&#34;&gt;// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IPriceFeed {
+    function getLatestPrice() external view returns (int);
+}
+
+contract PriceOracleManipulation {
+    address public owner;
+    IPriceFeed public priceFeed;
+    // [1]
+    int public minPrice = 1000; // Set minimum acceptable price
+    int public maxPrice = 2000; // Set maximum acceptable price
+
+    constructor(address _priceFeed) {
+        owner = msg.sender;
+        priceFeed = IPriceFeed(_priceFeed);
+    }
+
+    function borrow(uint256 amount) public {
+        int price = priceFeed.getLatestPrice();
+        // [2]
+        require(price &amp;gt; 0 &amp;amp;&amp;amp; price &amp;gt;= minPrice &amp;amp;&amp;amp; price &amp;lt;= maxPrice, &amp;quot;Price manipulation detected&amp;quot;);
+
+        uint256 collateralValue = uint256(price) * amount;
+
+        // Borrow logic based on valid price
+    }
+
+    function repay(uint256 amount) public {
+        // Repayment logic
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;[1] set a threshold variable to prevent price manipulation, and [2] added logic for price validation.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Real-world example&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;In February 2023, the BonqDAO protocol suffered an oracle manipulation attack that caused $120 million in losses. The attacker artificially inflated the price of ALBT tokens through the oracle and over issued BEUR stablecoins as collateral. The attack was caused by the lack of oracle price validation.&lt;/li&gt;
+&lt;li&gt;In May 2023, Baby Doge tokens suffered approximately $137,000 worth of damage due to an oracle manipulation attack.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;mitigation&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Aggregating data from multiple independent oracles can reduce the risk of manipulation.&lt;/li&gt;
+&lt;li&gt;Set minimum and maximum thresholds on the price received from oracles to prevent sudden price fluctuations that could affect smart contract logic.&lt;/li&gt;
+&lt;li&gt;Introduce a time lock, whereby a delay between price updates prevents exploitation of instantaneous price fluctuations.&lt;/li&gt;
+&lt;li&gt;To ensure the authenticity of the data received from the oracle, we utilize attestation methods such as cryptographic signatures.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;In this article, we&amp;#x2019;ve covered the concept of smart contracts, how they work, and some of their most common security vulnerabilities. In fact, I initially wanted to cover more vulnerabilities of smart contracts, but due to the length of this article, I had to briefly summarize only three.&lt;/p&gt;
+&lt;p&gt;Next time, I&amp;#x2019;m thinking about covering more actual hacking cases and various vulnerabilities.&lt;/p&gt;
+&lt;p&gt;That being said, I don&amp;#x2019;t know yet if that will be my next topic &amp;#x1F605; Thanks for reading this long research post!&lt;/p&gt;
+&lt;h3 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h3&gt;&lt;p&gt;&lt;a href=&#34;https://docs.soliditylang.org/en/latest/introduction-to-smart-contracts.html&#34;&gt;https://docs.soliditylang.org/en/latest/introduction-to-smart-contracts.html&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/pcaversaccio/reentrancy-attacks&#34;&gt;https://github.com/pcaversaccio/reentrancy-attacks&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://owasp.org/www-project-smart-contract-top-10/&#34;&gt;https://owasp.org/www-project-smart-contract-top-10/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://medium.com/coinmonks/10-smart-contract-vulnerabilities-with-code-examples-38562685fca2&#34;&gt;https://medium.com/coinmonks/10-smart-contract-vulnerabilities-with-code-examples-38562685fca2&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/07/13/bekim/smartcontract/en/image.jpg">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/07/13/bekim/smartcontract/en/">
+
+  <title>[Research] From Paper to Code: Smart Contract [en] - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-07-13 17:00" pubdate>
+      2025년 7월 13일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      3.3k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      65
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] From Paper to Code: Smart Contract [en]</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <h2 id="Introduction"><a href="#Introduction" class="headerlink" title="Introduction"></a>Introduction</h2><p>In the last post, we talked about blockchain and consensus algorithms, diving into how decentralized systems work. This time, I want to explore one of the most exciting technologies built on top of blockchain: <strong>smart contracts</strong>.</p>
+<p>You know how traditional contracts usually involve paperwork, signatures, and sometimes a middleman? Smart contracts change all that. They let us turn agreements into code that runs automatically when certain conditions are met&#x2014;no lawyers, no banks, no hassle.</p>
+<p>In this post, I&#x2019;ll walk you through how smart contracts work, share some interesting use cases, and touch on a few common security issues to watch out for.</p>
+<h2 id="What-Is-a-Smart-Contract"><a href="#What-Is-a-Smart-Contract" class="headerlink" title="What Is a Smart Contract?"></a>What Is a Smart Contract?</h2><p>A smart contract is a piece of code designed to automatically execute a contract when predetermined conditions are met. The terms of a contract can be implemented in code and designed to execute automatically on the blockchain. Because of this, smart contracts can reduce the cost of intermediaries and fulfill contracts without a third party.</p>
+<p>The concept of smart contracts was first proposed in 1994 by Nick Szabo (who, incidentally, is often cited as one of the alleged creators of Satoshi Nakamoto), but it was only a concept, and the technical realization came later. In 2013, Vitalik Buterin, the creator of Ethereum, published a white paper on his blog <a target="_blank" rel="external nofollow noopener noreferrer" href="https://web.archive.org/web/20131228111141/http://vbuterin.com/ethereum.html">outlining the concept of a new blockchain platform based on smart contracts</a>. The blockchain platform called Ethereum was officially launched in 2015, and smart contracts started to be used on real blockchains in earnest.</p>
+<p><img src="/2025/07/13/bekim/smartcontract/en/image.jpg" srcset="/img/loading.gif" alt></p>
+<p>Smart contracts are currently used on a variety of blockchain platforms besides Ethereum, and most of these contracts are executed based on code written in the form of if-then conditional statements. Because blockchain is a structure where multiple participants share and validate the same information, it is considered a very suitable environment for validating and executing contract terms.</p>
+<h3 id="How-smart-contracts-work"><a href="#How-smart-contracts-work" class="headerlink" title="How smart contracts work"></a>How smart contracts work</h3><p>Smart contracts are typically created in a programming language, and the sequence of actions is as follows.</p>
+<p>1) <strong>Write the code</strong></p>
+<pre><code class="hljs solidity">pragma solidity ^0.8.26;
+
+contract Coin {
+    // The keyword &quot;public&quot; makes variables
+    // accessible from other contracts
+    address public minter;
+    mapping(address =&gt; uint) public balances;
+
+    // Events allow clients to react to specific
+    // contract changes you declare
+    event Sent(address from, address to, uint amount);
+
+    // Constructor code is only run when the contract
+    // is created
+    constructor() {
+        minter = msg.sender;
+    }
+
+    // Sends an amount of newly created coins to an address
+    // Can only be called by the contract creator
+    function mint(address receiver, uint amount) public {
+        require(msg.sender == minter);
+        balances[receiver] += amount;
+    }
+
+    // Errors allow you to provide information about
+    // why an operation failed. They are returned
+    // to the caller of the function.
+    error InsufficientBalance(uint requested, uint available);
+
+    // Sends an amount of existing coins
+    // from any caller to an address
+    function send(address receiver, uint amount) public {
+        require(amount &lt;= balances[msg.sender], InsufficientBalance(amount, balances[msg.sender]));
+        balances[msg.sender] -= amount;
+        balances[receiver] += amount;
+        emit Sent(msg.sender, receiver, amount);
+    }
+}</code></pre>
+<p>A contract written like the one above introduces several concepts</p>
+<pre><code class="hljs solidity">address public minter;</code></pre>
+<p>This code declares a state variable minter of type address. The address type is 160 bits in size, non-mutable, and is used to store an account or contract address. Additionally, by adding the public keyword, the compiler automatically creates a getter function to retrieve this value externally.</p>
+<pre><code class="hljs solidity">mapping(address =&gt; uint) public balances;</code></pre>
+<p>This code is a mapping that stores an address as a key and the amount of coins at that address as a value. It&#x2019;s also public, so we can look up balances by address externally.</p>
+<pre><code class="hljs solidity">event Sent(address from, address to, uint amount);</code></pre>
+<p>This event is called in the last line of the send() function. When the Sent event is fired, the listener receives the sender, recipient, and amount information so they can track the transaction.</p>
+<pre><code class="hljs solidity">constructor() {
+    minter = msg.sender;
+}</code></pre>
+<p>The Constructor code is only executed once when the contract is deployed. msg.sender is the address where the contract was deployed, which we store as a minter.</p>
+<pre><code class="hljs solidity">function mint(address receiver, uint amount) public {
+    require(msg.sender == minter);
+    balances[receiver] += amount;
+}</code></pre>
+<p>Mint new coins and send them to another address. <code>The require(msg.sender == minter)</code> condition here restricts only the distributor to call this function. And if the <code>balances[receiver]+amount</code> operation exceeds the maximum value of uint256, the transaction will be automatically reverted according to Solidity&#x2019;s built-in Checked Arithmetic safety.</p>
+<pre><code class="hljs solidity">error InsufficientBalance(uint requested, uint available);</code></pre>
+<p>Define the error messages error and revert. For example, if a user tries to send more coins than they have, the transaction is canceled with an InsufficientBalance error.</p>
+<pre><code class="hljs solidity">function send(address receiver, uint amount) public {
+    require(amount &lt;= balances[msg.sender], InsufficientBalance(amount, balances[msg.sender]));
+    balances[msg.sender] -= amount;
+    balances[receiver] += amount;
+    emit Sent(msg.sender, receiver, amount);
+}</code></pre>
+<p>You can send your own coins to another address. If the require condition is not met, the code will throw an InsufficientBalance error.</p>
+<p>2) <strong>Compile and deploy</strong></p>
+<p>The code you write is converted into Bytecode and Application Binary Interface (ABI) by the Solidity compiler.</p>
+<ul>
+<li>Bytecode is low-level code that can be executed by the Ethereum Virtual Machine (EVM) and is used to deploy the contract to the blockchain.</li>
+<li>The ABI is the interface used to call the contract&#x2019;s functions from the outside, defining the function name and parameter format.</li>
+</ul>
+<p>The generated bytecode is then propagated on the blockchain network in the form of a transaction, and when this transaction contains a block, the contract is given a unique address and registered on the blockchain.</p>
+<p><img src="/2025/07/13/bekim/smartcontract/en/image1.png" srcset="/img/loading.gif" alt></p>
+<p>3) <strong>Call a transaction</strong></p>
+<pre><code class="hljs solidity">function send(address receiver, uint amount) public {
+        require(amount &lt;= balances[msg.sender], InsufficientBalance(amount, balances[msg.sender]));
+        balances[msg.sender] -= amount;
+        balances[receiver] += amount;
+        emit Sent(msg.sender, receiver, amount);
+    }</code></pre>
+<p>A user who wants to call a specific function of a smart contract creates a transaction containing the function call information (target contract address, ABI-based function signature, gas information, etc. As shown in the example code, when a user creates a transaction to execute Coin.sol&#x2019;s send() function, the transaction is temporarily stored in the node&#x2019;s mempool and is picked up by the block producer (miner or validator) and included in the block. After the transaction enters the mempool, it is processed in the order of gas price!</p>
+<p>&#x2192; mempool (Memory Pool): A place where transactions that have not yet been included in a block are temporarily stored.</p>
+<p><img src="/2025/07/13/bekim/smartcontract/en/image2.png" srcset="/img/loading.gif" alt></p>
+<p>Broadcast this transaction to the blockchain network.</p>
+<p><img src="/2025/07/13/bekim/smartcontract/en/image3.png" srcset="/img/loading.gif" alt></p>
+<p>4) <strong>Smart Contract Execution (EVM)</strong></p>
+<p>The block producer first executes the smart contract, and other validating nodes re-run the same to verify the legitimacy of the block. When the block producer processes a transaction, it runs its functions (such as send()) through the EVM. The EVM decodes the input, maps the functions to be called, and executes the contract&#x2019;s logic, including require conditional statements, state changes, and event logging.</p>
+<pre><code class="hljs solidity">require(amount &lt;= balances[msg.sender], InsufficientBalance(amount, balances[msg.sender]));</code></pre>
+<p>If this condition is met, the contract is fulfilled; otherwise, an InsufficientBalance error is thrown and all changes are rolled back.</p>
+<p>5) <strong>Gas handling</strong></p>
+<p>EVMs also consume gas to run. This is used as an incentive for nodes (validators) to continuously run the network and to prevent excessive computation. The remaining gas is refunded according to the gasLimit set by the user and the actual consumption, and failed transactions also consume gas.</p>
+<p>6) <strong>Storing results</strong></p>
+<p>When a transaction execution is successful, the following results are reflected on the blockchain</p>
+<ul>
+<li>State changes: Internal storage changes, for example, <code>balances[msg.sender] -= amount</code>, are reflected in a <strong>state trie</strong>.</li>
+<li>Event log: Events such as <code>emit Sent(...)</code> are written to a separate log store (receipts).</li>
+</ul>
+<p>These data are embedded in blocks, making them a persistent record shared by all nodes, and can be verified or queried by anyone.</p>
+<p>This makes smart contracts much more efficient than traditional contracts, as they are automatically executed when conditions are met. They can be executed without the need for intermediaries, and they are also more reliable, as they are transparent and immutable when based on the blockchain. Thanks to these advantages, smart contracts are increasingly being used in a variety of fields</p>
+<h2 id="Use-cases-for-smart-contracts"><a href="#Use-cases-for-smart-contracts" class="headerlink" title="Use cases for smart contracts"></a>Use cases for smart contracts</h2><p>Since smart contracts first gained traction on the Ethereum blockchain platform, they have expanded into a variety of fields.</p>
+<p>1) <strong>DeFi (Decentralized Finance)</strong></p>
+<p>DeFi is a decentralized financial system that enables deposits, loans, asset trading, derivatives, etc. to be conducted on the blockchain without the need for centralized financial institutions such as traditional banks and securities firms. DeFi services write all financial transaction logic in smart contracts.</p>
+<p>For example, on DeFi platforms like Aave or Compound, users can deposit cryptocurrency and automatically earn interest, while other users can borrow against collateral.</p>
+<p>Another example is Uniswap, which allows users to automatically exchange cryptocurrencies without the need for a centralized exchange: the transactions are carried out through a pool of pre-deposited liquidity, and the exchange logic is handled by smart contracts. Similarly, Curve is a platform that specializes in exchanging stablecoins, and the exchange process is also automated by smart contracts.</p>
+<p>2) <strong>DAO (Decentralized Autonomous Organization)</strong></p>
+<p>A DAO (Decentralized Autonomous Organization) is a form of organization where rules and decisions are automatically enforced by smart contracts rather than by a specific manager or operator like a traditional organization. Members participate in voting by holding DAO tokens, and if a proposed agenda meets certain conditions, the smart contract automatically executes it.</p>
+<p>A prime example is MarkerDAO. MarkerDAO is a DAO built on the Ethereum blockchain that issues and manages DAI, a decentralized stablecoin. MarkerDAO keeps the value of DAI stable, and members vote on things like interest rate adjustments and system upgrades through smart contracts.</p>
+<p>In this way, DAOs allow operations to be organized by code without human intervention.</p>
+<p>3) <strong>CryptoKitties</strong></p>
+<p>CryptoKitties is an Ethereum-based blockchain game that launched in 2017 that utilizes smart contracts to collect, breed, and trade digital cats.</p>
+<p>In the game, cats are represented by NFTs, each with its own unique characteristics and appearance. Users can breed two cats to create a new cat, where the combination of genetic information and the outcome of the breeding is automatically determined by the smart contract. The resulting cat is registered as a new NFT, and users can sell it to other users or keep it for themselves. The game was so popular that it overloaded the Ethereum network shortly after launch.</p>
+<p>As you can see, smart contracts are being used in a variety of fields, including finance, organizational operations, gaming, and more. While blockchain is known for being a highly secure technology, smart contracts have actually been hacked a few times. In the following, I will explain the vulnerabilities of smart contracts with real-world examples.</p>
+<h2 id="Vulnerabilities-of-Smart-Contract"><a href="#Vulnerabilities-of-Smart-Contract" class="headerlink" title="Vulnerabilities of Smart Contract"></a>Vulnerabilities of Smart Contract</h2><h3 id="1-Reentrancy-Attack"><a href="#1-Reentrancy-Attack" class="headerlink" title="1. Reentrancy Attack"></a>1. Reentrancy Attack</h3><p>Reentrancy attack is a vulnerability that occurs when a smart contract makes a call to an external contract before updating its state. In this case, the external contract (if malicious) can re-enter the original function and perform actions such as withdrawal repeatedly based on the same state.</p>
+<p>This vulnerability became a top security item to review after a 2016 DAO hack resulted in the theft of approximately $60 million.</p>
+<p>Here&#x2019;s an example</p>
+<ul>
+<li>When a smart contract sends ETH or tokens to an external address (the smart contract), a function (fallback() or receive()) on the receiver side is automatically executed.</li>
+<li>At this point, the code inside the function is executed, so the flow of execution goes to the external contract.</li>
+<li>If the attacker uses this opportunity to call the original contract&#x2019;s function again, the original contract will be executed again in an uncleaned state because it has not yet finished executing the previous function.</li>
+<li>As a result, the attacker can continue to withdraw funds before balance verification.</li>
+</ul>
+<p>The code below is part of splitDAO(), a function that was vulnerable to a reentry attack during the DAO hack.</p>
+<pre><code class="hljs solidity">function splitDAO(uint _proposalID, address _newCurator) noEther onlyTokenholders returns (bool _success) {
+    ...
+		// [1]
+    uint fundsToBeMoved = (balances[msg.sender] * p.splitData[0].splitBalance) / p.splitData[0].totalSupply;
+    //Since the balance is never updated the attacker can pass this modifier several times 
+    // [2]
+    if (p.splitData[0].newDAO.createTokenProxy.value(fundsToBeMoved)(msg.sender) == false) throw;
+
+    ...
+
+    // Burn DAO Tokens
+    // Funds are transferred before the balance is updated
+    //[3]
+    Transfer(msg.sender, 0, balances[msg.sender]);
+    withdrawRewardFor(msg.sender); // be nice, and get his rewards
+    // Only now after the funds are transferred is the balance updated
+    totalSupply -= balances[msg.sender];
+    paidOut[msg.sender] = 0;
+    return true;
+}</code></pre>
+<p>The splitDAO() function is executed when a user leaves a DAO and moves to a new DAO.</p>
+<p>In [1], it calls <code>fundsToBeMoved</code>, which calculates the amount of ether the user will receive. At this point, the <code>balances[msg.sender]</code> used is not yet decremented.</p>
+<p>In [2], sending the ether calls a function (<code>createTokenProxy</code>) in the external contract, which can be used by a malicious contract created by the attacker to call splitDAO() again.</p>
+<p>The <code>balances[msg.sender]</code> will then still have the same value, allowing the same amount of funds to be withdrawn repeatedly in multiple requests.</p>
+<p>It changes the internal state after [3], but this happens after the external call has already ended, so it&#x2019;s completely ineffective as a defense.</p>
+<p><strong>Mitigation</strong></p>
+<p>1) <strong>Use the Checks-Effects-Interactions pattern</strong><br>The smart contract must first change its internal state before interacting with the external contract. For this, it is important to write code in the following order: checks &#x2192; Effects &#x2192; Interaction.</p>
+<ul>
+<li>Checks: Validate inputs and conditions</li>
+<li>Effects: Updating state variables</li>
+<li>Interactions: call external contracts<br>2) <strong>Using ReentrancyGuard</strong><br>ReentrancyGuard, provided by <a target="_blank" rel="external nofollow noopener noreferrer" href="https://docs.openzeppelin.com/contracts/4.x/api/security#ReentrancyGuard">OpenZeppelin</a>, is a module that prevents re-entry attacks. By applying the <code>nonReentrant</code> modifier, you can block the same function from being called again when it is running.</li>
+</ul>
+<h3 id="2-Improper-Access-Control"><a href="#2-Improper-Access-Control" class="headerlink" title="2. Improper Access Control"></a>2. Improper Access Control</h3><p>An access control vulnerability is a vulnerability that occurs when a smart contract fails to adequately restrict access to certain functions or data.</p>
+<p>This allows unauthorized users to access sensitive functions (e.g. token issuance, asset withdrawal, contract suspension, upgrades, etc.), threatening the security and integrity of the contract.</p>
+<p>Below is a vulnerable version of a smart contract.</p>
+<pre><code class="hljs solidity">// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract Solidity_AccessControl {
+    mapping(address =&gt; uint256) public balances;
+
+    // Burn function with no access control
+    function burn(address account, uint256 amount) public {
+        _burn(account, amount);
+    }
+}</code></pre>
+<p>In this example, anyone can call the burn function and reduce or destroy the balance of tokens at any address. This contract is a classic example of exposing sensitive functionality without permission validation.</p>
+<p>The code below is a modified version that allows only the contract owner to call burn via the onlyOwner modifier.</p>
+<pre><code class="hljs solidity">// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+// Import the Ownable contract from OpenZeppelin to manage ownership
+import &quot;@openzeppelin/contracts/access/Ownable.sol&quot;;
+
+contract Solidity_AccessControl is Ownable {
+    mapping(address =&gt; uint256) public balances;
+
+    // Burn function with proper access control, only accessible by the contract owner
+    function burn(address account, uint256 amount) public onlyOwner {
+        _burn(account, amount);
+    }
+}</code></pre>
+<p><strong>Real-world example</strong></p>
+<ul>
+<li>The Parity Multisig Wallet hack in 2017 was attributed to the lack of access restrictions on the initialization function <code>initWallet()</code>. The attacker called the function to register himself as the owner of the wallet and stole approximately 150,000 ETH (approximately $30 million at the time).</li>
+</ul>
+<p><strong>Mitigation</strong></p>
+<p>1) <strong>Use an authorization control module</strong><br>Use a proven access control framework such as OpenZeppelin&#x2019;s <a target="_blank" rel="external nofollow noopener noreferrer" href="https://docs.openzeppelin.com/contracts/2.x/api/ownership#Ownable"><code>Ownable</code></a>, <code>AccessControl</code>, or Role-Based Access Control (RBAC).<br>2) <strong>It is important to design and implement access control mechanisms clearly and systematically within the smart contract.</strong></p>
+<h3 id="3-Price-oracle-manipulation"><a href="#3-Price-oracle-manipulation" class="headerlink" title="3. Price oracle manipulation"></a>3. <strong>Price oracle manipulation</strong></h3><p>Smart contracts use oracles to fetch prices or other information from the outside world, especially in DeFi, where oracles are often used to fetch asset prices. If the oracle is manipulated, vulnerable, or unreliable, an attacker can inject false price information and cause the smart contract to behave incorrectly. This vulnerability can cause unauthorized withdrawals, excessive leverage, contract bankruptcy, liquidity pool depletion, and more.</p>
+<p>The following example is sample code written to illustrate the concept.</p>
+<pre><code class="hljs solidity">// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+// [1]
+interface IPriceFeed {
+    function getLatestPrice() external view returns (int);
+}
+
+contract PriceOracleManipulation {
+    address public owner;
+    IPriceFeed public priceFeed;
+
+    constructor(address _priceFeed) {
+        owner = msg.sender;
+        priceFeed = IPriceFeed(_priceFeed);
+    }
+		// [2]
+    function borrow(uint256 amount) public {
+        int price = priceFeed.getLatestPrice();
+        require(price &gt; 0, &quot;Price must be positive&quot;);
+	
+        // Vulnerability: No validation or protection against price manipulation
+        //[3]
+        uint256 collateralValue = uint256(price) * amount;
+
+        // Borrow logic based on manipulated price
+        // If an attacker manipulates the oracle, they could borrow more than they should
+    }
+
+    function repay(uint256 amount) public {
+        // Repayment logic
+    }
+}</code></pre>
+<p>The getLatestPrice() function in [1] gets the latest price from an external system (oracle). If this oracle can be manipulated or is untrusted, an attacker can inject false price data into the contract.</p>
+<p>When calling borrow() with [2], we get the current price of the asset from the oracle; the price &gt; 0 condition is simply a validation, and there is no defense against manipulated prices.</p>
+<p>In [3], the collateral value is calculated by multiplying the received price value by amount, and if this value is overestimated, the attacker can borrow more funds than they actually have. If the attacker injected false price data, this could result in overborrowing against collateral and lead to system asset exfiltration.</p>
+<p>Below is code that improves upon the vulnerable version of the smart contract shown earlier.</p>
+<pre><code class="hljs solidity">// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IPriceFeed {
+    function getLatestPrice() external view returns (int);
+}
+
+contract PriceOracleManipulation {
+    address public owner;
+    IPriceFeed public priceFeed;
+    // [1]
+    int public minPrice = 1000; // Set minimum acceptable price
+    int public maxPrice = 2000; // Set maximum acceptable price
+
+    constructor(address _priceFeed) {
+        owner = msg.sender;
+        priceFeed = IPriceFeed(_priceFeed);
+    }
+
+    function borrow(uint256 amount) public {
+        int price = priceFeed.getLatestPrice();
+        // [2]
+        require(price &gt; 0 &amp;&amp; price &gt;= minPrice &amp;&amp; price &lt;= maxPrice, &quot;Price manipulation detected&quot;);
+
+        uint256 collateralValue = uint256(price) * amount;
+
+        // Borrow logic based on valid price
+    }
+
+    function repay(uint256 amount) public {
+        // Repayment logic
+    }
+}</code></pre>
+<p>[1] set a threshold variable to prevent price manipulation, and [2] added logic for price validation.</p>
+<p><strong>Real-world example</strong></p>
+<ul>
+<li>In February 2023, the BonqDAO protocol suffered an oracle manipulation attack that caused $120 million in losses. The attacker artificially inflated the price of ALBT tokens through the oracle and over issued BEUR stablecoins as collateral. The attack was caused by the lack of oracle price validation.</li>
+<li>In May 2023, Baby Doge tokens suffered approximately $137,000 worth of damage due to an oracle manipulation attack.</li>
+</ul>
+<p><strong>mitigation</strong></p>
+<ul>
+<li>Aggregating data from multiple independent oracles can reduce the risk of manipulation.</li>
+<li>Set minimum and maximum thresholds on the price received from oracles to prevent sudden price fluctuations that could affect smart contract logic.</li>
+<li>Introduce a time lock, whereby a delay between price updates prevents exploitation of instantaneous price fluctuations.</li>
+<li>To ensure the authenticity of the data received from the oracle, we utilize attestation methods such as cryptographic signatures.</li>
+</ul>
+<p>In this article, we&#x2019;ve covered the concept of smart contracts, how they work, and some of their most common security vulnerabilities. In fact, I initially wanted to cover more vulnerabilities of smart contracts, but due to the length of this article, I had to briefly summarize only three.</p>
+<p>Next time, I&#x2019;m thinking about covering more actual hacking cases and various vulnerabilities.</p>
+<p>That being said, I don&#x2019;t know yet if that will be my next topic &#x1F605; Thanks for reading this long research post!</p>
+<h3 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a>Reference</h3><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://docs.soliditylang.org/en/latest/introduction-to-smart-contracts.html">https://docs.soliditylang.org/en/latest/introduction-to-smart-contracts.html</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/pcaversaccio/reentrancy-attacks">https://github.com/pcaversaccio/reentrancy-attacks</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://owasp.org/www-project-smart-contract-top-10/">https://owasp.org/www-project-smart-contract-top-10/</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://medium.com/coinmonks/10-smart-contract-vulnerabilities-with-code-examples-38562685fca2">https://medium.com/coinmonks/10-smart-contract-vulnerabilities-with-code-examples-38562685fca2</a></p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/bekim/">bekim</a>
+                  
+                  <a class="hover-with-bg" href="/tags/blockchain/">blockchain</a>
+                  
+                  <a class="hover-with-bg" href="/tags/smartcontract/">smartcontract</a>
+                  
+                  <a class="hover-with-bg" href="/tags/ethereum/">ethereum</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_bekim.jpg" srcset="/img/loading.gif" alt="bekim">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">bekim</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/bekim">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/07/13/bekim/smartcontract/ko/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[Research] From Paper to Code: Smart Contract [ko]</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/07/12/poosic/cve-2025-32463/">
+                    <span class="hidden-mobile">[하루한줄] CVE-2025-32463 : sudo의 chroot를 이용한 Local Privilege Escalation</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/07/13/bekim/smartcontract/en/';
+        this.page.identifier = '/2025/07/13/bekim/smartcontract/en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] From Paper to Code: Smart Contract [en]&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
