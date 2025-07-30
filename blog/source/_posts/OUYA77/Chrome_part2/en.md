@@ -376,9 +376,8 @@ Now, let's assume a situation within the Worker process where a `Class A` instan
 As a result, even though the Worker process is actually accessing a field of a `Class A` instance, the runtime considers it a field of `Class B`, leading to unintended memory reads or writes.
 
 > It'd be quite embarrassed if a delivery meant for your home ended up at your workplace, wouldn't it?
-
-Here's another embarrassed example.
 > 
+> Here's another embarrassed example.
 > 
 > ![image.png](image.png)
 > 
