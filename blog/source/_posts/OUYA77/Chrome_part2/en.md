@@ -18,7 +18,7 @@ Before we dive in, let's briefly recap what we covered last time.
 
 Last time, we looked at the overall architecture of Chrome and how frontend resources are processed. To be more precise, we examined the process of HTML, CSS, and JS files being rendered in Chrome. In this research post, we'll focus on **V8**, which handles JS files
 
-> If you haven't seen it yet → [[Research] Starting Chrome Exploitation with Type Confusion 101 ^-^☆ Part 2.](https://hackyboiz.github.io/2025/07/01/OUYA77/Chrome_part1/en/)
+> If you haven't seen it yet → [[Research] Starting Chrome Exploitation with Type Confusion 101 ^-^☆ Part 1.](https://hackyboiz.github.io/2025/07/01/OUYA77/Chrome_part1/en/)
 > 
 
 ![image.png](image%201.png)
@@ -41,7 +41,7 @@ For example:
 
 As seen above, types are the basic units for processing data in programming languages, and for a computer to handle data correctly, the exact type must be specified. But what happens if some data, which should originally be an integer, is mistakenly (or intentionally) treated like a character or an object? The side effects of this cannot be predicted, and the program may behave in unexpected ways.
 
-### 1.2. Types of “Type Confusion”
+### 1.2 Types of “Type Confusion”
 
 Type Confusion, like other vulnerability classifications, can generally be divided into two types based on their impact: **Logical Bug** and **Memory Corruption**.
 
@@ -358,8 +358,8 @@ For instance, consider two classes with similar structures but where the meaning
 - name
 - age
 - residence
-
-Class B
+>
+>Class B
 - name
 - age
 - workspace
