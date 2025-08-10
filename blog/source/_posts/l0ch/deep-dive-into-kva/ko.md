@@ -63,6 +63,7 @@ FBClearWindowsSupportEnabled        : False
 
 ```
 
+
 | Hardware requires kernel VA shadowing | Maps to KVAShadowRequired. This line tells you whether your system requires kernel VA shadowing to mitigate a vulnerability. |
 | --- | --- |
 | Windows OS support for rogue data cache load mitigation is present | Maps to KVAShadowWindowsSupportPresent. This line tells you whether Windows operating system support for the kernel VA shadow feature is present. |
