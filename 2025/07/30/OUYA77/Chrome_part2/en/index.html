@@ -1,0 +1,1451 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;Hello, this is OUYA77. 2025 is already more than halfway over, and July is almost gone too. Time flies, doesn&amp;#x2019;t it? &amp;#x314E;.&amp;#x314E;&lt;/p&gt;
+&lt;p&gt;In this part, I really wanted to take a stab at Chrome exploit development, but because Chrome itself is a complex program with quite a lot of background knowledge required, this post ended up being a bit long. In this section, we&amp;#x2019;ll compare basic &lt;strong&gt;Type Confusion&lt;/strong&gt; with Type Confusion in Chrome, and explore how this Type Confusion occurs and ultimately leads to &lt;strong&gt;Memory Corruption&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;Before we dive in, let&amp;#x2019;s briefly recap what we covered last time.&lt;/p&gt;
+&lt;h2 id=&#34;0-Part-1-Recap&#34;&gt;&lt;a href=&#34;#0-Part-1-Recap&#34; class=&#34;headerlink&#34; title=&#34;0. Part 1. Recap&#34;&gt;&lt;/a&gt;0. Part 1. Recap&lt;/h2&gt;&lt;p&gt;Last time, we looked at the overall architecture of Chrome and how frontend resources are processed. To be more precise, we examined the process of HTML, CSS, and JS files being rendered in Chrome. In this research post, we&amp;#x2019;ll focus on &lt;strong&gt;V8&lt;/strong&gt;, which handles JS files&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;If you haven&amp;#x2019;t seen it yet &amp;#x2192; &lt;a href=&#34;https://hackyboiz.github.io/2025/07/01/OUYA77/Chrome_part1/en/&#34;&gt;[Research] Starting Chrome Exploitation with Type Confusion 101 ^-^&amp;#x2606; Part 1.&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;&lt;img src=&#34;image%201.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;V8 uses various compiler tiers (Ignition, SparkPlug, Maglev, TurboFan) for fast and efficient JavaScript execution, gradually optimizing code and increasing execution speed. However, this optimization is based on the assumption that &amp;#x201C;this structure will always be the same.&amp;#x201D; If an attacker changes the object type or structure at a specific point, V8 will execute incorrect native code based on a false assumption. &lt;strong&gt;This is a typical scenario where Type Confusion occurs.&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;Now that we understand the basic structure of how code executes within V8, in the next step, we&amp;#x2019;ll delve into how objects are represented and optimized inside this engine, and furthermore, how this structure can lead to security issues like Type Confusion!&lt;/p&gt;
+&lt;h2 id=&#34;1-Type-Confusion-101&#34;&gt;&lt;a href=&#34;#1-Type-Confusion-101&#34; class=&#34;headerlink&#34; title=&#34;1. Type Confusion 101&#34;&gt;&lt;/a&gt;1. Type Confusion 101&lt;/h2&gt;&lt;h3 id=&#34;1-1-Introduction&#34;&gt;&lt;a href=&#34;#1-1-Introduction&#34; class=&#34;headerlink&#34; title=&#34;1.1 Introduction&#34;&gt;&lt;/a&gt;1.1 Introduction&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;Type Confusion&lt;/strong&gt; is, as the name suggests, a vulnerability that arises when a &lt;strong&gt;&lt;code&gt;Type&lt;/code&gt;&lt;/strong&gt; is &lt;strong&gt;&lt;code&gt;Confused&lt;/code&gt;&lt;/strong&gt;. So, what exactly do we mean by &amp;#x2018;type&amp;#x2019; here? In computing, a &amp;#x2018;type&amp;#x2019; refers to the method by which data is stored and processed. Simply put, it serves to distinguish the data kind of the variables we use.&lt;/p&gt;
+&lt;p&gt;For example:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Integer:&lt;/strong&gt; Stores numerical data&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Char:&lt;/strong&gt; Stores single character data&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Array:&lt;/strong&gt; Groups multiple data items together&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;As seen above, types are the basic units for processing data in programming languages, and for a computer to handle data correctly, the exact type must be specified. But what happens if some data, which should originally be an integer, is mistakenly (or intentionally) treated like a character or an object? The side effects of this cannot be predicted, and the program may behave in unexpected ways.&lt;/p&gt;
+&lt;h3 id=&#34;1-2-Types-of-&amp;#x201C;Type-Confusion&amp;#x201D;&#34;&gt;&lt;a href=&#34;#1-2-Types-of-&amp;#x201C;Type-Confusion&amp;#x201D;&#34; class=&#34;headerlink&#34; title=&#34;1.2 Types of &amp;#x201C;Type Confusion&amp;#x201D;&#34;&gt;&lt;/a&gt;1.2 Types of &amp;#x201C;Type Confusion&amp;#x201D;&lt;/h3&gt;&lt;p&gt;Type Confusion, like other vulnerability classifications, can generally be divided into two types based on their impact: &lt;strong&gt;Logical Bug&lt;/strong&gt; and &lt;strong&gt;Memory Corruption&lt;/strong&gt;.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Logical Bug&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The &lt;strong&gt;Logical Bug&lt;/strong&gt; type of Type Confusion occurs when logic processing, which varies according to type, operates incorrectly. In many languages, operators or built-in methods behave differently depending on the input type. If types are confused, the result can be entirely different from the intended flow. Let&amp;#x2019;s assume the following code is part of a larger application.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%202.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;A developer has implemented a filter to prevent XSS by checking if the &lt;code&gt;&amp;lt;&lt;/code&gt; character is included in certain input values. The filter was implemented expecting the input to be a string, but what if an array object consisting of strings is actually passed? In JavaScript, if this object is directly checked, the comparison result might be &lt;code&gt;false&lt;/code&gt; even if it contains &lt;code&gt;&amp;lt;&lt;/code&gt;. This can lead to &lt;strong&gt;filter bypasses&lt;/strong&gt; and, as a result, serious logical vulnerabilities such as &lt;strong&gt;XSS (Cross-Site Scripting)&lt;/strong&gt; or privilege escalation.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Memory Corruption&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The &lt;strong&gt;Memory Corruption&lt;/strong&gt; type is a critical vulnerability that occurs when a &lt;strong&gt;memory layout is misaligned due to incorrect type casting&lt;/strong&gt;. Especially in languages like C/C++, misinterpreting the size or structure of an object can lead to unintended access to adjacent memory (&lt;strong&gt;Out-Of-Bounds Read/Write&lt;/strong&gt;). This is a major cause threatening program stability and security.&lt;/p&gt;
+&lt;p&gt;For example, let&amp;#x2019;s look at the following code.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;typedef&lt;/span&gt; &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; {&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; value[&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;];
+} SmallStruct;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;typedef&lt;/span&gt; &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; {&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; data[&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;];
+} LargeStruct;
+
+SmallStruct normal = {&lt;span class=&#34;hljs-number&#34;&gt;0x41&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x42&lt;/span&gt;};
+print_memory((&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;*)&amp;amp;normal , &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(normal)/&lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;)); 
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// Cast SmallStruct array to LargeStruct&lt;/span&gt;
+LargeStruct* confused = (LargeStruct*)&amp;amp;normal ;
+confused-&amp;gt;data[&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;] = &lt;span class=&#34;hljs-number&#34;&gt;0xdead&lt;/span&gt;; &lt;span class=&#34;hljs-comment&#34;&gt;// OOB Write&lt;/span&gt;
+confused-&amp;gt;data[&lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;] = &lt;span class=&#34;hljs-number&#34;&gt;0xbeef&lt;/span&gt;;
+print_memory((&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;*)&amp;amp;normal, &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(LargeStruct)/&lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;)); &lt;span class=&#34;hljs-comment&#34;&gt;// OOB Read&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In the example above, &lt;code&gt;SmallStruct&lt;/code&gt; is a structure holding two integers. In contrast, &lt;code&gt;LargeStruct&lt;/code&gt; contains an array of four integers. If a developer incorrectly casts a &lt;code&gt;SmallStruct&lt;/code&gt; instance to a &lt;code&gt;LargeStruct&lt;/code&gt; pointer, the program will misinterpret the size of &lt;code&gt;normal&lt;/code&gt; based on the memory layout of &lt;code&gt;LargeStruct&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Looking at the output, &lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%203.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;you can confirm that the area outside the bounds of the &lt;code&gt;SmallStruct&lt;/code&gt; structure has been modified by the write operation. That is, &lt;code&gt;confused-&amp;gt;data[2]&lt;/code&gt; and &lt;code&gt;data[3]&lt;/code&gt; accessed memory beyond the defined structure size of &lt;code&gt;normal&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;This can be visualized as follows.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%204.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The diagram illustrates how, even though the &lt;code&gt;SmallStruct&lt;/code&gt; instance occupies only two integer spaces, it is accessed through a &lt;code&gt;LargeStruct&lt;/code&gt; pointer as if four integer spaces exist, leading to out-of-bounds read/write operations.&lt;/p&gt;
+&lt;h3 id=&#34;1-3-Type-Confusion-case-in-Chrome&#34;&gt;&lt;a href=&#34;#1-3-Type-Confusion-case-in-Chrome&#34; class=&#34;headerlink&#34; title=&#34;1.3 Type Confusion (case: in Chrome)&#34;&gt;&lt;/a&gt;1.3 Type Confusion (case: in Chrome)&lt;/h3&gt;&lt;p&gt;Since we&amp;#x2019;re focusing on Type Confusion in Chrome, we&amp;#x2019;ll further explore how this vulnerability manifests in Chrome by comparing two typical cases of &lt;strong&gt;Memory Corruption&lt;/strong&gt; type confusion: C++ and JavaScript.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Type Confusion &amp;#x2013; C++&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;In statically-typed languages like C++, Type Confusion primarily occurs due to developer errors. Since types are determined at compile-time, incorrect explicit casting is the main cause.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// Type Confusion caused by incorrect Casting&lt;/span&gt;
+struct A { int x; };
+struct B { int y; &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; (*func)(); };
+
+A a = {&lt;span class=&#34;hljs-number&#34;&gt;42&lt;/span&gt;};
+B* b = (B*)&amp;amp;a; 
+&lt;span class=&#34;hljs-comment&#34;&gt;// Attempts to call an undefined function pointer &amp;#x2192; Crash or arbitrary code execution&lt;/span&gt;
+b-&amp;gt;func();&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In the example above, &lt;code&gt;struct A&lt;/code&gt; only contains an integer member &lt;code&gt;x&lt;/code&gt;. However, if it&amp;#x2019;s cast to &lt;code&gt;struct B&lt;/code&gt;, it will attempt to access a non-existent function pointer (&lt;code&gt;func&lt;/code&gt;). This leads to &lt;strong&gt;undefined behavior&lt;/strong&gt;, which can result in a system crash or even the execution of attacker-supplied code.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Type Confusion &amp;#x2013; JavaScript&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;On the other hand, in dynamic languages like JavaScript, Type Confusion can occur even without the developer explicitly changing types. Especially in modern JS engines like V8, the &lt;strong&gt;JIT (Just-In-Time) compiler&lt;/strong&gt; can make incorrect assumptions during the type inference process for runtime performance optimization, leading to Type Confusion (The details will be covered later!).&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;function&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;foo&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;x&lt;/span&gt;) &lt;/span&gt;{  
+    &lt;span class=&#34;hljs-keyword&#34;&gt;let&lt;/span&gt; arr = [&lt;span class=&#34;hljs-number&#34;&gt;1.1&lt;/span&gt;]; &lt;span class=&#34;hljs-comment&#34;&gt;// Initially an array containing a number (float)&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (x) arr[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;] = {&lt;span class=&#34;hljs-attr&#34;&gt;y&lt;/span&gt;: &lt;span class=&#34;hljs-number&#34;&gt;42&lt;/span&gt;}; &lt;span class=&#34;hljs-comment&#34;&gt;// Conditional branch to change to an object&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; arr[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;]; &lt;span class=&#34;hljs-comment&#34;&gt;// Potential OOB&lt;/span&gt;
+}
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;let&lt;/span&gt; i = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; i &amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;1000&lt;/span&gt;; i++) foo(&lt;span class=&#34;hljs-literal&#34;&gt;false&lt;/span&gt;);  &lt;span class=&#34;hljs-comment&#34;&gt;// Induce optimization&lt;/span&gt;
+
+foo(&lt;span class=&#34;hljs-literal&#34;&gt;true&lt;/span&gt;); &lt;span class=&#34;hljs-comment&#34;&gt;// After optimization, insert an object &amp;#x2192; change in type structure&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Initially, this code&amp;#x2019;s array contains only numbers, leading V8 to assume, &amp;#x201C;this array only holds numbers.&amp;#x201D; Accordingly, it optimizes its internal structure for simple and fast processing. However, if an object is inserted into the array based on the conditional statement, the internal structure should change. If the already generated optimized code doesn&amp;#x2019;t account for this change, the engine might still access the array assuming it only contains numbers. As a result, a value assumed to be a number might actually be an object or entirely different data, leading to &lt;strong&gt;memory misinterpretation&lt;/strong&gt; or &lt;strong&gt;Out-Of-Bounds access&lt;/strong&gt; to the array. This kind of mismatch between runtime structural changes and the JIT compiler&amp;#x2019;s inference is a primary cause of Type Confusion in JavaScript.&lt;/p&gt;
+&lt;h2 id=&#34;2-Type-Confusion-in-Chrome-Root-cause-Analysis&#34;&gt;&lt;a href=&#34;#2-Type-Confusion-in-Chrome-Root-cause-Analysis&#34; class=&#34;headerlink&#34; title=&#34;2. Type Confusion in Chrome - Root cause Analysis&#34;&gt;&lt;/a&gt;2. Type Confusion in Chrome - Root cause Analysis&lt;/h2&gt;&lt;p&gt;In Chapter 1, we explored the concept of Type Confusion and its common occurrences.&lt;br&gt;Now, let&amp;#x2019;s apply this concept to &lt;strong&gt;V8&lt;/strong&gt;, Chrome&amp;#x2019;s JavaScript engine. V8 is a high-performance, JIT-based engine, which makes it an environment where Type Confusion vulnerabilities frequently occur. For performance optimization, V8 internally tries to maintain object type information in a fixed form. This can lead to type inference errors resulting in memory corruption under specific conditions. In this chapter, we will examine the structural background of how Type Confusion occurs within V8 and the role of key concepts like &lt;strong&gt;Hidden Class&lt;/strong&gt; and &lt;strong&gt;ElementsKind&lt;/strong&gt;.&lt;/p&gt;
+&lt;h3 id=&#34;2-1-Overview-of-Type-Confusion-Cases-in-Chrome&#34;&gt;&lt;a href=&#34;#2-1-Overview-of-Type-Confusion-Cases-in-Chrome&#34; class=&#34;headerlink&#34; title=&#34;2.1 Overview of Type Confusion Cases in Chrome&#34;&gt;&lt;/a&gt;2.1 Overview of Type Confusion Cases in Chrome&lt;/h3&gt;&lt;p&gt;Indeed, numerous Chrome vulnerabilities, such as &lt;strong&gt;CVE-2018-17463&lt;/strong&gt;, &lt;strong&gt;CVE-2023-2033&lt;/strong&gt;, and &lt;strong&gt;CVE-2023-4069&lt;/strong&gt;, have originated from Type Confusion due to incorrect type inference. (You can also find them in HackyBoys 1day-1line! &amp;#x2192; &lt;a href=&#34;https://hackyboiz.github.io/2024/01/18/ogu123/cve-2023-2033/&#34;&gt;Link&lt;/a&gt;)&lt;/p&gt;
+&lt;p&gt;Most of these occur when the JIT compiler observes code execution patterns and generates optimized code based on assumptions like &amp;#x201C;this variable always handles numbers&amp;#x201D; or &amp;#x201C;this object always has the same structure.&amp;#x201D; The vulnerability then arises when these assumptions are broken by an exceptional execution flow later on.&lt;/p&gt;
+&lt;p&gt;In the V8 engine, Type Confusion vulnerabilities frequently occur in the following situations:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;When the object&amp;#x2019;s structure &lt;strong&gt;(Hidden Class)&lt;/strong&gt; has changed, but operations continue based on previous assumptions.&lt;/li&gt;
+&lt;li&gt;When changes to the &lt;strong&gt;array&amp;#x2019;s internal type (ElementsKind)&lt;/strong&gt; are not reflected.&lt;/li&gt;
+&lt;li&gt;When incorrect type hints left by the &lt;strong&gt;Inline Cache&lt;/strong&gt; are used.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;In summary, V8 generates code assuming &amp;#x201C;types will be fixed&amp;#x201D; for fast execution. However, JavaScript is a highly dynamic language, and this assumption can be broken at any time. Attackers can exploit these structural characteristics to disrupt internal type information and cause Type Confusion.&lt;/p&gt;
+&lt;p&gt;We will now delve into two core optimization concepts that form the basis of these structural assumptions: &lt;strong&gt;Hidden Class (Map)&lt;/strong&gt; and &lt;strong&gt;ElementsKind&lt;/strong&gt;.&lt;/p&gt;
+&lt;h3 id=&#34;2-2-Introduction-to-V8&amp;#x2019;s-Optimization-Model-1-HiddenClass-Map&#34;&gt;&lt;a href=&#34;#2-2-Introduction-to-V8&amp;#x2019;s-Optimization-Model-1-HiddenClass-Map&#34; class=&#34;headerlink&#34; title=&#34;2.2 Introduction to V8&amp;#x2019;s Optimization Model (1): HiddenClass (Map)&#34;&gt;&lt;/a&gt;2.2 Introduction to V8&amp;#x2019;s Optimization Model (1): HiddenClass (Map)&lt;/h3&gt;&lt;p&gt;A &lt;strong&gt;Hidden Class&lt;/strong&gt; is an internal mechanism V8 uses to track and optimize the structure of JavaScript objects. JavaScript objects are inherently dynamic, allowing properties and value pairs to be freely added or removed, which means their structure can change on the fly. However, for performance, V8 doesn&amp;#x2019;t treat objects like dictionaries. Instead, it internally tracks the property configuration and order of objects using a meta-structure called a Hidden Class (or Map).&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Property:&lt;/strong&gt; While properties in JavaScript objects simply appear as key-value pairs, internally in V8, each time a property is added, it triggers a change in the object&amp;#x2019;s memory layout. At this point, not only the property&amp;#x2019;s name but also the &lt;strong&gt;order in which it&amp;#x2019;s added&lt;/strong&gt; becomes a crucial factor in determining the object&amp;#x2019;s structure.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Transition:&lt;/strong&gt; When a new property is added, V8 connects (transitions) the object&amp;#x2019;s current Hidden Class from its existing structure to a new one. Each such transition corresponds to the addition of one property, forming a &lt;strong&gt;tree structure&lt;/strong&gt; composed of connections between Hidden Classes.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;&lt;strong&gt;&amp;#x1F9E9; How Hidden Class Works&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;let&lt;/span&gt; obj = {};        &lt;span class=&#34;hljs-comment&#34;&gt;// [1] Initial Hidden Class&lt;/span&gt;
+obj.x = &lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;;          &lt;span class=&#34;hljs-comment&#34;&gt;// [2] &amp;#x2192; Transitions to a Hidden Class with property &amp;apos;x&amp;apos;&lt;/span&gt;
+obj.y = &lt;span class=&#34;hljs-number&#34;&gt;20&lt;/span&gt;;          &lt;span class=&#34;hljs-comment&#34;&gt;// [3] &amp;#x2192; Transitions to a Hidden Class with properties &amp;apos;x, y&amp;apos; in that order&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;[1] When an object is created, V8 assigns an &lt;strong&gt;initial Hidden Class&lt;/strong&gt; to it. This represents a state where the object has no properties&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;Subsequently, each time a property is added, V8 performs a &lt;strong&gt;transition&lt;/strong&gt; from the existing Hidden Class to a new one&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;[2] if &lt;code&gt;obj.x = 10&lt;/code&gt; is added, it transitions to a new Hidden Class containing only &lt;code&gt;x&lt;/code&gt; .&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;[3] when &lt;code&gt;obj.y = 20&lt;/code&gt; is added, it transitions again to another Hidden Class that reflects the order &lt;code&gt;x, y&lt;/code&gt;.&lt;/p&gt;
+  &lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;[Initial Hidden Class]
+        |
+        | (add property &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;x&amp;apos;&lt;/span&gt;)
+        v
+   [Hidden Class: x]
+        |
+        | (add property &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;y&amp;apos;&lt;/span&gt;)
+        v
+   [Hidden Class: x, y]&lt;/code&gt;&lt;/pre&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;As shown, Hidden Classes are sequentially linked according to the property addition order. Objects with identical structures share the same Hidden Class. The Hidden Class expands, forming a branching tree structure based on the property addition order of an object, internally representing the static structural information of each object.&lt;/p&gt;
+&lt;p&gt;Due to this structure, when accessing properties like &lt;code&gt;obj.x&lt;/code&gt;, V8 doesn&amp;#x2019;t search for a string key. Instead, it directly accesses a fixed memory location, such as &lt;code&gt;obj[+8]&lt;/code&gt;, based on the offset information held by the corresponding Hidden Class. This method significantly &lt;strong&gt;speeds up property lookup&lt;/strong&gt; and enables V8 to generate highly optimized native code, under the assumption that the object&amp;#x2019;s structure will not change.&lt;/p&gt;
+&lt;h3 id=&#34;2-3-Introduction-to-V8&amp;#x2019;s-Optimization-Model-2-ElementsKind&#34;&gt;&lt;a href=&#34;#2-3-Introduction-to-V8&amp;#x2019;s-Optimization-Model-2-ElementsKind&#34; class=&#34;headerlink&#34; title=&#34;2.3 Introduction to V8&amp;#x2019;s Optimization Model (2): ElementsKind&#34;&gt;&lt;/a&gt;2.3 Introduction to V8&amp;#x2019;s Optimization Model (2): ElementsKind&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;ElementsKind&lt;/strong&gt; is an internal meta-information V8 uses to track the &lt;strong&gt;element type and density of JavaScript arrays&lt;/strong&gt;. JavaScript arrays have a very dynamic structure; they can freely mix numbers, strings, and objects, or contain sparse (empty) slots. However, for performance optimization, V8 tries to represent these arrays internally in the simplest and most standardized way possible. ElementsKind is the criterion for this internal representation.&lt;/p&gt;
+&lt;p&gt;&amp;#x1F9E9; &lt;strong&gt;How ElementsKind Works&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;When an array is created, V8 assigns the simplest and most compact &lt;strong&gt;ElementsKind&lt;/strong&gt; based on the array&amp;#x2019;s content.&lt;/p&gt;
+&lt;p&gt;  For example:&lt;/p&gt;
+  &lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;]           &amp;#x2192; PackedSmiElements (&lt;span class=&#34;hljs-number&#34;&gt;32&lt;/span&gt;bits integer array)
+[&lt;span class=&#34;hljs-number&#34;&gt;1.1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2.2&lt;/span&gt;]          &amp;#x2192; PackedDoubleElements (&lt;span class=&#34;hljs-number&#34;&gt;64&lt;/span&gt;bits floating-point array)
+[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, {}, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;text&amp;quot;&lt;/span&gt;]     &amp;#x2192; PackedElements (general object array)&lt;/code&gt;&lt;/pre&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;Subsequently, if elements of a different type are inserted into the array, or if intermediate elements are deleted reducing its density, V8 transitions the array to a more general ElementsKind.&lt;/p&gt;
+  &lt;pre&gt;&lt;code class=&#34;hljs angelscript&#34;&gt;let arr = [&lt;span class=&#34;hljs-number&#34;&gt;1.1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2.2&lt;/span&gt;];   &lt;span class=&#34;hljs-comment&#34;&gt;// Initial: PackedDoubleElements&lt;/span&gt;
+arr[&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;] = {};            &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2192; Transitions to PackedElements&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;This approach somewhat contrasts with the dynamic nature of JavaScript arrays but provides very high performance until a change occurs during execution. Ultimately, ElementsKind provides a core criterion for JIT optimization based on abstract type information about array elements, playing a crucial role in converging dynamic JavaScript code into a static performance model.&lt;/p&gt;
+&lt;h3 id=&#34;2-4-Optimization-Flow-and-Native-Code-Generation&#34;&gt;&lt;a href=&#34;#2-4-Optimization-Flow-and-Native-Code-Generation&#34; class=&#34;headerlink&#34; title=&#34;2.4 Optimization Flow and Native Code Generation&#34;&gt;&lt;/a&gt;2.4 Optimization Flow and Native Code Generation&lt;/h3&gt;&lt;p&gt;V8 generates high-performance &lt;strong&gt;Native Code&lt;/strong&gt; by making the most static assumptions possible about JavaScript&amp;#x2019;s dynamic nature. As discussed earlier, &lt;strong&gt;Hidden Class&lt;/strong&gt; and &lt;strong&gt;ElementsKind&lt;/strong&gt; make object and array structures predictable, allowing V8 to progressively generate optimized code during execution. In the previous section (Part 1.), we covered the overall concept and history of the V8 execution pipeline structure. Now, let&amp;#x2019;s look at these components from the perspective of native code execution and optimization flow.&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;&lt;strong&gt;&amp;#x2699;&amp;#xFE0F; Native Code Execution and Optimization Flow&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%205.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;V8&amp;#x2019;s execution pipeline transforms JavaScript code into increasingly fast native machine code through the following stages.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;The &lt;strong&gt;Ignition interpreter&lt;/strong&gt; converts JavaScript code into bytecode and begins execution. In this stage, runtime profiling information, such as execution counts and type information, is collected.&lt;/li&gt;
+&lt;li&gt;If code is determined to be a &amp;#x201C;hot&amp;#x201D; execution path, the &lt;strong&gt;Sparkplug&lt;/strong&gt; or &lt;strong&gt;Maglev JIT compilers&lt;/strong&gt; perform rapid compilation to generate Native Code. This code represents an initial level of optimization, prioritizing speed and efficiency.&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;Subsequently, once the code is deemed sufficiently analyzed, &lt;strong&gt;TurboFan&lt;/strong&gt;, the advanced JIT compiler, performs more sophisticated optimizations. At this point, it actively utilizes internal structural information like &lt;strong&gt;Hidden Class&lt;/strong&gt; and &lt;strong&gt;ElementsKind&lt;/strong&gt; to generate high-performance Native Code, assuming that object structures remain fixed.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;e.g., When accessing &lt;code&gt;obj.x&lt;/code&gt;, V8 can use the Hidden Class to know that the offset of &amp;#x201C;x&amp;#x201D; is &lt;code&gt;+8&lt;/code&gt; and generate code that directly references that memory location. Similarly, array memory access is statically optimized via ElementsKind.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;hr&gt;
+&lt;p&gt;During this process, TurboFan employs various advanced optimization techniques, including Inline Caching (IC), Escape Analysis, Loop Unrolling, and Function Inlining. The Native Code generated this way offers very high execution performance but concurrently relies on strong static assumptions about the object&amp;#x2019;s internal structure and type.&lt;/p&gt;
+&lt;p&gt;V8 registers this optimized code at the function&amp;#x2019;s entry point based on these assumptions. As a result, subsequent function calls bypass the interpreter stage and execute the Native Code directly, dramatically improving execution speed.&lt;/p&gt;
+&lt;p&gt;However, this optimization is premised on the following assumption:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&amp;#x201C;The structure of objects or types of arrays will not change during runtime.&amp;#x201D;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The problem is that, due to the dynamic nature of JavaScript, the structure of objects or arrays can change at any time. If such a change is detected, V8 will &lt;strong&gt;deoptimize&lt;/strong&gt; the existing Native Code, revert to the interpreter, or generate newly optimized code.&lt;/p&gt;
+&lt;p&gt;However, if these changes are not properly detected, or if they are intentionally bypassed by an attacker, V8 will continue to execute the optimized path based on the previous, incorrect type information. As a result, a situation can arise where the &lt;strong&gt;Inline Cache&lt;/strong&gt; still uses old information even though the &lt;strong&gt;Hidden Class&lt;/strong&gt; or &lt;strong&gt;ElementsKind&lt;/strong&gt; has already changed. This leads to incorrect field offset calculations or erroneous memory references. Ultimately, this context is the direct cause of &lt;strong&gt;Type Confusion&lt;/strong&gt; vulnerabilities.&lt;/p&gt;
+&lt;p&gt;As such, V8&amp;#x2019;s optimization pipeline is a core mechanism for converging JavaScript&amp;#x2019;s dynamic characteristics into a static execution model. Hidden Class and ElementsKind form the foundation of this static model, and the Native Code generated based on them provides very high performance. &lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%206.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;However, simultaneously, a vulnerability can arise the moment this static assumption is broken. Therefore, managing the &lt;strong&gt;trade-off between performance and security&lt;/strong&gt; becomes a very critical challenge in V8&amp;#x2019;s design.&lt;/p&gt;
+&lt;h3 id=&#34;2-5-The-Structure-of-Type-Confusion-Occurrence&#34;&gt;&lt;a href=&#34;#2-5-The-Structure-of-Type-Confusion-Occurrence&#34; class=&#34;headerlink&#34; title=&#34;2.5 The Structure of Type Confusion Occurrence&#34;&gt;&lt;/a&gt;2.5 The Structure of Type Confusion Occurrence&lt;/h3&gt;&lt;p&gt;As previously explained, V8&amp;#x2019;s optimization mechanisms are based on a strong premise that object structures and array types will not change. However, JavaScript is fundamentally a very dynamic language, and Type Confusion can occur the moment this premise is broken in the actual execution flow.&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s specifically examine how Type Confusion can be triggered within &lt;strong&gt;Hidden Class&lt;/strong&gt; and &lt;strong&gt;ElementsKind&lt;/strong&gt;, which form the basis of V8&amp;#x2019;s static model.&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;&lt;strong&gt;1) Hidden Class-based Confusion&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;A Hidden Class is an internal mechanism that tracks an object&amp;#x2019;s property structure, enabling fast property access and JIT optimization. However, when properties are dynamically added to an object or property types change, the Hidden Class transitions to a different class, rendering the existing Native Code invalid.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;function&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;Foo&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;&lt;/span&gt;) &lt;/span&gt;{
+  &lt;span class=&#34;hljs-built_in&#34;&gt;this&lt;/span&gt;.x = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;  &lt;span class=&#34;hljs-comment&#34;&gt;// HiddenClass A&lt;/span&gt;
+  &lt;span class=&#34;hljs-built_in&#34;&gt;this&lt;/span&gt;.y = &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;;  &lt;span class=&#34;hljs-comment&#34;&gt;// HiddenClass B&lt;/span&gt;
+}
+&lt;span class=&#34;hljs-keyword&#34;&gt;let&lt;/span&gt; a = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; Foo();
+a.z = &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;;       &lt;span class=&#34;hljs-comment&#34;&gt;// HiddenClass C (transition)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In this case, object &lt;code&gt;a&lt;/code&gt; ultimately gets Hidden Class C. But if TurboFan generated Native Code based on the structure up to Hidden Class B, and that code is still applied to &lt;code&gt;a&lt;/code&gt;, it might incorrectly perceive &lt;code&gt;a.z&lt;/code&gt; as &lt;code&gt;a.y&lt;/code&gt; or reference an incorrect offset.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Hidden Class Transition and Deoptimization&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;Changes in property types also trigger Hidden Class transitions. Consider, for example, a case where an object property&amp;#x2019;s type changes from a number to an object.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;let&lt;/span&gt; obj = { &lt;span class=&#34;hljs-attr&#34;&gt;x&lt;/span&gt;: &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; };         &lt;span class=&#34;hljs-comment&#34;&gt;// x is number &amp;#x2192; HiddenClass A&lt;/span&gt;
+obj.x = { &lt;span class=&#34;hljs-attr&#34;&gt;nested&lt;/span&gt;: &lt;span class=&#34;hljs-literal&#34;&gt;true&lt;/span&gt; };   &lt;span class=&#34;hljs-comment&#34;&gt;// x is now object &amp;#x2192; HiddenClass B&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In this scenario, V8 detects the type change and deoptimizes the existing Native Code, either reverting to bytecode or generating new code. However, if the structural change is not properly detected, or if an attacker designs the input to bypass this detection, V8 may still execute the existing Hidden Class-based Native Code, leading to incorrect memory access.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;2) ElementsKind-based Confusion&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;For arrays, V8 defines various &lt;strong&gt;ElementsKind&lt;/strong&gt; types based on the elements&amp;#x2019; types and density. &lt;/p&gt;
+&lt;p&gt;For example:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;PACKED_SMI_ELEMENTS&lt;/code&gt;: Dense array containing only integers.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;PACKED_DOUBLE_ELEMENTS&lt;/code&gt;: Array containing only floating-point numbers.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;PACKED_ELEMENTS&lt;/code&gt;: Mixed-type array.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;HOLEY_*&lt;/code&gt; (sparse array) variants corresponding to each of the above.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;TurboFan generates optimized code assuming that an array&amp;#x2019;s ElementsKind will not change. However, the moment an element of a different type is inserted into the array, the ElementsKind transitions, and the existing Native Code becomes invalid.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;function&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;confuse&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;x&lt;/span&gt;) &lt;/span&gt;{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;let&lt;/span&gt; arr = [&lt;span class=&#34;hljs-number&#34;&gt;1.1&lt;/span&gt;];     &lt;span class=&#34;hljs-comment&#34;&gt;// PackedDoubleElements&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (x) arr[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;] = {};  &lt;span class=&#34;hljs-comment&#34;&gt;// insert object &amp;#x2192; ElementsKind transition&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; arr[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;];
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;If &lt;code&gt;x&lt;/code&gt; is &lt;code&gt;false&lt;/code&gt;, &lt;code&gt;arr&lt;/code&gt; remains a double array, and TurboFan generates corresponding code. However, if &lt;code&gt;x&lt;/code&gt; is &lt;code&gt;true&lt;/code&gt;, an object is inserted into &lt;code&gt;arr[0]&lt;/code&gt;, changing the array&amp;#x2019;s internal representation. If the existing Native Code is still executed at this point, an incorrect type casting occurs, interpreting an object as a double.&lt;/p&gt;
+&lt;h2 id=&#34;3-From-Type-Confusion-to-Memory-Corruption&#34;&gt;&lt;a href=&#34;#3-From-Type-Confusion-to-Memory-Corruption&#34; class=&#34;headerlink&#34; title=&#34;3. From Type Confusion to Memory Corruption&#34;&gt;&lt;/a&gt;3. From Type Confusion to Memory Corruption&lt;/h2&gt;&lt;h3 id=&#34;3-1-Connecting-to-Practical-Memory-Corruption&#34;&gt;&lt;a href=&#34;#3-1-Connecting-to-Practical-Memory-Corruption&#34; class=&#34;headerlink&#34; title=&#34;3.1 Connecting to Practical Memory Corruption&#34;&gt;&lt;/a&gt;3.1 Connecting to Practical Memory Corruption&lt;/h3&gt;&lt;p&gt;Why does simple Type Confusion escalate to &lt;strong&gt;Memory Corruption&lt;/strong&gt;?&lt;/p&gt;
+&lt;p&gt;The core reason is that V8&amp;#x2019;s JIT-optimized Native Code directly accesses memory, relying on its trust in object structures or array types. V8 rapidly accesses objects or arrays by calculating precise field offsets based on &lt;strong&gt;HiddenClass (Map)&lt;/strong&gt; or &lt;strong&gt;ElementsKind&lt;/strong&gt; information. The problem arises when these assumptions are broken. If an object&amp;#x2019;s actual structure changes but the compiled code still accesses it based on the old structure, it will access completely incorrect memory addresses or misinterpret data. This can directly lead to &lt;strong&gt;memory corruption&lt;/strong&gt;, manipulating memory at unexpected locations.&lt;/p&gt;
+&lt;p&gt;Consider the following scenarios.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Misinterpreting a Floating-Point Array as an Object Array&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;  If an array storing floating-point values like &lt;code&gt;13.37&lt;/code&gt; is mistakenly treated and accessed by the JIT as an object array, this numerical value could be interpreted as a heap pointer, leading to access of an entirely unintended memory location. This results in &lt;strong&gt;OOB Read/Write&lt;/strong&gt;, which an attacker can leverage to manipulate adjacent objects or induce data leakage.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Pointer Manipulation using TypedArray or DataView&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;  In JavaScript, when using &lt;code&gt;TypedArray&lt;/code&gt; or &lt;code&gt;ArrayBuffer&lt;/code&gt;, the buffer directly points to an actual memory region. If an attacker can control the object&amp;#x2019;s structure, they might manipulate this &lt;strong&gt;backing store pointer&lt;/strong&gt; to set an arbitrary memory address as the buffer&amp;#x2019;s starting point. In this case, read/write operations through the &lt;code&gt;ArrayBuffer&lt;/code&gt; expand to memory access across the entire address space. &lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;This implies the ability to access memory near the object or specific fields within the same structure in a limited way, by manipulating the internal field offsets of the object through incorrect type interpretation.&lt;/p&gt;
+&lt;p&gt;One more crucial factor here is the &lt;strong&gt;Garbage Collector (GC)&lt;/strong&gt;. V8 uses a GC system that automatically manages the lifespan of JS objects. This system moves or reclaims objects within the heap as needed. Even if an object&amp;#x2019;s memory address changes during this process, the existing optimized code might not recognize it and could attempt to access it based on its old structure. In other words, a timing difference or information mismatch between the GC and JIT can act as another &lt;strong&gt;Type Confusion trigger&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;Consequently, we can see that Type Confusion is not merely a logical error or a developer&amp;#x2019;s mistake, but rather a vulnerability that can arise at the complex boundary where V8&amp;#x2019;s JIT optimization, object model, and GC system interact.&lt;/p&gt;
+&lt;p&gt;Now that we understand why Type Confusion occurs and how it can lead to Memory Corruption, let&amp;#x2019;s explore how to initiate an attack using this vulnerability.&lt;/p&gt;
+&lt;h3 id=&#34;3-2-Relative-Read-Write-Primitive&#34;&gt;&lt;a href=&#34;#3-2-Relative-Read-Write-Primitive&#34; class=&#34;headerlink&#34; title=&#34;3.2 Relative Read/Write Primitive&#34;&gt;&lt;/a&gt;3.2 Relative Read/Write Primitive&lt;/h3&gt;&lt;p&gt;The basic exploit flow for Type Confusion starts with an OOB Read/Write stemming from the Type Confusion itself. The general attack flow to achieve &lt;strong&gt;RCE via Type Confusion&lt;/strong&gt; involves carefully refining the OOB R/W to obtain a &lt;strong&gt;Relative R/W&lt;/strong&gt; primitive, then skillfully leveraging this to gain &lt;strong&gt;AAR/W&lt;/strong&gt; (Arbitrary Address Read/Write), and finally achieving Code Execution. Sounds exciting, right?! This part is turning out to be longer than expected, so I probably won&amp;#x2019;t cover everything. But it&amp;#x2019;d be a shame to end here, so let&amp;#x2019;s briefly touch on the Relative R/W portion as a sneak peek :)&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;Type Confusion means more than just a simple misinterpretation of types. From an attacker&amp;#x2019;s perspective, it becomes a &lt;strong&gt;starting point for manipulating memory regions that were originally inaccessible&lt;/strong&gt;. A prime example of this is the &lt;strong&gt;Relative Read/Write&lt;/strong&gt;. This is a primitive that allows limited access to memory based on a fixed offset from a known location.&lt;/p&gt;
+&lt;p&gt;For instance, consider two classes with similar structures but where the meaning of the last field differs.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%207.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Class A&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;name&lt;/li&gt;
+&lt;li&gt;age&lt;/li&gt;
+&lt;li&gt;residence&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Class B&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;name&lt;/li&gt;
+&lt;li&gt;age&lt;/li&gt;
+&lt;li&gt;workspace&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;These two classes have a similar number and order of fields, but the meaning and type of the last field are different. Let&amp;#x2019;s imagine that in a Worker process, an operation points to the &amp;#x201C;residence&amp;#x201D; field of a &lt;code&gt;Class A&lt;/code&gt; instance.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%208.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Now, let&amp;#x2019;s assume a situation within the Worker process where a &lt;code&gt;Class A&lt;/code&gt; instance is mistakenly perceived as a &lt;code&gt;Class B&lt;/code&gt; type for some reason. In this case, under normal circumstances, the &amp;#x201C;residence&amp;#x201D; field should be accessed. However, when interpreted based on &lt;code&gt;Class B&lt;/code&gt;, this memory location is recognized as the field corresponding to &amp;#x201C;workplace.&amp;#x201D;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%209.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;As a result, even though the Worker process is actually accessing a field of a &lt;code&gt;Class A&lt;/code&gt; instance, the runtime considers it a field of &lt;code&gt;Class B&lt;/code&gt;, leading to unintended memory reads or writes.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;It&amp;#x2019;d be quite embarrassed if a delivery meant for your home ended up at your workplace, wouldn&amp;#x2019;t it?&lt;/p&gt;
+&lt;p&gt;Here&amp;#x2019;s another embarrassed example.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;As shown, the runtime&amp;#x2019;s incorrect type interpretation creates a &lt;strong&gt;Relative R/W Primitive&lt;/strong&gt;, enabling memory access based on a fixed offset, even if the exact address isn&amp;#x2019;t known. Through this, an attacker can satisfy the following conditions:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Based on an object they control (&lt;code&gt;Class A&lt;/code&gt;), at a fixed offset (e.g., &lt;code&gt;+0x10&lt;/code&gt;, &lt;code&gt;+0x18&lt;/code&gt;, etc.),&lt;/li&gt;
+&lt;li&gt;They can read or write the contents of a specific field or an adjacent structure (&lt;code&gt;Class B&lt;/code&gt;) within memory.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr&gt;
+&lt;p&gt;Such a &lt;strong&gt;Relative Primitive&lt;/strong&gt; holds significant meaning in the early stages of an attack:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;It allows for leaking the internal structure of a specific object, or&lt;/li&gt;
+&lt;li&gt;It enables the manipulation of key information like pointers or length fields,&lt;/li&gt;
+&lt;li&gt;Thereby paving the way for expansion into an Absolute R/W Primitive.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;In the next part, we&amp;#x2019;ll explore through an actual exploit flow how this Relative R/W Primitive expands into absolute address-based memory manipulation, ultimately leading to remote code execution.&lt;/p&gt;
+&lt;p&gt;From the next part, you can expect a strong &amp;#x201C;pwnable&amp;#x201D; scent; please look forward to it! I&amp;#x2019;ll do my best to prepare it&amp;#x2026;!&lt;/p&gt;
+&lt;p&gt;(The following is just a humorous, digitally distorted prank call photo I added because I wanted this kind of vibe. But Liam Neeson and a Chinese restaurant are better, right? &amp;#x1F975;)&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%2010.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;(subtitle: Robbers at home lol)&lt;/p&gt;
+&lt;h2 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h2&gt;&lt;p&gt;v &lt;strong&gt;Conference Video&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://www.youtube.com/watch?v=RL2po1swXO4&#34;&gt;https://www.youtube.com/watch?v=RL2po1swXO4&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;v &lt;strong&gt;Background&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://v8.dev/docs/hidden-classes&#34;&gt;https://v8.dev/docs/hidden-classes&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://v8.dev/blog/elements-kinds&#34;&gt;https://v8.dev/blog/elements-kinds&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://richardartoul.github.io/jekyll/update/2015/04/26/hidden-classes.html&#34;&gt;https://richardartoul.github.io/jekyll/update/2015/04/26/hidden-classes.html&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] Starting Chrome Exploitation with Type Confusion 101 ^-^☆ Part 2.(EN) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;Hello, this is OUYA77. 2025 is already more than halfway over, and July is almost gone too. Time flies, doesn&amp;#x2019;t it? &amp;#x314E;.&amp;#x314E;&lt;/p&gt;
+&lt;p&gt;In this part, I really wanted to take a stab at Chrome exploit development, but because Chrome itself is a complex program with quite a lot of background knowledge required, this post ended up being a bit long. In this section, we&amp;#x2019;ll compare basic &lt;strong&gt;Type Confusion&lt;/strong&gt; with Type Confusion in Chrome, and explore how this Type Confusion occurs and ultimately leads to &lt;strong&gt;Memory Corruption&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;Before we dive in, let&amp;#x2019;s briefly recap what we covered last time.&lt;/p&gt;
+&lt;h2 id=&#34;0-Part-1-Recap&#34;&gt;&lt;a href=&#34;#0-Part-1-Recap&#34; class=&#34;headerlink&#34; title=&#34;0. Part 1. Recap&#34;&gt;&lt;/a&gt;0. Part 1. Recap&lt;/h2&gt;&lt;p&gt;Last time, we looked at the overall architecture of Chrome and how frontend resources are processed. To be more precise, we examined the process of HTML, CSS, and JS files being rendered in Chrome. In this research post, we&amp;#x2019;ll focus on &lt;strong&gt;V8&lt;/strong&gt;, which handles JS files&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;If you haven&amp;#x2019;t seen it yet &amp;#x2192; &lt;a href=&#34;https://hackyboiz.github.io/2025/07/01/OUYA77/Chrome_part1/en/&#34;&gt;[Research] Starting Chrome Exploitation with Type Confusion 101 ^-^&amp;#x2606; Part 1.&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;&lt;img src=&#34;image%201.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;V8 uses various compiler tiers (Ignition, SparkPlug, Maglev, TurboFan) for fast and efficient JavaScript execution, gradually optimizing code and increasing execution speed. However, this optimization is based on the assumption that &amp;#x201C;this structure will always be the same.&amp;#x201D; If an attacker changes the object type or structure at a specific point, V8 will execute incorrect native code based on a false assumption. &lt;strong&gt;This is a typical scenario where Type Confusion occurs.&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;Now that we understand the basic structure of how code executes within V8, in the next step, we&amp;#x2019;ll delve into how objects are represented and optimized inside this engine, and furthermore, how this structure can lead to security issues like Type Confusion!&lt;/p&gt;
+&lt;h2 id=&#34;1-Type-Confusion-101&#34;&gt;&lt;a href=&#34;#1-Type-Confusion-101&#34; class=&#34;headerlink&#34; title=&#34;1. Type Confusion 101&#34;&gt;&lt;/a&gt;1. Type Confusion 101&lt;/h2&gt;&lt;h3 id=&#34;1-1-Introduction&#34;&gt;&lt;a href=&#34;#1-1-Introduction&#34; class=&#34;headerlink&#34; title=&#34;1.1 Introduction&#34;&gt;&lt;/a&gt;1.1 Introduction&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;Type Confusion&lt;/strong&gt; is, as the name suggests, a vulnerability that arises when a &lt;strong&gt;&lt;code&gt;Type&lt;/code&gt;&lt;/strong&gt; is &lt;strong&gt;&lt;code&gt;Confused&lt;/code&gt;&lt;/strong&gt;. So, what exactly do we mean by &amp;#x2018;type&amp;#x2019; here? In computing, a &amp;#x2018;type&amp;#x2019; refers to the method by which data is stored and processed. Simply put, it serves to distinguish the data kind of the variables we use.&lt;/p&gt;
+&lt;p&gt;For example:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Integer:&lt;/strong&gt; Stores numerical data&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Char:&lt;/strong&gt; Stores single character data&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Array:&lt;/strong&gt; Groups multiple data items together&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;As seen above, types are the basic units for processing data in programming languages, and for a computer to handle data correctly, the exact type must be specified. But what happens if some data, which should originally be an integer, is mistakenly (or intentionally) treated like a character or an object? The side effects of this cannot be predicted, and the program may behave in unexpected ways.&lt;/p&gt;
+&lt;h3 id=&#34;1-2-Types-of-&amp;#x201C;Type-Confusion&amp;#x201D;&#34;&gt;&lt;a href=&#34;#1-2-Types-of-&amp;#x201C;Type-Confusion&amp;#x201D;&#34; class=&#34;headerlink&#34; title=&#34;1.2 Types of &amp;#x201C;Type Confusion&amp;#x201D;&#34;&gt;&lt;/a&gt;1.2 Types of &amp;#x201C;Type Confusion&amp;#x201D;&lt;/h3&gt;&lt;p&gt;Type Confusion, like other vulnerability classifications, can generally be divided into two types based on their impact: &lt;strong&gt;Logical Bug&lt;/strong&gt; and &lt;strong&gt;Memory Corruption&lt;/strong&gt;.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Logical Bug&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The &lt;strong&gt;Logical Bug&lt;/strong&gt; type of Type Confusion occurs when logic processing, which varies according to type, operates incorrectly. In many languages, operators or built-in methods behave differently depending on the input type. If types are confused, the result can be entirely different from the intended flow. Let&amp;#x2019;s assume the following code is part of a larger application.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%202.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;A developer has implemented a filter to prevent XSS by checking if the &lt;code&gt;&amp;lt;&lt;/code&gt; character is included in certain input values. The filter was implemented expecting the input to be a string, but what if an array object consisting of strings is actually passed? In JavaScript, if this object is directly checked, the comparison result might be &lt;code&gt;false&lt;/code&gt; even if it contains &lt;code&gt;&amp;lt;&lt;/code&gt;. This can lead to &lt;strong&gt;filter bypasses&lt;/strong&gt; and, as a result, serious logical vulnerabilities such as &lt;strong&gt;XSS (Cross-Site Scripting)&lt;/strong&gt; or privilege escalation.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Memory Corruption&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The &lt;strong&gt;Memory Corruption&lt;/strong&gt; type is a critical vulnerability that occurs when a &lt;strong&gt;memory layout is misaligned due to incorrect type casting&lt;/strong&gt;. Especially in languages like C/C++, misinterpreting the size or structure of an object can lead to unintended access to adjacent memory (&lt;strong&gt;Out-Of-Bounds Read/Write&lt;/strong&gt;). This is a major cause threatening program stability and security.&lt;/p&gt;
+&lt;p&gt;For example, let&amp;#x2019;s look at the following code.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;typedef&lt;/span&gt; &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; {&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; value[&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;];
+} SmallStruct;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;typedef&lt;/span&gt; &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; {&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; data[&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;];
+} LargeStruct;
+
+SmallStruct normal = {&lt;span class=&#34;hljs-number&#34;&gt;0x41&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x42&lt;/span&gt;};
+print_memory((&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;*)&amp;amp;normal , &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(normal)/&lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;)); 
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// Cast SmallStruct array to LargeStruct&lt;/span&gt;
+LargeStruct* confused = (LargeStruct*)&amp;amp;normal ;
+confused-&amp;gt;data[&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;] = &lt;span class=&#34;hljs-number&#34;&gt;0xdead&lt;/span&gt;; &lt;span class=&#34;hljs-comment&#34;&gt;// OOB Write&lt;/span&gt;
+confused-&amp;gt;data[&lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;] = &lt;span class=&#34;hljs-number&#34;&gt;0xbeef&lt;/span&gt;;
+print_memory((&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;*)&amp;amp;normal, &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(LargeStruct)/&lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;)); &lt;span class=&#34;hljs-comment&#34;&gt;// OOB Read&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In the example above, &lt;code&gt;SmallStruct&lt;/code&gt; is a structure holding two integers. In contrast, &lt;code&gt;LargeStruct&lt;/code&gt; contains an array of four integers. If a developer incorrectly casts a &lt;code&gt;SmallStruct&lt;/code&gt; instance to a &lt;code&gt;LargeStruct&lt;/code&gt; pointer, the program will misinterpret the size of &lt;code&gt;normal&lt;/code&gt; based on the memory layout of &lt;code&gt;LargeStruct&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Looking at the output, &lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%203.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;you can confirm that the area outside the bounds of the &lt;code&gt;SmallStruct&lt;/code&gt; structure has been modified by the write operation. That is, &lt;code&gt;confused-&amp;gt;data[2]&lt;/code&gt; and &lt;code&gt;data[3]&lt;/code&gt; accessed memory beyond the defined structure size of &lt;code&gt;normal&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;This can be visualized as follows.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%204.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The diagram illustrates how, even though the &lt;code&gt;SmallStruct&lt;/code&gt; instance occupies only two integer spaces, it is accessed through a &lt;code&gt;LargeStruct&lt;/code&gt; pointer as if four integer spaces exist, leading to out-of-bounds read/write operations.&lt;/p&gt;
+&lt;h3 id=&#34;1-3-Type-Confusion-case-in-Chrome&#34;&gt;&lt;a href=&#34;#1-3-Type-Confusion-case-in-Chrome&#34; class=&#34;headerlink&#34; title=&#34;1.3 Type Confusion (case: in Chrome)&#34;&gt;&lt;/a&gt;1.3 Type Confusion (case: in Chrome)&lt;/h3&gt;&lt;p&gt;Since we&amp;#x2019;re focusing on Type Confusion in Chrome, we&amp;#x2019;ll further explore how this vulnerability manifests in Chrome by comparing two typical cases of &lt;strong&gt;Memory Corruption&lt;/strong&gt; type confusion: C++ and JavaScript.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Type Confusion &amp;#x2013; C++&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;In statically-typed languages like C++, Type Confusion primarily occurs due to developer errors. Since types are determined at compile-time, incorrect explicit casting is the main cause.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// Type Confusion caused by incorrect Casting&lt;/span&gt;
+struct A { int x; };
+struct B { int y; &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; (*func)(); };
+
+A a = {&lt;span class=&#34;hljs-number&#34;&gt;42&lt;/span&gt;};
+B* b = (B*)&amp;amp;a; 
+&lt;span class=&#34;hljs-comment&#34;&gt;// Attempts to call an undefined function pointer &amp;#x2192; Crash or arbitrary code execution&lt;/span&gt;
+b-&amp;gt;func();&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In the example above, &lt;code&gt;struct A&lt;/code&gt; only contains an integer member &lt;code&gt;x&lt;/code&gt;. However, if it&amp;#x2019;s cast to &lt;code&gt;struct B&lt;/code&gt;, it will attempt to access a non-existent function pointer (&lt;code&gt;func&lt;/code&gt;). This leads to &lt;strong&gt;undefined behavior&lt;/strong&gt;, which can result in a system crash or even the execution of attacker-supplied code.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Type Confusion &amp;#x2013; JavaScript&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;On the other hand, in dynamic languages like JavaScript, Type Confusion can occur even without the developer explicitly changing types. Especially in modern JS engines like V8, the &lt;strong&gt;JIT (Just-In-Time) compiler&lt;/strong&gt; can make incorrect assumptions during the type inference process for runtime performance optimization, leading to Type Confusion (The details will be covered later!).&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;function&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;foo&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;x&lt;/span&gt;) &lt;/span&gt;{  
+    &lt;span class=&#34;hljs-keyword&#34;&gt;let&lt;/span&gt; arr = [&lt;span class=&#34;hljs-number&#34;&gt;1.1&lt;/span&gt;]; &lt;span class=&#34;hljs-comment&#34;&gt;// Initially an array containing a number (float)&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (x) arr[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;] = {&lt;span class=&#34;hljs-attr&#34;&gt;y&lt;/span&gt;: &lt;span class=&#34;hljs-number&#34;&gt;42&lt;/span&gt;}; &lt;span class=&#34;hljs-comment&#34;&gt;// Conditional branch to change to an object&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; arr[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;]; &lt;span class=&#34;hljs-comment&#34;&gt;// Potential OOB&lt;/span&gt;
+}
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;let&lt;/span&gt; i = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; i &amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;1000&lt;/span&gt;; i++) foo(&lt;span class=&#34;hljs-literal&#34;&gt;false&lt;/span&gt;);  &lt;span class=&#34;hljs-comment&#34;&gt;// Induce optimization&lt;/span&gt;
+
+foo(&lt;span class=&#34;hljs-literal&#34;&gt;true&lt;/span&gt;); &lt;span class=&#34;hljs-comment&#34;&gt;// After optimization, insert an object &amp;#x2192; change in type structure&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Initially, this code&amp;#x2019;s array contains only numbers, leading V8 to assume, &amp;#x201C;this array only holds numbers.&amp;#x201D; Accordingly, it optimizes its internal structure for simple and fast processing. However, if an object is inserted into the array based on the conditional statement, the internal structure should change. If the already generated optimized code doesn&amp;#x2019;t account for this change, the engine might still access the array assuming it only contains numbers. As a result, a value assumed to be a number might actually be an object or entirely different data, leading to &lt;strong&gt;memory misinterpretation&lt;/strong&gt; or &lt;strong&gt;Out-Of-Bounds access&lt;/strong&gt; to the array. This kind of mismatch between runtime structural changes and the JIT compiler&amp;#x2019;s inference is a primary cause of Type Confusion in JavaScript.&lt;/p&gt;
+&lt;h2 id=&#34;2-Type-Confusion-in-Chrome-Root-cause-Analysis&#34;&gt;&lt;a href=&#34;#2-Type-Confusion-in-Chrome-Root-cause-Analysis&#34; class=&#34;headerlink&#34; title=&#34;2. Type Confusion in Chrome - Root cause Analysis&#34;&gt;&lt;/a&gt;2. Type Confusion in Chrome - Root cause Analysis&lt;/h2&gt;&lt;p&gt;In Chapter 1, we explored the concept of Type Confusion and its common occurrences.&lt;br&gt;Now, let&amp;#x2019;s apply this concept to &lt;strong&gt;V8&lt;/strong&gt;, Chrome&amp;#x2019;s JavaScript engine. V8 is a high-performance, JIT-based engine, which makes it an environment where Type Confusion vulnerabilities frequently occur. For performance optimization, V8 internally tries to maintain object type information in a fixed form. This can lead to type inference errors resulting in memory corruption under specific conditions. In this chapter, we will examine the structural background of how Type Confusion occurs within V8 and the role of key concepts like &lt;strong&gt;Hidden Class&lt;/strong&gt; and &lt;strong&gt;ElementsKind&lt;/strong&gt;.&lt;/p&gt;
+&lt;h3 id=&#34;2-1-Overview-of-Type-Confusion-Cases-in-Chrome&#34;&gt;&lt;a href=&#34;#2-1-Overview-of-Type-Confusion-Cases-in-Chrome&#34; class=&#34;headerlink&#34; title=&#34;2.1 Overview of Type Confusion Cases in Chrome&#34;&gt;&lt;/a&gt;2.1 Overview of Type Confusion Cases in Chrome&lt;/h3&gt;&lt;p&gt;Indeed, numerous Chrome vulnerabilities, such as &lt;strong&gt;CVE-2018-17463&lt;/strong&gt;, &lt;strong&gt;CVE-2023-2033&lt;/strong&gt;, and &lt;strong&gt;CVE-2023-4069&lt;/strong&gt;, have originated from Type Confusion due to incorrect type inference. (You can also find them in HackyBoys 1day-1line! &amp;#x2192; &lt;a href=&#34;https://hackyboiz.github.io/2024/01/18/ogu123/cve-2023-2033/&#34;&gt;Link&lt;/a&gt;)&lt;/p&gt;
+&lt;p&gt;Most of these occur when the JIT compiler observes code execution patterns and generates optimized code based on assumptions like &amp;#x201C;this variable always handles numbers&amp;#x201D; or &amp;#x201C;this object always has the same structure.&amp;#x201D; The vulnerability then arises when these assumptions are broken by an exceptional execution flow later on.&lt;/p&gt;
+&lt;p&gt;In the V8 engine, Type Confusion vulnerabilities frequently occur in the following situations:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;When the object&amp;#x2019;s structure &lt;strong&gt;(Hidden Class)&lt;/strong&gt; has changed, but operations continue based on previous assumptions.&lt;/li&gt;
+&lt;li&gt;When changes to the &lt;strong&gt;array&amp;#x2019;s internal type (ElementsKind)&lt;/strong&gt; are not reflected.&lt;/li&gt;
+&lt;li&gt;When incorrect type hints left by the &lt;strong&gt;Inline Cache&lt;/strong&gt; are used.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;In summary, V8 generates code assuming &amp;#x201C;types will be fixed&amp;#x201D; for fast execution. However, JavaScript is a highly dynamic language, and this assumption can be broken at any time. Attackers can exploit these structural characteristics to disrupt internal type information and cause Type Confusion.&lt;/p&gt;
+&lt;p&gt;We will now delve into two core optimization concepts that form the basis of these structural assumptions: &lt;strong&gt;Hidden Class (Map)&lt;/strong&gt; and &lt;strong&gt;ElementsKind&lt;/strong&gt;.&lt;/p&gt;
+&lt;h3 id=&#34;2-2-Introduction-to-V8&amp;#x2019;s-Optimization-Model-1-HiddenClass-Map&#34;&gt;&lt;a href=&#34;#2-2-Introduction-to-V8&amp;#x2019;s-Optimization-Model-1-HiddenClass-Map&#34; class=&#34;headerlink&#34; title=&#34;2.2 Introduction to V8&amp;#x2019;s Optimization Model (1): HiddenClass (Map)&#34;&gt;&lt;/a&gt;2.2 Introduction to V8&amp;#x2019;s Optimization Model (1): HiddenClass (Map)&lt;/h3&gt;&lt;p&gt;A &lt;strong&gt;Hidden Class&lt;/strong&gt; is an internal mechanism V8 uses to track and optimize the structure of JavaScript objects. JavaScript objects are inherently dynamic, allowing properties and value pairs to be freely added or removed, which means their structure can change on the fly. However, for performance, V8 doesn&amp;#x2019;t treat objects like dictionaries. Instead, it internally tracks the property configuration and order of objects using a meta-structure called a Hidden Class (or Map).&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Property:&lt;/strong&gt; While properties in JavaScript objects simply appear as key-value pairs, internally in V8, each time a property is added, it triggers a change in the object&amp;#x2019;s memory layout. At this point, not only the property&amp;#x2019;s name but also the &lt;strong&gt;order in which it&amp;#x2019;s added&lt;/strong&gt; becomes a crucial factor in determining the object&amp;#x2019;s structure.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Transition:&lt;/strong&gt; When a new property is added, V8 connects (transitions) the object&amp;#x2019;s current Hidden Class from its existing structure to a new one. Each such transition corresponds to the addition of one property, forming a &lt;strong&gt;tree structure&lt;/strong&gt; composed of connections between Hidden Classes.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;&lt;strong&gt;&amp;#x1F9E9; How Hidden Class Works&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;let&lt;/span&gt; obj = {};        &lt;span class=&#34;hljs-comment&#34;&gt;// [1] Initial Hidden Class&lt;/span&gt;
+obj.x = &lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;;          &lt;span class=&#34;hljs-comment&#34;&gt;// [2] &amp;#x2192; Transitions to a Hidden Class with property &amp;apos;x&amp;apos;&lt;/span&gt;
+obj.y = &lt;span class=&#34;hljs-number&#34;&gt;20&lt;/span&gt;;          &lt;span class=&#34;hljs-comment&#34;&gt;// [3] &amp;#x2192; Transitions to a Hidden Class with properties &amp;apos;x, y&amp;apos; in that order&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;[1] When an object is created, V8 assigns an &lt;strong&gt;initial Hidden Class&lt;/strong&gt; to it. This represents a state where the object has no properties&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;Subsequently, each time a property is added, V8 performs a &lt;strong&gt;transition&lt;/strong&gt; from the existing Hidden Class to a new one&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;[2] if &lt;code&gt;obj.x = 10&lt;/code&gt; is added, it transitions to a new Hidden Class containing only &lt;code&gt;x&lt;/code&gt; .&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;[3] when &lt;code&gt;obj.y = 20&lt;/code&gt; is added, it transitions again to another Hidden Class that reflects the order &lt;code&gt;x, y&lt;/code&gt;.&lt;/p&gt;
+  &lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;[Initial Hidden Class]
+        |
+        | (add property &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;x&amp;apos;&lt;/span&gt;)
+        v
+   [Hidden Class: x]
+        |
+        | (add property &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;y&amp;apos;&lt;/span&gt;)
+        v
+   [Hidden Class: x, y]&lt;/code&gt;&lt;/pre&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;As shown, Hidden Classes are sequentially linked according to the property addition order. Objects with identical structures share the same Hidden Class. The Hidden Class expands, forming a branching tree structure based on the property addition order of an object, internally representing the static structural information of each object.&lt;/p&gt;
+&lt;p&gt;Due to this structure, when accessing properties like &lt;code&gt;obj.x&lt;/code&gt;, V8 doesn&amp;#x2019;t search for a string key. Instead, it directly accesses a fixed memory location, such as &lt;code&gt;obj[+8]&lt;/code&gt;, based on the offset information held by the corresponding Hidden Class. This method significantly &lt;strong&gt;speeds up property lookup&lt;/strong&gt; and enables V8 to generate highly optimized native code, under the assumption that the object&amp;#x2019;s structure will not change.&lt;/p&gt;
+&lt;h3 id=&#34;2-3-Introduction-to-V8&amp;#x2019;s-Optimization-Model-2-ElementsKind&#34;&gt;&lt;a href=&#34;#2-3-Introduction-to-V8&amp;#x2019;s-Optimization-Model-2-ElementsKind&#34; class=&#34;headerlink&#34; title=&#34;2.3 Introduction to V8&amp;#x2019;s Optimization Model (2): ElementsKind&#34;&gt;&lt;/a&gt;2.3 Introduction to V8&amp;#x2019;s Optimization Model (2): ElementsKind&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;ElementsKind&lt;/strong&gt; is an internal meta-information V8 uses to track the &lt;strong&gt;element type and density of JavaScript arrays&lt;/strong&gt;. JavaScript arrays have a very dynamic structure; they can freely mix numbers, strings, and objects, or contain sparse (empty) slots. However, for performance optimization, V8 tries to represent these arrays internally in the simplest and most standardized way possible. ElementsKind is the criterion for this internal representation.&lt;/p&gt;
+&lt;p&gt;&amp;#x1F9E9; &lt;strong&gt;How ElementsKind Works&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;When an array is created, V8 assigns the simplest and most compact &lt;strong&gt;ElementsKind&lt;/strong&gt; based on the array&amp;#x2019;s content.&lt;/p&gt;
+&lt;p&gt;  For example:&lt;/p&gt;
+  &lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;]           &amp;#x2192; PackedSmiElements (&lt;span class=&#34;hljs-number&#34;&gt;32&lt;/span&gt;bits integer array)
+[&lt;span class=&#34;hljs-number&#34;&gt;1.1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2.2&lt;/span&gt;]          &amp;#x2192; PackedDoubleElements (&lt;span class=&#34;hljs-number&#34;&gt;64&lt;/span&gt;bits floating-point array)
+[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, {}, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;text&amp;quot;&lt;/span&gt;]     &amp;#x2192; PackedElements (general object array)&lt;/code&gt;&lt;/pre&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;Subsequently, if elements of a different type are inserted into the array, or if intermediate elements are deleted reducing its density, V8 transitions the array to a more general ElementsKind.&lt;/p&gt;
+  &lt;pre&gt;&lt;code class=&#34;hljs angelscript&#34;&gt;let arr = [&lt;span class=&#34;hljs-number&#34;&gt;1.1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2.2&lt;/span&gt;];   &lt;span class=&#34;hljs-comment&#34;&gt;// Initial: PackedDoubleElements&lt;/span&gt;
+arr[&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;] = {};            &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2192; Transitions to PackedElements&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;This approach somewhat contrasts with the dynamic nature of JavaScript arrays but provides very high performance until a change occurs during execution. Ultimately, ElementsKind provides a core criterion for JIT optimization based on abstract type information about array elements, playing a crucial role in converging dynamic JavaScript code into a static performance model.&lt;/p&gt;
+&lt;h3 id=&#34;2-4-Optimization-Flow-and-Native-Code-Generation&#34;&gt;&lt;a href=&#34;#2-4-Optimization-Flow-and-Native-Code-Generation&#34; class=&#34;headerlink&#34; title=&#34;2.4 Optimization Flow and Native Code Generation&#34;&gt;&lt;/a&gt;2.4 Optimization Flow and Native Code Generation&lt;/h3&gt;&lt;p&gt;V8 generates high-performance &lt;strong&gt;Native Code&lt;/strong&gt; by making the most static assumptions possible about JavaScript&amp;#x2019;s dynamic nature. As discussed earlier, &lt;strong&gt;Hidden Class&lt;/strong&gt; and &lt;strong&gt;ElementsKind&lt;/strong&gt; make object and array structures predictable, allowing V8 to progressively generate optimized code during execution. In the previous section (Part 1.), we covered the overall concept and history of the V8 execution pipeline structure. Now, let&amp;#x2019;s look at these components from the perspective of native code execution and optimization flow.&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;&lt;strong&gt;&amp;#x2699;&amp;#xFE0F; Native Code Execution and Optimization Flow&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%205.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;V8&amp;#x2019;s execution pipeline transforms JavaScript code into increasingly fast native machine code through the following stages.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;The &lt;strong&gt;Ignition interpreter&lt;/strong&gt; converts JavaScript code into bytecode and begins execution. In this stage, runtime profiling information, such as execution counts and type information, is collected.&lt;/li&gt;
+&lt;li&gt;If code is determined to be a &amp;#x201C;hot&amp;#x201D; execution path, the &lt;strong&gt;Sparkplug&lt;/strong&gt; or &lt;strong&gt;Maglev JIT compilers&lt;/strong&gt; perform rapid compilation to generate Native Code. This code represents an initial level of optimization, prioritizing speed and efficiency.&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;Subsequently, once the code is deemed sufficiently analyzed, &lt;strong&gt;TurboFan&lt;/strong&gt;, the advanced JIT compiler, performs more sophisticated optimizations. At this point, it actively utilizes internal structural information like &lt;strong&gt;Hidden Class&lt;/strong&gt; and &lt;strong&gt;ElementsKind&lt;/strong&gt; to generate high-performance Native Code, assuming that object structures remain fixed.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;e.g., When accessing &lt;code&gt;obj.x&lt;/code&gt;, V8 can use the Hidden Class to know that the offset of &amp;#x201C;x&amp;#x201D; is &lt;code&gt;+8&lt;/code&gt; and generate code that directly references that memory location. Similarly, array memory access is statically optimized via ElementsKind.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;hr&gt;
+&lt;p&gt;During this process, TurboFan employs various advanced optimization techniques, including Inline Caching (IC), Escape Analysis, Loop Unrolling, and Function Inlining. The Native Code generated this way offers very high execution performance but concurrently relies on strong static assumptions about the object&amp;#x2019;s internal structure and type.&lt;/p&gt;
+&lt;p&gt;V8 registers this optimized code at the function&amp;#x2019;s entry point based on these assumptions. As a result, subsequent function calls bypass the interpreter stage and execute the Native Code directly, dramatically improving execution speed.&lt;/p&gt;
+&lt;p&gt;However, this optimization is premised on the following assumption:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&amp;#x201C;The structure of objects or types of arrays will not change during runtime.&amp;#x201D;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The problem is that, due to the dynamic nature of JavaScript, the structure of objects or arrays can change at any time. If such a change is detected, V8 will &lt;strong&gt;deoptimize&lt;/strong&gt; the existing Native Code, revert to the interpreter, or generate newly optimized code.&lt;/p&gt;
+&lt;p&gt;However, if these changes are not properly detected, or if they are intentionally bypassed by an attacker, V8 will continue to execute the optimized path based on the previous, incorrect type information. As a result, a situation can arise where the &lt;strong&gt;Inline Cache&lt;/strong&gt; still uses old information even though the &lt;strong&gt;Hidden Class&lt;/strong&gt; or &lt;strong&gt;ElementsKind&lt;/strong&gt; has already changed. This leads to incorrect field offset calculations or erroneous memory references. Ultimately, this context is the direct cause of &lt;strong&gt;Type Confusion&lt;/strong&gt; vulnerabilities.&lt;/p&gt;
+&lt;p&gt;As such, V8&amp;#x2019;s optimization pipeline is a core mechanism for converging JavaScript&amp;#x2019;s dynamic characteristics into a static execution model. Hidden Class and ElementsKind form the foundation of this static model, and the Native Code generated based on them provides very high performance. &lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%206.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;However, simultaneously, a vulnerability can arise the moment this static assumption is broken. Therefore, managing the &lt;strong&gt;trade-off between performance and security&lt;/strong&gt; becomes a very critical challenge in V8&amp;#x2019;s design.&lt;/p&gt;
+&lt;h3 id=&#34;2-5-The-Structure-of-Type-Confusion-Occurrence&#34;&gt;&lt;a href=&#34;#2-5-The-Structure-of-Type-Confusion-Occurrence&#34; class=&#34;headerlink&#34; title=&#34;2.5 The Structure of Type Confusion Occurrence&#34;&gt;&lt;/a&gt;2.5 The Structure of Type Confusion Occurrence&lt;/h3&gt;&lt;p&gt;As previously explained, V8&amp;#x2019;s optimization mechanisms are based on a strong premise that object structures and array types will not change. However, JavaScript is fundamentally a very dynamic language, and Type Confusion can occur the moment this premise is broken in the actual execution flow.&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s specifically examine how Type Confusion can be triggered within &lt;strong&gt;Hidden Class&lt;/strong&gt; and &lt;strong&gt;ElementsKind&lt;/strong&gt;, which form the basis of V8&amp;#x2019;s static model.&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;&lt;strong&gt;1) Hidden Class-based Confusion&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;A Hidden Class is an internal mechanism that tracks an object&amp;#x2019;s property structure, enabling fast property access and JIT optimization. However, when properties are dynamically added to an object or property types change, the Hidden Class transitions to a different class, rendering the existing Native Code invalid.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;function&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;Foo&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;&lt;/span&gt;) &lt;/span&gt;{
+  &lt;span class=&#34;hljs-built_in&#34;&gt;this&lt;/span&gt;.x = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;  &lt;span class=&#34;hljs-comment&#34;&gt;// HiddenClass A&lt;/span&gt;
+  &lt;span class=&#34;hljs-built_in&#34;&gt;this&lt;/span&gt;.y = &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;;  &lt;span class=&#34;hljs-comment&#34;&gt;// HiddenClass B&lt;/span&gt;
+}
+&lt;span class=&#34;hljs-keyword&#34;&gt;let&lt;/span&gt; a = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; Foo();
+a.z = &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;;       &lt;span class=&#34;hljs-comment&#34;&gt;// HiddenClass C (transition)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In this case, object &lt;code&gt;a&lt;/code&gt; ultimately gets Hidden Class C. But if TurboFan generated Native Code based on the structure up to Hidden Class B, and that code is still applied to &lt;code&gt;a&lt;/code&gt;, it might incorrectly perceive &lt;code&gt;a.z&lt;/code&gt; as &lt;code&gt;a.y&lt;/code&gt; or reference an incorrect offset.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Hidden Class Transition and Deoptimization&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;Changes in property types also trigger Hidden Class transitions. Consider, for example, a case where an object property&amp;#x2019;s type changes from a number to an object.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;let&lt;/span&gt; obj = { &lt;span class=&#34;hljs-attr&#34;&gt;x&lt;/span&gt;: &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; };         &lt;span class=&#34;hljs-comment&#34;&gt;// x is number &amp;#x2192; HiddenClass A&lt;/span&gt;
+obj.x = { &lt;span class=&#34;hljs-attr&#34;&gt;nested&lt;/span&gt;: &lt;span class=&#34;hljs-literal&#34;&gt;true&lt;/span&gt; };   &lt;span class=&#34;hljs-comment&#34;&gt;// x is now object &amp;#x2192; HiddenClass B&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In this scenario, V8 detects the type change and deoptimizes the existing Native Code, either reverting to bytecode or generating new code. However, if the structural change is not properly detected, or if an attacker designs the input to bypass this detection, V8 may still execute the existing Hidden Class-based Native Code, leading to incorrect memory access.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;2) ElementsKind-based Confusion&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;For arrays, V8 defines various &lt;strong&gt;ElementsKind&lt;/strong&gt; types based on the elements&amp;#x2019; types and density. &lt;/p&gt;
+&lt;p&gt;For example:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;PACKED_SMI_ELEMENTS&lt;/code&gt;: Dense array containing only integers.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;PACKED_DOUBLE_ELEMENTS&lt;/code&gt;: Array containing only floating-point numbers.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;PACKED_ELEMENTS&lt;/code&gt;: Mixed-type array.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;HOLEY_*&lt;/code&gt; (sparse array) variants corresponding to each of the above.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;TurboFan generates optimized code assuming that an array&amp;#x2019;s ElementsKind will not change. However, the moment an element of a different type is inserted into the array, the ElementsKind transitions, and the existing Native Code becomes invalid.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;function&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;confuse&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;x&lt;/span&gt;) &lt;/span&gt;{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;let&lt;/span&gt; arr = [&lt;span class=&#34;hljs-number&#34;&gt;1.1&lt;/span&gt;];     &lt;span class=&#34;hljs-comment&#34;&gt;// PackedDoubleElements&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (x) arr[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;] = {};  &lt;span class=&#34;hljs-comment&#34;&gt;// insert object &amp;#x2192; ElementsKind transition&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; arr[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;];
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;If &lt;code&gt;x&lt;/code&gt; is &lt;code&gt;false&lt;/code&gt;, &lt;code&gt;arr&lt;/code&gt; remains a double array, and TurboFan generates corresponding code. However, if &lt;code&gt;x&lt;/code&gt; is &lt;code&gt;true&lt;/code&gt;, an object is inserted into &lt;code&gt;arr[0]&lt;/code&gt;, changing the array&amp;#x2019;s internal representation. If the existing Native Code is still executed at this point, an incorrect type casting occurs, interpreting an object as a double.&lt;/p&gt;
+&lt;h2 id=&#34;3-From-Type-Confusion-to-Memory-Corruption&#34;&gt;&lt;a href=&#34;#3-From-Type-Confusion-to-Memory-Corruption&#34; class=&#34;headerlink&#34; title=&#34;3. From Type Confusion to Memory Corruption&#34;&gt;&lt;/a&gt;3. From Type Confusion to Memory Corruption&lt;/h2&gt;&lt;h3 id=&#34;3-1-Connecting-to-Practical-Memory-Corruption&#34;&gt;&lt;a href=&#34;#3-1-Connecting-to-Practical-Memory-Corruption&#34; class=&#34;headerlink&#34; title=&#34;3.1 Connecting to Practical Memory Corruption&#34;&gt;&lt;/a&gt;3.1 Connecting to Practical Memory Corruption&lt;/h3&gt;&lt;p&gt;Why does simple Type Confusion escalate to &lt;strong&gt;Memory Corruption&lt;/strong&gt;?&lt;/p&gt;
+&lt;p&gt;The core reason is that V8&amp;#x2019;s JIT-optimized Native Code directly accesses memory, relying on its trust in object structures or array types. V8 rapidly accesses objects or arrays by calculating precise field offsets based on &lt;strong&gt;HiddenClass (Map)&lt;/strong&gt; or &lt;strong&gt;ElementsKind&lt;/strong&gt; information. The problem arises when these assumptions are broken. If an object&amp;#x2019;s actual structure changes but the compiled code still accesses it based on the old structure, it will access completely incorrect memory addresses or misinterpret data. This can directly lead to &lt;strong&gt;memory corruption&lt;/strong&gt;, manipulating memory at unexpected locations.&lt;/p&gt;
+&lt;p&gt;Consider the following scenarios.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Misinterpreting a Floating-Point Array as an Object Array&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;  If an array storing floating-point values like &lt;code&gt;13.37&lt;/code&gt; is mistakenly treated and accessed by the JIT as an object array, this numerical value could be interpreted as a heap pointer, leading to access of an entirely unintended memory location. This results in &lt;strong&gt;OOB Read/Write&lt;/strong&gt;, which an attacker can leverage to manipulate adjacent objects or induce data leakage.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Pointer Manipulation using TypedArray or DataView&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;  In JavaScript, when using &lt;code&gt;TypedArray&lt;/code&gt; or &lt;code&gt;ArrayBuffer&lt;/code&gt;, the buffer directly points to an actual memory region. If an attacker can control the object&amp;#x2019;s structure, they might manipulate this &lt;strong&gt;backing store pointer&lt;/strong&gt; to set an arbitrary memory address as the buffer&amp;#x2019;s starting point. In this case, read/write operations through the &lt;code&gt;ArrayBuffer&lt;/code&gt; expand to memory access across the entire address space. &lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;This implies the ability to access memory near the object or specific fields within the same structure in a limited way, by manipulating the internal field offsets of the object through incorrect type interpretation.&lt;/p&gt;
+&lt;p&gt;One more crucial factor here is the &lt;strong&gt;Garbage Collector (GC)&lt;/strong&gt;. V8 uses a GC system that automatically manages the lifespan of JS objects. This system moves or reclaims objects within the heap as needed. Even if an object&amp;#x2019;s memory address changes during this process, the existing optimized code might not recognize it and could attempt to access it based on its old structure. In other words, a timing difference or information mismatch between the GC and JIT can act as another &lt;strong&gt;Type Confusion trigger&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;Consequently, we can see that Type Confusion is not merely a logical error or a developer&amp;#x2019;s mistake, but rather a vulnerability that can arise at the complex boundary where V8&amp;#x2019;s JIT optimization, object model, and GC system interact.&lt;/p&gt;
+&lt;p&gt;Now that we understand why Type Confusion occurs and how it can lead to Memory Corruption, let&amp;#x2019;s explore how to initiate an attack using this vulnerability.&lt;/p&gt;
+&lt;h3 id=&#34;3-2-Relative-Read-Write-Primitive&#34;&gt;&lt;a href=&#34;#3-2-Relative-Read-Write-Primitive&#34; class=&#34;headerlink&#34; title=&#34;3.2 Relative Read/Write Primitive&#34;&gt;&lt;/a&gt;3.2 Relative Read/Write Primitive&lt;/h3&gt;&lt;p&gt;The basic exploit flow for Type Confusion starts with an OOB Read/Write stemming from the Type Confusion itself. The general attack flow to achieve &lt;strong&gt;RCE via Type Confusion&lt;/strong&gt; involves carefully refining the OOB R/W to obtain a &lt;strong&gt;Relative R/W&lt;/strong&gt; primitive, then skillfully leveraging this to gain &lt;strong&gt;AAR/W&lt;/strong&gt; (Arbitrary Address Read/Write), and finally achieving Code Execution. Sounds exciting, right?! This part is turning out to be longer than expected, so I probably won&amp;#x2019;t cover everything. But it&amp;#x2019;d be a shame to end here, so let&amp;#x2019;s briefly touch on the Relative R/W portion as a sneak peek :)&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;Type Confusion means more than just a simple misinterpretation of types. From an attacker&amp;#x2019;s perspective, it becomes a &lt;strong&gt;starting point for manipulating memory regions that were originally inaccessible&lt;/strong&gt;. A prime example of this is the &lt;strong&gt;Relative Read/Write&lt;/strong&gt;. This is a primitive that allows limited access to memory based on a fixed offset from a known location.&lt;/p&gt;
+&lt;p&gt;For instance, consider two classes with similar structures but where the meaning of the last field differs.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%207.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Class A&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;name&lt;/li&gt;
+&lt;li&gt;age&lt;/li&gt;
+&lt;li&gt;residence&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Class B&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;name&lt;/li&gt;
+&lt;li&gt;age&lt;/li&gt;
+&lt;li&gt;workspace&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;These two classes have a similar number and order of fields, but the meaning and type of the last field are different. Let&amp;#x2019;s imagine that in a Worker process, an operation points to the &amp;#x201C;residence&amp;#x201D; field of a &lt;code&gt;Class A&lt;/code&gt; instance.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%208.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Now, let&amp;#x2019;s assume a situation within the Worker process where a &lt;code&gt;Class A&lt;/code&gt; instance is mistakenly perceived as a &lt;code&gt;Class B&lt;/code&gt; type for some reason. In this case, under normal circumstances, the &amp;#x201C;residence&amp;#x201D; field should be accessed. However, when interpreted based on &lt;code&gt;Class B&lt;/code&gt;, this memory location is recognized as the field corresponding to &amp;#x201C;workplace.&amp;#x201D;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%209.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;As a result, even though the Worker process is actually accessing a field of a &lt;code&gt;Class A&lt;/code&gt; instance, the runtime considers it a field of &lt;code&gt;Class B&lt;/code&gt;, leading to unintended memory reads or writes.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;It&amp;#x2019;d be quite embarrassed if a delivery meant for your home ended up at your workplace, wouldn&amp;#x2019;t it?&lt;/p&gt;
+&lt;p&gt;Here&amp;#x2019;s another embarrassed example.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;As shown, the runtime&amp;#x2019;s incorrect type interpretation creates a &lt;strong&gt;Relative R/W Primitive&lt;/strong&gt;, enabling memory access based on a fixed offset, even if the exact address isn&amp;#x2019;t known. Through this, an attacker can satisfy the following conditions:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Based on an object they control (&lt;code&gt;Class A&lt;/code&gt;), at a fixed offset (e.g., &lt;code&gt;+0x10&lt;/code&gt;, &lt;code&gt;+0x18&lt;/code&gt;, etc.),&lt;/li&gt;
+&lt;li&gt;They can read or write the contents of a specific field or an adjacent structure (&lt;code&gt;Class B&lt;/code&gt;) within memory.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr&gt;
+&lt;p&gt;Such a &lt;strong&gt;Relative Primitive&lt;/strong&gt; holds significant meaning in the early stages of an attack:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;It allows for leaking the internal structure of a specific object, or&lt;/li&gt;
+&lt;li&gt;It enables the manipulation of key information like pointers or length fields,&lt;/li&gt;
+&lt;li&gt;Thereby paving the way for expansion into an Absolute R/W Primitive.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;In the next part, we&amp;#x2019;ll explore through an actual exploit flow how this Relative R/W Primitive expands into absolute address-based memory manipulation, ultimately leading to remote code execution.&lt;/p&gt;
+&lt;p&gt;From the next part, you can expect a strong &amp;#x201C;pwnable&amp;#x201D; scent; please look forward to it! I&amp;#x2019;ll do my best to prepare it&amp;#x2026;!&lt;/p&gt;
+&lt;p&gt;(The following is just a humorous, digitally distorted prank call photo I added because I wanted this kind of vibe. But Liam Neeson and a Chinese restaurant are better, right? &amp;#x1F975;)&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%2010.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;(subtitle: Robbers at home lol)&lt;/p&gt;
+&lt;h2 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h2&gt;&lt;p&gt;v &lt;strong&gt;Conference Video&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://www.youtube.com/watch?v=RL2po1swXO4&#34;&gt;https://www.youtube.com/watch?v=RL2po1swXO4&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;v &lt;strong&gt;Background&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://v8.dev/docs/hidden-classes&#34;&gt;https://v8.dev/docs/hidden-classes&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://v8.dev/blog/elements-kinds&#34;&gt;https://v8.dev/blog/elements-kinds&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://richardartoul.github.io/jekyll/update/2015/04/26/hidden-classes.html&#34;&gt;https://richardartoul.github.io/jekyll/update/2015/04/26/hidden-classes.html&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/07/30/OUYA77/Chrome_part2/kr/TypeConfusion101_Part2.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/07/30/ouya77/chrome_part2/en/">
+
+  <title>[Research] Starting Chrome Exploitation with Type Confusion 101 ^-^☆ Part 2.(EN) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-07-30 14:20" pubdate>
+      2025년 7월 30일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      4.4k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      88
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] Starting Chrome Exploitation with Type Confusion 101 ^-^☆ Part 2.(EN)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p>Hello, this is OUYA77. 2025 is already more than halfway over, and July is almost gone too. Time flies, doesn&#x2019;t it? &#x314E;.&#x314E;</p>
+<p>In this part, I really wanted to take a stab at Chrome exploit development, but because Chrome itself is a complex program with quite a lot of background knowledge required, this post ended up being a bit long. In this section, we&#x2019;ll compare basic <strong>Type Confusion</strong> with Type Confusion in Chrome, and explore how this Type Confusion occurs and ultimately leads to <strong>Memory Corruption</strong>.</p>
+<p>Before we dive in, let&#x2019;s briefly recap what we covered last time.</p>
+<h2 id="0-Part-1-Recap"><a href="#0-Part-1-Recap" class="headerlink" title="0. Part 1. Recap"></a>0. Part 1. Recap</h2><p>Last time, we looked at the overall architecture of Chrome and how frontend resources are processed. To be more precise, we examined the process of HTML, CSS, and JS files being rendered in Chrome. In this research post, we&#x2019;ll focus on <strong>V8</strong>, which handles JS files</p>
+<blockquote>
+<p>If you haven&#x2019;t seen it yet &#x2192; <a href="https://hackyboiz.github.io/2025/07/01/OUYA77/Chrome_part1/en/">[Research] Starting Chrome Exploitation with Type Confusion 101 ^-^&#x2606; Part 1.</a></p>
+</blockquote>
+<p><img src="image%201.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>V8 uses various compiler tiers (Ignition, SparkPlug, Maglev, TurboFan) for fast and efficient JavaScript execution, gradually optimizing code and increasing execution speed. However, this optimization is based on the assumption that &#x201C;this structure will always be the same.&#x201D; If an attacker changes the object type or structure at a specific point, V8 will execute incorrect native code based on a false assumption. <strong>This is a typical scenario where Type Confusion occurs.</strong></p>
+<p>Now that we understand the basic structure of how code executes within V8, in the next step, we&#x2019;ll delve into how objects are represented and optimized inside this engine, and furthermore, how this structure can lead to security issues like Type Confusion!</p>
+<h2 id="1-Type-Confusion-101"><a href="#1-Type-Confusion-101" class="headerlink" title="1. Type Confusion 101"></a>1. Type Confusion 101</h2><h3 id="1-1-Introduction"><a href="#1-1-Introduction" class="headerlink" title="1.1 Introduction"></a>1.1 Introduction</h3><p><strong>Type Confusion</strong> is, as the name suggests, a vulnerability that arises when a <strong><code>Type</code></strong> is <strong><code>Confused</code></strong>. So, what exactly do we mean by &#x2018;type&#x2019; here? In computing, a &#x2018;type&#x2019; refers to the method by which data is stored and processed. Simply put, it serves to distinguish the data kind of the variables we use.</p>
+<p>For example:</p>
+<ul>
+<li><strong>Integer:</strong> Stores numerical data</li>
+<li><strong>Char:</strong> Stores single character data</li>
+<li><strong>Array:</strong> Groups multiple data items together</li>
+</ul>
+<p>As seen above, types are the basic units for processing data in programming languages, and for a computer to handle data correctly, the exact type must be specified. But what happens if some data, which should originally be an integer, is mistakenly (or intentionally) treated like a character or an object? The side effects of this cannot be predicted, and the program may behave in unexpected ways.</p>
+<h3 id="1-2-Types-of-&#x201C;Type-Confusion&#x201D;"><a href="#1-2-Types-of-&#x201C;Type-Confusion&#x201D;" class="headerlink" title="1.2 Types of &#x201C;Type Confusion&#x201D;"></a>1.2 Types of &#x201C;Type Confusion&#x201D;</h3><p>Type Confusion, like other vulnerability classifications, can generally be divided into two types based on their impact: <strong>Logical Bug</strong> and <strong>Memory Corruption</strong>.</p>
+<ul>
+<li><strong>Logical Bug</strong></li>
+</ul>
+<p>The <strong>Logical Bug</strong> type of Type Confusion occurs when logic processing, which varies according to type, operates incorrectly. In many languages, operators or built-in methods behave differently depending on the input type. If types are confused, the result can be entirely different from the intended flow. Let&#x2019;s assume the following code is part of a larger application.</p>
+<p><img src="image%202.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>A developer has implemented a filter to prevent XSS by checking if the <code>&lt;</code> character is included in certain input values. The filter was implemented expecting the input to be a string, but what if an array object consisting of strings is actually passed? In JavaScript, if this object is directly checked, the comparison result might be <code>false</code> even if it contains <code>&lt;</code>. This can lead to <strong>filter bypasses</strong> and, as a result, serious logical vulnerabilities such as <strong>XSS (Cross-Site Scripting)</strong> or privilege escalation.</p>
+<ul>
+<li><strong>Memory Corruption</strong></li>
+</ul>
+<p>The <strong>Memory Corruption</strong> type is a critical vulnerability that occurs when a <strong>memory layout is misaligned due to incorrect type casting</strong>. Especially in languages like C/C++, misinterpreting the size or structure of an object can lead to unintended access to adjacent memory (<strong>Out-Of-Bounds Read/Write</strong>). This is a major cause threatening program stability and security.</p>
+<p>For example, let&#x2019;s look at the following code.</p>
+<pre><code class="hljs c"><span class="hljs-keyword">typedef</span> <span class="hljs-class"><span class="hljs-keyword">struct</span> {</span>
+    <span class="hljs-keyword">int</span> value[<span class="hljs-number">2</span>];
+} SmallStruct;
+
+<span class="hljs-keyword">typedef</span> <span class="hljs-class"><span class="hljs-keyword">struct</span> {</span>
+    <span class="hljs-keyword">int</span> data[<span class="hljs-number">4</span>];
+} LargeStruct;
+
+SmallStruct normal = {<span class="hljs-number">0x41</span>, <span class="hljs-number">0x42</span>};
+print_memory((<span class="hljs-keyword">int</span>*)&amp;normal , <span class="hljs-keyword">sizeof</span>(normal)/<span class="hljs-keyword">sizeof</span>(<span class="hljs-keyword">int</span>)); 
+
+<span class="hljs-comment">// Cast SmallStruct array to LargeStruct</span>
+LargeStruct* confused = (LargeStruct*)&amp;normal ;
+confused-&gt;data[<span class="hljs-number">2</span>] = <span class="hljs-number">0xdead</span>; <span class="hljs-comment">// OOB Write</span>
+confused-&gt;data[<span class="hljs-number">3</span>] = <span class="hljs-number">0xbeef</span>;
+print_memory((<span class="hljs-keyword">int</span>*)&amp;normal, <span class="hljs-keyword">sizeof</span>(LargeStruct)/<span class="hljs-keyword">sizeof</span>(<span class="hljs-keyword">int</span>)); <span class="hljs-comment">// OOB Read</span></code></pre>
+<p>In the example above, <code>SmallStruct</code> is a structure holding two integers. In contrast, <code>LargeStruct</code> contains an array of four integers. If a developer incorrectly casts a <code>SmallStruct</code> instance to a <code>LargeStruct</code> pointer, the program will misinterpret the size of <code>normal</code> based on the memory layout of <code>LargeStruct</code>.</p>
+<p>Looking at the output, </p>
+<p><img src="image%203.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>you can confirm that the area outside the bounds of the <code>SmallStruct</code> structure has been modified by the write operation. That is, <code>confused-&gt;data[2]</code> and <code>data[3]</code> accessed memory beyond the defined structure size of <code>normal</code>.</p>
+<p>This can be visualized as follows.</p>
+<p><img src="image%204.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>The diagram illustrates how, even though the <code>SmallStruct</code> instance occupies only two integer spaces, it is accessed through a <code>LargeStruct</code> pointer as if four integer spaces exist, leading to out-of-bounds read/write operations.</p>
+<h3 id="1-3-Type-Confusion-case-in-Chrome"><a href="#1-3-Type-Confusion-case-in-Chrome" class="headerlink" title="1.3 Type Confusion (case: in Chrome)"></a>1.3 Type Confusion (case: in Chrome)</h3><p>Since we&#x2019;re focusing on Type Confusion in Chrome, we&#x2019;ll further explore how this vulnerability manifests in Chrome by comparing two typical cases of <strong>Memory Corruption</strong> type confusion: C++ and JavaScript.</p>
+<ul>
+<li><strong>Type Confusion &#x2013; C++</strong></li>
+</ul>
+<p>In statically-typed languages like C++, Type Confusion primarily occurs due to developer errors. Since types are determined at compile-time, incorrect explicit casting is the main cause.</p>
+<pre><code class="hljs jsx"><span class="hljs-comment">// Type Confusion caused by incorrect Casting</span>
+struct A { int x; };
+struct B { int y; <span class="hljs-keyword">void</span> (*func)(); };
+
+A a = {<span class="hljs-number">42</span>};
+B* b = (B*)&amp;a; 
+<span class="hljs-comment">// Attempts to call an undefined function pointer &#x2192; Crash or arbitrary code execution</span>
+b-&gt;func();</code></pre>
+<p>In the example above, <code>struct A</code> only contains an integer member <code>x</code>. However, if it&#x2019;s cast to <code>struct B</code>, it will attempt to access a non-existent function pointer (<code>func</code>). This leads to <strong>undefined behavior</strong>, which can result in a system crash or even the execution of attacker-supplied code.</p>
+<ul>
+<li><strong>Type Confusion &#x2013; JavaScript</strong></li>
+</ul>
+<p>On the other hand, in dynamic languages like JavaScript, Type Confusion can occur even without the developer explicitly changing types. Especially in modern JS engines like V8, the <strong>JIT (Just-In-Time) compiler</strong> can make incorrect assumptions during the type inference process for runtime performance optimization, leading to Type Confusion (The details will be covered later!).</p>
+<pre><code class="hljs jsx"><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">foo</span>(<span class="hljs-params">x</span>) </span>{  
+    <span class="hljs-keyword">let</span> arr = [<span class="hljs-number">1.1</span>]; <span class="hljs-comment">// Initially an array containing a number (float)</span>
+    <span class="hljs-keyword">if</span> (x) arr[<span class="hljs-number">0</span>] = {<span class="hljs-attr">y</span>: <span class="hljs-number">42</span>}; <span class="hljs-comment">// Conditional branch to change to an object</span>
+    <span class="hljs-keyword">return</span> arr[<span class="hljs-number">1</span>]; <span class="hljs-comment">// Potential OOB</span>
+}
+
+<span class="hljs-keyword">for</span> (<span class="hljs-keyword">let</span> i = <span class="hljs-number">0</span>; i &lt; <span class="hljs-number">1000</span>; i++) foo(<span class="hljs-literal">false</span>);  <span class="hljs-comment">// Induce optimization</span>
+
+foo(<span class="hljs-literal">true</span>); <span class="hljs-comment">// After optimization, insert an object &#x2192; change in type structure</span></code></pre>
+<p>Initially, this code&#x2019;s array contains only numbers, leading V8 to assume, &#x201C;this array only holds numbers.&#x201D; Accordingly, it optimizes its internal structure for simple and fast processing. However, if an object is inserted into the array based on the conditional statement, the internal structure should change. If the already generated optimized code doesn&#x2019;t account for this change, the engine might still access the array assuming it only contains numbers. As a result, a value assumed to be a number might actually be an object or entirely different data, leading to <strong>memory misinterpretation</strong> or <strong>Out-Of-Bounds access</strong> to the array. This kind of mismatch between runtime structural changes and the JIT compiler&#x2019;s inference is a primary cause of Type Confusion in JavaScript.</p>
+<h2 id="2-Type-Confusion-in-Chrome-Root-cause-Analysis"><a href="#2-Type-Confusion-in-Chrome-Root-cause-Analysis" class="headerlink" title="2. Type Confusion in Chrome - Root cause Analysis"></a>2. Type Confusion in Chrome - Root cause Analysis</h2><p>In Chapter 1, we explored the concept of Type Confusion and its common occurrences.<br>Now, let&#x2019;s apply this concept to <strong>V8</strong>, Chrome&#x2019;s JavaScript engine. V8 is a high-performance, JIT-based engine, which makes it an environment where Type Confusion vulnerabilities frequently occur. For performance optimization, V8 internally tries to maintain object type information in a fixed form. This can lead to type inference errors resulting in memory corruption under specific conditions. In this chapter, we will examine the structural background of how Type Confusion occurs within V8 and the role of key concepts like <strong>Hidden Class</strong> and <strong>ElementsKind</strong>.</p>
+<h3 id="2-1-Overview-of-Type-Confusion-Cases-in-Chrome"><a href="#2-1-Overview-of-Type-Confusion-Cases-in-Chrome" class="headerlink" title="2.1 Overview of Type Confusion Cases in Chrome"></a>2.1 Overview of Type Confusion Cases in Chrome</h3><p>Indeed, numerous Chrome vulnerabilities, such as <strong>CVE-2018-17463</strong>, <strong>CVE-2023-2033</strong>, and <strong>CVE-2023-4069</strong>, have originated from Type Confusion due to incorrect type inference. (You can also find them in HackyBoys 1day-1line! &#x2192; <a href="https://hackyboiz.github.io/2024/01/18/ogu123/cve-2023-2033/">Link</a>)</p>
+<p>Most of these occur when the JIT compiler observes code execution patterns and generates optimized code based on assumptions like &#x201C;this variable always handles numbers&#x201D; or &#x201C;this object always has the same structure.&#x201D; The vulnerability then arises when these assumptions are broken by an exceptional execution flow later on.</p>
+<p>In the V8 engine, Type Confusion vulnerabilities frequently occur in the following situations:</p>
+<ul>
+<li>When the object&#x2019;s structure <strong>(Hidden Class)</strong> has changed, but operations continue based on previous assumptions.</li>
+<li>When changes to the <strong>array&#x2019;s internal type (ElementsKind)</strong> are not reflected.</li>
+<li>When incorrect type hints left by the <strong>Inline Cache</strong> are used.</li>
+</ul>
+<p>In summary, V8 generates code assuming &#x201C;types will be fixed&#x201D; for fast execution. However, JavaScript is a highly dynamic language, and this assumption can be broken at any time. Attackers can exploit these structural characteristics to disrupt internal type information and cause Type Confusion.</p>
+<p>We will now delve into two core optimization concepts that form the basis of these structural assumptions: <strong>Hidden Class (Map)</strong> and <strong>ElementsKind</strong>.</p>
+<h3 id="2-2-Introduction-to-V8&#x2019;s-Optimization-Model-1-HiddenClass-Map"><a href="#2-2-Introduction-to-V8&#x2019;s-Optimization-Model-1-HiddenClass-Map" class="headerlink" title="2.2 Introduction to V8&#x2019;s Optimization Model (1): HiddenClass (Map)"></a>2.2 Introduction to V8&#x2019;s Optimization Model (1): HiddenClass (Map)</h3><p>A <strong>Hidden Class</strong> is an internal mechanism V8 uses to track and optimize the structure of JavaScript objects. JavaScript objects are inherently dynamic, allowing properties and value pairs to be freely added or removed, which means their structure can change on the fly. However, for performance, V8 doesn&#x2019;t treat objects like dictionaries. Instead, it internally tracks the property configuration and order of objects using a meta-structure called a Hidden Class (or Map).</p>
+<blockquote>
+<p><strong>Property:</strong> While properties in JavaScript objects simply appear as key-value pairs, internally in V8, each time a property is added, it triggers a change in the object&#x2019;s memory layout. At this point, not only the property&#x2019;s name but also the <strong>order in which it&#x2019;s added</strong> becomes a crucial factor in determining the object&#x2019;s structure.</p>
+<p><strong>Transition:</strong> When a new property is added, V8 connects (transitions) the object&#x2019;s current Hidden Class from its existing structure to a new one. Each such transition corresponds to the addition of one property, forming a <strong>tree structure</strong> composed of connections between Hidden Classes.</p>
+</blockquote>
+<p><strong>&#x1F9E9; How Hidden Class Works</strong></p>
+<pre><code class="hljs jsx"><span class="hljs-keyword">let</span> obj = {};        <span class="hljs-comment">// [1] Initial Hidden Class</span>
+obj.x = <span class="hljs-number">10</span>;          <span class="hljs-comment">// [2] &#x2192; Transitions to a Hidden Class with property &apos;x&apos;</span>
+obj.y = <span class="hljs-number">20</span>;          <span class="hljs-comment">// [3] &#x2192; Transitions to a Hidden Class with properties &apos;x, y&apos; in that order</span></code></pre>
+<ul>
+<li>[1] When an object is created, V8 assigns an <strong>initial Hidden Class</strong> to it. This represents a state where the object has no properties</li>
+<li><p>Subsequently, each time a property is added, V8 performs a <strong>transition</strong> from the existing Hidden Class to a new one</p>
+<ul>
+<li>[2] if <code>obj.x = 10</code> is added, it transitions to a new Hidden Class containing only <code>x</code> .</li>
+<li><p>[3] when <code>obj.y = 20</code> is added, it transitions again to another Hidden Class that reflects the order <code>x, y</code>.</p>
+  <pre><code class="hljs c">[Initial Hidden Class]
+        |
+        | (add property <span class="hljs-string">&apos;x&apos;</span>)
+        v
+   [Hidden Class: x]
+        |
+        | (add property <span class="hljs-string">&apos;y&apos;</span>)
+        v
+   [Hidden Class: x, y]</code></pre>
+</li>
+</ul>
+</li>
+</ul>
+<p>As shown, Hidden Classes are sequentially linked according to the property addition order. Objects with identical structures share the same Hidden Class. The Hidden Class expands, forming a branching tree structure based on the property addition order of an object, internally representing the static structural information of each object.</p>
+<p>Due to this structure, when accessing properties like <code>obj.x</code>, V8 doesn&#x2019;t search for a string key. Instead, it directly accesses a fixed memory location, such as <code>obj[+8]</code>, based on the offset information held by the corresponding Hidden Class. This method significantly <strong>speeds up property lookup</strong> and enables V8 to generate highly optimized native code, under the assumption that the object&#x2019;s structure will not change.</p>
+<h3 id="2-3-Introduction-to-V8&#x2019;s-Optimization-Model-2-ElementsKind"><a href="#2-3-Introduction-to-V8&#x2019;s-Optimization-Model-2-ElementsKind" class="headerlink" title="2.3 Introduction to V8&#x2019;s Optimization Model (2): ElementsKind"></a>2.3 Introduction to V8&#x2019;s Optimization Model (2): ElementsKind</h3><p><strong>ElementsKind</strong> is an internal meta-information V8 uses to track the <strong>element type and density of JavaScript arrays</strong>. JavaScript arrays have a very dynamic structure; they can freely mix numbers, strings, and objects, or contain sparse (empty) slots. However, for performance optimization, V8 tries to represent these arrays internally in the simplest and most standardized way possible. ElementsKind is the criterion for this internal representation.</p>
+<p>&#x1F9E9; <strong>How ElementsKind Works</strong></p>
+<ul>
+<li><p>When an array is created, V8 assigns the simplest and most compact <strong>ElementsKind</strong> based on the array&#x2019;s content.</p>
+<p>  For example:</p>
+  <pre><code class="hljs jsx">[<span class="hljs-number">1</span>, <span class="hljs-number">2</span>, <span class="hljs-number">3</span>]           &#x2192; PackedSmiElements (<span class="hljs-number">32</span>bits integer array)
+[<span class="hljs-number">1.1</span>, <span class="hljs-number">2.2</span>]          &#x2192; PackedDoubleElements (<span class="hljs-number">64</span>bits floating-point array)
+[<span class="hljs-number">1</span>, {}, <span class="hljs-string">&quot;text&quot;</span>]     &#x2192; PackedElements (general object array)</code></pre>
+</li>
+<li><p>Subsequently, if elements of a different type are inserted into the array, or if intermediate elements are deleted reducing its density, V8 transitions the array to a more general ElementsKind.</p>
+  <pre><code class="hljs angelscript">let arr = [<span class="hljs-number">1.1</span>, <span class="hljs-number">2.2</span>];   <span class="hljs-comment">// Initial: PackedDoubleElements</span>
+arr[<span class="hljs-number">2</span>] = {};            <span class="hljs-comment">// &#x2192; Transitions to PackedElements</span></code></pre>
+</li>
+</ul>
+<p>This approach somewhat contrasts with the dynamic nature of JavaScript arrays but provides very high performance until a change occurs during execution. Ultimately, ElementsKind provides a core criterion for JIT optimization based on abstract type information about array elements, playing a crucial role in converging dynamic JavaScript code into a static performance model.</p>
+<h3 id="2-4-Optimization-Flow-and-Native-Code-Generation"><a href="#2-4-Optimization-Flow-and-Native-Code-Generation" class="headerlink" title="2.4 Optimization Flow and Native Code Generation"></a>2.4 Optimization Flow and Native Code Generation</h3><p>V8 generates high-performance <strong>Native Code</strong> by making the most static assumptions possible about JavaScript&#x2019;s dynamic nature. As discussed earlier, <strong>Hidden Class</strong> and <strong>ElementsKind</strong> make object and array structures predictable, allowing V8 to progressively generate optimized code during execution. In the previous section (Part 1.), we covered the overall concept and history of the V8 execution pipeline structure. Now, let&#x2019;s look at these components from the perspective of native code execution and optimization flow.</p>
+<hr>
+<p><strong>&#x2699;&#xFE0F; Native Code Execution and Optimization Flow</strong></p>
+<p><img src="image%205.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>V8&#x2019;s execution pipeline transforms JavaScript code into increasingly fast native machine code through the following stages.</p>
+<ol>
+<li>The <strong>Ignition interpreter</strong> converts JavaScript code into bytecode and begins execution. In this stage, runtime profiling information, such as execution counts and type information, is collected.</li>
+<li>If code is determined to be a &#x201C;hot&#x201D; execution path, the <strong>Sparkplug</strong> or <strong>Maglev JIT compilers</strong> perform rapid compilation to generate Native Code. This code represents an initial level of optimization, prioritizing speed and efficiency.</li>
+<li><p>Subsequently, once the code is deemed sufficiently analyzed, <strong>TurboFan</strong>, the advanced JIT compiler, performs more sophisticated optimizations. At this point, it actively utilizes internal structural information like <strong>Hidden Class</strong> and <strong>ElementsKind</strong> to generate high-performance Native Code, assuming that object structures remain fixed.</p>
+<blockquote>
+<p>e.g., When accessing <code>obj.x</code>, V8 can use the Hidden Class to know that the offset of &#x201C;x&#x201D; is <code>+8</code> and generate code that directly references that memory location. Similarly, array memory access is statically optimized via ElementsKind.</p>
+</blockquote>
+</li>
+</ol>
+<hr>
+<p>During this process, TurboFan employs various advanced optimization techniques, including Inline Caching (IC), Escape Analysis, Loop Unrolling, and Function Inlining. The Native Code generated this way offers very high execution performance but concurrently relies on strong static assumptions about the object&#x2019;s internal structure and type.</p>
+<p>V8 registers this optimized code at the function&#x2019;s entry point based on these assumptions. As a result, subsequent function calls bypass the interpreter stage and execute the Native Code directly, dramatically improving execution speed.</p>
+<p>However, this optimization is premised on the following assumption:</p>
+<blockquote>
+<p>&#x201C;The structure of objects or types of arrays will not change during runtime.&#x201D;</p>
+</blockquote>
+<p>The problem is that, due to the dynamic nature of JavaScript, the structure of objects or arrays can change at any time. If such a change is detected, V8 will <strong>deoptimize</strong> the existing Native Code, revert to the interpreter, or generate newly optimized code.</p>
+<p>However, if these changes are not properly detected, or if they are intentionally bypassed by an attacker, V8 will continue to execute the optimized path based on the previous, incorrect type information. As a result, a situation can arise where the <strong>Inline Cache</strong> still uses old information even though the <strong>Hidden Class</strong> or <strong>ElementsKind</strong> has already changed. This leads to incorrect field offset calculations or erroneous memory references. Ultimately, this context is the direct cause of <strong>Type Confusion</strong> vulnerabilities.</p>
+<p>As such, V8&#x2019;s optimization pipeline is a core mechanism for converging JavaScript&#x2019;s dynamic characteristics into a static execution model. Hidden Class and ElementsKind form the foundation of this static model, and the Native Code generated based on them provides very high performance. </p>
+<p><img src="image%206.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>However, simultaneously, a vulnerability can arise the moment this static assumption is broken. Therefore, managing the <strong>trade-off between performance and security</strong> becomes a very critical challenge in V8&#x2019;s design.</p>
+<h3 id="2-5-The-Structure-of-Type-Confusion-Occurrence"><a href="#2-5-The-Structure-of-Type-Confusion-Occurrence" class="headerlink" title="2.5 The Structure of Type Confusion Occurrence"></a>2.5 The Structure of Type Confusion Occurrence</h3><p>As previously explained, V8&#x2019;s optimization mechanisms are based on a strong premise that object structures and array types will not change. However, JavaScript is fundamentally a very dynamic language, and Type Confusion can occur the moment this premise is broken in the actual execution flow.</p>
+<p>Let&#x2019;s specifically examine how Type Confusion can be triggered within <strong>Hidden Class</strong> and <strong>ElementsKind</strong>, which form the basis of V8&#x2019;s static model.</p>
+<hr>
+<p><strong>1) Hidden Class-based Confusion</strong></p>
+<p>A Hidden Class is an internal mechanism that tracks an object&#x2019;s property structure, enabling fast property access and JIT optimization. However, when properties are dynamically added to an object or property types change, the Hidden Class transitions to a different class, rendering the existing Native Code invalid.</p>
+<pre><code class="hljs jsx"><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">Foo</span>(<span class="hljs-params"></span>) </span>{
+  <span class="hljs-built_in">this</span>.x = <span class="hljs-number">1</span>;  <span class="hljs-comment">// HiddenClass A</span>
+  <span class="hljs-built_in">this</span>.y = <span class="hljs-number">2</span>;  <span class="hljs-comment">// HiddenClass B</span>
+}
+<span class="hljs-keyword">let</span> a = <span class="hljs-keyword">new</span> Foo();
+a.z = <span class="hljs-number">3</span>;       <span class="hljs-comment">// HiddenClass C (transition)</span></code></pre>
+<p>In this case, object <code>a</code> ultimately gets Hidden Class C. But if TurboFan generated Native Code based on the structure up to Hidden Class B, and that code is still applied to <code>a</code>, it might incorrectly perceive <code>a.z</code> as <code>a.y</code> or reference an incorrect offset.</p>
+<p><strong>Hidden Class Transition and Deoptimization</strong></p>
+<p>Changes in property types also trigger Hidden Class transitions. Consider, for example, a case where an object property&#x2019;s type changes from a number to an object.</p>
+<pre><code class="hljs jsx"><span class="hljs-keyword">let</span> obj = { <span class="hljs-attr">x</span>: <span class="hljs-number">1</span> };         <span class="hljs-comment">// x is number &#x2192; HiddenClass A</span>
+obj.x = { <span class="hljs-attr">nested</span>: <span class="hljs-literal">true</span> };   <span class="hljs-comment">// x is now object &#x2192; HiddenClass B</span></code></pre>
+<p>In this scenario, V8 detects the type change and deoptimizes the existing Native Code, either reverting to bytecode or generating new code. However, if the structural change is not properly detected, or if an attacker designs the input to bypass this detection, V8 may still execute the existing Hidden Class-based Native Code, leading to incorrect memory access.</p>
+<p><strong>2) ElementsKind-based Confusion</strong></p>
+<p>For arrays, V8 defines various <strong>ElementsKind</strong> types based on the elements&#x2019; types and density. </p>
+<p>For example:</p>
+<ul>
+<li><code>PACKED_SMI_ELEMENTS</code>: Dense array containing only integers.</li>
+<li><code>PACKED_DOUBLE_ELEMENTS</code>: Array containing only floating-point numbers.</li>
+<li><code>PACKED_ELEMENTS</code>: Mixed-type array.</li>
+<li><code>HOLEY_*</code> (sparse array) variants corresponding to each of the above.</li>
+</ul>
+<p>TurboFan generates optimized code assuming that an array&#x2019;s ElementsKind will not change. However, the moment an element of a different type is inserted into the array, the ElementsKind transitions, and the existing Native Code becomes invalid.</p>
+<pre><code class="hljs jsx"><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">confuse</span>(<span class="hljs-params">x</span>) </span>{
+  <span class="hljs-keyword">let</span> arr = [<span class="hljs-number">1.1</span>];     <span class="hljs-comment">// PackedDoubleElements</span>
+  <span class="hljs-keyword">if</span> (x) arr[<span class="hljs-number">0</span>] = {};  <span class="hljs-comment">// insert object &#x2192; ElementsKind transition</span>
+  <span class="hljs-keyword">return</span> arr[<span class="hljs-number">0</span>];
+}</code></pre>
+<p>If <code>x</code> is <code>false</code>, <code>arr</code> remains a double array, and TurboFan generates corresponding code. However, if <code>x</code> is <code>true</code>, an object is inserted into <code>arr[0]</code>, changing the array&#x2019;s internal representation. If the existing Native Code is still executed at this point, an incorrect type casting occurs, interpreting an object as a double.</p>
+<h2 id="3-From-Type-Confusion-to-Memory-Corruption"><a href="#3-From-Type-Confusion-to-Memory-Corruption" class="headerlink" title="3. From Type Confusion to Memory Corruption"></a>3. From Type Confusion to Memory Corruption</h2><h3 id="3-1-Connecting-to-Practical-Memory-Corruption"><a href="#3-1-Connecting-to-Practical-Memory-Corruption" class="headerlink" title="3.1 Connecting to Practical Memory Corruption"></a>3.1 Connecting to Practical Memory Corruption</h3><p>Why does simple Type Confusion escalate to <strong>Memory Corruption</strong>?</p>
+<p>The core reason is that V8&#x2019;s JIT-optimized Native Code directly accesses memory, relying on its trust in object structures or array types. V8 rapidly accesses objects or arrays by calculating precise field offsets based on <strong>HiddenClass (Map)</strong> or <strong>ElementsKind</strong> information. The problem arises when these assumptions are broken. If an object&#x2019;s actual structure changes but the compiled code still accesses it based on the old structure, it will access completely incorrect memory addresses or misinterpret data. This can directly lead to <strong>memory corruption</strong>, manipulating memory at unexpected locations.</p>
+<p>Consider the following scenarios.</p>
+<ul>
+<li><p><strong>Misinterpreting a Floating-Point Array as an Object Array</strong></p>
+<p>  If an array storing floating-point values like <code>13.37</code> is mistakenly treated and accessed by the JIT as an object array, this numerical value could be interpreted as a heap pointer, leading to access of an entirely unintended memory location. This results in <strong>OOB Read/Write</strong>, which an attacker can leverage to manipulate adjacent objects or induce data leakage.</p>
+</li>
+<li><p><strong>Pointer Manipulation using TypedArray or DataView</strong></p>
+<p>  In JavaScript, when using <code>TypedArray</code> or <code>ArrayBuffer</code>, the buffer directly points to an actual memory region. If an attacker can control the object&#x2019;s structure, they might manipulate this <strong>backing store pointer</strong> to set an arbitrary memory address as the buffer&#x2019;s starting point. In this case, read/write operations through the <code>ArrayBuffer</code> expand to memory access across the entire address space. </p>
+</li>
+</ul>
+<p>This implies the ability to access memory near the object or specific fields within the same structure in a limited way, by manipulating the internal field offsets of the object through incorrect type interpretation.</p>
+<p>One more crucial factor here is the <strong>Garbage Collector (GC)</strong>. V8 uses a GC system that automatically manages the lifespan of JS objects. This system moves or reclaims objects within the heap as needed. Even if an object&#x2019;s memory address changes during this process, the existing optimized code might not recognize it and could attempt to access it based on its old structure. In other words, a timing difference or information mismatch between the GC and JIT can act as another <strong>Type Confusion trigger</strong>.</p>
+<p>Consequently, we can see that Type Confusion is not merely a logical error or a developer&#x2019;s mistake, but rather a vulnerability that can arise at the complex boundary where V8&#x2019;s JIT optimization, object model, and GC system interact.</p>
+<p>Now that we understand why Type Confusion occurs and how it can lead to Memory Corruption, let&#x2019;s explore how to initiate an attack using this vulnerability.</p>
+<h3 id="3-2-Relative-Read-Write-Primitive"><a href="#3-2-Relative-Read-Write-Primitive" class="headerlink" title="3.2 Relative Read/Write Primitive"></a>3.2 Relative Read/Write Primitive</h3><p>The basic exploit flow for Type Confusion starts with an OOB Read/Write stemming from the Type Confusion itself. The general attack flow to achieve <strong>RCE via Type Confusion</strong> involves carefully refining the OOB R/W to obtain a <strong>Relative R/W</strong> primitive, then skillfully leveraging this to gain <strong>AAR/W</strong> (Arbitrary Address Read/Write), and finally achieving Code Execution. Sounds exciting, right?! This part is turning out to be longer than expected, so I probably won&#x2019;t cover everything. But it&#x2019;d be a shame to end here, so let&#x2019;s briefly touch on the Relative R/W portion as a sneak peek :)</p>
+<hr>
+<p>Type Confusion means more than just a simple misinterpretation of types. From an attacker&#x2019;s perspective, it becomes a <strong>starting point for manipulating memory regions that were originally inaccessible</strong>. A prime example of this is the <strong>Relative Read/Write</strong>. This is a primitive that allows limited access to memory based on a fixed offset from a known location.</p>
+<p>For instance, consider two classes with similar structures but where the meaning of the last field differs.</p>
+<p><img src="image%207.png" srcset="/img/loading.gif" alt="image.png"></p>
+<blockquote>
+<p>Class A</p>
+<ul>
+<li>name</li>
+<li>age</li>
+<li>residence</li>
+</ul>
+<p>Class B</p>
+<ul>
+<li>name</li>
+<li>age</li>
+<li>workspace</li>
+</ul>
+</blockquote>
+<p>These two classes have a similar number and order of fields, but the meaning and type of the last field are different. Let&#x2019;s imagine that in a Worker process, an operation points to the &#x201C;residence&#x201D; field of a <code>Class A</code> instance.</p>
+<p><img src="image%208.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Now, let&#x2019;s assume a situation within the Worker process where a <code>Class A</code> instance is mistakenly perceived as a <code>Class B</code> type for some reason. In this case, under normal circumstances, the &#x201C;residence&#x201D; field should be accessed. However, when interpreted based on <code>Class B</code>, this memory location is recognized as the field corresponding to &#x201C;workplace.&#x201D;</p>
+<p><img src="image%209.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>As a result, even though the Worker process is actually accessing a field of a <code>Class A</code> instance, the runtime considers it a field of <code>Class B</code>, leading to unintended memory reads or writes.</p>
+<blockquote>
+<p>It&#x2019;d be quite embarrassed if a delivery meant for your home ended up at your workplace, wouldn&#x2019;t it?</p>
+<p>Here&#x2019;s another embarrassed example.</p>
+<p><img src="image.png" srcset="/img/loading.gif" alt="image.png"></p>
+</blockquote>
+<p>As shown, the runtime&#x2019;s incorrect type interpretation creates a <strong>Relative R/W Primitive</strong>, enabling memory access based on a fixed offset, even if the exact address isn&#x2019;t known. Through this, an attacker can satisfy the following conditions:</p>
+<ul>
+<li>Based on an object they control (<code>Class A</code>), at a fixed offset (e.g., <code>+0x10</code>, <code>+0x18</code>, etc.),</li>
+<li>They can read or write the contents of a specific field or an adjacent structure (<code>Class B</code>) within memory.</li>
+</ul>
+<hr>
+<p>Such a <strong>Relative Primitive</strong> holds significant meaning in the early stages of an attack:</p>
+<ul>
+<li>It allows for leaking the internal structure of a specific object, or</li>
+<li>It enables the manipulation of key information like pointers or length fields,</li>
+<li>Thereby paving the way for expansion into an Absolute R/W Primitive.</li>
+</ul>
+<p>In the next part, we&#x2019;ll explore through an actual exploit flow how this Relative R/W Primitive expands into absolute address-based memory manipulation, ultimately leading to remote code execution.</p>
+<p>From the next part, you can expect a strong &#x201C;pwnable&#x201D; scent; please look forward to it! I&#x2019;ll do my best to prepare it&#x2026;!</p>
+<p>(The following is just a humorous, digitally distorted prank call photo I added because I wanted this kind of vibe. But Liam Neeson and a Chinese restaurant are better, right? &#x1F975;)</p>
+<p><img src="image%2010.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>(subtitle: Robbers at home lol)</p>
+<h2 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a>Reference</h2><p>v <strong>Conference Video</strong></p>
+<ul>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.youtube.com/watch?v=RL2po1swXO4">https://www.youtube.com/watch?v=RL2po1swXO4</a></li>
+</ul>
+<p>v <strong>Background</strong></p>
+<ul>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://v8.dev/docs/hidden-classes">https://v8.dev/docs/hidden-classes</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://v8.dev/blog/elements-kinds">https://v8.dev/blog/elements-kinds</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://richardartoul.github.io/jekyll/update/2015/04/26/hidden-classes.html">https://richardartoul.github.io/jekyll/update/2015/04/26/hidden-classes.html</a></li>
+</ul>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/OUYA77/">OUYA77</a>
+                  
+                  <a class="hover-with-bg" href="/tags/OOB/">OOB</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Type-Confusion/">Type Confusion</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Type-Confusion-101/">Type Confusion 101</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Chrome/">Chrome</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Chromium/">Chromium</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Relative-R-W/">Relative R/W</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_OUYA77.jpg" srcset="/img/loading.gif" alt="OUYA77">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">OUYA77</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/OUYA77">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/07/30/OUYA77/2025-07-30/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2025-40596 : (Pre-auth) SonicWall SMA100의 스택 버퍼 오버플로우로 인한 DoS</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/07/30/OUYA77/Chrome_part2/kr/">
+                    <span class="hidden-mobile">[Research] Type Confusion 101으로 시작하는 Chrome Exploit ^-^☆Part 2.(KR)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/07/30/OUYA77/Chrome_part2/en/';
+        this.page.identifier = '/2025/07/30/OUYA77/Chrome_part2/en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] Starting Chrome Exploitation with Type Confusion 101 ^-^☆ Part 2.(EN)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>

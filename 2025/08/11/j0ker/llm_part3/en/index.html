@@ -1,0 +1,1109 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;h1 id=&#34;1-Introduction&#34;&gt;&lt;a href=&#34;#1-Introduction&#34; class=&#34;headerlink&#34; title=&#34;1. Introduction&#34;&gt;&lt;/a&gt;1. Introduction&lt;/h1&gt;&lt;p&gt;It&amp;#x2019;s been a while since my last post, but I&amp;#x2019;m back! I originally told my team, &amp;#x201C;I&amp;#x2019;m going to analyze all of the Usenix papers using LLM and analyze the trends!&amp;#x201D; But&amp;#x2026; well&amp;#x2026; that was wishful thinking, wasn&amp;#x2019;t it? As expected, real life is not going so easy.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/11/j0ker/llm_part3/en/1.jpg&#34; alt=&#34;index_img&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;When will slaves be able to be happy?&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;So, I brought another paper this time. If you thought, &amp;#x201C;Oh, this is something anyone would think of&amp;#x201D; about the previous paper, this paper immediately made me think, &amp;#x201C;Oh, this one is a little different.&amp;#x201D; While other papers focused on the inference output of LLM through prompting, RAG, etc., this paper stood out in that it utilized the structure of LLM itself.&lt;/p&gt;
+&lt;p&gt;It is &amp;#x201C;&lt;a href=&#34;https://arxiv.org/html/2410.15288v1&#34;&gt;Attention Is All You Need for LLM-based Code Vulnerability Localization,&lt;/a&gt;&amp;#x201D; which was published on Arxiv in October 2024. It seems that it was not submitted to any academic conference but only uploaded to the archive. The idea itself is good, but I think the conclusion part is a little disappointing.&lt;/p&gt;
+&lt;h1 id=&#34;2-Paper-Review&#34;&gt;&lt;a href=&#34;#2-Paper-Review&#34; class=&#34;headerlink&#34; title=&#34;2. Paper Review&#34;&gt;&lt;/a&gt;2. Paper Review&lt;/h1&gt;&lt;p&gt;As the title &amp;#x201C;Attention Is All You Need for LLM-based Code Vulnerability Localization&amp;#x201D; suggests, this paper focuses on how the self-attention mechanism of LLM can be used to identify vulnerability locations. It is also an interesting point that the paper pays homage to &amp;#x201C;Attention Is All You Need,&amp;#x201D; which serves as the foundation for current LLMs. &amp;#x1F604;&lt;/p&gt;
+&lt;h2 id=&#34;2-1-Limitations-of-Existing-Methods&#34;&gt;&lt;a href=&#34;#2-1-Limitations-of-Existing-Methods&#34; class=&#34;headerlink&#34; title=&#34;2.1 Limitations of Existing Methods&#34;&gt;&lt;/a&gt;2.1 Limitations of Existing Methods&lt;/h2&gt;&lt;h3 id=&#34;1-Lost-in-the-Middle&#34;&gt;&lt;a href=&#34;#1-Lost-in-the-Middle&#34; class=&#34;headerlink&#34; title=&#34;1) Lost in the Middle&#34;&gt;&lt;/a&gt;1) Lost in the Middle&lt;/h3&gt;&lt;p&gt;Before delving into the details, the paper points out that the biggest limitation of LLM in vulnerability detection is the &amp;#x201C;decrease in inference accuracy in long contexts.&amp;#x201D; It is said that when the code exceeds 300 lines, the accuracy drops below 5%.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/11/j0ker/llm_part3/en/2.png&#34; alt=&#34;index_img&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The papers cited as evidence are as follows.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://arxiv.org/pdf/2307.03172&#34;&gt;Lost in the Middle: How Language Models Use Long Contexs&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://arxiv.org/pdf/2406.10149&#34;&gt;BABILong: Testing the Limits of LLMs with Long Context Reasoning-in-a-Haystack&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;However, you probably don&amp;#x2019;t want to read all these papers while reading this article, right? There is a YouTube channel that covers a similar topic, so you may want to check it out.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://www.youtube.com/watch?v=EbN_DWM3DJc&#34;&gt;OpenAI, Google, Claude are all the same&amp;#x2026; Performance drops much more than expected as input length increases - How to respond | Context Engineering&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;I haven&amp;#x2019;t read the above content in detail, but it seems to be an issue where, as the number of tokens unrelated to the core content increases, the model fails to accurately focus on the content that requires attention. This is a problem that anyone who has used LLM services extensively, especially those who have tested them with long code snippets for vulnerability detection, has likely encountered at least once. When asking to identify vulnerabilities across multiple functions, issues such as forgetting or failing to recall the code may arise. However, I have noticed that these issues have improved significantly since late last year to early this year. Additionally, papers addressing these issues are beginning to emerge.&lt;/p&gt;
+&lt;p&gt;(This information was found by LLM. lol)&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Training method for finding information regardless of location&lt;/li&gt;
+&lt;/ol&gt;
+&lt;ul&gt;
+&lt;li&gt;&amp;#x201C;Never Lost in the Middle: Mastering Long-Context Question Answering with Position-Agnostic Decompositional Training&amp;#x201D; (2024)&lt;ul&gt;
+&lt;li&gt;Key points: To address this issue, we propose a new training method called &amp;#x201C;Position-Agnostic Decompositional Training.&amp;#x201D; Long questions are decomposed into multiple short questions, and the positions of the correct answers are intentionally mixed to train the model.&lt;/li&gt;
+&lt;li&gt;Solution: This reduces the model&amp;#x2019;s reliance on the &amp;#x2018;location&amp;#x2019; of information and enhances its ability to find the necessary information regardless of context.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;ol&gt;
+&lt;li&gt;Changing the structure of input data&lt;/li&gt;
+&lt;/ol&gt;
+&lt;ul&gt;
+&lt;li&gt;&amp;#x201C;Structured Packing in LLM Training Improves Long Context Utilization&amp;#x201D; (2023)&lt;ul&gt;
+&lt;li&gt;Key points: Instead of simply concatenating multiple documents in order for training, this method proposes providing the model with information that is structurally grouped (packing) together.&lt;/li&gt;
+&lt;li&gt;Solution: Strengthens the logical connectivity of information to help the model better understand and utilize information in the middle of the context.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;ol&gt;
+&lt;li&gt;Improving the attention mechanism&lt;/li&gt;
+&lt;/ol&gt;
+&lt;ul&gt;
+&lt;li&gt;&amp;#x201C;Mixture-of-Recursions: Learning Dynamic Recursive Depths for Adaptive Token-Level Computation&amp;#x201D; (2025)&lt;ul&gt;
+&lt;li&gt;Key Points: Instead of treating all tokens equally, we propose the MoR (Mixture-of-Recursions) architecture, which identifies important tokens through a &amp;#x201C;router&amp;#x201D; and dynamically allocates more computations to those tokens.&lt;/li&gt;
+&lt;li&gt;Solution: By focusing computational resources on importance rather than location, we ensure that even core information in the middle of the context is processed deeply without being overlooked.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;ol&gt;
+&lt;li&gt;Combination and Comparison with Retrieval-Augmented Generation (RAG)&lt;/li&gt;
+&lt;/ol&gt;
+&lt;ul&gt;
+&lt;li&gt;&amp;#x201C;Long Context vs. RAG for LLMs: An Evaluation and Revisits&amp;#x201D; (2025)&lt;ul&gt;
+&lt;li&gt;Key Points: This paper compares and analyzes the &amp;#x201C;Long Context&amp;#x201D; approach, which inputs the entire long context, and the RAG (Retrieval-Augmented Generation) approach, which retrieves only the necessary information from an external database.&lt;/li&gt;
+&lt;li&gt;Solution: RAG demonstrates that it can be an effective alternative to avoid the &amp;#x201C;Lost in the Middle&amp;#x201D; problem by initially &amp;#x201C;searching&amp;#x201D; for only the necessary information and presenting it at the beginning of the context. However, the analysis concludes that which method is superior depends on the type of task.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Looking at the above papers, we can see that research is being conducted to solve this problem in various aspects, such as training processes, training datasets, attention mechanisms, and context.&lt;/p&gt;
+&lt;h3 id=&#34;2-Accuracy&#34;&gt;&lt;a href=&#34;#2-Accuracy&#34; class=&#34;headerlink&#34; title=&#34;2) Accuracy&#34;&gt;&lt;/a&gt;2) Accuracy&lt;/h3&gt;&lt;p&gt;The fundamental problem with LLM is the accuracy of the output results. Of course, it has improved significantly since ChatGPT 3.5 was first released, but false positives and false negatives still exist. To address this, the following advanced reasoning techniques have been employed:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://arxiv.org/pdf/2203.11171&#34;&gt;SELF-CONSISTENCY IMPROVES CHAIN OF THOUGHT REASONING IN LANGUAGE MODELS&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://arxiv.org/pdf/2408.06195&#34;&gt;MUTUAL REASONING MAKES SMALLER LLMS STRONGER PROBLEM-SOLVERS&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;However, even these advanced prompting and CoT techniques rely on stochastic decoding to utilize multiple outputs for majority voting or scoring, which are considered incomplete methods.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Stochastic decoding is one of the ways LLMs generate text, where tokens are randomly sampled from a calculated probability distribution. In other words, it does not always select the token with the highest probability but gives each token a chance to be selected proportional to its probability.&lt;/li&gt;
+&lt;li&gt;Conversely, deterministic decoding simply selects the token with the highest probability, ensuring the same output for the same input every time, but it can generate repetitive and less creative results.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&amp;#x201C;Due to this randomness, improvements in accuracy are minimal, and it is difficult to pinpoint the exact location of vulnerabilities!&amp;#x201D; This is the second issue raised in this paper.&lt;/p&gt;
+&lt;h2 id=&#34;2-2-Hypotheses-and-Experiments&#34;&gt;&lt;a href=&#34;#2-2-Hypotheses-and-Experiments&#34; class=&#34;headerlink&#34; title=&#34;2.2 Hypotheses and Experiments&#34;&gt;&lt;/a&gt;2.2 Hypotheses and Experiments&lt;/h2&gt;&lt;h3 id=&#34;1-Hypotheses&#34;&gt;&lt;a href=&#34;#1-Hypotheses&#34; class=&#34;headerlink&#34; title=&#34;1) Hypotheses&#34;&gt;&lt;/a&gt;1) Hypotheses&lt;/h3&gt;&lt;ol&gt;
+&lt;li&gt;&lt;p&gt;When searching for vulnerable code, attention is focused on specific lines.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;If instructed to search for vulnerabilities on specific lines, attention becomes stronger, potentially improving accuracy.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;Lines containing vulnerabilities will influence the model&amp;#x2019;s output.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;Highlighting lines without vulnerabilities will not affect the results.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3 id=&#34;2-Experiment&#34;&gt;&lt;a href=&#34;#2-Experiment&#34; class=&#34;headerlink&#34; title=&#34;2) Experiment&#34;&gt;&lt;/a&gt;2) Experiment&lt;/h3&gt;&lt;p&gt;The paper first tests whether self-attention can be used to identify the location of vulnerabilities.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs yaml&#34;&gt;&lt;span class=&#34;hljs-attr&#34;&gt;Code:&lt;/span&gt;
+    &lt;span class=&#34;hljs-string&#34;&gt;....&lt;/span&gt;
+ &lt;span class=&#34;hljs-attr&#34;&gt;8:&lt;/span&gt;     &lt;span class=&#34;hljs-string&#34;&gt;glyphs&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;(cairo_glyph_t&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;*)&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;gmalloc&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;(len&lt;/span&gt;
+    &lt;span class=&#34;hljs-string&#34;&gt;*&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;sizeof&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;(cairo_glyph_t));&lt;/span&gt;
+ &lt;span class=&#34;hljs-attr&#34;&gt;9:&lt;/span&gt;     &lt;span class=&#34;hljs-string&#34;&gt;glyphCount&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;&lt;span class=&#34;hljs-string&#34;&gt;;&lt;/span&gt;
+&lt;span class=&#34;hljs-attr&#34;&gt;10:&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;}&lt;/span&gt;
+
+&lt;span class=&#34;hljs-string&#34;&gt;Pay&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;attention&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;to&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;line&lt;/span&gt; {&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;}&lt;span class=&#34;hljs-string&#34;&gt;.&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;Check&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;whether&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;there&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;are&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;vulnerabilities&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;in&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;it.&lt;/span&gt;
+&lt;span class=&#34;hljs-attr&#34;&gt;vulnerable line:&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;```&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;To find vulnerabilities, write a prompt as shown above. When predicting words after ```, the code with vulnerabilities will receive the highest attention, right? Not only that, but it also tells you which line it is, maximizing the change in weight and allowing you to observe the change.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/11/j0ker/llm_part3/en/3.png&#34; alt=&#34;index_img&#34;&gt;&lt;/p&gt;
+&lt;p&gt;When testing with actual code without vulnerabilities and code with artificially inserted vulnerabilities based on the former,&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Upon checking the attention of code with and without vulnerabilities, it was found that, except for the 70th line where the vulnerability exists, the weights of other lines were high, indicating that the vulnerability was not properly identified.&lt;/li&gt;
+&lt;li&gt;When highlighting the 70th line to check the attention in both the code without vulnerabilities and the code with vulnerabilities, the weight of the 70th line increased slightly, and in the code with actual vulnerabilities, the weight was even higher.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;As shown above, this simple test demonstrates that vulnerabilities can be identified to some extent.&lt;/p&gt;
+&lt;h1 id=&#34;3-LOVA-LO-cating-Vulnerabilities-via-Attention&#34;&gt;&lt;a href=&#34;#3-LOVA-LO-cating-Vulnerabilities-via-Attention&#34; class=&#34;headerlink&#34; title=&#34;3. LOVA(LO-cating Vulnerabilities via Attention)&#34;&gt;&lt;/a&gt;3. LOVA(LO-cating Vulnerabilities via Attention)&lt;/h1&gt;&lt;p&gt;&lt;img src=&#34;/2025/08/11/j0ker/llm_part3/en/4.png&#34; alt=&#34;index_img&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The LOVA proposed in this paper compares the weights of unhighlighted code and highlighted code based on the results of the experiments described above to ultimately identify the code lines with the highest probability of containing vulnerabilities.&lt;/p&gt;
+&lt;p&gt;It is divided into three stages: Code Line Highlight, Attention Calculation, and Vulnerability Line Localization. Let&amp;#x2019;s take a closer look at each one!&lt;/p&gt;
+&lt;h2 id=&#34;3-1-Code-Line-Highlight&#34;&gt;&lt;a href=&#34;#3-1-Code-Line-Highlight&#34; class=&#34;headerlink&#34; title=&#34;3.1 Code Line Highlight&#34;&gt;&lt;/a&gt;3.1 Code Line Highlight&lt;/h2&gt;&lt;p&gt;LOVA creates two versions of prompts. One is the original code with no modifications (Base prompt), and the other is a version where each line of code is highlighted one by one (Highlighted prompts). If the code has 100 lines, one original prompt and 100 highlighted prompts are generated.&lt;/p&gt;
+&lt;p&gt;However, there is one problem here. Simply adding a comment like &amp;#x201C;// Take a look here!&amp;#x201D; or inserting specific keywords causes the LLM to ignore the code when it becomes long, or even causes hallucinations, mistaking normal code for vulnerable code.&lt;/p&gt;
+&lt;p&gt;Therefore, in LOVA, we directly specify the &lt;strong&gt;code line index&lt;/strong&gt;. We add numbers to the front of the code and explicitly state in the prompt, &amp;#x201C;Focus on line 8 and check for vulnerabilities!&amp;#x201D;&lt;/p&gt;
+&lt;h2 id=&#34;3-2-Attention-Calculation&#34;&gt;&lt;a href=&#34;#3-2-Attention-Calculation&#34; class=&#34;headerlink&#34; title=&#34;3.2 Attention Calculation&#34;&gt;&lt;/a&gt;3.2 Attention Calculation&lt;/h2&gt;&lt;p&gt;Next, we need to quantitatively calculate how the LLM&amp;#x2019;s &amp;#x2018;attention&amp;#x2019; changes when each line is highlighted. The attention data output by the LLM is an enormous tensor in the form of (num_tokens, num_tokens, num_layers, num_heads).  The paper mentions that even a 1,000-token code can generate hundreds of millions of data points&amp;#x2026; So, analyzing it myself might be faster, right?&lt;/p&gt;
+&lt;p&gt;LOVA performs dimensionality reduction as follows to retain only the information necessary for vulnerability analysis from this massive dataset.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/11/j0ker/llm_part3/en/5.png&#34; alt=&#34;index_img&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Pseudocode for Steps 1 to 4&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;ol&gt;
+&lt;li&gt;Summarize the attention of all heads into a single attention map in the form of (num_tokens, num_tokens, num_layers) and merge them.&lt;/li&gt;
+&lt;li&gt;Maintain the attention of each layer as they have their own unique meanings.&lt;/li&gt;
+&lt;li&gt;Use the last token as a query (Q) to determine how much attention it receives from all previous tokens, and create a matrix of size (num_tokens, num_layers).&lt;/li&gt;
+&lt;li&gt;Sum the attention values of all tokens in each line to calculate the total attention value for that line, and create a matrix of size (num_lines, num_layers). This matrix is called LayerwiseAttnMat.&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;Calculate the difference between the LayerwiseAttnMat of the highlighted prompt and the base prompt to create DiffAttnMat. Instead of looking at the differences across all lines, we extract only the data from the &amp;#x2018;instruction&amp;#x2019; and &amp;#x2018;highlighted line&amp;#x2019; where the actual changes are expected to be the largest, and create the final &lt;code&gt;VulnAttnMat&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt; &lt;img src=&#34;/2025/08/11/j0ker/llm_part3/en/6.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h2 id=&#34;3-3-Vulnerability-Line-Localization&#34;&gt;&lt;a href=&#34;#3-3-Vulnerability-Line-Localization&#34; class=&#34;headerlink&#34; title=&#34;3.3 Vulnerability Line Localization&#34;&gt;&lt;/a&gt;&lt;strong&gt;3.3 Vulnerability Line Localization&lt;/strong&gt;&lt;/h2&gt;&lt;p&gt;The final step is to select the lines with actual vulnerabilities based on the patterns in &lt;code&gt;VulnAttnMat&lt;/code&gt;. While it is possible to rank them simply by the sum of attention changes, it is difficult to apply consistent criteria across languages because the vulnerability patterns in C and Python are different.  Furthermore, this is just a &amp;#x201C;suspicious ranking,&amp;#x201D; not an accurate judgment such as &amp;#x201C;this line has an 80% probability of being vulnerable!&amp;#x201D; Therefore, LOVA uses a deep learning model called &lt;strong&gt;Bi-LSTM&lt;/strong&gt; at this stage. (Ugh&amp;#x2026; it&amp;#x2019;s getting more and more complicated&amp;#x2026;)&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;First, we create a long vector from the &lt;code&gt;VulnAttnMat&lt;/code&gt; calculated for each line.&lt;/li&gt;
+&lt;li&gt;We feed this vector sequence into the Bi-LSTM model as input. The reason we use Bi-LSTM is that when determining whether a specific line (A) is suspicious, it is more accurate to compare it with the attention patterns of the preceding and following lines (B, C). In other words, it considers the context of the entire code in both directions.&lt;/li&gt;
+&lt;li&gt;The model ultimately outputs a &amp;#x201C;suspicious score&amp;#x201D; between 0 and 1 for each line, and if this score exceeds 0.5, it is judged to be vulnerable code.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h1 id=&#34;4-Results&#34;&gt;&lt;a href=&#34;#4-Results&#34; class=&#34;headerlink&#34; title=&#34;4. Results&#34;&gt;&lt;/a&gt;4. Results&lt;/h1&gt;&lt;p&gt;The tests were conducted using the Big-Vul, SmartFix, and CVEFixes benchmarks, utilizing models with 10B or less, such as Llama-3.1-8B-Instruct, Mistral-7B-Instruct-v0.2, and Phi3.5-mini-instruct.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;LOVA demonstrated superior vulnerability location identification capabilities compared to existing LLM direct output methods, achieving up to a 5x performance improvement based on F1-score, especially in long code contexts.&lt;/li&gt;
+&lt;li&gt;LOVA achieved excellent vulnerability location identification results across various programming languages, showing up to a 14.6x improvement.&lt;/li&gt;
+&lt;li&gt;LOVA is applicable to various LLM architectures and shows consistent results.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Overall, it shows impressive performance. It was also good to compare it with various techniques such as CoT, MoA, and rStar, assuming that the same model was used. Above all, I think the attempt to use the self-attention mechanism for vulnerability detection for the first time is meaningful.&lt;/p&gt;
+&lt;h1 id=&#34;5-Areas-for-improvement&#34;&gt;&lt;a href=&#34;#5-Areas-for-improvement&#34; class=&#34;headerlink&#34; title=&#34;5. Areas for improvement&#34;&gt;&lt;/a&gt;5. Areas for improvement&lt;/h1&gt;&lt;ol&gt;
+&lt;li&gt;Lack of comparison with larger models&lt;ul&gt;
+&lt;li&gt;This paper tested using Llama-3.1-8B-Instruct, Mistral-7B-Instruct-v0.2, and Phi3.5-mini-instruct, but there is no comparison with larger models.&lt;ul&gt;
+&lt;li&gt;To use the method described in this paper, an attention matrix must be created for each code line, which increases the time required and the number of matrices to be computed. I suspect that the hardware was insufficient to handle larger models.&lt;/li&gt;
+&lt;li&gt;In that case, it might be worth comparing it with the vanilla output of a larger model. (Oh, maybe I should try that myself&amp;#x2026;) Even if it only comes out as &amp;#x201C;comparable to the vanilla output of a larger model,&amp;#x201D; it would still be meaningful, right?&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;Lack of comparison of power efficiency or computational cost&lt;ul&gt;
+&lt;li&gt;LOVA highlights each code line individually to generate multiple versions of prompts, calculates the differences in attention maps between them, and goes through several other steps. Additionally, dimension reduction and the use of a Bi-LSTM classifier can increase complexity.&lt;ul&gt;
+&lt;li&gt;This paper lacks mention of the time and financial costs incurred when applied to actual large-scale software projects. While dataset comparisons are useful for performance comparisons, it would be helpful to include measurements of how much additional computation is required as the amount of code increases. (The paper mentions that contexts exceeding 4,000 tokens were filtered to comply with LLM input constraints.)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Well&amp;#x2026; I&amp;#x2019;ll wrap up this post here. I considered developing it further into a second part&amp;#x2026; but my current life won&amp;#x2019;t allow it. Haha. Then I&amp;#x2019;ll be back for the next part! (Now I really need to watch Usenix&amp;#x2026;)&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] LLM Security &amp; Safety Part 3. “Attention Is All You Need for LLM-based Code Vulnerability Localization” Review (EN) - hackyboiz">
+  <meta property="og:description" content="&lt;h1 id=&#34;1-Introduction&#34;&gt;&lt;a href=&#34;#1-Introduction&#34; class=&#34;headerlink&#34; title=&#34;1. Introduction&#34;&gt;&lt;/a&gt;1. Introduction&lt;/h1&gt;&lt;p&gt;It&amp;#x2019;s been a while since my last post, but I&amp;#x2019;m back! I originally told my team, &amp;#x201C;I&amp;#x2019;m going to analyze all of the Usenix papers using LLM and analyze the trends!&amp;#x201D; But&amp;#x2026; well&amp;#x2026; that was wishful thinking, wasn&amp;#x2019;t it? As expected, real life is not going so easy.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/11/j0ker/llm_part3/en/1.jpg&#34; alt=&#34;index_img&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;When will slaves be able to be happy?&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;So, I brought another paper this time. If you thought, &amp;#x201C;Oh, this is something anyone would think of&amp;#x201D; about the previous paper, this paper immediately made me think, &amp;#x201C;Oh, this one is a little different.&amp;#x201D; While other papers focused on the inference output of LLM through prompting, RAG, etc., this paper stood out in that it utilized the structure of LLM itself.&lt;/p&gt;
+&lt;p&gt;It is &amp;#x201C;&lt;a href=&#34;https://arxiv.org/html/2410.15288v1&#34;&gt;Attention Is All You Need for LLM-based Code Vulnerability Localization,&lt;/a&gt;&amp;#x201D; which was published on Arxiv in October 2024. It seems that it was not submitted to any academic conference but only uploaded to the archive. The idea itself is good, but I think the conclusion part is a little disappointing.&lt;/p&gt;
+&lt;h1 id=&#34;2-Paper-Review&#34;&gt;&lt;a href=&#34;#2-Paper-Review&#34; class=&#34;headerlink&#34; title=&#34;2. Paper Review&#34;&gt;&lt;/a&gt;2. Paper Review&lt;/h1&gt;&lt;p&gt;As the title &amp;#x201C;Attention Is All You Need for LLM-based Code Vulnerability Localization&amp;#x201D; suggests, this paper focuses on how the self-attention mechanism of LLM can be used to identify vulnerability locations. It is also an interesting point that the paper pays homage to &amp;#x201C;Attention Is All You Need,&amp;#x201D; which serves as the foundation for current LLMs. &amp;#x1F604;&lt;/p&gt;
+&lt;h2 id=&#34;2-1-Limitations-of-Existing-Methods&#34;&gt;&lt;a href=&#34;#2-1-Limitations-of-Existing-Methods&#34; class=&#34;headerlink&#34; title=&#34;2.1 Limitations of Existing Methods&#34;&gt;&lt;/a&gt;2.1 Limitations of Existing Methods&lt;/h2&gt;&lt;h3 id=&#34;1-Lost-in-the-Middle&#34;&gt;&lt;a href=&#34;#1-Lost-in-the-Middle&#34; class=&#34;headerlink&#34; title=&#34;1) Lost in the Middle&#34;&gt;&lt;/a&gt;1) Lost in the Middle&lt;/h3&gt;&lt;p&gt;Before delving into the details, the paper points out that the biggest limitation of LLM in vulnerability detection is the &amp;#x201C;decrease in inference accuracy in long contexts.&amp;#x201D; It is said that when the code exceeds 300 lines, the accuracy drops below 5%.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/11/j0ker/llm_part3/en/2.png&#34; alt=&#34;index_img&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The papers cited as evidence are as follows.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://arxiv.org/pdf/2307.03172&#34;&gt;Lost in the Middle: How Language Models Use Long Contexs&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://arxiv.org/pdf/2406.10149&#34;&gt;BABILong: Testing the Limits of LLMs with Long Context Reasoning-in-a-Haystack&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;However, you probably don&amp;#x2019;t want to read all these papers while reading this article, right? There is a YouTube channel that covers a similar topic, so you may want to check it out.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://www.youtube.com/watch?v=EbN_DWM3DJc&#34;&gt;OpenAI, Google, Claude are all the same&amp;#x2026; Performance drops much more than expected as input length increases - How to respond | Context Engineering&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;I haven&amp;#x2019;t read the above content in detail, but it seems to be an issue where, as the number of tokens unrelated to the core content increases, the model fails to accurately focus on the content that requires attention. This is a problem that anyone who has used LLM services extensively, especially those who have tested them with long code snippets for vulnerability detection, has likely encountered at least once. When asking to identify vulnerabilities across multiple functions, issues such as forgetting or failing to recall the code may arise. However, I have noticed that these issues have improved significantly since late last year to early this year. Additionally, papers addressing these issues are beginning to emerge.&lt;/p&gt;
+&lt;p&gt;(This information was found by LLM. lol)&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Training method for finding information regardless of location&lt;/li&gt;
+&lt;/ol&gt;
+&lt;ul&gt;
+&lt;li&gt;&amp;#x201C;Never Lost in the Middle: Mastering Long-Context Question Answering with Position-Agnostic Decompositional Training&amp;#x201D; (2024)&lt;ul&gt;
+&lt;li&gt;Key points: To address this issue, we propose a new training method called &amp;#x201C;Position-Agnostic Decompositional Training.&amp;#x201D; Long questions are decomposed into multiple short questions, and the positions of the correct answers are intentionally mixed to train the model.&lt;/li&gt;
+&lt;li&gt;Solution: This reduces the model&amp;#x2019;s reliance on the &amp;#x2018;location&amp;#x2019; of information and enhances its ability to find the necessary information regardless of context.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;ol&gt;
+&lt;li&gt;Changing the structure of input data&lt;/li&gt;
+&lt;/ol&gt;
+&lt;ul&gt;
+&lt;li&gt;&amp;#x201C;Structured Packing in LLM Training Improves Long Context Utilization&amp;#x201D; (2023)&lt;ul&gt;
+&lt;li&gt;Key points: Instead of simply concatenating multiple documents in order for training, this method proposes providing the model with information that is structurally grouped (packing) together.&lt;/li&gt;
+&lt;li&gt;Solution: Strengthens the logical connectivity of information to help the model better understand and utilize information in the middle of the context.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;ol&gt;
+&lt;li&gt;Improving the attention mechanism&lt;/li&gt;
+&lt;/ol&gt;
+&lt;ul&gt;
+&lt;li&gt;&amp;#x201C;Mixture-of-Recursions: Learning Dynamic Recursive Depths for Adaptive Token-Level Computation&amp;#x201D; (2025)&lt;ul&gt;
+&lt;li&gt;Key Points: Instead of treating all tokens equally, we propose the MoR (Mixture-of-Recursions) architecture, which identifies important tokens through a &amp;#x201C;router&amp;#x201D; and dynamically allocates more computations to those tokens.&lt;/li&gt;
+&lt;li&gt;Solution: By focusing computational resources on importance rather than location, we ensure that even core information in the middle of the context is processed deeply without being overlooked.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;ol&gt;
+&lt;li&gt;Combination and Comparison with Retrieval-Augmented Generation (RAG)&lt;/li&gt;
+&lt;/ol&gt;
+&lt;ul&gt;
+&lt;li&gt;&amp;#x201C;Long Context vs. RAG for LLMs: An Evaluation and Revisits&amp;#x201D; (2025)&lt;ul&gt;
+&lt;li&gt;Key Points: This paper compares and analyzes the &amp;#x201C;Long Context&amp;#x201D; approach, which inputs the entire long context, and the RAG (Retrieval-Augmented Generation) approach, which retrieves only the necessary information from an external database.&lt;/li&gt;
+&lt;li&gt;Solution: RAG demonstrates that it can be an effective alternative to avoid the &amp;#x201C;Lost in the Middle&amp;#x201D; problem by initially &amp;#x201C;searching&amp;#x201D; for only the necessary information and presenting it at the beginning of the context. However, the analysis concludes that which method is superior depends on the type of task.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Looking at the above papers, we can see that research is being conducted to solve this problem in various aspects, such as training processes, training datasets, attention mechanisms, and context.&lt;/p&gt;
+&lt;h3 id=&#34;2-Accuracy&#34;&gt;&lt;a href=&#34;#2-Accuracy&#34; class=&#34;headerlink&#34; title=&#34;2) Accuracy&#34;&gt;&lt;/a&gt;2) Accuracy&lt;/h3&gt;&lt;p&gt;The fundamental problem with LLM is the accuracy of the output results. Of course, it has improved significantly since ChatGPT 3.5 was first released, but false positives and false negatives still exist. To address this, the following advanced reasoning techniques have been employed:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://arxiv.org/pdf/2203.11171&#34;&gt;SELF-CONSISTENCY IMPROVES CHAIN OF THOUGHT REASONING IN LANGUAGE MODELS&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://arxiv.org/pdf/2408.06195&#34;&gt;MUTUAL REASONING MAKES SMALLER LLMS STRONGER PROBLEM-SOLVERS&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;However, even these advanced prompting and CoT techniques rely on stochastic decoding to utilize multiple outputs for majority voting or scoring, which are considered incomplete methods.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Stochastic decoding is one of the ways LLMs generate text, where tokens are randomly sampled from a calculated probability distribution. In other words, it does not always select the token with the highest probability but gives each token a chance to be selected proportional to its probability.&lt;/li&gt;
+&lt;li&gt;Conversely, deterministic decoding simply selects the token with the highest probability, ensuring the same output for the same input every time, but it can generate repetitive and less creative results.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&amp;#x201C;Due to this randomness, improvements in accuracy are minimal, and it is difficult to pinpoint the exact location of vulnerabilities!&amp;#x201D; This is the second issue raised in this paper.&lt;/p&gt;
+&lt;h2 id=&#34;2-2-Hypotheses-and-Experiments&#34;&gt;&lt;a href=&#34;#2-2-Hypotheses-and-Experiments&#34; class=&#34;headerlink&#34; title=&#34;2.2 Hypotheses and Experiments&#34;&gt;&lt;/a&gt;2.2 Hypotheses and Experiments&lt;/h2&gt;&lt;h3 id=&#34;1-Hypotheses&#34;&gt;&lt;a href=&#34;#1-Hypotheses&#34; class=&#34;headerlink&#34; title=&#34;1) Hypotheses&#34;&gt;&lt;/a&gt;1) Hypotheses&lt;/h3&gt;&lt;ol&gt;
+&lt;li&gt;&lt;p&gt;When searching for vulnerable code, attention is focused on specific lines.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;If instructed to search for vulnerabilities on specific lines, attention becomes stronger, potentially improving accuracy.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;Lines containing vulnerabilities will influence the model&amp;#x2019;s output.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;Highlighting lines without vulnerabilities will not affect the results.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3 id=&#34;2-Experiment&#34;&gt;&lt;a href=&#34;#2-Experiment&#34; class=&#34;headerlink&#34; title=&#34;2) Experiment&#34;&gt;&lt;/a&gt;2) Experiment&lt;/h3&gt;&lt;p&gt;The paper first tests whether self-attention can be used to identify the location of vulnerabilities.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs yaml&#34;&gt;&lt;span class=&#34;hljs-attr&#34;&gt;Code:&lt;/span&gt;
+    &lt;span class=&#34;hljs-string&#34;&gt;....&lt;/span&gt;
+ &lt;span class=&#34;hljs-attr&#34;&gt;8:&lt;/span&gt;     &lt;span class=&#34;hljs-string&#34;&gt;glyphs&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;(cairo_glyph_t&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;*)&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;gmalloc&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;(len&lt;/span&gt;
+    &lt;span class=&#34;hljs-string&#34;&gt;*&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;sizeof&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;(cairo_glyph_t));&lt;/span&gt;
+ &lt;span class=&#34;hljs-attr&#34;&gt;9:&lt;/span&gt;     &lt;span class=&#34;hljs-string&#34;&gt;glyphCount&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;&lt;span class=&#34;hljs-string&#34;&gt;;&lt;/span&gt;
+&lt;span class=&#34;hljs-attr&#34;&gt;10:&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;}&lt;/span&gt;
+
+&lt;span class=&#34;hljs-string&#34;&gt;Pay&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;attention&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;to&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;line&lt;/span&gt; {&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;}&lt;span class=&#34;hljs-string&#34;&gt;.&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;Check&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;whether&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;there&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;are&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;vulnerabilities&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;in&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;it.&lt;/span&gt;
+&lt;span class=&#34;hljs-attr&#34;&gt;vulnerable line:&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;```&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;To find vulnerabilities, write a prompt as shown above. When predicting words after ```, the code with vulnerabilities will receive the highest attention, right? Not only that, but it also tells you which line it is, maximizing the change in weight and allowing you to observe the change.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/11/j0ker/llm_part3/en/3.png&#34; alt=&#34;index_img&#34;&gt;&lt;/p&gt;
+&lt;p&gt;When testing with actual code without vulnerabilities and code with artificially inserted vulnerabilities based on the former,&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Upon checking the attention of code with and without vulnerabilities, it was found that, except for the 70th line where the vulnerability exists, the weights of other lines were high, indicating that the vulnerability was not properly identified.&lt;/li&gt;
+&lt;li&gt;When highlighting the 70th line to check the attention in both the code without vulnerabilities and the code with vulnerabilities, the weight of the 70th line increased slightly, and in the code with actual vulnerabilities, the weight was even higher.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;As shown above, this simple test demonstrates that vulnerabilities can be identified to some extent.&lt;/p&gt;
+&lt;h1 id=&#34;3-LOVA-LO-cating-Vulnerabilities-via-Attention&#34;&gt;&lt;a href=&#34;#3-LOVA-LO-cating-Vulnerabilities-via-Attention&#34; class=&#34;headerlink&#34; title=&#34;3. LOVA(LO-cating Vulnerabilities via Attention)&#34;&gt;&lt;/a&gt;3. LOVA(LO-cating Vulnerabilities via Attention)&lt;/h1&gt;&lt;p&gt;&lt;img src=&#34;/2025/08/11/j0ker/llm_part3/en/4.png&#34; alt=&#34;index_img&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The LOVA proposed in this paper compares the weights of unhighlighted code and highlighted code based on the results of the experiments described above to ultimately identify the code lines with the highest probability of containing vulnerabilities.&lt;/p&gt;
+&lt;p&gt;It is divided into three stages: Code Line Highlight, Attention Calculation, and Vulnerability Line Localization. Let&amp;#x2019;s take a closer look at each one!&lt;/p&gt;
+&lt;h2 id=&#34;3-1-Code-Line-Highlight&#34;&gt;&lt;a href=&#34;#3-1-Code-Line-Highlight&#34; class=&#34;headerlink&#34; title=&#34;3.1 Code Line Highlight&#34;&gt;&lt;/a&gt;3.1 Code Line Highlight&lt;/h2&gt;&lt;p&gt;LOVA creates two versions of prompts. One is the original code with no modifications (Base prompt), and the other is a version where each line of code is highlighted one by one (Highlighted prompts). If the code has 100 lines, one original prompt and 100 highlighted prompts are generated.&lt;/p&gt;
+&lt;p&gt;However, there is one problem here. Simply adding a comment like &amp;#x201C;// Take a look here!&amp;#x201D; or inserting specific keywords causes the LLM to ignore the code when it becomes long, or even causes hallucinations, mistaking normal code for vulnerable code.&lt;/p&gt;
+&lt;p&gt;Therefore, in LOVA, we directly specify the &lt;strong&gt;code line index&lt;/strong&gt;. We add numbers to the front of the code and explicitly state in the prompt, &amp;#x201C;Focus on line 8 and check for vulnerabilities!&amp;#x201D;&lt;/p&gt;
+&lt;h2 id=&#34;3-2-Attention-Calculation&#34;&gt;&lt;a href=&#34;#3-2-Attention-Calculation&#34; class=&#34;headerlink&#34; title=&#34;3.2 Attention Calculation&#34;&gt;&lt;/a&gt;3.2 Attention Calculation&lt;/h2&gt;&lt;p&gt;Next, we need to quantitatively calculate how the LLM&amp;#x2019;s &amp;#x2018;attention&amp;#x2019; changes when each line is highlighted. The attention data output by the LLM is an enormous tensor in the form of (num_tokens, num_tokens, num_layers, num_heads).  The paper mentions that even a 1,000-token code can generate hundreds of millions of data points&amp;#x2026; So, analyzing it myself might be faster, right?&lt;/p&gt;
+&lt;p&gt;LOVA performs dimensionality reduction as follows to retain only the information necessary for vulnerability analysis from this massive dataset.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/11/j0ker/llm_part3/en/5.png&#34; alt=&#34;index_img&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Pseudocode for Steps 1 to 4&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;ol&gt;
+&lt;li&gt;Summarize the attention of all heads into a single attention map in the form of (num_tokens, num_tokens, num_layers) and merge them.&lt;/li&gt;
+&lt;li&gt;Maintain the attention of each layer as they have their own unique meanings.&lt;/li&gt;
+&lt;li&gt;Use the last token as a query (Q) to determine how much attention it receives from all previous tokens, and create a matrix of size (num_tokens, num_layers).&lt;/li&gt;
+&lt;li&gt;Sum the attention values of all tokens in each line to calculate the total attention value for that line, and create a matrix of size (num_lines, num_layers). This matrix is called LayerwiseAttnMat.&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;Calculate the difference between the LayerwiseAttnMat of the highlighted prompt and the base prompt to create DiffAttnMat. Instead of looking at the differences across all lines, we extract only the data from the &amp;#x2018;instruction&amp;#x2019; and &amp;#x2018;highlighted line&amp;#x2019; where the actual changes are expected to be the largest, and create the final &lt;code&gt;VulnAttnMat&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt; &lt;img src=&#34;/2025/08/11/j0ker/llm_part3/en/6.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h2 id=&#34;3-3-Vulnerability-Line-Localization&#34;&gt;&lt;a href=&#34;#3-3-Vulnerability-Line-Localization&#34; class=&#34;headerlink&#34; title=&#34;3.3 Vulnerability Line Localization&#34;&gt;&lt;/a&gt;&lt;strong&gt;3.3 Vulnerability Line Localization&lt;/strong&gt;&lt;/h2&gt;&lt;p&gt;The final step is to select the lines with actual vulnerabilities based on the patterns in &lt;code&gt;VulnAttnMat&lt;/code&gt;. While it is possible to rank them simply by the sum of attention changes, it is difficult to apply consistent criteria across languages because the vulnerability patterns in C and Python are different.  Furthermore, this is just a &amp;#x201C;suspicious ranking,&amp;#x201D; not an accurate judgment such as &amp;#x201C;this line has an 80% probability of being vulnerable!&amp;#x201D; Therefore, LOVA uses a deep learning model called &lt;strong&gt;Bi-LSTM&lt;/strong&gt; at this stage. (Ugh&amp;#x2026; it&amp;#x2019;s getting more and more complicated&amp;#x2026;)&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;First, we create a long vector from the &lt;code&gt;VulnAttnMat&lt;/code&gt; calculated for each line.&lt;/li&gt;
+&lt;li&gt;We feed this vector sequence into the Bi-LSTM model as input. The reason we use Bi-LSTM is that when determining whether a specific line (A) is suspicious, it is more accurate to compare it with the attention patterns of the preceding and following lines (B, C). In other words, it considers the context of the entire code in both directions.&lt;/li&gt;
+&lt;li&gt;The model ultimately outputs a &amp;#x201C;suspicious score&amp;#x201D; between 0 and 1 for each line, and if this score exceeds 0.5, it is judged to be vulnerable code.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h1 id=&#34;4-Results&#34;&gt;&lt;a href=&#34;#4-Results&#34; class=&#34;headerlink&#34; title=&#34;4. Results&#34;&gt;&lt;/a&gt;4. Results&lt;/h1&gt;&lt;p&gt;The tests were conducted using the Big-Vul, SmartFix, and CVEFixes benchmarks, utilizing models with 10B or less, such as Llama-3.1-8B-Instruct, Mistral-7B-Instruct-v0.2, and Phi3.5-mini-instruct.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;LOVA demonstrated superior vulnerability location identification capabilities compared to existing LLM direct output methods, achieving up to a 5x performance improvement based on F1-score, especially in long code contexts.&lt;/li&gt;
+&lt;li&gt;LOVA achieved excellent vulnerability location identification results across various programming languages, showing up to a 14.6x improvement.&lt;/li&gt;
+&lt;li&gt;LOVA is applicable to various LLM architectures and shows consistent results.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Overall, it shows impressive performance. It was also good to compare it with various techniques such as CoT, MoA, and rStar, assuming that the same model was used. Above all, I think the attempt to use the self-attention mechanism for vulnerability detection for the first time is meaningful.&lt;/p&gt;
+&lt;h1 id=&#34;5-Areas-for-improvement&#34;&gt;&lt;a href=&#34;#5-Areas-for-improvement&#34; class=&#34;headerlink&#34; title=&#34;5. Areas for improvement&#34;&gt;&lt;/a&gt;5. Areas for improvement&lt;/h1&gt;&lt;ol&gt;
+&lt;li&gt;Lack of comparison with larger models&lt;ul&gt;
+&lt;li&gt;This paper tested using Llama-3.1-8B-Instruct, Mistral-7B-Instruct-v0.2, and Phi3.5-mini-instruct, but there is no comparison with larger models.&lt;ul&gt;
+&lt;li&gt;To use the method described in this paper, an attention matrix must be created for each code line, which increases the time required and the number of matrices to be computed. I suspect that the hardware was insufficient to handle larger models.&lt;/li&gt;
+&lt;li&gt;In that case, it might be worth comparing it with the vanilla output of a larger model. (Oh, maybe I should try that myself&amp;#x2026;) Even if it only comes out as &amp;#x201C;comparable to the vanilla output of a larger model,&amp;#x201D; it would still be meaningful, right?&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;Lack of comparison of power efficiency or computational cost&lt;ul&gt;
+&lt;li&gt;LOVA highlights each code line individually to generate multiple versions of prompts, calculates the differences in attention maps between them, and goes through several other steps. Additionally, dimension reduction and the use of a Bi-LSTM classifier can increase complexity.&lt;ul&gt;
+&lt;li&gt;This paper lacks mention of the time and financial costs incurred when applied to actual large-scale software projects. While dataset comparisons are useful for performance comparisons, it would be helpful to include measurements of how much additional computation is required as the amount of code increases. (The paper mentions that contexts exceeding 4,000 tokens were filtered to comply with LLM input constraints.)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Well&amp;#x2026; I&amp;#x2019;ll wrap up this post here. I considered developing it further into a second part&amp;#x2026; but my current life won&amp;#x2019;t allow it. Haha. Then I&amp;#x2019;ll be back for the next part! (Now I really need to watch Usenix&amp;#x2026;)&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/08/11/j0ker/llm_part3/en/thumbnail.jpg">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/08/11/j0ker/llm_part3/en/">
+
+  <title>[Research] LLM Security &amp; Safety Part 3. “Attention Is All You Need for LLM-based Code Vulnerability Localization” Review (EN) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-08-11 17:00" pubdate>
+      2025년 8월 11일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      2.4k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      48
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] LLM Security &amp; Safety Part 3. “Attention Is All You Need for LLM-based Code Vulnerability Localization” Review (EN)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <h1 id="1-Introduction"><a href="#1-Introduction" class="headerlink" title="1. Introduction"></a>1. Introduction</h1><p>It&#x2019;s been a while since my last post, but I&#x2019;m back! I originally told my team, &#x201C;I&#x2019;m going to analyze all of the Usenix papers using LLM and analyze the trends!&#x201D; But&#x2026; well&#x2026; that was wishful thinking, wasn&#x2019;t it? As expected, real life is not going so easy.</p>
+<p><img src="/2025/08/11/j0ker/llm_part3/en/1.jpg" srcset="/img/loading.gif" alt="index_img"></p>
+<blockquote>
+<p>When will slaves be able to be happy?</p>
+</blockquote>
+<p>So, I brought another paper this time. If you thought, &#x201C;Oh, this is something anyone would think of&#x201D; about the previous paper, this paper immediately made me think, &#x201C;Oh, this one is a little different.&#x201D; While other papers focused on the inference output of LLM through prompting, RAG, etc., this paper stood out in that it utilized the structure of LLM itself.</p>
+<p>It is &#x201C;<a target="_blank" rel="external nofollow noopener noreferrer" href="https://arxiv.org/html/2410.15288v1">Attention Is All You Need for LLM-based Code Vulnerability Localization,</a>&#x201D; which was published on Arxiv in October 2024. It seems that it was not submitted to any academic conference but only uploaded to the archive. The idea itself is good, but I think the conclusion part is a little disappointing.</p>
+<h1 id="2-Paper-Review"><a href="#2-Paper-Review" class="headerlink" title="2. Paper Review"></a>2. Paper Review</h1><p>As the title &#x201C;Attention Is All You Need for LLM-based Code Vulnerability Localization&#x201D; suggests, this paper focuses on how the self-attention mechanism of LLM can be used to identify vulnerability locations. It is also an interesting point that the paper pays homage to &#x201C;Attention Is All You Need,&#x201D; which serves as the foundation for current LLMs. &#x1F604;</p>
+<h2 id="2-1-Limitations-of-Existing-Methods"><a href="#2-1-Limitations-of-Existing-Methods" class="headerlink" title="2.1 Limitations of Existing Methods"></a>2.1 Limitations of Existing Methods</h2><h3 id="1-Lost-in-the-Middle"><a href="#1-Lost-in-the-Middle" class="headerlink" title="1) Lost in the Middle"></a>1) Lost in the Middle</h3><p>Before delving into the details, the paper points out that the biggest limitation of LLM in vulnerability detection is the &#x201C;decrease in inference accuracy in long contexts.&#x201D; It is said that when the code exceeds 300 lines, the accuracy drops below 5%.</p>
+<p><img src="/2025/08/11/j0ker/llm_part3/en/2.png" srcset="/img/loading.gif" alt="index_img"></p>
+<p>The papers cited as evidence are as follows.</p>
+<ul>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://arxiv.org/pdf/2307.03172">Lost in the Middle: How Language Models Use Long Contexs</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://arxiv.org/pdf/2406.10149">BABILong: Testing the Limits of LLMs with Long Context Reasoning-in-a-Haystack</a></li>
+</ul>
+<p>However, you probably don&#x2019;t want to read all these papers while reading this article, right? There is a YouTube channel that covers a similar topic, so you may want to check it out.</p>
+<ul>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.youtube.com/watch?v=EbN_DWM3DJc">OpenAI, Google, Claude are all the same&#x2026; Performance drops much more than expected as input length increases - How to respond | Context Engineering</a></li>
+</ul>
+<p>I haven&#x2019;t read the above content in detail, but it seems to be an issue where, as the number of tokens unrelated to the core content increases, the model fails to accurately focus on the content that requires attention. This is a problem that anyone who has used LLM services extensively, especially those who have tested them with long code snippets for vulnerability detection, has likely encountered at least once. When asking to identify vulnerabilities across multiple functions, issues such as forgetting or failing to recall the code may arise. However, I have noticed that these issues have improved significantly since late last year to early this year. Additionally, papers addressing these issues are beginning to emerge.</p>
+<p>(This information was found by LLM. lol)</p>
+<ol>
+<li>Training method for finding information regardless of location</li>
+</ol>
+<ul>
+<li>&#x201C;Never Lost in the Middle: Mastering Long-Context Question Answering with Position-Agnostic Decompositional Training&#x201D; (2024)<ul>
+<li>Key points: To address this issue, we propose a new training method called &#x201C;Position-Agnostic Decompositional Training.&#x201D; Long questions are decomposed into multiple short questions, and the positions of the correct answers are intentionally mixed to train the model.</li>
+<li>Solution: This reduces the model&#x2019;s reliance on the &#x2018;location&#x2019; of information and enhances its ability to find the necessary information regardless of context.</li>
+</ul>
+</li>
+</ul>
+<ol>
+<li>Changing the structure of input data</li>
+</ol>
+<ul>
+<li>&#x201C;Structured Packing in LLM Training Improves Long Context Utilization&#x201D; (2023)<ul>
+<li>Key points: Instead of simply concatenating multiple documents in order for training, this method proposes providing the model with information that is structurally grouped (packing) together.</li>
+<li>Solution: Strengthens the logical connectivity of information to help the model better understand and utilize information in the middle of the context.</li>
+</ul>
+</li>
+</ul>
+<ol>
+<li>Improving the attention mechanism</li>
+</ol>
+<ul>
+<li>&#x201C;Mixture-of-Recursions: Learning Dynamic Recursive Depths for Adaptive Token-Level Computation&#x201D; (2025)<ul>
+<li>Key Points: Instead of treating all tokens equally, we propose the MoR (Mixture-of-Recursions) architecture, which identifies important tokens through a &#x201C;router&#x201D; and dynamically allocates more computations to those tokens.</li>
+<li>Solution: By focusing computational resources on importance rather than location, we ensure that even core information in the middle of the context is processed deeply without being overlooked.</li>
+</ul>
+</li>
+</ul>
+<ol>
+<li>Combination and Comparison with Retrieval-Augmented Generation (RAG)</li>
+</ol>
+<ul>
+<li>&#x201C;Long Context vs. RAG for LLMs: An Evaluation and Revisits&#x201D; (2025)<ul>
+<li>Key Points: This paper compares and analyzes the &#x201C;Long Context&#x201D; approach, which inputs the entire long context, and the RAG (Retrieval-Augmented Generation) approach, which retrieves only the necessary information from an external database.</li>
+<li>Solution: RAG demonstrates that it can be an effective alternative to avoid the &#x201C;Lost in the Middle&#x201D; problem by initially &#x201C;searching&#x201D; for only the necessary information and presenting it at the beginning of the context. However, the analysis concludes that which method is superior depends on the type of task.</li>
+</ul>
+</li>
+</ul>
+<p>Looking at the above papers, we can see that research is being conducted to solve this problem in various aspects, such as training processes, training datasets, attention mechanisms, and context.</p>
+<h3 id="2-Accuracy"><a href="#2-Accuracy" class="headerlink" title="2) Accuracy"></a>2) Accuracy</h3><p>The fundamental problem with LLM is the accuracy of the output results. Of course, it has improved significantly since ChatGPT 3.5 was first released, but false positives and false negatives still exist. To address this, the following advanced reasoning techniques have been employed:</p>
+<ul>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://arxiv.org/pdf/2203.11171">SELF-CONSISTENCY IMPROVES CHAIN OF THOUGHT REASONING IN LANGUAGE MODELS</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://arxiv.org/pdf/2408.06195">MUTUAL REASONING MAKES SMALLER LLMS STRONGER PROBLEM-SOLVERS</a></li>
+</ul>
+<p>However, even these advanced prompting and CoT techniques rely on stochastic decoding to utilize multiple outputs for majority voting or scoring, which are considered incomplete methods.</p>
+<ul>
+<li>Stochastic decoding is one of the ways LLMs generate text, where tokens are randomly sampled from a calculated probability distribution. In other words, it does not always select the token with the highest probability but gives each token a chance to be selected proportional to its probability.</li>
+<li>Conversely, deterministic decoding simply selects the token with the highest probability, ensuring the same output for the same input every time, but it can generate repetitive and less creative results.</li>
+</ul>
+<p>&#x201C;Due to this randomness, improvements in accuracy are minimal, and it is difficult to pinpoint the exact location of vulnerabilities!&#x201D; This is the second issue raised in this paper.</p>
+<h2 id="2-2-Hypotheses-and-Experiments"><a href="#2-2-Hypotheses-and-Experiments" class="headerlink" title="2.2 Hypotheses and Experiments"></a>2.2 Hypotheses and Experiments</h2><h3 id="1-Hypotheses"><a href="#1-Hypotheses" class="headerlink" title="1) Hypotheses"></a>1) Hypotheses</h3><ol>
+<li><p>When searching for vulnerable code, attention is focused on specific lines.</p>
+</li>
+<li><p>If instructed to search for vulnerabilities on specific lines, attention becomes stronger, potentially improving accuracy.</p>
+</li>
+<li><p>Lines containing vulnerabilities will influence the model&#x2019;s output.</p>
+</li>
+<li><p>Highlighting lines without vulnerabilities will not affect the results.</p>
+</li>
+</ol>
+<h3 id="2-Experiment"><a href="#2-Experiment" class="headerlink" title="2) Experiment"></a>2) Experiment</h3><p>The paper first tests whether self-attention can be used to identify the location of vulnerabilities.</p>
+<pre><code class="hljs yaml"><span class="hljs-attr">Code:</span>
+    <span class="hljs-string">....</span>
+ <span class="hljs-attr">8:</span>     <span class="hljs-string">glyphs</span> <span class="hljs-string">=</span> <span class="hljs-string">(cairo_glyph_t</span> <span class="hljs-string">*)</span> <span class="hljs-string">gmalloc</span> <span class="hljs-string">(len</span>
+    <span class="hljs-string">*</span> <span class="hljs-string">sizeof</span> <span class="hljs-string">(cairo_glyph_t));</span>
+ <span class="hljs-attr">9:</span>     <span class="hljs-string">glyphCount</span> <span class="hljs-string">=</span> <span class="hljs-number">0</span><span class="hljs-string">;</span>
+<span class="hljs-attr">10:</span> <span class="hljs-string">}</span>
+
+<span class="hljs-string">Pay</span> <span class="hljs-string">attention</span> <span class="hljs-string">to</span> <span class="hljs-string">line</span> {<span class="hljs-number">8</span>}<span class="hljs-string">.</span> <span class="hljs-string">Check</span> <span class="hljs-string">whether</span> <span class="hljs-string">there</span> <span class="hljs-string">are</span> <span class="hljs-string">vulnerabilities</span> <span class="hljs-string">in</span> <span class="hljs-string">it.</span>
+<span class="hljs-attr">vulnerable line:</span> <span class="hljs-string">```</span></code></pre>
+<p>To find vulnerabilities, write a prompt as shown above. When predicting words after ```, the code with vulnerabilities will receive the highest attention, right? Not only that, but it also tells you which line it is, maximizing the change in weight and allowing you to observe the change.</p>
+<p><img src="/2025/08/11/j0ker/llm_part3/en/3.png" srcset="/img/loading.gif" alt="index_img"></p>
+<p>When testing with actual code without vulnerabilities and code with artificially inserted vulnerabilities based on the former,</p>
+<ol>
+<li>Upon checking the attention of code with and without vulnerabilities, it was found that, except for the 70th line where the vulnerability exists, the weights of other lines were high, indicating that the vulnerability was not properly identified.</li>
+<li>When highlighting the 70th line to check the attention in both the code without vulnerabilities and the code with vulnerabilities, the weight of the 70th line increased slightly, and in the code with actual vulnerabilities, the weight was even higher.</li>
+</ol>
+<p>As shown above, this simple test demonstrates that vulnerabilities can be identified to some extent.</p>
+<h1 id="3-LOVA-LO-cating-Vulnerabilities-via-Attention"><a href="#3-LOVA-LO-cating-Vulnerabilities-via-Attention" class="headerlink" title="3. LOVA(LO-cating Vulnerabilities via Attention)"></a>3. LOVA(LO-cating Vulnerabilities via Attention)</h1><p><img src="/2025/08/11/j0ker/llm_part3/en/4.png" srcset="/img/loading.gif" alt="index_img"></p>
+<p>The LOVA proposed in this paper compares the weights of unhighlighted code and highlighted code based on the results of the experiments described above to ultimately identify the code lines with the highest probability of containing vulnerabilities.</p>
+<p>It is divided into three stages: Code Line Highlight, Attention Calculation, and Vulnerability Line Localization. Let&#x2019;s take a closer look at each one!</p>
+<h2 id="3-1-Code-Line-Highlight"><a href="#3-1-Code-Line-Highlight" class="headerlink" title="3.1 Code Line Highlight"></a>3.1 Code Line Highlight</h2><p>LOVA creates two versions of prompts. One is the original code with no modifications (Base prompt), and the other is a version where each line of code is highlighted one by one (Highlighted prompts). If the code has 100 lines, one original prompt and 100 highlighted prompts are generated.</p>
+<p>However, there is one problem here. Simply adding a comment like &#x201C;// Take a look here!&#x201D; or inserting specific keywords causes the LLM to ignore the code when it becomes long, or even causes hallucinations, mistaking normal code for vulnerable code.</p>
+<p>Therefore, in LOVA, we directly specify the <strong>code line index</strong>. We add numbers to the front of the code and explicitly state in the prompt, &#x201C;Focus on line 8 and check for vulnerabilities!&#x201D;</p>
+<h2 id="3-2-Attention-Calculation"><a href="#3-2-Attention-Calculation" class="headerlink" title="3.2 Attention Calculation"></a>3.2 Attention Calculation</h2><p>Next, we need to quantitatively calculate how the LLM&#x2019;s &#x2018;attention&#x2019; changes when each line is highlighted. The attention data output by the LLM is an enormous tensor in the form of (num_tokens, num_tokens, num_layers, num_heads).  The paper mentions that even a 1,000-token code can generate hundreds of millions of data points&#x2026; So, analyzing it myself might be faster, right?</p>
+<p>LOVA performs dimensionality reduction as follows to retain only the information necessary for vulnerability analysis from this massive dataset.</p>
+<p><img src="/2025/08/11/j0ker/llm_part3/en/5.png" srcset="/img/loading.gif" alt="index_img"></p>
+<blockquote>
+<p>Pseudocode for Steps 1 to 4</p>
+</blockquote>
+<ol>
+<li>Summarize the attention of all heads into a single attention map in the form of (num_tokens, num_tokens, num_layers) and merge them.</li>
+<li>Maintain the attention of each layer as they have their own unique meanings.</li>
+<li>Use the last token as a query (Q) to determine how much attention it receives from all previous tokens, and create a matrix of size (num_tokens, num_layers).</li>
+<li>Sum the attention values of all tokens in each line to calculate the total attention value for that line, and create a matrix of size (num_lines, num_layers). This matrix is called LayerwiseAttnMat.</li>
+<li><p>Calculate the difference between the LayerwiseAttnMat of the highlighted prompt and the base prompt to create DiffAttnMat. Instead of looking at the differences across all lines, we extract only the data from the &#x2018;instruction&#x2019; and &#x2018;highlighted line&#x2019; where the actual changes are expected to be the largest, and create the final <code>VulnAttnMat</code>.</p>
+<p> <img src="/2025/08/11/j0ker/llm_part3/en/6.png" srcset="/img/loading.gif" alt="image.png"></p>
+</li>
+</ol>
+<h2 id="3-3-Vulnerability-Line-Localization"><a href="#3-3-Vulnerability-Line-Localization" class="headerlink" title="3.3 Vulnerability Line Localization"></a><strong>3.3 Vulnerability Line Localization</strong></h2><p>The final step is to select the lines with actual vulnerabilities based on the patterns in <code>VulnAttnMat</code>. While it is possible to rank them simply by the sum of attention changes, it is difficult to apply consistent criteria across languages because the vulnerability patterns in C and Python are different.  Furthermore, this is just a &#x201C;suspicious ranking,&#x201D; not an accurate judgment such as &#x201C;this line has an 80% probability of being vulnerable!&#x201D; Therefore, LOVA uses a deep learning model called <strong>Bi-LSTM</strong> at this stage. (Ugh&#x2026; it&#x2019;s getting more and more complicated&#x2026;)</p>
+<ol>
+<li>First, we create a long vector from the <code>VulnAttnMat</code> calculated for each line.</li>
+<li>We feed this vector sequence into the Bi-LSTM model as input. The reason we use Bi-LSTM is that when determining whether a specific line (A) is suspicious, it is more accurate to compare it with the attention patterns of the preceding and following lines (B, C). In other words, it considers the context of the entire code in both directions.</li>
+<li>The model ultimately outputs a &#x201C;suspicious score&#x201D; between 0 and 1 for each line, and if this score exceeds 0.5, it is judged to be vulnerable code.</li>
+</ol>
+<h1 id="4-Results"><a href="#4-Results" class="headerlink" title="4. Results"></a>4. Results</h1><p>The tests were conducted using the Big-Vul, SmartFix, and CVEFixes benchmarks, utilizing models with 10B or less, such as Llama-3.1-8B-Instruct, Mistral-7B-Instruct-v0.2, and Phi3.5-mini-instruct.</p>
+<ul>
+<li>LOVA demonstrated superior vulnerability location identification capabilities compared to existing LLM direct output methods, achieving up to a 5x performance improvement based on F1-score, especially in long code contexts.</li>
+<li>LOVA achieved excellent vulnerability location identification results across various programming languages, showing up to a 14.6x improvement.</li>
+<li>LOVA is applicable to various LLM architectures and shows consistent results.</li>
+</ul>
+<p>Overall, it shows impressive performance. It was also good to compare it with various techniques such as CoT, MoA, and rStar, assuming that the same model was used. Above all, I think the attempt to use the self-attention mechanism for vulnerability detection for the first time is meaningful.</p>
+<h1 id="5-Areas-for-improvement"><a href="#5-Areas-for-improvement" class="headerlink" title="5. Areas for improvement"></a>5. Areas for improvement</h1><ol>
+<li>Lack of comparison with larger models<ul>
+<li>This paper tested using Llama-3.1-8B-Instruct, Mistral-7B-Instruct-v0.2, and Phi3.5-mini-instruct, but there is no comparison with larger models.<ul>
+<li>To use the method described in this paper, an attention matrix must be created for each code line, which increases the time required and the number of matrices to be computed. I suspect that the hardware was insufficient to handle larger models.</li>
+<li>In that case, it might be worth comparing it with the vanilla output of a larger model. (Oh, maybe I should try that myself&#x2026;) Even if it only comes out as &#x201C;comparable to the vanilla output of a larger model,&#x201D; it would still be meaningful, right?</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>Lack of comparison of power efficiency or computational cost<ul>
+<li>LOVA highlights each code line individually to generate multiple versions of prompts, calculates the differences in attention maps between them, and goes through several other steps. Additionally, dimension reduction and the use of a Bi-LSTM classifier can increase complexity.<ul>
+<li>This paper lacks mention of the time and financial costs incurred when applied to actual large-scale software projects. While dataset comparisons are useful for performance comparisons, it would be helpful to include measurements of how much additional computation is required as the amount of code increases. (The paper mentions that contexts exceeding 4,000 tokens were filtered to comply with LLM input constraints.)</li>
+</ul>
+</li>
+</ul>
+</li>
+</ol>
+<p>Well&#x2026; I&#x2019;ll wrap up this post here. I considered developing it further into a second part&#x2026; but my current life won&#x2019;t allow it. Haha. Then I&#x2019;ll be back for the next part! (Now I really need to watch Usenix&#x2026;)</p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/j0ker/">j0ker</a>
+                  
+                  <a class="hover-with-bg" href="/tags/LLM/">LLM</a>
+                  
+                  <a class="hover-with-bg" href="/tags/LLM-Security/">LLM Security</a>
+                  
+                  <a class="hover-with-bg" href="/tags/LLM-Safety/">LLM Safety</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Transformer/">Transformer</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Attention/">Attention</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Automated-vulnerability-Detection/">Automated vulnerability Detection</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_j0ker.jpg" srcset="/img/loading.gif" alt="j0ker">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">j0ker</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/j0ker">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/08/13/ogu123/cve-2025%E2%80%9332713/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2025–32713: Windows Common Log File System Driver Local Privilege Escalation 취약점</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/08/11/j0ker/llm_part3/kr/">
+                    <span class="hidden-mobile">[Research] LLM Security & Safety Part 3. “Attention Is All You Need for LLM-based Code Vulnerability Localization” Review (KR)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/08/11/j0ker/llm_part3/en/';
+        this.page.identifier = '/2025/08/11/j0ker/llm_part3/en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] LLM Security & Safety Part 3. “Attention Is All You Need for LLM-based Code Vulnerability Localization” Review (EN)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>

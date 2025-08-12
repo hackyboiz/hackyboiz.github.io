@@ -1,0 +1,2552 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;Hello, this is L0ch!  It&amp;#x2019;s been a while since my last post.&lt;/p&gt;
+&lt;p&gt;Last week&amp;#x2019;s topic was &lt;a href=&#34;https://hackyboiz.github.io/2025/04/13/l0ch/bypassing-kernel-mitigation-part0/ko/&#34;&gt;[Research] Bypassing Windows Kernel Mitigations: Part 0 - Deep Dive into KASLR Leaks Restriction&lt;/a&gt;. I mentioned that one of the conditions for the KASLR bypass PoC to work is that KVA Shadow is disabled!&lt;/p&gt;
+&lt;p&gt;At the time of writing, I had assumed that KVAS was disabled by default in the latest Windows 11, but through feedback, I learned that KVAS is dynamically activated based on CPU model and specific vulnerabilities, rather than Windows version.&lt;/p&gt;
+&lt;h1 id=&#34;SpeculationControl-PowerShell-script&#34;&gt;&lt;a href=&#34;#SpeculationControl-PowerShell-script&#34; class=&#34;headerlink&#34; title=&#34;SpeculationControl PowerShell script&#34;&gt;&lt;/a&gt;&lt;strong&gt;SpeculationControl PowerShell script&lt;/strong&gt;&lt;/h1&gt;&lt;p&gt;KVAS is closely related to various speculative execution-based side-channel vulnerabilities, such as Meltdown and Spectre, so you can easily check the relevant MS support information.&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://support.microsoft.com/en-us/topic/kb4074629-understanding-speculationcontrol-powershell-script-output-fd70a80a-a63f-e539-cda5-5be4c9e67c04&#34;&gt;https://support.microsoft.com/en-us/topic/kb4074629-understanding-speculationcontrol-powershell-script-output-fd70a80a-a63f-e539-cda5-5be4c9e67c04&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;The results of testing on my computer with a 12th generation Intel CPU are summarized as follows.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs powershell&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# Windwos 11 24H2 - Intel 12th i7-12700&lt;/span&gt;
+
+&lt;span class=&#34;hljs-built_in&#34;&gt;PS&lt;/span&gt; C:\WINDOWS\system32&amp;gt; &lt;span class=&#34;hljs-built_in&#34;&gt;Install-Module&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;-Name&lt;/span&gt; SpeculationControl                                                                                                                                                                                 need a NuGet provider to &lt;span class=&#34;hljs-keyword&#34;&gt;continue&lt;/span&gt;.
+
+&lt;span class=&#34;hljs-built_in&#34;&gt;PS&lt;/span&gt; C:\WINDOWS\system32&amp;gt; &lt;span class=&#34;hljs-built_in&#34;&gt;Get-SpeculationControlSettings&lt;/span&gt;
+
+BTIHardwarePresent                  : True
+BTIWindowsSupportPresent            : True
+BTIWindowsSupportEnabled            : True
+BTIDisabledBySystemPolicy           : False
+BTIDisabledByNoHardwareSupport      : False
+BTIKernelRetpolineEnabled           : False
+BTIKernelImportOptimizationEnabled  : True
+RdclHardwareProtectedReported       : True
+RdclHardwareProtected               : True
+KVAShadowRequired                   : False
+KVAShadowWindowsSupportPresent      : True
+KVAShadowWindowsSupportEnabled      : False
+KVAShadowPcidEnabled                : False
+SSBDWindowsSupportPresent           : True
+SSBDHardwareVulnerable              : True
+SSBDHardwarePresent                 : True
+SSBDWindowsSupportEnabledSystemWide : False
+L1TFHardwareVulnerable              : False
+L1TFWindowsSupportPresent           : True
+L1TFWindowsSupportEnabled           : False
+L1TFInvalidPteBit                   : &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+L1DFlushSupported                   : True
+HvL1tfStatusAvailable               : True
+HvL1tfProcessorNotAffected          : True
+MDSWindowsSupportPresent            : True
+MDSHardwareVulnerable               : False
+MDSWindowsSupportEnabled            : False
+FBClearWindowsSupportPresent        : True
+SBDRSSDPHardwareVulnerable          : False
+FBSDPHardwareVulnerable             : False
+PSDPHardwareVulnerable              : False
+FBClearWindowsSupportEnabled        : False
+&lt;/code&gt;&lt;/pre&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Hardware requires kernel VA shadowing&lt;/th&gt;
+&lt;th&gt;Maps to KVAShadowRequired. This line tells you whether your system requires kernel VA shadowing to mitigate a vulnerability.&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;Windows OS support for rogue data cache load mitigation is present&lt;/td&gt;
+&lt;td&gt;Maps to KVAShadowWindowsSupportPresent. This line tells you whether Windows operating system support for the kernel VA shadow feature is present.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Windows OS support for kernel VA shadow is present&lt;/td&gt;
+&lt;td&gt;Maps to KVAShadowWindowsSupportPresent. This line tells you whether Windows operating system support for the kernel VA shadow feature is present. If it is True, the January 2018 update is installed on the device, and kernel VA shadow is supported. If it is False, the January 2018 update is not installed, and kernel VA shadow support does not exist.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Windows OS support for rogue data cache load mitigation is enabled&lt;/td&gt;
+&lt;td&gt;Maps to KVAShadowWindowsSupportEnabled. This line tells you whether the kernel VA shadow feature is enabled. If it is True, the hardware is believed to be vulnerable to CVE-2017-5754, Windows operating system support is present, and the feature is enabled.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Windows OS support for kernel VA shadow is enabled&lt;/td&gt;
+&lt;td&gt;Maps to KVAShadowWindowsSupportEnabled. This line tells you whether the kernel VA shadow feature is enabled. If it is True, Windows operating system support is present, and the feature is enabled. The Kernel VA shadow feature is currently enabled by default on client versions of Windows and is disabled by default on versions of Windows Server. If it is False, either Windows operating system support is not present, or the feature is not enabled.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;Although the KVA Shadow feature exists in Windows,(KVAShadowWindowsSupportPresent: True) 
+it is &lt;span class=&#34;hljs-keyword&#34;&gt;not&lt;/span&gt; necessary.(KVAShadowRequired: False) 
+&lt;span class=&#34;hljs-function&#34;&gt;so &lt;span class=&#34;hljs-keyword&#34;&gt;not&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;activated&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(KVAShadowWindowsSupportEnabled: False)&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;We can see that KVAS is disabled, which means that although the mitigation feature exists, &lt;strong&gt;the hardware (CPU) is not vulnerable, so the mitigation feature is disabled&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;So where and how does Windows identify vulnerable CPUs and determine whether to enable KVAS?&lt;/p&gt;
+&lt;h1 id=&#34;Background-Knowledge-CPU-Identification&#34;&gt;&lt;a href=&#34;#Background-Knowledge-CPU-Identification&#34; class=&#34;headerlink&#34; title=&#34;Background Knowledge - CPU Identification&#34;&gt;&lt;/a&gt;Background Knowledge - CPU Identification&lt;/h1&gt;&lt;p&gt;Windows identifies the CPU vendor on its own. As defined in the &lt;a href=&#34;https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/ntos/amd64_x/cpu_vendors.htm&#34;&gt;CPU_VENDORS&lt;/a&gt; Enum, unknown manufacturers are defined as 0, AMD as 1, and Intel as 2.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;typedef enum
+{
+    CPU_UNKNOWN,   &lt;span class=&#34;hljs-comment&#34;&gt;// 0&lt;/span&gt;
+    CPU_AMD,       &lt;span class=&#34;hljs-comment&#34;&gt;// 1&lt;/span&gt;
+    CPU_INTEL,     &lt;span class=&#34;hljs-comment&#34;&gt;// 2&lt;/span&gt;
+    CPU_VIA        &lt;span class=&#34;hljs-comment&#34;&gt;// 3&lt;/span&gt;
+} CPU_VENDORS;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;CPU information such as vendor, Faily ID, and Model ID is stored in the &lt;a href=&#34;https://www.vergiliusproject.com/kernels/x64/windows-11/24h2/_KPRCB&#34;&gt;KPRCB&lt;/a&gt; structure. &lt;/p&gt;
+&lt;p&gt;These IDs are defined by each CPU vendor. In the case of Intel, the Family ID, Model ID, and generation information for Intel CPU products are defined in the &lt;a href=&#34;https://www.intel.com/content/www/us/en/content-details/782158/&#34;&gt;Intel Developer Manual&lt;/a&gt;. Since it&amp;#x2019;s not feasible to review the entire 5,000-page manual, I used gemini to summarize the information in the table below.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;&lt;strong&gt;MircoArchitecture(gen)&lt;/strong&gt;&lt;/th&gt;
+&lt;th&gt;Processor family&lt;/th&gt;
+&lt;th&gt;&lt;strong&gt;Family ID (Hex)&lt;/strong&gt;&lt;/th&gt;
+&lt;th&gt;&lt;strong&gt;Model ID (Hex)&lt;/strong&gt;&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;Raptor Lake (13 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;B7H, BFH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Alder Lake (12 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;97H, 9AH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Tiger Lake (11 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;8CH, 8DH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Rocket Lake (11 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;A7H&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Ice Lake (10 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;7DH, 7EH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Comet Lake (10 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;A5H, A6H&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Amber Lake Y (8 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;8EH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Whiskey Lake U (8 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;8EH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Coffee Lake (8, 9 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;9EH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Kaby Lake (7 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;8EH, 9EH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Skylake (6 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;4EH, 5EH, 55H&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Broadwell (5 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;3DH, 47H, 4FH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Haswell (4 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;3CH, 45H, 46H, 3FH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Ivy Bridge (3 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;3AH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Sandy Bridge (2 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;2AH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Westmere (2010)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;25H, 2CH, 2FH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Nehalem (1 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;1AH, 1EH, 1FH, 2EH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Penryn&lt;/td&gt;
+&lt;td&gt;Core 2 Duo/Quad&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;17H, 1DH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Merom&lt;/td&gt;
+&lt;td&gt;Core 2 Duo&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;0FH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Yonah&lt;/td&gt;
+&lt;td&gt;Core Duo/Solo&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;0EH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;I also organized and analyzed the ID lists of AMD and other vendors.&lt;/p&gt;
+&lt;h1 id=&#34;Analysis-of-KVAS-Activation-Logic&#34;&gt;&lt;a href=&#34;#Analysis-of-KVAS-Activation-Logic&#34; class=&#34;headerlink&#34; title=&#34;Analysis of KVAS Activation Logic&#34;&gt;&lt;/a&gt;Analysis of KVAS Activation Logic&lt;/h1&gt;&lt;p&gt;Analysis Environment: Windows 24H2 64-bit 10.0.26100.1742&lt;/p&gt;
+&lt;p&gt;Returning to the topic at hand, in order to analyze the mitigation initialization logic, we need to examine the part of the Windows boot process that initializes the kernel. &lt;/p&gt;
+&lt;p&gt;The entry point of the Windows kernel image &lt;code&gt;ntoskrnl.exe&lt;/code&gt; is &lt;code&gt;KiSystemStartup&lt;/code&gt;, which performs various tasks such as CPU initialization, mitigation-related feature settings, and kernel debugger initialization.&lt;/p&gt;
+&lt;p&gt;The function that determines whether KVAS is enabled was surprisingly easy to find.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;KiSystemStartup &amp;#x2192; KiInitializeBootStructures &amp;#x2192; KiSetFeatureBits &amp;#x2192; KiDetectKvaLeakage&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;NTSTATUS __stdcall __noreturn &lt;span class=&#34;hljs-title&#34;&gt;KiSystemStartup&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+&lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+  KeLoaderBlock_0 = (__int64)DriverObject;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( !*((_DWORD *)DriverObject-&amp;gt;MajorFunction[&lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;] + &lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;) )
+    KasanInitSystem(DriverObject, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( !*(_DWORD *)(*(_QWORD *)(KeLoaderBlock_0 + &lt;span class=&#34;hljs-number&#34;&gt;136&lt;/span&gt;) + &lt;span class=&#34;hljs-number&#34;&gt;36&lt;/span&gt;i64) )
+    KdInitSystem(&lt;span class=&#34;hljs-number&#34;&gt;0xFFFFFFFF&lt;/span&gt;i64, KeLoaderBlock_0);
+  v2 = *(&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; **)(KeLoaderBlock_0 + &lt;span class=&#34;hljs-number&#34;&gt;136&lt;/span&gt;);
+
+&lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+
+  KiInitializeBootStructures(KeLoaderBlock_0);  &lt;span class=&#34;hljs-comment&#34;&gt;// Initialize Boot Structures&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( !*MK_FP(&lt;span class=&#34;hljs-number&#34;&gt;43&lt;/span&gt;, *MK_FP(&lt;span class=&#34;hljs-number&#34;&gt;43&lt;/span&gt;, KeLoaderBlock_0 + &lt;span class=&#34;hljs-number&#34;&gt;136&lt;/span&gt;) + &lt;span class=&#34;hljs-number&#34;&gt;36&lt;/span&gt;i64) )
+    KdInitSystem(&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64, KeLoaderBlock_0);
+&lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+
+}
+
+&lt;span class=&#34;hljs-function&#34;&gt;__int64 __fastcall &lt;span class=&#34;hljs-title&#34;&gt;KiInitializeBootStructures&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(__int64 a1)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+  KPCR *Pcr; &lt;span class=&#34;hljs-comment&#34;&gt;// r14&lt;/span&gt;
+  _KPROCESS **v2; &lt;span class=&#34;hljs-comment&#34;&gt;// rbx&lt;/span&gt;
+  &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; _&lt;span class=&#34;hljs-title&#34;&gt;KPRCB&lt;/span&gt; *&lt;span class=&#34;hljs-title&#34;&gt;CurrentPrcb&lt;/span&gt;;&lt;/span&gt; &lt;span class=&#34;hljs-comment&#34;&gt;// rdi&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( !KeGetPcr()-&amp;gt;Prcb.Number )
+    KiInitializeNxSupportDiscard(v19, v18, v20);
+  HalInitializeProcessor(Number, a1, v20);
+  KiSetFeatureBits(CurrentPrcb);                &lt;span class=&#34;hljs-comment&#34;&gt;// Set Prcb Feature Bits&lt;/span&gt;
+  CurrentPCB_Number = CurrentPrcb-&amp;gt;Number;
+  v27 = KiSystemCall32;
+  v28 = KiSystemCall64;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( !CurrentPCB_Number )
+  {
+    KiEnableKvaShadowing(CurrentPrcb);              &lt;span class=&#34;hljs-comment&#34;&gt;//  Decide whether to enable KVA Shadow&lt;/span&gt;
+    CurrentPCB_Number = CurrentPrcb-&amp;gt;Number;
+  }
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( KiKvaShadow )                             &lt;span class=&#34;hljs-comment&#34;&gt;// When the KVA Shadow flag is enabled&lt;/span&gt;
+  {
+    v27 = KiSystemCall32Shadow;                 &lt;span class=&#34;hljs-comment&#34;&gt;// instead of KiSystemCall32/KiSystemCall64  &lt;/span&gt;
+    v28 = KiSystemCall64Shadow;                 &lt;span class=&#34;hljs-comment&#34;&gt;// use KiSystemCall32Shadow/KiSystemCall64Shadow&lt;/span&gt;
+  }
+  
+&lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+}
+
+&lt;span class=&#34;hljs-function&#34;&gt;__int64 __fastcall &lt;span class=&#34;hljs-title&#34;&gt;KiSetFeatureBits&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(_KPRCB *CurrentPRCB)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; CpuType; &lt;span class=&#34;hljs-comment&#34;&gt;// bl&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; CpuModel; &lt;span class=&#34;hljs-comment&#34;&gt;// ecx&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int8 CpuVendor; &lt;span class=&#34;hljs-comment&#34;&gt;// dl&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; ProcessorSignature; &lt;span class=&#34;hljs-comment&#34;&gt;// eax&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int8 CpuStepping; &lt;span class=&#34;hljs-comment&#34;&gt;// cl&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int8 v57; &lt;span class=&#34;hljs-comment&#34;&gt;// al&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int64 v58; &lt;span class=&#34;hljs-comment&#34;&gt;// rcx&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+
+  CpuType = CurrentPRCB-&amp;gt;CpuType_Family;        &lt;span class=&#34;hljs-comment&#34;&gt;// CpuType = Processor Family&lt;/span&gt;
+  CpuModel = CurrentPRCB-&amp;gt;CpuModel;
+  CpuVendor = CurrentPRCB-&amp;gt;CpuVendor;
+  v123 = (CpuVendor - &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;) &amp;lt;= &lt;span class=&#34;hljs-number&#34;&gt;1u&lt;/span&gt;;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( CurrentPRCB-&amp;gt;Number )
+  {
+    ProcessorSignature = KiGetProcessorSignature(&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64);
+    KiSetProcessorSignature(CurrentPRCB, ProcessorSignature);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; LABEL_40;
+  }
+
+&lt;span class=&#34;hljs-comment&#34;&gt;//... &lt;/span&gt;
+  KiDetectKvaLeakage(CurrentPRCB);      &lt;span class=&#34;hljs-comment&#34;&gt;// Detect - KVA needs to be activated&lt;/span&gt;
+  _m_prefetchw(CurrentPRCB);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( CurrentPRCB-&amp;gt;CpuVendor == &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; )
+  {
+    v52 |= &lt;span class=&#34;hljs-number&#34;&gt;0x100000&lt;/span&gt;u;
+    HIDWORD(v134) = v52;
+  }
+&lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;h2 id=&#34;KVAS-Activation-for-Meltdown&#34;&gt;&lt;a href=&#34;#KVAS-Activation-for-Meltdown&#34; class=&#34;headerlink&#34; title=&#34;KVAS Activation for Meltdown&#34;&gt;&lt;/a&gt;KVAS Activation for Meltdown&lt;/h2&gt;&lt;p&gt;In the above call chain, the &lt;code&gt;KiDetectKvaLeakage&lt;/code&gt; function is the core function that determines whether KVA is enabled.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; __fastcall &lt;span class=&#34;hljs-title&#34;&gt;KiDetectKvaLeakage&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(_KPRCB *a1)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+  __int64 p_CpuVendor; &lt;span class=&#34;hljs-comment&#34;&gt;// rsi&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int64 _RAX; &lt;span class=&#34;hljs-comment&#34;&gt;// rax&lt;/span&gt;
+  __int64 v4; &lt;span class=&#34;hljs-comment&#34;&gt;// rcx&lt;/span&gt;
+  __int64 _RAX; &lt;span class=&#34;hljs-comment&#34;&gt;// rax&lt;/span&gt;
+  __int64 _RAX; &lt;span class=&#34;hljs-comment&#34;&gt;// rax&lt;/span&gt;
+  __int64 _RDX; &lt;span class=&#34;hljs-comment&#34;&gt;// rdx&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int64 v13; &lt;span class=&#34;hljs-comment&#34;&gt;// rdx&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;bool&lt;/span&gt; v14; &lt;span class=&#34;hljs-comment&#34;&gt;// zf&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *v15; &lt;span class=&#34;hljs-comment&#34;&gt;// rdx&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; v16; &lt;span class=&#34;hljs-comment&#34;&gt;// ecx&lt;/span&gt;
+  __int64 v17; &lt;span class=&#34;hljs-comment&#34;&gt;// rbx&lt;/span&gt;
+  __int64 _RAX; &lt;span class=&#34;hljs-comment&#34;&gt;// rax&lt;/span&gt;
+  __int64 _RAX; &lt;span class=&#34;hljs-comment&#34;&gt;// rax&lt;/span&gt;
+  __int64 _RAX; &lt;span class=&#34;hljs-comment&#34;&gt;// rax&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; Number; &lt;span class=&#34;hljs-comment&#34;&gt;// edx&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; v29[&lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;]; &lt;span class=&#34;hljs-comment&#34;&gt;// [rsp+30h] [rbp-20h] BYREF&lt;/span&gt;
+
+  v29[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;] = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+  p_CpuVendor = &amp;amp;a1-&amp;gt;CpuVendor;
+  
+  &lt;span class=&#34;hljs-comment&#34;&gt;// Check 1&lt;/span&gt;
+  LODWORD(_RAX) = KiIsKvaShadowNeededForBranchConfusion(a1);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( _RAX )
+    &lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; ENABLE_KVAS_BRANCH_CONFUSION;
+  LODWORD(_RAX) = *p_CpuVendor;
+  
+  &lt;span class=&#34;hljs-comment&#34;&gt;// Check 2&lt;/span&gt;
+  &lt;span class=&#34;hljs-comment&#34;&gt;// Intel - Check with bitmask&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( *p_CpuVendor == &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; )
+  {
+    _RAX = a1-&amp;gt;CpuModel;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( a1-&amp;gt;CpuType == &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt; &amp;amp;&amp;amp; _RAX &amp;lt;= &lt;span class=&#34;hljs-number&#34;&gt;0x36&lt;/span&gt;u )
+    {
+      v4 = &lt;span class=&#34;hljs-number&#34;&gt;0x6000C010000000&lt;/span&gt;i64;
+      &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( _bittest64(&amp;amp;v4, _RAX) )
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; _RAX;
+    }
+  }
+  &lt;span class=&#34;hljs-comment&#34;&gt;// Others - disable KVAS&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( _RAX != &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt; || a1-&amp;gt;CpuType == &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt; &amp;amp;&amp;amp; a1-&amp;gt;CpuModel == &lt;span class=&#34;hljs-number&#34;&gt;13&lt;/span&gt;)
+  {
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; _RAX;
+  }
+	
+	&lt;span class=&#34;hljs-comment&#34;&gt;// Check 3&lt;/span&gt;
+	&lt;span class=&#34;hljs-comment&#34;&gt;// IA32_ARCH_CAPABILITIES support query&lt;/span&gt;
+  _RAX = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64;
+  __asm { cpuid }
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( _RAX &amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt; )
+    &lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; ENABLE_KVAS;
+  _RAX = &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;i64;
+  __asm { cpuid }
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( (_RDX &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x20000000&lt;/span&gt;) == &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; )
+    &lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; ENABLE_KVAS;
+
+	&lt;span class=&#34;hljs-comment&#34;&gt;// Check 3&lt;/span&gt;
+	&lt;span class=&#34;hljs-comment&#34;&gt;// msr address 0x10A - IA32_ARCH_CAPABILITIES&lt;/span&gt;
+  _RAX = __readmsr(&lt;span class=&#34;hljs-number&#34;&gt;0x10A&lt;/span&gt;u);
+  &lt;span class=&#34;hljs-comment&#34;&gt;//IA32_ARCH_CAPABILITIES bit 0 : RDCL_NO&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( (_RAX &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;) == &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; )
+    &lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; ENABLE_KVAS;
+ 
+  KiMicrocodeTrackerEnabled = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+  LODWORD(_RAX) = &lt;span class=&#34;hljs-number&#34;&gt;3670016&lt;/span&gt;;
+  LOBYTE(v13) = (KeFeatureBits2 &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x28&lt;/span&gt;) == &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( (KeFeatureBits2 &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x380000&lt;/span&gt;) != &lt;span class=&#34;hljs-number&#34;&gt;3670016&lt;/span&gt; )
+  {
+    LODWORD(_RAX) = KiIsFbClearSupported(KeFeatureBits2 &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x380000&lt;/span&gt;, v13);
+    LOBYTE(v13) = _RAX | v13;
+  }
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( v13 )
+  {
+ENABLE_KVAS:
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( a1-&amp;gt;Number &amp;amp;&amp;amp; !KiKvaLeakage )
+      KeBugCheckEx(&lt;span class=&#34;hljs-number&#34;&gt;0x5D&lt;/span&gt;u, &lt;span class=&#34;hljs-number&#34;&gt;0x4B56414C&lt;/span&gt;ui64, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64);
+ENABLE_KVAS_BRANCH_CONFUSION:
+    v14 = *p_CpuVendor == &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;;
+    **KiKvaLeakage = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;**
+&lt;span class=&#34;hljs-comment&#34;&gt;//... for enable KVA&lt;/span&gt;
+  }
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; _RAX;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The &lt;code&gt;KiDetectKvaLeakage&lt;/code&gt; function determines whether KVAS is enabled based on CPU vendor and model information included in KPRCB and information that can be read from MSR. The verification routine can be divided into three main parts.&lt;/p&gt;
+&lt;h3 id=&#34;Check-1&#34;&gt;&lt;a href=&#34;#Check-1&#34; class=&#34;headerlink&#34; title=&#34;Check 1&#34;&gt;&lt;/a&gt;Check 1&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;Check whether affected by Branch Confusion vulnerability through the &lt;code&gt;KiIsKvaShadowNeededForBranchConfusion&lt;/code&gt; function&lt;/li&gt;
+&lt;li&gt;If the call result of the function is affected by Branch Confusion vulnerability, proceed to the &lt;code&gt;ENABLE_KVAS_BRANCH_CONFUSION&lt;/code&gt; branch to activate KVAS&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;Check-2&#34;&gt;&lt;a href=&#34;#Check-2&#34; class=&#34;headerlink&#34; title=&#34;Check 2&#34;&gt;&lt;/a&gt;Check 2&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;Filter out older CPUs that are not affected by Meltdown and do not require KVAS activation using a bitmask, and disable KVAS.&lt;/li&gt;
+&lt;li&gt;Furthermore, since Meltdown is a vulnerability that only affects Intel processor architectures, disable KVAS for other vendors as well.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;Check-3&#34;&gt;&lt;a href=&#34;#Check-3&#34; class=&#34;headerlink&#34; title=&#34;Check 3&#34;&gt;&lt;/a&gt;Check 3&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;First, check whether the CPU supports the MSR (Model Specific Register) function.&lt;ul&gt;
+&lt;li&gt;If MSR is not supported, proceed to the &lt;code&gt;ENABLE_KVAS&lt;/code&gt; branch to activate KVAS, as it is an older CPU affected by Meltdown.&lt;/li&gt;
+&lt;li&gt;Models that do not support MSR but are not affected are first filtered through a bitmask in the Check 2 routine.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;Read the MSR address &lt;code&gt;0x10A&lt;/code&gt; using &lt;code&gt;__readmsr&lt;/code&gt; - &lt;a href=&#34;https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/technical-documentation/cpuid-enumeration-and-architectural-msrs.html&#34;&gt;IA32_ARCH_CAPABILITIES&lt;/a&gt;&lt;ul&gt;
+&lt;li&gt;If field 0 (&lt;code&gt;RDCL_NO&lt;/code&gt;) of the result (&lt;code&gt;_RAX&lt;/code&gt;) is not enabled, proceed to the &lt;code&gt;ENABLE_KVAS&lt;/code&gt; branch to enable KVAS&lt;/li&gt;
+&lt;li&gt;RDCL_NO: A bit flag indicating immunity to Rogue Data Cache Load (Meltdown)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;If KVAS is determined to be necessary through the above verification process, &lt;code&gt;KiKvaLeakage&lt;/code&gt; is set to 1.&lt;/p&gt;
+&lt;p&gt;The main functions of this function can be summarized as identifying Intel processors affected by the Meltdown vulnerability in Check 2 and Check 3 and setting the KVAS activation flag. Check 1 will be explained in more detail below.&lt;/p&gt;
+&lt;h2 id=&#34;KVAS-Activation-for-Branch-Confusion&#34;&gt;&lt;a href=&#34;#KVAS-Activation-for-Branch-Confusion&#34; class=&#34;headerlink&#34; title=&#34;KVAS Activation for Branch Confusion&#34;&gt;&lt;/a&gt;KVAS Activation for Branch Confusion&lt;/h2&gt;&lt;p&gt;KVAS is not a mitigation that only applies to Meltdown. You can confirm this with the function &lt;code&gt;KiIsKvaShadowNeededForBranchConfusion&lt;/code&gt; called in the Check 1 routine.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs powershell&#34;&gt;__int64 __fastcall KiIsKvaShadowNeededForBranchConfusion(__int64 a1)
+{
+  unsigned int v2; // ebx
+  __int128 v4; // [&lt;span class=&#34;hljs-type&#34;&gt;rsp&lt;/span&gt;+&lt;span class=&#34;hljs-number&#34;&gt;20&lt;/span&gt;&lt;span class=&#34;hljs-type&#34;&gt;h&lt;/span&gt;] [&lt;span class=&#34;hljs-type&#34;&gt;rbp&lt;/span&gt;-&lt;span class=&#34;hljs-number&#34;&gt;28&lt;/span&gt;&lt;span class=&#34;hljs-type&#34;&gt;h&lt;/span&gt;] BYREF
+  __int64 v5; // [&lt;span class=&#34;hljs-type&#34;&gt;rsp&lt;/span&gt;+&lt;span class=&#34;hljs-number&#34;&gt;30&lt;/span&gt;&lt;span class=&#34;hljs-type&#34;&gt;h&lt;/span&gt;] [&lt;span class=&#34;hljs-type&#34;&gt;rbp&lt;/span&gt;-&lt;span class=&#34;hljs-number&#34;&gt;18&lt;/span&gt;&lt;span class=&#34;hljs-type&#34;&gt;h&lt;/span&gt;]
+
+  v5 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64;
+  v4 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64;
+  KiDetectHardwareSpecControlFeatures(a1, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64, (__int64)&amp;amp;v4, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( (v4 &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x8000) == &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; )
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64;
+  v2 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( !(unsigned int)KiIsBranchConfusionMitigationDesired(a1, &amp;amp;v4) )
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64;
+  LOBYTE(v2) = (unsigned int)KiIsBranchConfusionMitigationSupported(a1, &amp;amp;v4) != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; v2;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;As the function name suggests, this function checks whether the CPU is affected by the Branch Confusion vulnerability and determines whether KVA Shadow activation is necessary.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;If the &lt;code&gt;0x8000&lt;/code&gt; bit of &lt;code&gt;v4&lt;/code&gt;, the result of calling the &lt;code&gt;KiDetectHardwareSpecControlFeatures&lt;/code&gt; function, is 1, the CPU is affected by Branch Confusion.&lt;/li&gt;
+&lt;li&gt;If the relevant mitigation is supported, it returns True. - It enters the KVAS activation routine from the &lt;code&gt;KiDetectKvaLeakage&lt;/code&gt; function.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Let&amp;#x2019;s take a closer look at the &lt;code&gt;KiDetectHardwareSpecControlFeatures&lt;/code&gt; function.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *__fastcall &lt;span class=&#34;hljs-title&#34;&gt;KiDetectHardwareSpecControlFeatures&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(_KPRCB *PRCB, __int64 _zero, __int64 result2, &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *__zero)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; CpuModel_1; &lt;span class=&#34;hljs-comment&#34;&gt;// r14d&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int8 CpuVendor; &lt;span class=&#34;hljs-comment&#34;&gt;// al&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; CpuType_Family; &lt;span class=&#34;hljs-comment&#34;&gt;// r12&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;bool&lt;/span&gt; IsAnyHypervisorPresent; &lt;span class=&#34;hljs-comment&#34;&gt;// r9&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; CpuVendor_2; &lt;span class=&#34;hljs-comment&#34;&gt;// bl&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; ProcessorFlags; &lt;span class=&#34;hljs-comment&#34;&gt;// ecx&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int8 CpuModel; &lt;span class=&#34;hljs-comment&#34;&gt;// cl&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int8 CpuStepping; &lt;span class=&#34;hljs-comment&#34;&gt;// al&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *result; &lt;span class=&#34;hljs-comment&#34;&gt;// rax&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int8 CpuVendor_1; &lt;span class=&#34;hljs-comment&#34;&gt;// [rsp+20h] [rbp-60h]&lt;/span&gt;
+  
+  
+  CpuVendor = PRCB-&amp;gt;CpuVendor;
+  CpuType_Family = PRCB-&amp;gt;CpuType_Family;
+  LOBYTE(CpuModel_1) = PRCB-&amp;gt;CpuModel;
+&lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+  CpuVendor_1 = CpuVendor;
+  v48 = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+  
+  &lt;span class=&#34;hljs-comment&#34;&gt;// Hypervisor check&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( HviIsHypervisorMicrosoftCompatible() )
+  {
+    HviGetEnlightenmentInformation(&amp;amp;v54);
+    v53 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64;
+    HviGetHypervisorFeatures(&amp;amp;v53);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( (v53 &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x100000000000&lt;/span&gt;i64) == &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; || (v54 &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x1000&lt;/span&gt;) != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; )
+    {
+      IsAnyHypervisorPresent = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+    }
+    &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+    {
+      IsAnyHypervisorPresent = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+      v48 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+    }
+  }
+  &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+  {
+    IsAnyHypervisorPresent = HviIsAnyHypervisorPresent();
+    v48 = IsAnyHypervisorPresent;
+  }
+  v11 = result1;
+
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( KiIsBranchConfusionPresent(PRCB) )
+  {
+    v11 |= &lt;span class=&#34;hljs-number&#34;&gt;0x8000&lt;/span&gt;ui64;
+    *&amp;amp;result1 = v11;
+  }
+&lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+  *result2 = result1;
+  *(result2 + &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;) = &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;i64;
+  result = __zero;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( __zero )
+    *__zero = v8;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; result;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The function contains logic to check whether it is affected by various speculative execution-based side-channel vulnerabilities, but since the code is too long to write in its entirety, we will only look at the code that sets the &lt;code&gt;0x8000&lt;/code&gt; bit to enable KVAS.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;For a list of speculative execution-related vulnerabilities, refer to &lt;a href=&#34;https://support.microsoft.com/en-us/topic/kb4073119-windows-client-guidance-for-it-pros-to-protect-against-silicon-based-microarchitectural-and-speculative-execution-side-channel-vulnerabilities-35820a8a-ae13-1299-88cc-357f104f5b11&#34;&gt;MS Client Guidance&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;If the return value of the &lt;code&gt;KiIsBranchConfusionPresent&lt;/code&gt; function is True, the &lt;code&gt;0x8000&lt;/code&gt; bit is set.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;KiIsBranchConfusionPresent&lt;/code&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;__int64 __fastcall KiIsBranchConfusionPresent(_KPRCB *a1)
+{
+  bool IsAnyHypervisorPresent; &lt;span class=&#34;hljs-comment&#34;&gt;// al&lt;/span&gt;
+  unsigned int v3; &lt;span class=&#34;hljs-comment&#34;&gt;// edx&lt;/span&gt;
+
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( a1-&amp;gt;CpuVendor != &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; || (KeFeatureBits2 &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x1000000&lt;/span&gt;) != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; )
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64;
+  IsAnyHypervisorPresent = HviIsAnyHypervisorPresent();
+  v3 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( IsAnyHypervisorPresent )
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;i64;
+  LOBYTE(v3) = a1-&amp;gt;CpuType_Family != &lt;span class=&#34;hljs-number&#34;&gt;25&lt;/span&gt;;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; v3;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The function logic can be analyzed as follows.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;If CpuVendor is not AMD, return False.&lt;ul&gt;
+&lt;li&gt;Branch Confusion is a vulnerability that affects only AMD CPUs (&lt;a href=&#34;https://msrc.microsoft.com/update-guide/vulnerability/CVE-2022-23825&#34;&gt;CVE-2022-23825&lt;/a&gt;)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;If the Hypervisor is enabled, the &lt;code&gt;HviIsAnyHypervisorPresent&lt;/code&gt; function returns True&lt;ul&gt;
+&lt;li&gt;CVE-2022-23825 is a vulnerability that affects virtualized environments, so KVAS is implemented to activate only when the hypervisor is enabled.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;Returns True only if the Family Number is 25 for Zen 3 / Zen 3+ / Zen 4.&lt;ul&gt;
+&lt;li&gt;It can be seen that other architectures are not affected.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;After that, there is a final check before KVAS activation in &lt;code&gt;KiEnableKvaShadowing&lt;/code&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;__int64 __fastcall &lt;span class=&#34;hljs-title&#34;&gt;KiEnableKvaShadowing&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(_KPRCB *a1)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+  __int64 v2; &lt;span class=&#34;hljs-comment&#34;&gt;// rdx&lt;/span&gt;
+  __int64 v3; &lt;span class=&#34;hljs-comment&#34;&gt;// rcx&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; v4; &lt;span class=&#34;hljs-comment&#34;&gt;// cl&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int64 v5; &lt;span class=&#34;hljs-comment&#34;&gt;// rax&lt;/span&gt;
+  __int64 v6; &lt;span class=&#34;hljs-comment&#34;&gt;// rdx&lt;/span&gt;
+  __int64 v7; &lt;span class=&#34;hljs-comment&#34;&gt;// r11&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int8 v8; &lt;span class=&#34;hljs-comment&#34;&gt;// cf&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int64 v9; &lt;span class=&#34;hljs-comment&#34;&gt;// rax&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int64 v10; &lt;span class=&#34;hljs-comment&#34;&gt;// rax&lt;/span&gt;
+  __int64 result; &lt;span class=&#34;hljs-comment&#34;&gt;// rax&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int16 v12; &lt;span class=&#34;hljs-comment&#34;&gt;// cx&lt;/span&gt;
+
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( KiIsKvaShadowDisabled() )
+  {
+    KiIsKvaShadowConfigDisabled = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+  }
+  &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+  {
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( (KeFeatureBits2 &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x18000&lt;/span&gt;) == &lt;span class=&#34;hljs-number&#34;&gt;0x8000&lt;/span&gt; )
+      *(_QWORD *)(v3 + &lt;span class=&#34;hljs-number&#34;&gt;11520&lt;/span&gt;) = &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;i64;
+    v4 = KiKernelCetEnabled;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( !(_BYTE)KiKernelCetEnabled &amp;amp;&amp;amp; (&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int8)KiIsKvaLeakSimulated() )
+      KiKvaLeakageSimulate = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+    
+    &lt;span class=&#34;hljs-comment&#34;&gt;// Enable KVAS&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( KiKvaLeakage || KiKvaLeakageSimulate )
+    {
+      &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( v4 )
+        KeBugCheckEx(&lt;span class=&#34;hljs-number&#34;&gt;0x5D&lt;/span&gt;u, &lt;span class=&#34;hljs-number&#34;&gt;0x4B766120&lt;/span&gt;ui64, &lt;span class=&#34;hljs-number&#34;&gt;0x4B434554&lt;/span&gt;ui64, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64);
+      v5 = __readcr3();
+      a1-&amp;gt;KernelDirectoryTableBase = v5;
+      *(_QWORD *)(v2 + &lt;span class=&#34;hljs-number&#34;&gt;4216&lt;/span&gt;) = *(_QWORD *)(v2 + &lt;span class=&#34;hljs-number&#34;&gt;4100&lt;/span&gt;);
+      KiInitializeDescriptorIst(a1);
+      *(_QWORD *)(v7 + &lt;span class=&#34;hljs-number&#34;&gt;4100&lt;/span&gt;) = v7 + &lt;span class=&#34;hljs-number&#34;&gt;16896&lt;/span&gt;;
+      &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( a1-&amp;gt;Number )
+      {
+        result = KiShadowProcessorAllocation(a1, v7);
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( !(_DWORD)result )
+          &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; result;
+        v12 = *(_WORD *)(KeGetPrcb(&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64) + &lt;span class=&#34;hljs-number&#34;&gt;44714&lt;/span&gt;);
+        a1-&amp;gt;ShadowFlags |= &lt;span class=&#34;hljs-number&#34;&gt;2u&lt;/span&gt;;
+        a1-&amp;gt;VerwSelector = v12;
+      }
+      &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+      {
+        LOBYTE(v6) = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+        KiInitializeIdt(v7, v6);
+        KeGetCurrentThread()-&amp;gt;ApcState.Process-&amp;gt;AddressPolicy = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+        byte_140FCE0E0 = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+        _InterlockedOr(dword_140FCE57C, &lt;span class=&#34;hljs-number&#34;&gt;0x4000&lt;/span&gt;u);
+        KiSetAddressPolicy(&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;i64);
+        v8 = _bittest64((&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;signed&lt;/span&gt; __int64 *)&amp;amp;a1-&amp;gt;FeatureBits, &lt;span class=&#34;hljs-number&#34;&gt;0x2A&lt;/span&gt;u);
+        a1-&amp;gt;VerwSelector = &lt;span class=&#34;hljs-number&#34;&gt;24&lt;/span&gt;;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( v8 )
+        {
+          v9 = __readcr4();
+          __writecr4(v9 &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0xFFFFFFFFFFFDFF7F&lt;/span&gt;ui64 | &lt;span class=&#34;hljs-number&#34;&gt;0x20000&lt;/span&gt;);
+          v10 = __readcr3();
+          __writecr3(v10 | &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;);
+          KiFlushPcid |= &lt;span class=&#34;hljs-number&#34;&gt;1u&lt;/span&gt;;
+        }
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( (a1-&amp;gt;FeatureBits &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x240000000000&lt;/span&gt;i64) == &lt;span class=&#34;hljs-number&#34;&gt;0x240000000000&lt;/span&gt;i64 )
+          KiFlushPcid |= &lt;span class=&#34;hljs-number&#34;&gt;2u&lt;/span&gt;;
+        HvlRescindEnlightenments();
+        KiKvaShadow = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+        KiKvaShadowMode = &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; - (KiFlushPcid != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+      }
+      &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( KiFlushPcid )
+        _interlockedbittestandset64((&lt;span class=&#34;hljs-keyword&#34;&gt;volatile&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;signed&lt;/span&gt; __int32 *)&amp;amp;a1-&amp;gt;KernelDirectoryTableBase, &lt;span class=&#34;hljs-number&#34;&gt;0x3F&lt;/span&gt;ui64);
+    }
+  }
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;i64;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;if ( KiKvaLeakage || KiKvaLeakageSimulate )&lt;/code&gt; branch&lt;ul&gt;
+&lt;li&gt;Global variable &lt;code&gt;KiKvaLeakage&lt;/code&gt; set in the &lt;code&gt;KiDetectKvaLeakage&lt;/code&gt; function&lt;/li&gt;
+&lt;li&gt;Global variable &lt;code&gt;KiKvaLeakageSimulate&lt;/code&gt;, which is estimated to be determined by manual settings (for debugging and testing)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;If either of the two global variable values is set, KVAS is activated&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h1 id=&#34;Three-line-summary&#34;&gt;&lt;a href=&#34;#Three-line-summary&#34; class=&#34;headerlink&#34; title=&#34;Three-line summary&#34;&gt;&lt;/a&gt;Three-line summary&lt;/h1&gt;&lt;ul&gt;
+&lt;li&gt;The Windows kernel dynamically activates KVAS (and other mitigations) at initialization depending on the CPU.&lt;/li&gt;
+&lt;li&gt;There are two main criteria for determining whether to activate KVAS&lt;ul&gt;
+&lt;li&gt;Intel: Rogue Data Cache Load (Meltdown)&lt;/li&gt;
+&lt;li&gt;AMD: Branch Confusion&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;The CPU checks whether hardware mitigations provided through MSR are applied, and if MSR functionality is not available, it determines whether to activate KVAS through legacy checks (bitmask, model number information, etc.).&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h1 id=&#34;Outro&#34;&gt;&lt;a href=&#34;#Outro&#34; class=&#34;headerlink&#34; title=&#34;Outro&#34;&gt;&lt;/a&gt;Outro&lt;/h1&gt;&lt;p&gt;&lt;img src=&#34;/2025/08/10/l0ch/deep-dive-into-kva/en/image1.jpg&#34; alt=&#34;Untitled&#34;&gt;&lt;br&gt;Actually, when side-channel vulnerabilities based on speculative execution were a hot topic, I was busy fulfilling my military service obligations and didn&amp;#x2019;t have a chance to look into it properly. However, while writing this article and the previous one on KASLR bypass, I had the opportunity to examine it in detail. I realized once again that understanding past issues is just as important as keeping up with current trends.  &lt;del&gt;Now, I&amp;#x2019;m going to try reading Windows Internals again&amp;#x2026;&lt;/del&gt;&lt;/p&gt;
+&lt;p&gt;I&amp;#x2019;ll bring you another interesting research topic next time~&lt;/p&gt;
+&lt;h1 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h1&gt;&lt;p&gt;&lt;a href=&#34;https://support.microsoft.com/en-us/topic/kb4073119-windows-client-guidance-for-it-pros-to-protect-against-silicon-based-microarchitectural-and-speculative-execution-side-channel-vulnerabilities-35820a8a-ae13-1299-88cc-357f104f5b11&#34;&gt;https://support.microsoft.com/en-us/topic/kb4073119-windows-client-guidance-for-it-pros-to-protect-against-silicon-based-microarchitectural-and-speculative-execution-side-channel-vulnerabilities-35820a8a-ae13-1299-88cc-357f104f5b11&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://msrc.microsoft.com/update-guide/vulnerability/CVE-2022-23825&#34;&gt;https://msrc.microsoft.com/update-guide/vulnerability/CVE-2022-23825&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/technical-documentation/cpuid-enumeration-and-architectural-msrs.html&#34;&gt;https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/technical-documentation/cpuid-enumeration-and-architectural-msrs.html&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/ntos/amd64_x/cpu_vendors.htm&#34;&gt;https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/ntos/amd64_x/cpu_vendors.htm&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://support.microsoft.com/en-us/topic/kb4074629-understanding-speculationcontrol-powershell-script-output-fd70a80a-a63f-e539-cda5-5be4c9e67c04&#34;&gt;https://support.microsoft.com/en-us/topic/kb4074629-understanding-speculationcontrol-powershell-script-output-fd70a80a-a63f-e539-cda5-5be4c9e67c04&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.intel.com/content/www/us/en/content-details/782158/intel-64-and-ia-32-architectures-software-developer-s-manual-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4.html&#34;&gt;https://www.intel.com/content/www/us/en/content-details/782158/intel-64-and-ia-32-architectures-software-developer-s-manual-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4.html&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.vergiliusproject.com/kernels/x64/windows-11/24h2/_KPRCB&#34;&gt;https://www.vergiliusproject.com/kernels/x64/windows-11/24h2/_KPRCB&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] Deep Dive into KVA Shadow&#39;s Dynamic Activation Mechanism(En) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;Hello, this is L0ch!  It&amp;#x2019;s been a while since my last post.&lt;/p&gt;
+&lt;p&gt;Last week&amp;#x2019;s topic was &lt;a href=&#34;https://hackyboiz.github.io/2025/04/13/l0ch/bypassing-kernel-mitigation-part0/ko/&#34;&gt;[Research] Bypassing Windows Kernel Mitigations: Part 0 - Deep Dive into KASLR Leaks Restriction&lt;/a&gt;. I mentioned that one of the conditions for the KASLR bypass PoC to work is that KVA Shadow is disabled!&lt;/p&gt;
+&lt;p&gt;At the time of writing, I had assumed that KVAS was disabled by default in the latest Windows 11, but through feedback, I learned that KVAS is dynamically activated based on CPU model and specific vulnerabilities, rather than Windows version.&lt;/p&gt;
+&lt;h1 id=&#34;SpeculationControl-PowerShell-script&#34;&gt;&lt;a href=&#34;#SpeculationControl-PowerShell-script&#34; class=&#34;headerlink&#34; title=&#34;SpeculationControl PowerShell script&#34;&gt;&lt;/a&gt;&lt;strong&gt;SpeculationControl PowerShell script&lt;/strong&gt;&lt;/h1&gt;&lt;p&gt;KVAS is closely related to various speculative execution-based side-channel vulnerabilities, such as Meltdown and Spectre, so you can easily check the relevant MS support information.&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://support.microsoft.com/en-us/topic/kb4074629-understanding-speculationcontrol-powershell-script-output-fd70a80a-a63f-e539-cda5-5be4c9e67c04&#34;&gt;https://support.microsoft.com/en-us/topic/kb4074629-understanding-speculationcontrol-powershell-script-output-fd70a80a-a63f-e539-cda5-5be4c9e67c04&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;The results of testing on my computer with a 12th generation Intel CPU are summarized as follows.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs powershell&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# Windwos 11 24H2 - Intel 12th i7-12700&lt;/span&gt;
+
+&lt;span class=&#34;hljs-built_in&#34;&gt;PS&lt;/span&gt; C:\WINDOWS\system32&amp;gt; &lt;span class=&#34;hljs-built_in&#34;&gt;Install-Module&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;-Name&lt;/span&gt; SpeculationControl                                                                                                                                                                                 need a NuGet provider to &lt;span class=&#34;hljs-keyword&#34;&gt;continue&lt;/span&gt;.
+
+&lt;span class=&#34;hljs-built_in&#34;&gt;PS&lt;/span&gt; C:\WINDOWS\system32&amp;gt; &lt;span class=&#34;hljs-built_in&#34;&gt;Get-SpeculationControlSettings&lt;/span&gt;
+
+BTIHardwarePresent                  : True
+BTIWindowsSupportPresent            : True
+BTIWindowsSupportEnabled            : True
+BTIDisabledBySystemPolicy           : False
+BTIDisabledByNoHardwareSupport      : False
+BTIKernelRetpolineEnabled           : False
+BTIKernelImportOptimizationEnabled  : True
+RdclHardwareProtectedReported       : True
+RdclHardwareProtected               : True
+KVAShadowRequired                   : False
+KVAShadowWindowsSupportPresent      : True
+KVAShadowWindowsSupportEnabled      : False
+KVAShadowPcidEnabled                : False
+SSBDWindowsSupportPresent           : True
+SSBDHardwareVulnerable              : True
+SSBDHardwarePresent                 : True
+SSBDWindowsSupportEnabledSystemWide : False
+L1TFHardwareVulnerable              : False
+L1TFWindowsSupportPresent           : True
+L1TFWindowsSupportEnabled           : False
+L1TFInvalidPteBit                   : &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+L1DFlushSupported                   : True
+HvL1tfStatusAvailable               : True
+HvL1tfProcessorNotAffected          : True
+MDSWindowsSupportPresent            : True
+MDSHardwareVulnerable               : False
+MDSWindowsSupportEnabled            : False
+FBClearWindowsSupportPresent        : True
+SBDRSSDPHardwareVulnerable          : False
+FBSDPHardwareVulnerable             : False
+PSDPHardwareVulnerable              : False
+FBClearWindowsSupportEnabled        : False
+&lt;/code&gt;&lt;/pre&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Hardware requires kernel VA shadowing&lt;/th&gt;
+&lt;th&gt;Maps to KVAShadowRequired. This line tells you whether your system requires kernel VA shadowing to mitigate a vulnerability.&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;Windows OS support for rogue data cache load mitigation is present&lt;/td&gt;
+&lt;td&gt;Maps to KVAShadowWindowsSupportPresent. This line tells you whether Windows operating system support for the kernel VA shadow feature is present.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Windows OS support for kernel VA shadow is present&lt;/td&gt;
+&lt;td&gt;Maps to KVAShadowWindowsSupportPresent. This line tells you whether Windows operating system support for the kernel VA shadow feature is present. If it is True, the January 2018 update is installed on the device, and kernel VA shadow is supported. If it is False, the January 2018 update is not installed, and kernel VA shadow support does not exist.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Windows OS support for rogue data cache load mitigation is enabled&lt;/td&gt;
+&lt;td&gt;Maps to KVAShadowWindowsSupportEnabled. This line tells you whether the kernel VA shadow feature is enabled. If it is True, the hardware is believed to be vulnerable to CVE-2017-5754, Windows operating system support is present, and the feature is enabled.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Windows OS support for kernel VA shadow is enabled&lt;/td&gt;
+&lt;td&gt;Maps to KVAShadowWindowsSupportEnabled. This line tells you whether the kernel VA shadow feature is enabled. If it is True, Windows operating system support is present, and the feature is enabled. The Kernel VA shadow feature is currently enabled by default on client versions of Windows and is disabled by default on versions of Windows Server. If it is False, either Windows operating system support is not present, or the feature is not enabled.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;Although the KVA Shadow feature exists in Windows,(KVAShadowWindowsSupportPresent: True) 
+it is &lt;span class=&#34;hljs-keyword&#34;&gt;not&lt;/span&gt; necessary.(KVAShadowRequired: False) 
+&lt;span class=&#34;hljs-function&#34;&gt;so &lt;span class=&#34;hljs-keyword&#34;&gt;not&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;activated&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(KVAShadowWindowsSupportEnabled: False)&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;We can see that KVAS is disabled, which means that although the mitigation feature exists, &lt;strong&gt;the hardware (CPU) is not vulnerable, so the mitigation feature is disabled&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;So where and how does Windows identify vulnerable CPUs and determine whether to enable KVAS?&lt;/p&gt;
+&lt;h1 id=&#34;Background-Knowledge-CPU-Identification&#34;&gt;&lt;a href=&#34;#Background-Knowledge-CPU-Identification&#34; class=&#34;headerlink&#34; title=&#34;Background Knowledge - CPU Identification&#34;&gt;&lt;/a&gt;Background Knowledge - CPU Identification&lt;/h1&gt;&lt;p&gt;Windows identifies the CPU vendor on its own. As defined in the &lt;a href=&#34;https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/ntos/amd64_x/cpu_vendors.htm&#34;&gt;CPU_VENDORS&lt;/a&gt; Enum, unknown manufacturers are defined as 0, AMD as 1, and Intel as 2.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;typedef enum
+{
+    CPU_UNKNOWN,   &lt;span class=&#34;hljs-comment&#34;&gt;// 0&lt;/span&gt;
+    CPU_AMD,       &lt;span class=&#34;hljs-comment&#34;&gt;// 1&lt;/span&gt;
+    CPU_INTEL,     &lt;span class=&#34;hljs-comment&#34;&gt;// 2&lt;/span&gt;
+    CPU_VIA        &lt;span class=&#34;hljs-comment&#34;&gt;// 3&lt;/span&gt;
+} CPU_VENDORS;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;CPU information such as vendor, Faily ID, and Model ID is stored in the &lt;a href=&#34;https://www.vergiliusproject.com/kernels/x64/windows-11/24h2/_KPRCB&#34;&gt;KPRCB&lt;/a&gt; structure. &lt;/p&gt;
+&lt;p&gt;These IDs are defined by each CPU vendor. In the case of Intel, the Family ID, Model ID, and generation information for Intel CPU products are defined in the &lt;a href=&#34;https://www.intel.com/content/www/us/en/content-details/782158/&#34;&gt;Intel Developer Manual&lt;/a&gt;. Since it&amp;#x2019;s not feasible to review the entire 5,000-page manual, I used gemini to summarize the information in the table below.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;&lt;strong&gt;MircoArchitecture(gen)&lt;/strong&gt;&lt;/th&gt;
+&lt;th&gt;Processor family&lt;/th&gt;
+&lt;th&gt;&lt;strong&gt;Family ID (Hex)&lt;/strong&gt;&lt;/th&gt;
+&lt;th&gt;&lt;strong&gt;Model ID (Hex)&lt;/strong&gt;&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;Raptor Lake (13 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;B7H, BFH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Alder Lake (12 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;97H, 9AH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Tiger Lake (11 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;8CH, 8DH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Rocket Lake (11 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;A7H&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Ice Lake (10 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;7DH, 7EH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Comet Lake (10 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;A5H, A6H&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Amber Lake Y (8 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;8EH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Whiskey Lake U (8 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;8EH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Coffee Lake (8, 9 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;9EH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Kaby Lake (7 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;8EH, 9EH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Skylake (6 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;4EH, 5EH, 55H&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Broadwell (5 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;3DH, 47H, 4FH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Haswell (4 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;3CH, 45H, 46H, 3FH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Ivy Bridge (3 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;3AH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Sandy Bridge (2 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;2AH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Westmere (2010)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;25H, 2CH, 2FH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Nehalem (1 gen)&lt;/td&gt;
+&lt;td&gt;Intel Core&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;1AH, 1EH, 1FH, 2EH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Penryn&lt;/td&gt;
+&lt;td&gt;Core 2 Duo/Quad&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;17H, 1DH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Merom&lt;/td&gt;
+&lt;td&gt;Core 2 Duo&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;0FH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Yonah&lt;/td&gt;
+&lt;td&gt;Core Duo/Solo&lt;/td&gt;
+&lt;td&gt;06H&lt;/td&gt;
+&lt;td&gt;0EH&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;I also organized and analyzed the ID lists of AMD and other vendors.&lt;/p&gt;
+&lt;h1 id=&#34;Analysis-of-KVAS-Activation-Logic&#34;&gt;&lt;a href=&#34;#Analysis-of-KVAS-Activation-Logic&#34; class=&#34;headerlink&#34; title=&#34;Analysis of KVAS Activation Logic&#34;&gt;&lt;/a&gt;Analysis of KVAS Activation Logic&lt;/h1&gt;&lt;p&gt;Analysis Environment: Windows 24H2 64-bit 10.0.26100.1742&lt;/p&gt;
+&lt;p&gt;Returning to the topic at hand, in order to analyze the mitigation initialization logic, we need to examine the part of the Windows boot process that initializes the kernel. &lt;/p&gt;
+&lt;p&gt;The entry point of the Windows kernel image &lt;code&gt;ntoskrnl.exe&lt;/code&gt; is &lt;code&gt;KiSystemStartup&lt;/code&gt;, which performs various tasks such as CPU initialization, mitigation-related feature settings, and kernel debugger initialization.&lt;/p&gt;
+&lt;p&gt;The function that determines whether KVAS is enabled was surprisingly easy to find.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;KiSystemStartup &amp;#x2192; KiInitializeBootStructures &amp;#x2192; KiSetFeatureBits &amp;#x2192; KiDetectKvaLeakage&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;NTSTATUS __stdcall __noreturn &lt;span class=&#34;hljs-title&#34;&gt;KiSystemStartup&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+&lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+  KeLoaderBlock_0 = (__int64)DriverObject;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( !*((_DWORD *)DriverObject-&amp;gt;MajorFunction[&lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;] + &lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;) )
+    KasanInitSystem(DriverObject, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( !*(_DWORD *)(*(_QWORD *)(KeLoaderBlock_0 + &lt;span class=&#34;hljs-number&#34;&gt;136&lt;/span&gt;) + &lt;span class=&#34;hljs-number&#34;&gt;36&lt;/span&gt;i64) )
+    KdInitSystem(&lt;span class=&#34;hljs-number&#34;&gt;0xFFFFFFFF&lt;/span&gt;i64, KeLoaderBlock_0);
+  v2 = *(&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; **)(KeLoaderBlock_0 + &lt;span class=&#34;hljs-number&#34;&gt;136&lt;/span&gt;);
+
+&lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+
+  KiInitializeBootStructures(KeLoaderBlock_0);  &lt;span class=&#34;hljs-comment&#34;&gt;// Initialize Boot Structures&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( !*MK_FP(&lt;span class=&#34;hljs-number&#34;&gt;43&lt;/span&gt;, *MK_FP(&lt;span class=&#34;hljs-number&#34;&gt;43&lt;/span&gt;, KeLoaderBlock_0 + &lt;span class=&#34;hljs-number&#34;&gt;136&lt;/span&gt;) + &lt;span class=&#34;hljs-number&#34;&gt;36&lt;/span&gt;i64) )
+    KdInitSystem(&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64, KeLoaderBlock_0);
+&lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+
+}
+
+&lt;span class=&#34;hljs-function&#34;&gt;__int64 __fastcall &lt;span class=&#34;hljs-title&#34;&gt;KiInitializeBootStructures&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(__int64 a1)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+  KPCR *Pcr; &lt;span class=&#34;hljs-comment&#34;&gt;// r14&lt;/span&gt;
+  _KPROCESS **v2; &lt;span class=&#34;hljs-comment&#34;&gt;// rbx&lt;/span&gt;
+  &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; _&lt;span class=&#34;hljs-title&#34;&gt;KPRCB&lt;/span&gt; *&lt;span class=&#34;hljs-title&#34;&gt;CurrentPrcb&lt;/span&gt;;&lt;/span&gt; &lt;span class=&#34;hljs-comment&#34;&gt;// rdi&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( !KeGetPcr()-&amp;gt;Prcb.Number )
+    KiInitializeNxSupportDiscard(v19, v18, v20);
+  HalInitializeProcessor(Number, a1, v20);
+  KiSetFeatureBits(CurrentPrcb);                &lt;span class=&#34;hljs-comment&#34;&gt;// Set Prcb Feature Bits&lt;/span&gt;
+  CurrentPCB_Number = CurrentPrcb-&amp;gt;Number;
+  v27 = KiSystemCall32;
+  v28 = KiSystemCall64;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( !CurrentPCB_Number )
+  {
+    KiEnableKvaShadowing(CurrentPrcb);              &lt;span class=&#34;hljs-comment&#34;&gt;//  Decide whether to enable KVA Shadow&lt;/span&gt;
+    CurrentPCB_Number = CurrentPrcb-&amp;gt;Number;
+  }
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( KiKvaShadow )                             &lt;span class=&#34;hljs-comment&#34;&gt;// When the KVA Shadow flag is enabled&lt;/span&gt;
+  {
+    v27 = KiSystemCall32Shadow;                 &lt;span class=&#34;hljs-comment&#34;&gt;// instead of KiSystemCall32/KiSystemCall64  &lt;/span&gt;
+    v28 = KiSystemCall64Shadow;                 &lt;span class=&#34;hljs-comment&#34;&gt;// use KiSystemCall32Shadow/KiSystemCall64Shadow&lt;/span&gt;
+  }
+  
+&lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+}
+
+&lt;span class=&#34;hljs-function&#34;&gt;__int64 __fastcall &lt;span class=&#34;hljs-title&#34;&gt;KiSetFeatureBits&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(_KPRCB *CurrentPRCB)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; CpuType; &lt;span class=&#34;hljs-comment&#34;&gt;// bl&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; CpuModel; &lt;span class=&#34;hljs-comment&#34;&gt;// ecx&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int8 CpuVendor; &lt;span class=&#34;hljs-comment&#34;&gt;// dl&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; ProcessorSignature; &lt;span class=&#34;hljs-comment&#34;&gt;// eax&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int8 CpuStepping; &lt;span class=&#34;hljs-comment&#34;&gt;// cl&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int8 v57; &lt;span class=&#34;hljs-comment&#34;&gt;// al&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int64 v58; &lt;span class=&#34;hljs-comment&#34;&gt;// rcx&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+
+  CpuType = CurrentPRCB-&amp;gt;CpuType_Family;        &lt;span class=&#34;hljs-comment&#34;&gt;// CpuType = Processor Family&lt;/span&gt;
+  CpuModel = CurrentPRCB-&amp;gt;CpuModel;
+  CpuVendor = CurrentPRCB-&amp;gt;CpuVendor;
+  v123 = (CpuVendor - &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;) &amp;lt;= &lt;span class=&#34;hljs-number&#34;&gt;1u&lt;/span&gt;;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( CurrentPRCB-&amp;gt;Number )
+  {
+    ProcessorSignature = KiGetProcessorSignature(&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64);
+    KiSetProcessorSignature(CurrentPRCB, ProcessorSignature);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; LABEL_40;
+  }
+
+&lt;span class=&#34;hljs-comment&#34;&gt;//... &lt;/span&gt;
+  KiDetectKvaLeakage(CurrentPRCB);      &lt;span class=&#34;hljs-comment&#34;&gt;// Detect - KVA needs to be activated&lt;/span&gt;
+  _m_prefetchw(CurrentPRCB);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( CurrentPRCB-&amp;gt;CpuVendor == &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; )
+  {
+    v52 |= &lt;span class=&#34;hljs-number&#34;&gt;0x100000&lt;/span&gt;u;
+    HIDWORD(v134) = v52;
+  }
+&lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;h2 id=&#34;KVAS-Activation-for-Meltdown&#34;&gt;&lt;a href=&#34;#KVAS-Activation-for-Meltdown&#34; class=&#34;headerlink&#34; title=&#34;KVAS Activation for Meltdown&#34;&gt;&lt;/a&gt;KVAS Activation for Meltdown&lt;/h2&gt;&lt;p&gt;In the above call chain, the &lt;code&gt;KiDetectKvaLeakage&lt;/code&gt; function is the core function that determines whether KVA is enabled.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; __fastcall &lt;span class=&#34;hljs-title&#34;&gt;KiDetectKvaLeakage&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(_KPRCB *a1)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+  __int64 p_CpuVendor; &lt;span class=&#34;hljs-comment&#34;&gt;// rsi&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int64 _RAX; &lt;span class=&#34;hljs-comment&#34;&gt;// rax&lt;/span&gt;
+  __int64 v4; &lt;span class=&#34;hljs-comment&#34;&gt;// rcx&lt;/span&gt;
+  __int64 _RAX; &lt;span class=&#34;hljs-comment&#34;&gt;// rax&lt;/span&gt;
+  __int64 _RAX; &lt;span class=&#34;hljs-comment&#34;&gt;// rax&lt;/span&gt;
+  __int64 _RDX; &lt;span class=&#34;hljs-comment&#34;&gt;// rdx&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int64 v13; &lt;span class=&#34;hljs-comment&#34;&gt;// rdx&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;bool&lt;/span&gt; v14; &lt;span class=&#34;hljs-comment&#34;&gt;// zf&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *v15; &lt;span class=&#34;hljs-comment&#34;&gt;// rdx&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; v16; &lt;span class=&#34;hljs-comment&#34;&gt;// ecx&lt;/span&gt;
+  __int64 v17; &lt;span class=&#34;hljs-comment&#34;&gt;// rbx&lt;/span&gt;
+  __int64 _RAX; &lt;span class=&#34;hljs-comment&#34;&gt;// rax&lt;/span&gt;
+  __int64 _RAX; &lt;span class=&#34;hljs-comment&#34;&gt;// rax&lt;/span&gt;
+  __int64 _RAX; &lt;span class=&#34;hljs-comment&#34;&gt;// rax&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; Number; &lt;span class=&#34;hljs-comment&#34;&gt;// edx&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; v29[&lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;]; &lt;span class=&#34;hljs-comment&#34;&gt;// [rsp+30h] [rbp-20h] BYREF&lt;/span&gt;
+
+  v29[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;] = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+  p_CpuVendor = &amp;amp;a1-&amp;gt;CpuVendor;
+  
+  &lt;span class=&#34;hljs-comment&#34;&gt;// Check 1&lt;/span&gt;
+  LODWORD(_RAX) = KiIsKvaShadowNeededForBranchConfusion(a1);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( _RAX )
+    &lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; ENABLE_KVAS_BRANCH_CONFUSION;
+  LODWORD(_RAX) = *p_CpuVendor;
+  
+  &lt;span class=&#34;hljs-comment&#34;&gt;// Check 2&lt;/span&gt;
+  &lt;span class=&#34;hljs-comment&#34;&gt;// Intel - Check with bitmask&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( *p_CpuVendor == &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; )
+  {
+    _RAX = a1-&amp;gt;CpuModel;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( a1-&amp;gt;CpuType == &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt; &amp;amp;&amp;amp; _RAX &amp;lt;= &lt;span class=&#34;hljs-number&#34;&gt;0x36&lt;/span&gt;u )
+    {
+      v4 = &lt;span class=&#34;hljs-number&#34;&gt;0x6000C010000000&lt;/span&gt;i64;
+      &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( _bittest64(&amp;amp;v4, _RAX) )
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; _RAX;
+    }
+  }
+  &lt;span class=&#34;hljs-comment&#34;&gt;// Others - disable KVAS&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( _RAX != &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt; || a1-&amp;gt;CpuType == &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt; &amp;amp;&amp;amp; a1-&amp;gt;CpuModel == &lt;span class=&#34;hljs-number&#34;&gt;13&lt;/span&gt;)
+  {
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; _RAX;
+  }
+	
+	&lt;span class=&#34;hljs-comment&#34;&gt;// Check 3&lt;/span&gt;
+	&lt;span class=&#34;hljs-comment&#34;&gt;// IA32_ARCH_CAPABILITIES support query&lt;/span&gt;
+  _RAX = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64;
+  __asm { cpuid }
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( _RAX &amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt; )
+    &lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; ENABLE_KVAS;
+  _RAX = &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;i64;
+  __asm { cpuid }
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( (_RDX &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x20000000&lt;/span&gt;) == &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; )
+    &lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; ENABLE_KVAS;
+
+	&lt;span class=&#34;hljs-comment&#34;&gt;// Check 3&lt;/span&gt;
+	&lt;span class=&#34;hljs-comment&#34;&gt;// msr address 0x10A - IA32_ARCH_CAPABILITIES&lt;/span&gt;
+  _RAX = __readmsr(&lt;span class=&#34;hljs-number&#34;&gt;0x10A&lt;/span&gt;u);
+  &lt;span class=&#34;hljs-comment&#34;&gt;//IA32_ARCH_CAPABILITIES bit 0 : RDCL_NO&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( (_RAX &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;) == &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; )
+    &lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; ENABLE_KVAS;
+ 
+  KiMicrocodeTrackerEnabled = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+  LODWORD(_RAX) = &lt;span class=&#34;hljs-number&#34;&gt;3670016&lt;/span&gt;;
+  LOBYTE(v13) = (KeFeatureBits2 &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x28&lt;/span&gt;) == &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( (KeFeatureBits2 &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x380000&lt;/span&gt;) != &lt;span class=&#34;hljs-number&#34;&gt;3670016&lt;/span&gt; )
+  {
+    LODWORD(_RAX) = KiIsFbClearSupported(KeFeatureBits2 &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x380000&lt;/span&gt;, v13);
+    LOBYTE(v13) = _RAX | v13;
+  }
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( v13 )
+  {
+ENABLE_KVAS:
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( a1-&amp;gt;Number &amp;amp;&amp;amp; !KiKvaLeakage )
+      KeBugCheckEx(&lt;span class=&#34;hljs-number&#34;&gt;0x5D&lt;/span&gt;u, &lt;span class=&#34;hljs-number&#34;&gt;0x4B56414C&lt;/span&gt;ui64, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64);
+ENABLE_KVAS_BRANCH_CONFUSION:
+    v14 = *p_CpuVendor == &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;;
+    **KiKvaLeakage = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;**
+&lt;span class=&#34;hljs-comment&#34;&gt;//... for enable KVA&lt;/span&gt;
+  }
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; _RAX;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The &lt;code&gt;KiDetectKvaLeakage&lt;/code&gt; function determines whether KVAS is enabled based on CPU vendor and model information included in KPRCB and information that can be read from MSR. The verification routine can be divided into three main parts.&lt;/p&gt;
+&lt;h3 id=&#34;Check-1&#34;&gt;&lt;a href=&#34;#Check-1&#34; class=&#34;headerlink&#34; title=&#34;Check 1&#34;&gt;&lt;/a&gt;Check 1&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;Check whether affected by Branch Confusion vulnerability through the &lt;code&gt;KiIsKvaShadowNeededForBranchConfusion&lt;/code&gt; function&lt;/li&gt;
+&lt;li&gt;If the call result of the function is affected by Branch Confusion vulnerability, proceed to the &lt;code&gt;ENABLE_KVAS_BRANCH_CONFUSION&lt;/code&gt; branch to activate KVAS&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;Check-2&#34;&gt;&lt;a href=&#34;#Check-2&#34; class=&#34;headerlink&#34; title=&#34;Check 2&#34;&gt;&lt;/a&gt;Check 2&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;Filter out older CPUs that are not affected by Meltdown and do not require KVAS activation using a bitmask, and disable KVAS.&lt;/li&gt;
+&lt;li&gt;Furthermore, since Meltdown is a vulnerability that only affects Intel processor architectures, disable KVAS for other vendors as well.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;Check-3&#34;&gt;&lt;a href=&#34;#Check-3&#34; class=&#34;headerlink&#34; title=&#34;Check 3&#34;&gt;&lt;/a&gt;Check 3&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;First, check whether the CPU supports the MSR (Model Specific Register) function.&lt;ul&gt;
+&lt;li&gt;If MSR is not supported, proceed to the &lt;code&gt;ENABLE_KVAS&lt;/code&gt; branch to activate KVAS, as it is an older CPU affected by Meltdown.&lt;/li&gt;
+&lt;li&gt;Models that do not support MSR but are not affected are first filtered through a bitmask in the Check 2 routine.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;Read the MSR address &lt;code&gt;0x10A&lt;/code&gt; using &lt;code&gt;__readmsr&lt;/code&gt; - &lt;a href=&#34;https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/technical-documentation/cpuid-enumeration-and-architectural-msrs.html&#34;&gt;IA32_ARCH_CAPABILITIES&lt;/a&gt;&lt;ul&gt;
+&lt;li&gt;If field 0 (&lt;code&gt;RDCL_NO&lt;/code&gt;) of the result (&lt;code&gt;_RAX&lt;/code&gt;) is not enabled, proceed to the &lt;code&gt;ENABLE_KVAS&lt;/code&gt; branch to enable KVAS&lt;/li&gt;
+&lt;li&gt;RDCL_NO: A bit flag indicating immunity to Rogue Data Cache Load (Meltdown)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;If KVAS is determined to be necessary through the above verification process, &lt;code&gt;KiKvaLeakage&lt;/code&gt; is set to 1.&lt;/p&gt;
+&lt;p&gt;The main functions of this function can be summarized as identifying Intel processors affected by the Meltdown vulnerability in Check 2 and Check 3 and setting the KVAS activation flag. Check 1 will be explained in more detail below.&lt;/p&gt;
+&lt;h2 id=&#34;KVAS-Activation-for-Branch-Confusion&#34;&gt;&lt;a href=&#34;#KVAS-Activation-for-Branch-Confusion&#34; class=&#34;headerlink&#34; title=&#34;KVAS Activation for Branch Confusion&#34;&gt;&lt;/a&gt;KVAS Activation for Branch Confusion&lt;/h2&gt;&lt;p&gt;KVAS is not a mitigation that only applies to Meltdown. You can confirm this with the function &lt;code&gt;KiIsKvaShadowNeededForBranchConfusion&lt;/code&gt; called in the Check 1 routine.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs powershell&#34;&gt;__int64 __fastcall KiIsKvaShadowNeededForBranchConfusion(__int64 a1)
+{
+  unsigned int v2; // ebx
+  __int128 v4; // [&lt;span class=&#34;hljs-type&#34;&gt;rsp&lt;/span&gt;+&lt;span class=&#34;hljs-number&#34;&gt;20&lt;/span&gt;&lt;span class=&#34;hljs-type&#34;&gt;h&lt;/span&gt;] [&lt;span class=&#34;hljs-type&#34;&gt;rbp&lt;/span&gt;-&lt;span class=&#34;hljs-number&#34;&gt;28&lt;/span&gt;&lt;span class=&#34;hljs-type&#34;&gt;h&lt;/span&gt;] BYREF
+  __int64 v5; // [&lt;span class=&#34;hljs-type&#34;&gt;rsp&lt;/span&gt;+&lt;span class=&#34;hljs-number&#34;&gt;30&lt;/span&gt;&lt;span class=&#34;hljs-type&#34;&gt;h&lt;/span&gt;] [&lt;span class=&#34;hljs-type&#34;&gt;rbp&lt;/span&gt;-&lt;span class=&#34;hljs-number&#34;&gt;18&lt;/span&gt;&lt;span class=&#34;hljs-type&#34;&gt;h&lt;/span&gt;]
+
+  v5 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64;
+  v4 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64;
+  KiDetectHardwareSpecControlFeatures(a1, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64, (__int64)&amp;amp;v4, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( (v4 &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x8000) == &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; )
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64;
+  v2 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( !(unsigned int)KiIsBranchConfusionMitigationDesired(a1, &amp;amp;v4) )
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64;
+  LOBYTE(v2) = (unsigned int)KiIsBranchConfusionMitigationSupported(a1, &amp;amp;v4) != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; v2;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;As the function name suggests, this function checks whether the CPU is affected by the Branch Confusion vulnerability and determines whether KVA Shadow activation is necessary.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;If the &lt;code&gt;0x8000&lt;/code&gt; bit of &lt;code&gt;v4&lt;/code&gt;, the result of calling the &lt;code&gt;KiDetectHardwareSpecControlFeatures&lt;/code&gt; function, is 1, the CPU is affected by Branch Confusion.&lt;/li&gt;
+&lt;li&gt;If the relevant mitigation is supported, it returns True. - It enters the KVAS activation routine from the &lt;code&gt;KiDetectKvaLeakage&lt;/code&gt; function.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Let&amp;#x2019;s take a closer look at the &lt;code&gt;KiDetectHardwareSpecControlFeatures&lt;/code&gt; function.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *__fastcall &lt;span class=&#34;hljs-title&#34;&gt;KiDetectHardwareSpecControlFeatures&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(_KPRCB *PRCB, __int64 _zero, __int64 result2, &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *__zero)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; CpuModel_1; &lt;span class=&#34;hljs-comment&#34;&gt;// r14d&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int8 CpuVendor; &lt;span class=&#34;hljs-comment&#34;&gt;// al&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; CpuType_Family; &lt;span class=&#34;hljs-comment&#34;&gt;// r12&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;bool&lt;/span&gt; IsAnyHypervisorPresent; &lt;span class=&#34;hljs-comment&#34;&gt;// r9&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; CpuVendor_2; &lt;span class=&#34;hljs-comment&#34;&gt;// bl&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; ProcessorFlags; &lt;span class=&#34;hljs-comment&#34;&gt;// ecx&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int8 CpuModel; &lt;span class=&#34;hljs-comment&#34;&gt;// cl&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int8 CpuStepping; &lt;span class=&#34;hljs-comment&#34;&gt;// al&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *result; &lt;span class=&#34;hljs-comment&#34;&gt;// rax&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int8 CpuVendor_1; &lt;span class=&#34;hljs-comment&#34;&gt;// [rsp+20h] [rbp-60h]&lt;/span&gt;
+  
+  
+  CpuVendor = PRCB-&amp;gt;CpuVendor;
+  CpuType_Family = PRCB-&amp;gt;CpuType_Family;
+  LOBYTE(CpuModel_1) = PRCB-&amp;gt;CpuModel;
+&lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+  CpuVendor_1 = CpuVendor;
+  v48 = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+  
+  &lt;span class=&#34;hljs-comment&#34;&gt;// Hypervisor check&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( HviIsHypervisorMicrosoftCompatible() )
+  {
+    HviGetEnlightenmentInformation(&amp;amp;v54);
+    v53 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64;
+    HviGetHypervisorFeatures(&amp;amp;v53);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( (v53 &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x100000000000&lt;/span&gt;i64) == &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; || (v54 &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x1000&lt;/span&gt;) != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; )
+    {
+      IsAnyHypervisorPresent = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+    }
+    &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+    {
+      IsAnyHypervisorPresent = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+      v48 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+    }
+  }
+  &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+  {
+    IsAnyHypervisorPresent = HviIsAnyHypervisorPresent();
+    v48 = IsAnyHypervisorPresent;
+  }
+  v11 = result1;
+
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( KiIsBranchConfusionPresent(PRCB) )
+  {
+    v11 |= &lt;span class=&#34;hljs-number&#34;&gt;0x8000&lt;/span&gt;ui64;
+    *&amp;amp;result1 = v11;
+  }
+&lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+  *result2 = result1;
+  *(result2 + &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;) = &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;i64;
+  result = __zero;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( __zero )
+    *__zero = v8;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; result;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The function contains logic to check whether it is affected by various speculative execution-based side-channel vulnerabilities, but since the code is too long to write in its entirety, we will only look at the code that sets the &lt;code&gt;0x8000&lt;/code&gt; bit to enable KVAS.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;For a list of speculative execution-related vulnerabilities, refer to &lt;a href=&#34;https://support.microsoft.com/en-us/topic/kb4073119-windows-client-guidance-for-it-pros-to-protect-against-silicon-based-microarchitectural-and-speculative-execution-side-channel-vulnerabilities-35820a8a-ae13-1299-88cc-357f104f5b11&#34;&gt;MS Client Guidance&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;If the return value of the &lt;code&gt;KiIsBranchConfusionPresent&lt;/code&gt; function is True, the &lt;code&gt;0x8000&lt;/code&gt; bit is set.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;KiIsBranchConfusionPresent&lt;/code&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;__int64 __fastcall KiIsBranchConfusionPresent(_KPRCB *a1)
+{
+  bool IsAnyHypervisorPresent; &lt;span class=&#34;hljs-comment&#34;&gt;// al&lt;/span&gt;
+  unsigned int v3; &lt;span class=&#34;hljs-comment&#34;&gt;// edx&lt;/span&gt;
+
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( a1-&amp;gt;CpuVendor != &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; || (KeFeatureBits2 &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x1000000&lt;/span&gt;) != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; )
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64;
+  IsAnyHypervisorPresent = HviIsAnyHypervisorPresent();
+  v3 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( IsAnyHypervisorPresent )
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;i64;
+  LOBYTE(v3) = a1-&amp;gt;CpuType_Family != &lt;span class=&#34;hljs-number&#34;&gt;25&lt;/span&gt;;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; v3;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The function logic can be analyzed as follows.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;If CpuVendor is not AMD, return False.&lt;ul&gt;
+&lt;li&gt;Branch Confusion is a vulnerability that affects only AMD CPUs (&lt;a href=&#34;https://msrc.microsoft.com/update-guide/vulnerability/CVE-2022-23825&#34;&gt;CVE-2022-23825&lt;/a&gt;)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;If the Hypervisor is enabled, the &lt;code&gt;HviIsAnyHypervisorPresent&lt;/code&gt; function returns True&lt;ul&gt;
+&lt;li&gt;CVE-2022-23825 is a vulnerability that affects virtualized environments, so KVAS is implemented to activate only when the hypervisor is enabled.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;Returns True only if the Family Number is 25 for Zen 3 / Zen 3+ / Zen 4.&lt;ul&gt;
+&lt;li&gt;It can be seen that other architectures are not affected.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;After that, there is a final check before KVAS activation in &lt;code&gt;KiEnableKvaShadowing&lt;/code&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;__int64 __fastcall &lt;span class=&#34;hljs-title&#34;&gt;KiEnableKvaShadowing&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(_KPRCB *a1)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+  __int64 v2; &lt;span class=&#34;hljs-comment&#34;&gt;// rdx&lt;/span&gt;
+  __int64 v3; &lt;span class=&#34;hljs-comment&#34;&gt;// rcx&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; v4; &lt;span class=&#34;hljs-comment&#34;&gt;// cl&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int64 v5; &lt;span class=&#34;hljs-comment&#34;&gt;// rax&lt;/span&gt;
+  __int64 v6; &lt;span class=&#34;hljs-comment&#34;&gt;// rdx&lt;/span&gt;
+  __int64 v7; &lt;span class=&#34;hljs-comment&#34;&gt;// r11&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int8 v8; &lt;span class=&#34;hljs-comment&#34;&gt;// cf&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int64 v9; &lt;span class=&#34;hljs-comment&#34;&gt;// rax&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int64 v10; &lt;span class=&#34;hljs-comment&#34;&gt;// rax&lt;/span&gt;
+  __int64 result; &lt;span class=&#34;hljs-comment&#34;&gt;// rax&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int16 v12; &lt;span class=&#34;hljs-comment&#34;&gt;// cx&lt;/span&gt;
+
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( KiIsKvaShadowDisabled() )
+  {
+    KiIsKvaShadowConfigDisabled = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+  }
+  &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+  {
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( (KeFeatureBits2 &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x18000&lt;/span&gt;) == &lt;span class=&#34;hljs-number&#34;&gt;0x8000&lt;/span&gt; )
+      *(_QWORD *)(v3 + &lt;span class=&#34;hljs-number&#34;&gt;11520&lt;/span&gt;) = &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;i64;
+    v4 = KiKernelCetEnabled;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( !(_BYTE)KiKernelCetEnabled &amp;amp;&amp;amp; (&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int8)KiIsKvaLeakSimulated() )
+      KiKvaLeakageSimulate = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+    
+    &lt;span class=&#34;hljs-comment&#34;&gt;// Enable KVAS&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( KiKvaLeakage || KiKvaLeakageSimulate )
+    {
+      &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( v4 )
+        KeBugCheckEx(&lt;span class=&#34;hljs-number&#34;&gt;0x5D&lt;/span&gt;u, &lt;span class=&#34;hljs-number&#34;&gt;0x4B766120&lt;/span&gt;ui64, &lt;span class=&#34;hljs-number&#34;&gt;0x4B434554&lt;/span&gt;ui64, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64);
+      v5 = __readcr3();
+      a1-&amp;gt;KernelDirectoryTableBase = v5;
+      *(_QWORD *)(v2 + &lt;span class=&#34;hljs-number&#34;&gt;4216&lt;/span&gt;) = *(_QWORD *)(v2 + &lt;span class=&#34;hljs-number&#34;&gt;4100&lt;/span&gt;);
+      KiInitializeDescriptorIst(a1);
+      *(_QWORD *)(v7 + &lt;span class=&#34;hljs-number&#34;&gt;4100&lt;/span&gt;) = v7 + &lt;span class=&#34;hljs-number&#34;&gt;16896&lt;/span&gt;;
+      &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( a1-&amp;gt;Number )
+      {
+        result = KiShadowProcessorAllocation(a1, v7);
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( !(_DWORD)result )
+          &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; result;
+        v12 = *(_WORD *)(KeGetPrcb(&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;i64) + &lt;span class=&#34;hljs-number&#34;&gt;44714&lt;/span&gt;);
+        a1-&amp;gt;ShadowFlags |= &lt;span class=&#34;hljs-number&#34;&gt;2u&lt;/span&gt;;
+        a1-&amp;gt;VerwSelector = v12;
+      }
+      &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+      {
+        LOBYTE(v6) = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+        KiInitializeIdt(v7, v6);
+        KeGetCurrentThread()-&amp;gt;ApcState.Process-&amp;gt;AddressPolicy = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+        byte_140FCE0E0 = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+        _InterlockedOr(dword_140FCE57C, &lt;span class=&#34;hljs-number&#34;&gt;0x4000&lt;/span&gt;u);
+        KiSetAddressPolicy(&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;i64);
+        v8 = _bittest64((&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;signed&lt;/span&gt; __int64 *)&amp;amp;a1-&amp;gt;FeatureBits, &lt;span class=&#34;hljs-number&#34;&gt;0x2A&lt;/span&gt;u);
+        a1-&amp;gt;VerwSelector = &lt;span class=&#34;hljs-number&#34;&gt;24&lt;/span&gt;;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( v8 )
+        {
+          v9 = __readcr4();
+          __writecr4(v9 &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0xFFFFFFFFFFFDFF7F&lt;/span&gt;ui64 | &lt;span class=&#34;hljs-number&#34;&gt;0x20000&lt;/span&gt;);
+          v10 = __readcr3();
+          __writecr3(v10 | &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;);
+          KiFlushPcid |= &lt;span class=&#34;hljs-number&#34;&gt;1u&lt;/span&gt;;
+        }
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( (a1-&amp;gt;FeatureBits &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x240000000000&lt;/span&gt;i64) == &lt;span class=&#34;hljs-number&#34;&gt;0x240000000000&lt;/span&gt;i64 )
+          KiFlushPcid |= &lt;span class=&#34;hljs-number&#34;&gt;2u&lt;/span&gt;;
+        HvlRescindEnlightenments();
+        KiKvaShadow = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+        KiKvaShadowMode = &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; - (KiFlushPcid != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+      }
+      &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( KiFlushPcid )
+        _interlockedbittestandset64((&lt;span class=&#34;hljs-keyword&#34;&gt;volatile&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;signed&lt;/span&gt; __int32 *)&amp;amp;a1-&amp;gt;KernelDirectoryTableBase, &lt;span class=&#34;hljs-number&#34;&gt;0x3F&lt;/span&gt;ui64);
+    }
+  }
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;i64;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;if ( KiKvaLeakage || KiKvaLeakageSimulate )&lt;/code&gt; branch&lt;ul&gt;
+&lt;li&gt;Global variable &lt;code&gt;KiKvaLeakage&lt;/code&gt; set in the &lt;code&gt;KiDetectKvaLeakage&lt;/code&gt; function&lt;/li&gt;
+&lt;li&gt;Global variable &lt;code&gt;KiKvaLeakageSimulate&lt;/code&gt;, which is estimated to be determined by manual settings (for debugging and testing)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;If either of the two global variable values is set, KVAS is activated&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h1 id=&#34;Three-line-summary&#34;&gt;&lt;a href=&#34;#Three-line-summary&#34; class=&#34;headerlink&#34; title=&#34;Three-line summary&#34;&gt;&lt;/a&gt;Three-line summary&lt;/h1&gt;&lt;ul&gt;
+&lt;li&gt;The Windows kernel dynamically activates KVAS (and other mitigations) at initialization depending on the CPU.&lt;/li&gt;
+&lt;li&gt;There are two main criteria for determining whether to activate KVAS&lt;ul&gt;
+&lt;li&gt;Intel: Rogue Data Cache Load (Meltdown)&lt;/li&gt;
+&lt;li&gt;AMD: Branch Confusion&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;The CPU checks whether hardware mitigations provided through MSR are applied, and if MSR functionality is not available, it determines whether to activate KVAS through legacy checks (bitmask, model number information, etc.).&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h1 id=&#34;Outro&#34;&gt;&lt;a href=&#34;#Outro&#34; class=&#34;headerlink&#34; title=&#34;Outro&#34;&gt;&lt;/a&gt;Outro&lt;/h1&gt;&lt;p&gt;&lt;img src=&#34;/2025/08/10/l0ch/deep-dive-into-kva/en/image1.jpg&#34; alt=&#34;Untitled&#34;&gt;&lt;br&gt;Actually, when side-channel vulnerabilities based on speculative execution were a hot topic, I was busy fulfilling my military service obligations and didn&amp;#x2019;t have a chance to look into it properly. However, while writing this article and the previous one on KASLR bypass, I had the opportunity to examine it in detail. I realized once again that understanding past issues is just as important as keeping up with current trends.  &lt;del&gt;Now, I&amp;#x2019;m going to try reading Windows Internals again&amp;#x2026;&lt;/del&gt;&lt;/p&gt;
+&lt;p&gt;I&amp;#x2019;ll bring you another interesting research topic next time~&lt;/p&gt;
+&lt;h1 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h1&gt;&lt;p&gt;&lt;a href=&#34;https://support.microsoft.com/en-us/topic/kb4073119-windows-client-guidance-for-it-pros-to-protect-against-silicon-based-microarchitectural-and-speculative-execution-side-channel-vulnerabilities-35820a8a-ae13-1299-88cc-357f104f5b11&#34;&gt;https://support.microsoft.com/en-us/topic/kb4073119-windows-client-guidance-for-it-pros-to-protect-against-silicon-based-microarchitectural-and-speculative-execution-side-channel-vulnerabilities-35820a8a-ae13-1299-88cc-357f104f5b11&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://msrc.microsoft.com/update-guide/vulnerability/CVE-2022-23825&#34;&gt;https://msrc.microsoft.com/update-guide/vulnerability/CVE-2022-23825&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/technical-documentation/cpuid-enumeration-and-architectural-msrs.html&#34;&gt;https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/technical-documentation/cpuid-enumeration-and-architectural-msrs.html&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/ntos/amd64_x/cpu_vendors.htm&#34;&gt;https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/ntos/amd64_x/cpu_vendors.htm&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://support.microsoft.com/en-us/topic/kb4074629-understanding-speculationcontrol-powershell-script-output-fd70a80a-a63f-e539-cda5-5be4c9e67c04&#34;&gt;https://support.microsoft.com/en-us/topic/kb4074629-understanding-speculationcontrol-powershell-script-output-fd70a80a-a63f-e539-cda5-5be4c9e67c04&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.intel.com/content/www/us/en/content-details/782158/intel-64-and-ia-32-architectures-software-developer-s-manual-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4.html&#34;&gt;https://www.intel.com/content/www/us/en/content-details/782158/intel-64-and-ia-32-architectures-software-developer-s-manual-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4.html&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.vergiliusproject.com/kernels/x64/windows-11/24h2/_KPRCB&#34;&gt;https://www.vergiliusproject.com/kernels/x64/windows-11/24h2/_KPRCB&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io2025/08/10/l0ch/deep-dive-into-kva/en/thumbnail.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/08/10/l0ch/deep-dive-into-kva/en/">
+
+  <title>[Research] Deep Dive into KVA Shadow&#39;s Dynamic Activation Mechanism(En) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-08-10 21:00" pubdate>
+      2025년 8월 10일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      2.8k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      55
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] Deep Dive into KVA Shadow&#39;s Dynamic Activation Mechanism(En)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p>Hello, this is L0ch!  It&#x2019;s been a while since my last post.</p>
+<p>Last week&#x2019;s topic was <a href="https://hackyboiz.github.io/2025/04/13/l0ch/bypassing-kernel-mitigation-part0/ko/">[Research] Bypassing Windows Kernel Mitigations: Part 0 - Deep Dive into KASLR Leaks Restriction</a>. I mentioned that one of the conditions for the KASLR bypass PoC to work is that KVA Shadow is disabled!</p>
+<p>At the time of writing, I had assumed that KVAS was disabled by default in the latest Windows 11, but through feedback, I learned that KVAS is dynamically activated based on CPU model and specific vulnerabilities, rather than Windows version.</p>
+<h1 id="SpeculationControl-PowerShell-script"><a href="#SpeculationControl-PowerShell-script" class="headerlink" title="SpeculationControl PowerShell script"></a><strong>SpeculationControl PowerShell script</strong></h1><p>KVAS is closely related to various speculative execution-based side-channel vulnerabilities, such as Meltdown and Spectre, so you can easily check the relevant MS support information.</p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://support.microsoft.com/en-us/topic/kb4074629-understanding-speculationcontrol-powershell-script-output-fd70a80a-a63f-e539-cda5-5be4c9e67c04">https://support.microsoft.com/en-us/topic/kb4074629-understanding-speculationcontrol-powershell-script-output-fd70a80a-a63f-e539-cda5-5be4c9e67c04</a></p>
+<p>The results of testing on my computer with a 12th generation Intel CPU are summarized as follows.</p>
+<pre><code class="hljs powershell"><span class="hljs-comment"># Windwos 11 24H2 - Intel 12th i7-12700</span>
+
+<span class="hljs-built_in">PS</span> C:\WINDOWS\system32&gt; <span class="hljs-built_in">Install-Module</span> <span class="hljs-literal">-Name</span> SpeculationControl                                                                                                                                                                                 need a NuGet provider to <span class="hljs-keyword">continue</span>.
+
+<span class="hljs-built_in">PS</span> C:\WINDOWS\system32&gt; <span class="hljs-built_in">Get-SpeculationControlSettings</span>
+
+BTIHardwarePresent                  : True
+BTIWindowsSupportPresent            : True
+BTIWindowsSupportEnabled            : True
+BTIDisabledBySystemPolicy           : False
+BTIDisabledByNoHardwareSupport      : False
+BTIKernelRetpolineEnabled           : False
+BTIKernelImportOptimizationEnabled  : True
+RdclHardwareProtectedReported       : True
+RdclHardwareProtected               : True
+KVAShadowRequired                   : False
+KVAShadowWindowsSupportPresent      : True
+KVAShadowWindowsSupportEnabled      : False
+KVAShadowPcidEnabled                : False
+SSBDWindowsSupportPresent           : True
+SSBDHardwareVulnerable              : True
+SSBDHardwarePresent                 : True
+SSBDWindowsSupportEnabledSystemWide : False
+L1TFHardwareVulnerable              : False
+L1TFWindowsSupportPresent           : True
+L1TFWindowsSupportEnabled           : False
+L1TFInvalidPteBit                   : <span class="hljs-number">0</span>
+L1DFlushSupported                   : True
+HvL1tfStatusAvailable               : True
+HvL1tfProcessorNotAffected          : True
+MDSWindowsSupportPresent            : True
+MDSHardwareVulnerable               : False
+MDSWindowsSupportEnabled            : False
+FBClearWindowsSupportPresent        : True
+SBDRSSDPHardwareVulnerable          : False
+FBSDPHardwareVulnerable             : False
+PSDPHardwareVulnerable              : False
+FBClearWindowsSupportEnabled        : False
+</code></pre>
+<div class="table-container">
+<table>
+<thead>
+<tr>
+<th>Hardware requires kernel VA shadowing</th>
+<th>Maps to KVAShadowRequired. This line tells you whether your system requires kernel VA shadowing to mitigate a vulnerability.</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Windows OS support for rogue data cache load mitigation is present</td>
+<td>Maps to KVAShadowWindowsSupportPresent. This line tells you whether Windows operating system support for the kernel VA shadow feature is present.</td>
+</tr>
+<tr>
+<td>Windows OS support for kernel VA shadow is present</td>
+<td>Maps to KVAShadowWindowsSupportPresent. This line tells you whether Windows operating system support for the kernel VA shadow feature is present. If it is True, the January 2018 update is installed on the device, and kernel VA shadow is supported. If it is False, the January 2018 update is not installed, and kernel VA shadow support does not exist.</td>
+</tr>
+<tr>
+<td>Windows OS support for rogue data cache load mitigation is enabled</td>
+<td>Maps to KVAShadowWindowsSupportEnabled. This line tells you whether the kernel VA shadow feature is enabled. If it is True, the hardware is believed to be vulnerable to CVE-2017-5754, Windows operating system support is present, and the feature is enabled.</td>
+</tr>
+<tr>
+<td>Windows OS support for kernel VA shadow is enabled</td>
+<td>Maps to KVAShadowWindowsSupportEnabled. This line tells you whether the kernel VA shadow feature is enabled. If it is True, Windows operating system support is present, and the feature is enabled. The Kernel VA shadow feature is currently enabled by default on client versions of Windows and is disabled by default on versions of Windows Server. If it is False, either Windows operating system support is not present, or the feature is not enabled.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<pre><code class="hljs cpp">Although the KVA Shadow feature exists in Windows,(KVAShadowWindowsSupportPresent: True) 
+it is <span class="hljs-keyword">not</span> necessary.(KVAShadowRequired: False) 
+<span class="hljs-function">so <span class="hljs-keyword">not</span> <span class="hljs-title">activated</span><span class="hljs-params">(KVAShadowWindowsSupportEnabled: False)</span></span></code></pre>
+<p>We can see that KVAS is disabled, which means that although the mitigation feature exists, <strong>the hardware (CPU) is not vulnerable, so the mitigation feature is disabled</strong>.</p>
+<p>So where and how does Windows identify vulnerable CPUs and determine whether to enable KVAS?</p>
+<h1 id="Background-Knowledge-CPU-Identification"><a href="#Background-Knowledge-CPU-Identification" class="headerlink" title="Background Knowledge - CPU Identification"></a>Background Knowledge - CPU Identification</h1><p>Windows identifies the CPU vendor on its own. As defined in the <a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/ntos/amd64_x/cpu_vendors.htm">CPU_VENDORS</a> Enum, unknown manufacturers are defined as 0, AMD as 1, and Intel as 2.</p>
+<pre><code class="hljs jsx">typedef enum
+{
+    CPU_UNKNOWN,   <span class="hljs-comment">// 0</span>
+    CPU_AMD,       <span class="hljs-comment">// 1</span>
+    CPU_INTEL,     <span class="hljs-comment">// 2</span>
+    CPU_VIA        <span class="hljs-comment">// 3</span>
+} CPU_VENDORS;</code></pre>
+<p>CPU information such as vendor, Faily ID, and Model ID is stored in the <a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.vergiliusproject.com/kernels/x64/windows-11/24h2/_KPRCB">KPRCB</a> structure. </p>
+<p>These IDs are defined by each CPU vendor. In the case of Intel, the Family ID, Model ID, and generation information for Intel CPU products are defined in the <a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.intel.com/content/www/us/en/content-details/782158/">Intel Developer Manual</a>. Since it&#x2019;s not feasible to review the entire 5,000-page manual, I used gemini to summarize the information in the table below.</p>
+<div class="table-container">
+<table>
+<thead>
+<tr>
+<th><strong>MircoArchitecture(gen)</strong></th>
+<th>Processor family</th>
+<th><strong>Family ID (Hex)</strong></th>
+<th><strong>Model ID (Hex)</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Raptor Lake (13 gen)</td>
+<td>Intel Core</td>
+<td>06H</td>
+<td>B7H, BFH</td>
+</tr>
+<tr>
+<td>Alder Lake (12 gen)</td>
+<td>Intel Core</td>
+<td>06H</td>
+<td>97H, 9AH</td>
+</tr>
+<tr>
+<td>Tiger Lake (11 gen)</td>
+<td>Intel Core</td>
+<td>06H</td>
+<td>8CH, 8DH</td>
+</tr>
+<tr>
+<td>Rocket Lake (11 gen)</td>
+<td>Intel Core</td>
+<td>06H</td>
+<td>A7H</td>
+</tr>
+<tr>
+<td>Ice Lake (10 gen)</td>
+<td>Intel Core</td>
+<td>06H</td>
+<td>7DH, 7EH</td>
+</tr>
+<tr>
+<td>Comet Lake (10 gen)</td>
+<td>Intel Core</td>
+<td>06H</td>
+<td>A5H, A6H</td>
+</tr>
+<tr>
+<td>Amber Lake Y (8 gen)</td>
+<td>Intel Core</td>
+<td>06H</td>
+<td>8EH</td>
+</tr>
+<tr>
+<td>Whiskey Lake U (8 gen)</td>
+<td>Intel Core</td>
+<td>06H</td>
+<td>8EH</td>
+</tr>
+<tr>
+<td>Coffee Lake (8, 9 gen)</td>
+<td>Intel Core</td>
+<td>06H</td>
+<td>9EH</td>
+</tr>
+<tr>
+<td>Kaby Lake (7 gen)</td>
+<td>Intel Core</td>
+<td>06H</td>
+<td>8EH, 9EH</td>
+</tr>
+<tr>
+<td>Skylake (6 gen)</td>
+<td>Intel Core</td>
+<td>06H</td>
+<td>4EH, 5EH, 55H</td>
+</tr>
+<tr>
+<td>Broadwell (5 gen)</td>
+<td>Intel Core</td>
+<td>06H</td>
+<td>3DH, 47H, 4FH</td>
+</tr>
+<tr>
+<td>Haswell (4 gen)</td>
+<td>Intel Core</td>
+<td>06H</td>
+<td>3CH, 45H, 46H, 3FH</td>
+</tr>
+<tr>
+<td>Ivy Bridge (3 gen)</td>
+<td>Intel Core</td>
+<td>06H</td>
+<td>3AH</td>
+</tr>
+<tr>
+<td>Sandy Bridge (2 gen)</td>
+<td>Intel Core</td>
+<td>06H</td>
+<td>2AH</td>
+</tr>
+<tr>
+<td>Westmere (2010)</td>
+<td>Intel Core</td>
+<td>06H</td>
+<td>25H, 2CH, 2FH</td>
+</tr>
+<tr>
+<td>Nehalem (1 gen)</td>
+<td>Intel Core</td>
+<td>06H</td>
+<td>1AH, 1EH, 1FH, 2EH</td>
+</tr>
+<tr>
+<td>Penryn</td>
+<td>Core 2 Duo/Quad</td>
+<td>06H</td>
+<td>17H, 1DH</td>
+</tr>
+<tr>
+<td>Merom</td>
+<td>Core 2 Duo</td>
+<td>06H</td>
+<td>0FH</td>
+</tr>
+<tr>
+<td>Yonah</td>
+<td>Core Duo/Solo</td>
+<td>06H</td>
+<td>0EH</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>I also organized and analyzed the ID lists of AMD and other vendors.</p>
+<h1 id="Analysis-of-KVAS-Activation-Logic"><a href="#Analysis-of-KVAS-Activation-Logic" class="headerlink" title="Analysis of KVAS Activation Logic"></a>Analysis of KVAS Activation Logic</h1><p>Analysis Environment: Windows 24H2 64-bit 10.0.26100.1742</p>
+<p>Returning to the topic at hand, in order to analyze the mitigation initialization logic, we need to examine the part of the Windows boot process that initializes the kernel. </p>
+<p>The entry point of the Windows kernel image <code>ntoskrnl.exe</code> is <code>KiSystemStartup</code>, which performs various tasks such as CPU initialization, mitigation-related feature settings, and kernel debugger initialization.</p>
+<p>The function that determines whether KVAS is enabled was surprisingly easy to find.</p>
+<ul>
+<li>KiSystemStartup &#x2192; KiInitializeBootStructures &#x2192; KiSetFeatureBits &#x2192; KiDetectKvaLeakage</li>
+</ul>
+<pre><code class="hljs cpp"><span class="hljs-function">NTSTATUS __stdcall __noreturn <span class="hljs-title">KiSystemStartup</span><span class="hljs-params">(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)</span></span>
+<span class="hljs-function"></span>{
+<span class="hljs-comment">//...</span>
+  KeLoaderBlock_0 = (__int64)DriverObject;
+  <span class="hljs-keyword">if</span> ( !*((_DWORD *)DriverObject-&gt;MajorFunction[<span class="hljs-number">3</span>] + <span class="hljs-number">9</span>) )
+    KasanInitSystem(DriverObject, <span class="hljs-number">0</span>i64);
+  <span class="hljs-keyword">if</span> ( !*(_DWORD *)(*(_QWORD *)(KeLoaderBlock_0 + <span class="hljs-number">136</span>) + <span class="hljs-number">36</span>i64) )
+    KdInitSystem(<span class="hljs-number">0xFFFFFFFF</span>i64, KeLoaderBlock_0);
+  v2 = *(<span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span> **)(KeLoaderBlock_0 + <span class="hljs-number">136</span>);
+
+<span class="hljs-comment">//...</span>
+
+  KiInitializeBootStructures(KeLoaderBlock_0);  <span class="hljs-comment">// Initialize Boot Structures</span>
+  <span class="hljs-keyword">if</span> ( !*MK_FP(<span class="hljs-number">43</span>, *MK_FP(<span class="hljs-number">43</span>, KeLoaderBlock_0 + <span class="hljs-number">136</span>) + <span class="hljs-number">36</span>i64) )
+    KdInitSystem(<span class="hljs-number">0</span>i64, KeLoaderBlock_0);
+<span class="hljs-comment">//...</span>
+
+}
+
+<span class="hljs-function">__int64 __fastcall <span class="hljs-title">KiInitializeBootStructures</span><span class="hljs-params">(__int64 a1)</span></span>
+<span class="hljs-function"></span>{
+  KPCR *Pcr; <span class="hljs-comment">// r14</span>
+  _KPROCESS **v2; <span class="hljs-comment">// rbx</span>
+  <span class="hljs-class"><span class="hljs-keyword">struct</span> _<span class="hljs-title">KPRCB</span> *<span class="hljs-title">CurrentPrcb</span>;</span> <span class="hljs-comment">// rdi</span>
+<span class="hljs-comment">//...</span>
+
+  <span class="hljs-keyword">if</span> ( !KeGetPcr()-&gt;Prcb.Number )
+    KiInitializeNxSupportDiscard(v19, v18, v20);
+  HalInitializeProcessor(Number, a1, v20);
+  KiSetFeatureBits(CurrentPrcb);                <span class="hljs-comment">// Set Prcb Feature Bits</span>
+  CurrentPCB_Number = CurrentPrcb-&gt;Number;
+  v27 = KiSystemCall32;
+  v28 = KiSystemCall64;
+  <span class="hljs-keyword">if</span> ( !CurrentPCB_Number )
+  {
+    KiEnableKvaShadowing(CurrentPrcb);              <span class="hljs-comment">//  Decide whether to enable KVA Shadow</span>
+    CurrentPCB_Number = CurrentPrcb-&gt;Number;
+  }
+  <span class="hljs-keyword">if</span> ( KiKvaShadow )                             <span class="hljs-comment">// When the KVA Shadow flag is enabled</span>
+  {
+    v27 = KiSystemCall32Shadow;                 <span class="hljs-comment">// instead of KiSystemCall32/KiSystemCall64  </span>
+    v28 = KiSystemCall64Shadow;                 <span class="hljs-comment">// use KiSystemCall32Shadow/KiSystemCall64Shadow</span>
+  }
+  
+<span class="hljs-comment">//...</span>
+}
+
+<span class="hljs-function">__int64 __fastcall <span class="hljs-title">KiSetFeatureBits</span><span class="hljs-params">(_KPRCB *CurrentPRCB)</span></span>
+<span class="hljs-function"></span>{
+  <span class="hljs-keyword">char</span> CpuType; <span class="hljs-comment">// bl</span>
+  <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span> CpuModel; <span class="hljs-comment">// ecx</span>
+  <span class="hljs-keyword">unsigned</span> __int8 CpuVendor; <span class="hljs-comment">// dl</span>
+  <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span> ProcessorSignature; <span class="hljs-comment">// eax</span>
+  <span class="hljs-keyword">unsigned</span> __int8 CpuStepping; <span class="hljs-comment">// cl</span>
+  <span class="hljs-keyword">unsigned</span> __int8 v57; <span class="hljs-comment">// al</span>
+  <span class="hljs-keyword">unsigned</span> __int64 v58; <span class="hljs-comment">// rcx</span>
+<span class="hljs-comment">//...</span>
+
+  CpuType = CurrentPRCB-&gt;CpuType_Family;        <span class="hljs-comment">// CpuType = Processor Family</span>
+  CpuModel = CurrentPRCB-&gt;CpuModel;
+  CpuVendor = CurrentPRCB-&gt;CpuVendor;
+  v123 = (CpuVendor - <span class="hljs-number">1</span>) &lt;= <span class="hljs-number">1u</span>;
+  <span class="hljs-keyword">if</span> ( CurrentPRCB-&gt;Number )
+  {
+    ProcessorSignature = KiGetProcessorSignature(<span class="hljs-number">0</span>i64, <span class="hljs-number">0</span>i64, <span class="hljs-number">0</span>i64, <span class="hljs-number">0</span>i64);
+    KiSetProcessorSignature(CurrentPRCB, ProcessorSignature);
+    <span class="hljs-keyword">goto</span> LABEL_40;
+  }
+
+<span class="hljs-comment">//... </span>
+  KiDetectKvaLeakage(CurrentPRCB);      <span class="hljs-comment">// Detect - KVA needs to be activated</span>
+  _m_prefetchw(CurrentPRCB);
+  <span class="hljs-keyword">if</span> ( CurrentPRCB-&gt;CpuVendor == <span class="hljs-number">1</span> )
+  {
+    v52 |= <span class="hljs-number">0x100000</span>u;
+    HIDWORD(v134) = v52;
+  }
+<span class="hljs-comment">//...</span>
+}</code></pre>
+<h2 id="KVAS-Activation-for-Meltdown"><a href="#KVAS-Activation-for-Meltdown" class="headerlink" title="KVAS Activation for Meltdown"></a>KVAS Activation for Meltdown</h2><p>In the above call chain, the <code>KiDetectKvaLeakage</code> function is the core function that determines whether KVA is enabled.</p>
+<pre><code class="hljs cpp"><span class="hljs-function"><span class="hljs-keyword">int</span> __fastcall <span class="hljs-title">KiDetectKvaLeakage</span><span class="hljs-params">(_KPRCB *a1)</span></span>
+<span class="hljs-function"></span>{
+  __int64 p_CpuVendor; <span class="hljs-comment">// rsi</span>
+  <span class="hljs-keyword">unsigned</span> __int64 _RAX; <span class="hljs-comment">// rax</span>
+  __int64 v4; <span class="hljs-comment">// rcx</span>
+  __int64 _RAX; <span class="hljs-comment">// rax</span>
+  __int64 _RAX; <span class="hljs-comment">// rax</span>
+  __int64 _RDX; <span class="hljs-comment">// rdx</span>
+  <span class="hljs-keyword">unsigned</span> __int64 v13; <span class="hljs-comment">// rdx</span>
+  <span class="hljs-keyword">bool</span> v14; <span class="hljs-comment">// zf</span>
+  <span class="hljs-keyword">int</span> *v15; <span class="hljs-comment">// rdx</span>
+  <span class="hljs-keyword">int</span> v16; <span class="hljs-comment">// ecx</span>
+  __int64 v17; <span class="hljs-comment">// rbx</span>
+  __int64 _RAX; <span class="hljs-comment">// rax</span>
+  __int64 _RAX; <span class="hljs-comment">// rax</span>
+  __int64 _RAX; <span class="hljs-comment">// rax</span>
+  <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span> Number; <span class="hljs-comment">// edx</span>
+  <span class="hljs-keyword">int</span> v29[<span class="hljs-number">6</span>]; <span class="hljs-comment">// [rsp+30h] [rbp-20h] BYREF</span>
+
+  v29[<span class="hljs-number">0</span>] = <span class="hljs-number">0</span>;
+  p_CpuVendor = &amp;a1-&gt;CpuVendor;
+  
+  <span class="hljs-comment">// Check 1</span>
+  LODWORD(_RAX) = KiIsKvaShadowNeededForBranchConfusion(a1);
+  <span class="hljs-keyword">if</span> ( _RAX )
+    <span class="hljs-keyword">goto</span> ENABLE_KVAS_BRANCH_CONFUSION;
+  LODWORD(_RAX) = *p_CpuVendor;
+  
+  <span class="hljs-comment">// Check 2</span>
+  <span class="hljs-comment">// Intel - Check with bitmask</span>
+  <span class="hljs-keyword">if</span> ( *p_CpuVendor == <span class="hljs-number">2</span> )
+  {
+    _RAX = a1-&gt;CpuModel;
+    <span class="hljs-keyword">if</span> ( a1-&gt;CpuType == <span class="hljs-number">6</span> &amp;&amp; _RAX &lt;= <span class="hljs-number">0x36</span>u )
+    {
+      v4 = <span class="hljs-number">0x6000C010000000</span>i64;
+      <span class="hljs-keyword">if</span> ( _bittest64(&amp;v4, _RAX) )
+        <span class="hljs-keyword">return</span> _RAX;
+    }
+  }
+  <span class="hljs-comment">// Others - disable KVAS</span>
+  <span class="hljs-keyword">else</span> <span class="hljs-keyword">if</span> ( _RAX != <span class="hljs-number">3</span> || a1-&gt;CpuType == <span class="hljs-number">6</span> &amp;&amp; a1-&gt;CpuModel == <span class="hljs-number">13</span>)
+  {
+    <span class="hljs-keyword">return</span> _RAX;
+  }
+	
+	<span class="hljs-comment">// Check 3</span>
+	<span class="hljs-comment">// IA32_ARCH_CAPABILITIES support query</span>
+  _RAX = <span class="hljs-number">0</span>i64;
+  __asm { cpuid }
+  <span class="hljs-keyword">if</span> ( _RAX &lt; <span class="hljs-number">7</span> )
+    <span class="hljs-keyword">goto</span> ENABLE_KVAS;
+  _RAX = <span class="hljs-number">7</span>i64;
+  __asm { cpuid }
+  <span class="hljs-keyword">if</span> ( (_RDX &amp; <span class="hljs-number">0x20000000</span>) == <span class="hljs-number">0</span> )
+    <span class="hljs-keyword">goto</span> ENABLE_KVAS;
+
+	<span class="hljs-comment">// Check 3</span>
+	<span class="hljs-comment">// msr address 0x10A - IA32_ARCH_CAPABILITIES</span>
+  _RAX = __readmsr(<span class="hljs-number">0x10A</span>u);
+  <span class="hljs-comment">//IA32_ARCH_CAPABILITIES bit 0 : RDCL_NO</span>
+  <span class="hljs-keyword">if</span> ( (_RAX &amp; <span class="hljs-number">1</span>) == <span class="hljs-number">0</span> )
+    <span class="hljs-keyword">goto</span> ENABLE_KVAS;
+ 
+  KiMicrocodeTrackerEnabled = <span class="hljs-number">1</span>;
+  LODWORD(_RAX) = <span class="hljs-number">3670016</span>;
+  LOBYTE(v13) = (KeFeatureBits2 &amp; <span class="hljs-number">0x28</span>) == <span class="hljs-number">8</span>;
+  <span class="hljs-keyword">if</span> ( (KeFeatureBits2 &amp; <span class="hljs-number">0x380000</span>) != <span class="hljs-number">3670016</span> )
+  {
+    LODWORD(_RAX) = KiIsFbClearSupported(KeFeatureBits2 &amp; <span class="hljs-number">0x380000</span>, v13);
+    LOBYTE(v13) = _RAX | v13;
+  }
+  <span class="hljs-keyword">if</span> ( v13 )
+  {
+ENABLE_KVAS:
+    <span class="hljs-keyword">if</span> ( a1-&gt;Number &amp;&amp; !KiKvaLeakage )
+      KeBugCheckEx(<span class="hljs-number">0x5D</span>u, <span class="hljs-number">0x4B56414C</span>ui64, <span class="hljs-number">0</span>i64, <span class="hljs-number">0</span>i64, <span class="hljs-number">0</span>i64);
+ENABLE_KVAS_BRANCH_CONFUSION:
+    v14 = *p_CpuVendor == <span class="hljs-number">2</span>;
+    **KiKvaLeakage = <span class="hljs-number">1</span>;**
+<span class="hljs-comment">//... for enable KVA</span>
+  }
+  <span class="hljs-keyword">return</span> _RAX;
+}</code></pre>
+<p>The <code>KiDetectKvaLeakage</code> function determines whether KVAS is enabled based on CPU vendor and model information included in KPRCB and information that can be read from MSR. The verification routine can be divided into three main parts.</p>
+<h3 id="Check-1"><a href="#Check-1" class="headerlink" title="Check 1"></a>Check 1</h3><ul>
+<li>Check whether affected by Branch Confusion vulnerability through the <code>KiIsKvaShadowNeededForBranchConfusion</code> function</li>
+<li>If the call result of the function is affected by Branch Confusion vulnerability, proceed to the <code>ENABLE_KVAS_BRANCH_CONFUSION</code> branch to activate KVAS</li>
+</ul>
+<h3 id="Check-2"><a href="#Check-2" class="headerlink" title="Check 2"></a>Check 2</h3><ul>
+<li>Filter out older CPUs that are not affected by Meltdown and do not require KVAS activation using a bitmask, and disable KVAS.</li>
+<li>Furthermore, since Meltdown is a vulnerability that only affects Intel processor architectures, disable KVAS for other vendors as well.</li>
+</ul>
+<h3 id="Check-3"><a href="#Check-3" class="headerlink" title="Check 3"></a>Check 3</h3><ul>
+<li>First, check whether the CPU supports the MSR (Model Specific Register) function.<ul>
+<li>If MSR is not supported, proceed to the <code>ENABLE_KVAS</code> branch to activate KVAS, as it is an older CPU affected by Meltdown.</li>
+<li>Models that do not support MSR but are not affected are first filtered through a bitmask in the Check 2 routine.</li>
+</ul>
+</li>
+<li>Read the MSR address <code>0x10A</code> using <code>__readmsr</code> - <a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/technical-documentation/cpuid-enumeration-and-architectural-msrs.html">IA32_ARCH_CAPABILITIES</a><ul>
+<li>If field 0 (<code>RDCL_NO</code>) of the result (<code>_RAX</code>) is not enabled, proceed to the <code>ENABLE_KVAS</code> branch to enable KVAS</li>
+<li>RDCL_NO: A bit flag indicating immunity to Rogue Data Cache Load (Meltdown)</li>
+</ul>
+</li>
+</ul>
+<p>If KVAS is determined to be necessary through the above verification process, <code>KiKvaLeakage</code> is set to 1.</p>
+<p>The main functions of this function can be summarized as identifying Intel processors affected by the Meltdown vulnerability in Check 2 and Check 3 and setting the KVAS activation flag. Check 1 will be explained in more detail below.</p>
+<h2 id="KVAS-Activation-for-Branch-Confusion"><a href="#KVAS-Activation-for-Branch-Confusion" class="headerlink" title="KVAS Activation for Branch Confusion"></a>KVAS Activation for Branch Confusion</h2><p>KVAS is not a mitigation that only applies to Meltdown. You can confirm this with the function <code>KiIsKvaShadowNeededForBranchConfusion</code> called in the Check 1 routine.</p>
+<pre><code class="hljs powershell">__int64 __fastcall KiIsKvaShadowNeededForBranchConfusion(__int64 a1)
+{
+  unsigned int v2; // ebx
+  __int128 v4; // [<span class="hljs-type">rsp</span>+<span class="hljs-number">20</span><span class="hljs-type">h</span>] [<span class="hljs-type">rbp</span>-<span class="hljs-number">28</span><span class="hljs-type">h</span>] BYREF
+  __int64 v5; // [<span class="hljs-type">rsp</span>+<span class="hljs-number">30</span><span class="hljs-type">h</span>] [<span class="hljs-type">rbp</span>-<span class="hljs-number">18</span><span class="hljs-type">h</span>]
+
+  v5 = <span class="hljs-number">0</span>i64;
+  v4 = <span class="hljs-number">0</span>i64;
+  KiDetectHardwareSpecControlFeatures(a1, <span class="hljs-number">0</span>i64, (__int64)&amp;v4, <span class="hljs-number">0</span>i64);
+  <span class="hljs-keyword">if</span> ( (v4 &amp; <span class="hljs-number">0</span>x8000) == <span class="hljs-number">0</span> )
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>i64;
+  v2 = <span class="hljs-number">0</span>;
+  <span class="hljs-keyword">if</span> ( !(unsigned int)KiIsBranchConfusionMitigationDesired(a1, &amp;v4) )
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>i64;
+  LOBYTE(v2) = (unsigned int)KiIsBranchConfusionMitigationSupported(a1, &amp;v4) != <span class="hljs-number">0</span>;
+  <span class="hljs-keyword">return</span> v2;
+}</code></pre>
+<p>As the function name suggests, this function checks whether the CPU is affected by the Branch Confusion vulnerability and determines whether KVA Shadow activation is necessary.</p>
+<ul>
+<li>If the <code>0x8000</code> bit of <code>v4</code>, the result of calling the <code>KiDetectHardwareSpecControlFeatures</code> function, is 1, the CPU is affected by Branch Confusion.</li>
+<li>If the relevant mitigation is supported, it returns True. - It enters the KVAS activation routine from the <code>KiDetectKvaLeakage</code> function.</li>
+</ul>
+<p>Let&#x2019;s take a closer look at the <code>KiDetectHardwareSpecControlFeatures</code> function.</p>
+<pre><code class="hljs cpp"><span class="hljs-function"><span class="hljs-keyword">char</span> *__fastcall <span class="hljs-title">KiDetectHardwareSpecControlFeatures</span><span class="hljs-params">(_KPRCB *PRCB, __int64 _zero, __int64 result2, <span class="hljs-keyword">char</span> *__zero)</span></span>
+<span class="hljs-function"></span>{
+  <span class="hljs-keyword">int</span> CpuModel_1; <span class="hljs-comment">// r14d</span>
+  <span class="hljs-keyword">unsigned</span> __int8 CpuVendor; <span class="hljs-comment">// al</span>
+  <span class="hljs-keyword">char</span> CpuType_Family; <span class="hljs-comment">// r12</span>
+  <span class="hljs-keyword">bool</span> IsAnyHypervisorPresent; <span class="hljs-comment">// r9</span>
+  <span class="hljs-keyword">char</span> CpuVendor_2; <span class="hljs-comment">// bl</span>
+  <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span> ProcessorFlags; <span class="hljs-comment">// ecx</span>
+  <span class="hljs-keyword">unsigned</span> __int8 CpuModel; <span class="hljs-comment">// cl</span>
+  <span class="hljs-keyword">unsigned</span> __int8 CpuStepping; <span class="hljs-comment">// al</span>
+<span class="hljs-comment">//...</span>
+  <span class="hljs-keyword">char</span> *result; <span class="hljs-comment">// rax</span>
+  <span class="hljs-keyword">unsigned</span> __int8 CpuVendor_1; <span class="hljs-comment">// [rsp+20h] [rbp-60h]</span>
+  
+  
+  CpuVendor = PRCB-&gt;CpuVendor;
+  CpuType_Family = PRCB-&gt;CpuType_Family;
+  LOBYTE(CpuModel_1) = PRCB-&gt;CpuModel;
+<span class="hljs-comment">//...</span>
+  CpuVendor_1 = CpuVendor;
+  v48 = <span class="hljs-number">1</span>;
+  
+  <span class="hljs-comment">// Hypervisor check</span>
+  <span class="hljs-keyword">if</span> ( HviIsHypervisorMicrosoftCompatible() )
+  {
+    HviGetEnlightenmentInformation(&amp;v54);
+    v53 = <span class="hljs-number">0</span>i64;
+    HviGetHypervisorFeatures(&amp;v53);
+    <span class="hljs-keyword">if</span> ( (v53 &amp; <span class="hljs-number">0x100000000000</span>i64) == <span class="hljs-number">0</span> || (v54 &amp; <span class="hljs-number">0x1000</span>) != <span class="hljs-number">0</span> )
+    {
+      IsAnyHypervisorPresent = <span class="hljs-number">1</span>;
+    }
+    <span class="hljs-keyword">else</span>
+    {
+      IsAnyHypervisorPresent = <span class="hljs-number">0</span>;
+      v48 = <span class="hljs-number">0</span>;
+    }
+  }
+  <span class="hljs-keyword">else</span>
+  {
+    IsAnyHypervisorPresent = HviIsAnyHypervisorPresent();
+    v48 = IsAnyHypervisorPresent;
+  }
+  v11 = result1;
+
+  <span class="hljs-keyword">if</span> ( KiIsBranchConfusionPresent(PRCB) )
+  {
+    v11 |= <span class="hljs-number">0x8000</span>ui64;
+    *&amp;result1 = v11;
+  }
+<span class="hljs-comment">//...</span>
+  *result2 = result1;
+  *(result2 + <span class="hljs-number">16</span>) = <span class="hljs-number">4</span>i64;
+  result = __zero;
+  <span class="hljs-keyword">if</span> ( __zero )
+    *__zero = v8;
+  <span class="hljs-keyword">return</span> result;
+}</code></pre>
+<p>The function contains logic to check whether it is affected by various speculative execution-based side-channel vulnerabilities, but since the code is too long to write in its entirety, we will only look at the code that sets the <code>0x8000</code> bit to enable KVAS.</p>
+<ul>
+<li>For a list of speculative execution-related vulnerabilities, refer to <a target="_blank" rel="external nofollow noopener noreferrer" href="https://support.microsoft.com/en-us/topic/kb4073119-windows-client-guidance-for-it-pros-to-protect-against-silicon-based-microarchitectural-and-speculative-execution-side-channel-vulnerabilities-35820a8a-ae13-1299-88cc-357f104f5b11">MS Client Guidance</a></li>
+</ul>
+<p>If the return value of the <code>KiIsBranchConfusionPresent</code> function is True, the <code>0x8000</code> bit is set.</p>
+<p><code>KiIsBranchConfusionPresent</code></p>
+<pre><code class="hljs jsx">__int64 __fastcall KiIsBranchConfusionPresent(_KPRCB *a1)
+{
+  bool IsAnyHypervisorPresent; <span class="hljs-comment">// al</span>
+  unsigned int v3; <span class="hljs-comment">// edx</span>
+
+  <span class="hljs-keyword">if</span> ( a1-&gt;CpuVendor != <span class="hljs-number">1</span> || (KeFeatureBits2 &amp; <span class="hljs-number">0x1000000</span>) != <span class="hljs-number">0</span> )
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>i64;
+  IsAnyHypervisorPresent = HviIsAnyHypervisorPresent();
+  v3 = <span class="hljs-number">0</span>;
+  <span class="hljs-keyword">if</span> ( IsAnyHypervisorPresent )
+    <span class="hljs-keyword">return</span> <span class="hljs-number">1</span>i64;
+  LOBYTE(v3) = a1-&gt;CpuType_Family != <span class="hljs-number">25</span>;
+  <span class="hljs-keyword">return</span> v3;
+}</code></pre>
+<p>The function logic can be analyzed as follows.</p>
+<ol>
+<li>If CpuVendor is not AMD, return False.<ul>
+<li>Branch Confusion is a vulnerability that affects only AMD CPUs (<a target="_blank" rel="external nofollow noopener noreferrer" href="https://msrc.microsoft.com/update-guide/vulnerability/CVE-2022-23825">CVE-2022-23825</a>)</li>
+</ul>
+</li>
+<li>If the Hypervisor is enabled, the <code>HviIsAnyHypervisorPresent</code> function returns True<ul>
+<li>CVE-2022-23825 is a vulnerability that affects virtualized environments, so KVAS is implemented to activate only when the hypervisor is enabled.</li>
+</ul>
+</li>
+<li>Returns True only if the Family Number is 25 for Zen 3 / Zen 3+ / Zen 4.<ul>
+<li>It can be seen that other architectures are not affected.</li>
+</ul>
+</li>
+</ol>
+<p>After that, there is a final check before KVAS activation in <code>KiEnableKvaShadowing</code>.</p>
+<pre><code class="hljs cpp"><span class="hljs-function">__int64 __fastcall <span class="hljs-title">KiEnableKvaShadowing</span><span class="hljs-params">(_KPRCB *a1)</span></span>
+<span class="hljs-function"></span>{
+  __int64 v2; <span class="hljs-comment">// rdx</span>
+  __int64 v3; <span class="hljs-comment">// rcx</span>
+  <span class="hljs-keyword">char</span> v4; <span class="hljs-comment">// cl</span>
+  <span class="hljs-keyword">unsigned</span> __int64 v5; <span class="hljs-comment">// rax</span>
+  __int64 v6; <span class="hljs-comment">// rdx</span>
+  __int64 v7; <span class="hljs-comment">// r11</span>
+  <span class="hljs-keyword">unsigned</span> __int8 v8; <span class="hljs-comment">// cf</span>
+  <span class="hljs-keyword">unsigned</span> __int64 v9; <span class="hljs-comment">// rax</span>
+  <span class="hljs-keyword">unsigned</span> __int64 v10; <span class="hljs-comment">// rax</span>
+  __int64 result; <span class="hljs-comment">// rax</span>
+  <span class="hljs-keyword">unsigned</span> __int16 v12; <span class="hljs-comment">// cx</span>
+
+  <span class="hljs-keyword">if</span> ( KiIsKvaShadowDisabled() )
+  {
+    KiIsKvaShadowConfigDisabled = <span class="hljs-number">1</span>;
+  }
+  <span class="hljs-keyword">else</span>
+  {
+    <span class="hljs-keyword">if</span> ( (KeFeatureBits2 &amp; <span class="hljs-number">0x18000</span>) == <span class="hljs-number">0x8000</span> )
+      *(_QWORD *)(v3 + <span class="hljs-number">11520</span>) = <span class="hljs-number">3</span>i64;
+    v4 = KiKernelCetEnabled;
+    <span class="hljs-keyword">if</span> ( !(_BYTE)KiKernelCetEnabled &amp;&amp; (<span class="hljs-keyword">unsigned</span> __int8)KiIsKvaLeakSimulated() )
+      KiKvaLeakageSimulate = <span class="hljs-number">1</span>;
+    
+    <span class="hljs-comment">// Enable KVAS</span>
+    <span class="hljs-keyword">if</span> ( KiKvaLeakage || KiKvaLeakageSimulate )
+    {
+      <span class="hljs-keyword">if</span> ( v4 )
+        KeBugCheckEx(<span class="hljs-number">0x5D</span>u, <span class="hljs-number">0x4B766120</span>ui64, <span class="hljs-number">0x4B434554</span>ui64, <span class="hljs-number">0</span>i64, <span class="hljs-number">0</span>i64);
+      v5 = __readcr3();
+      a1-&gt;KernelDirectoryTableBase = v5;
+      *(_QWORD *)(v2 + <span class="hljs-number">4216</span>) = *(_QWORD *)(v2 + <span class="hljs-number">4100</span>);
+      KiInitializeDescriptorIst(a1);
+      *(_QWORD *)(v7 + <span class="hljs-number">4100</span>) = v7 + <span class="hljs-number">16896</span>;
+      <span class="hljs-keyword">if</span> ( a1-&gt;Number )
+      {
+        result = KiShadowProcessorAllocation(a1, v7);
+        <span class="hljs-keyword">if</span> ( !(_DWORD)result )
+          <span class="hljs-keyword">return</span> result;
+        v12 = *(_WORD *)(KeGetPrcb(<span class="hljs-number">0</span>i64) + <span class="hljs-number">44714</span>);
+        a1-&gt;ShadowFlags |= <span class="hljs-number">2u</span>;
+        a1-&gt;VerwSelector = v12;
+      }
+      <span class="hljs-keyword">else</span>
+      {
+        LOBYTE(v6) = <span class="hljs-number">1</span>;
+        KiInitializeIdt(v7, v6);
+        KeGetCurrentThread()-&gt;ApcState.Process-&gt;AddressPolicy = <span class="hljs-number">1</span>;
+        byte_140FCE0E0 = <span class="hljs-number">1</span>;
+        _InterlockedOr(dword_140FCE57C, <span class="hljs-number">0x4000</span>u);
+        KiSetAddressPolicy(<span class="hljs-number">1</span>i64);
+        v8 = _bittest64((<span class="hljs-keyword">const</span> <span class="hljs-keyword">signed</span> __int64 *)&amp;a1-&gt;FeatureBits, <span class="hljs-number">0x2A</span>u);
+        a1-&gt;VerwSelector = <span class="hljs-number">24</span>;
+        <span class="hljs-keyword">if</span> ( v8 )
+        {
+          v9 = __readcr4();
+          __writecr4(v9 &amp; <span class="hljs-number">0xFFFFFFFFFFFDFF7F</span>ui64 | <span class="hljs-number">0x20000</span>);
+          v10 = __readcr3();
+          __writecr3(v10 | <span class="hljs-number">2</span>);
+          KiFlushPcid |= <span class="hljs-number">1u</span>;
+        }
+        <span class="hljs-keyword">if</span> ( (a1-&gt;FeatureBits &amp; <span class="hljs-number">0x240000000000</span>i64) == <span class="hljs-number">0x240000000000</span>i64 )
+          KiFlushPcid |= <span class="hljs-number">2u</span>;
+        HvlRescindEnlightenments();
+        KiKvaShadow = <span class="hljs-number">1</span>;
+        KiKvaShadowMode = <span class="hljs-number">2</span> - (KiFlushPcid != <span class="hljs-number">0</span>);
+      }
+      <span class="hljs-keyword">if</span> ( KiFlushPcid )
+        _interlockedbittestandset64((<span class="hljs-keyword">volatile</span> <span class="hljs-keyword">signed</span> __int32 *)&amp;a1-&gt;KernelDirectoryTableBase, <span class="hljs-number">0x3F</span>ui64);
+    }
+  }
+  <span class="hljs-keyword">return</span> <span class="hljs-number">1</span>i64;
+}</code></pre>
+<ul>
+<li><code>if ( KiKvaLeakage || KiKvaLeakageSimulate )</code> branch<ul>
+<li>Global variable <code>KiKvaLeakage</code> set in the <code>KiDetectKvaLeakage</code> function</li>
+<li>Global variable <code>KiKvaLeakageSimulate</code>, which is estimated to be determined by manual settings (for debugging and testing)</li>
+</ul>
+</li>
+<li>If either of the two global variable values is set, KVAS is activated</li>
+</ul>
+<h1 id="Three-line-summary"><a href="#Three-line-summary" class="headerlink" title="Three-line summary"></a>Three-line summary</h1><ul>
+<li>The Windows kernel dynamically activates KVAS (and other mitigations) at initialization depending on the CPU.</li>
+<li>There are two main criteria for determining whether to activate KVAS<ul>
+<li>Intel: Rogue Data Cache Load (Meltdown)</li>
+<li>AMD: Branch Confusion</li>
+</ul>
+</li>
+<li>The CPU checks whether hardware mitigations provided through MSR are applied, and if MSR functionality is not available, it determines whether to activate KVAS through legacy checks (bitmask, model number information, etc.).</li>
+</ul>
+<h1 id="Outro"><a href="#Outro" class="headerlink" title="Outro"></a>Outro</h1><p><img src="/2025/08/10/l0ch/deep-dive-into-kva/en/image1.jpg" srcset="/img/loading.gif" alt="Untitled"><br>Actually, when side-channel vulnerabilities based on speculative execution were a hot topic, I was busy fulfilling my military service obligations and didn&#x2019;t have a chance to look into it properly. However, while writing this article and the previous one on KASLR bypass, I had the opportunity to examine it in detail. I realized once again that understanding past issues is just as important as keeping up with current trends.  <del>Now, I&#x2019;m going to try reading Windows Internals again&#x2026;</del></p>
+<p>I&#x2019;ll bring you another interesting research topic next time~</p>
+<h1 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a>Reference</h1><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://support.microsoft.com/en-us/topic/kb4073119-windows-client-guidance-for-it-pros-to-protect-against-silicon-based-microarchitectural-and-speculative-execution-side-channel-vulnerabilities-35820a8a-ae13-1299-88cc-357f104f5b11">https://support.microsoft.com/en-us/topic/kb4073119-windows-client-guidance-for-it-pros-to-protect-against-silicon-based-microarchitectural-and-speculative-execution-side-channel-vulnerabilities-35820a8a-ae13-1299-88cc-357f104f5b11</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://msrc.microsoft.com/update-guide/vulnerability/CVE-2022-23825">https://msrc.microsoft.com/update-guide/vulnerability/CVE-2022-23825</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/technical-documentation/cpuid-enumeration-and-architectural-msrs.html">https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/technical-documentation/cpuid-enumeration-and-architectural-msrs.html</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/ntos/amd64_x/cpu_vendors.htm">https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/ntos/amd64_x/cpu_vendors.htm</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://support.microsoft.com/en-us/topic/kb4074629-understanding-speculationcontrol-powershell-script-output-fd70a80a-a63f-e539-cda5-5be4c9e67c04">https://support.microsoft.com/en-us/topic/kb4074629-understanding-speculationcontrol-powershell-script-output-fd70a80a-a63f-e539-cda5-5be4c9e67c04</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.intel.com/content/www/us/en/content-details/782158/intel-64-and-ia-32-architectures-software-developer-s-manual-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4.html">https://www.intel.com/content/www/us/en/content-details/782158/intel-64-and-ia-32-architectures-software-developer-s-manual-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4.html</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.vergiliusproject.com/kernels/x64/windows-11/24h2/_KPRCB">https://www.vergiliusproject.com/kernels/x64/windows-11/24h2/_KPRCB</a></p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/windows/">windows</a>
+                  
+                  <a class="hover-with-bg" href="/tags/bypass/">bypass</a>
+                  
+                  <a class="hover-with-bg" href="/tags/L0ch/">L0ch</a>
+                  
+                  <a class="hover-with-bg" href="/tags/mitigation/">mitigation</a>
+                  
+                  <a class="hover-with-bg" href="/tags/exploit-techniques/">exploit techniques</a>
+                  
+                  <a class="hover-with-bg" href="/tags/KVAS/">KVAS</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_L0ch.jpg" srcset="/img/loading.gif" alt="L0ch">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">L0ch</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/L0ch">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/08/11/j0ker/llm_part3/kr/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[Research] LLM Security & Safety Part 3. “Attention Is All You Need for LLM-based Code Vulnerability Localization” Review (KR)</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/08/10/l0ch/deep-dive-into-kva/ko/">
+                    <span class="hidden-mobile">[Research] Deep Dive into KVA Shadow's Dynamic Activation Mechanism(Ko)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/08/10/l0ch/deep-dive-into-kva/en/';
+        this.page.identifier = '/2025/08/10/l0ch/deep-dive-into-kva/en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] Deep Dive into KVA Shadow's Dynamic Activation Mechanism(En)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
