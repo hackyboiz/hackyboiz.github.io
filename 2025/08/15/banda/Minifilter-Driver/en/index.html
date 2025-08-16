@@ -1,0 +1,1768 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;Hello, this is banda. This is my first time greeting you with an article on Windows Minifilter Drivers. &amp;#x1F917;&lt;/p&gt;
+&lt;p&gt;While studying Windows Kernel Drivers recently, I discovered that there are various types of drivers categorized by purpose, such as Bus Drivers, Filter Drivers, FSDs, and Minifilters. I became curious about the structural differences between Bus or Filter Drivers and traditional Function Drivers, as well as how vulnerabilities manifest in these different types.&lt;/p&gt;
+&lt;p&gt;Today, we will explore the structure and operation of Minifilter Drivers, examine their internal components, and analyze potential vulnerabilities.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image1.png&#34; alt&gt;&lt;/p&gt;
+&lt;h1 id=&#34;1-About-Minifilter-Drivers&#34;&gt;&lt;a href=&#34;#1-About-Minifilter-Drivers&#34; class=&#34;headerlink&#34; title=&#34;1. About Minifilter Drivers&#34;&gt;&lt;/a&gt;1. About Minifilter Drivers&lt;/h1&gt;&lt;hr&gt;
+&lt;p&gt;A Minifilter driver is a specialized type of driver in Windows designed to monitor, intercept, and modify file system I/O requests such as file creation, opening, reading, writing, and deletion. It is commonly used for precise monitoring of file system activity.&lt;/p&gt;
+&lt;p&gt;If you think about it in terms of &lt;strong&gt;&amp;#x201C;monitoring, blocking, or modifying file access&amp;#x201D;&lt;/strong&gt;, it starts to sound familiar, doesn&amp;#x2019;t it? Indeed &amp;#x2014; this functionality is well-suited for products like &lt;strong&gt;antivirus software, EDR solutions, and backup programs&lt;/strong&gt;. In fact, I&amp;#x2019;ve personally confirmed that many such products rely on Minifilter drivers.&lt;/p&gt;
+&lt;p&gt;A Minifilter driver can intercept or manipulate the following three types of requests:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;IRP (I/O Request Packet)&lt;/li&gt;
+&lt;li&gt;Fast I/O&lt;/li&gt;
+&lt;li&gt;File System Filter Callbacks&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h2 id=&#34;1-1-Filter-Manager-&amp;#x2192;-Minifilter-Flow&#34;&gt;&lt;a href=&#34;#1-1-Filter-Manager-&amp;#x2192;-Minifilter-Flow&#34; class=&#34;headerlink&#34; title=&#34;1.1 Filter Manager &amp;#x2192; Minifilter Flow&#34;&gt;&lt;/a&gt;1.1 Filter Manager &amp;#x2192; Minifilter Flow&lt;/h2&gt;&lt;p&gt;A Minifilter operates on top of the Windows Filter Manager (&lt;code&gt;fltmgr.sys&lt;/code&gt;). The Filter Manager receives file I/O requests from the I/O Manager and forwards them to the registered Minifilter drivers in the order determined by their &lt;strong&gt;altitude&lt;/strong&gt;. In other words, the altitude controls the order in which filters are loaded and invoked.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image2.gif&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s take a look at how file I/O requests are processed in Windows.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;An application issues an I/O operation by calling APIs such as &lt;code&gt;CreateFile&lt;/code&gt;, &lt;code&gt;ReadFile&lt;/code&gt;, or &lt;code&gt;WriteFile&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;The I/O Manager receives this request and forwards it to the Filter Manager (&lt;code&gt;fltmgr.sys&lt;/code&gt;).&lt;/li&gt;
+&lt;li&gt;The Filter Manager checks the list of all registered Minifilter drivers and passes the request to each driver in the order of their altitude.&lt;/li&gt;
+&lt;li&gt;After the Minifilter completes its processing, the request is passed on to the file system filter driver.&lt;/li&gt;
+&lt;li&gt;Finally, the request is delivered to the disk driver (Storage Driver Stack), which accesses the physical disk or processes the data accordingly.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image3.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;You can check the list of Minifilter drivers loaded on the system by running the &lt;code&gt;fltmc&lt;/code&gt; command in the Command Prompt.&lt;/p&gt;
+&lt;p&gt;The higher the altitude value, the higher the priority, meaning the Minifilter can intercept or modify I/O requests earlier. However, the processing order differs depending on whether it is a pre-operation or post-operation callback.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Pre-operation&lt;/strong&gt;: Called in &lt;strong&gt;descending altitude order&lt;/strong&gt; (high &amp;#x2192; low)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Post-operation&lt;/strong&gt;: Called in &lt;strong&gt;ascending altitude order&lt;/strong&gt; (low &amp;#x2192; high)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Looking back at the overall flow&amp;#x2026; a Minifilter driver does not directly handle IRPs in the traditional way.&lt;/p&gt;
+&lt;p&gt;Instead, the Filter Manager receives I/O requests on its behalf and passes them to the Minifilter through callback functions.&lt;/p&gt;
+&lt;p&gt;In other words, a Minifilter driver does &lt;strong&gt;not&lt;/strong&gt; need to set up the &lt;strong&gt;DispatchRoutine&lt;/strong&gt; that we commonly associate with traditional drivers!&lt;/p&gt;
+&lt;h2 id=&#34;1-2-Minifilter-Callback-Routine&#34;&gt;&lt;a href=&#34;#1-2-Minifilter-Callback-Routine&#34; class=&#34;headerlink&#34; title=&#34;1.2 Minifilter Callback Routine&#34;&gt;&lt;/a&gt;1.2 Minifilter Callback Routine&lt;/h2&gt;&lt;p&gt;How can a Minifilter driver operate only on specific file operations?&lt;/p&gt;
+&lt;p&gt;This is possible thanks to a mechanism called &lt;strong&gt;callbacks&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;As mentioned earlier, a Minifilter driver does &lt;strong&gt;not&lt;/strong&gt; directly process IRPs through a &lt;code&gt;DispatchRoutine&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Instead, it can &amp;#x201C;hook&amp;#x201D; I/O requests delivered via the Filter Manager.&lt;/p&gt;
+&lt;p&gt;By registering &lt;strong&gt;pre-operation (&lt;code&gt;PreOperation Callback&lt;/code&gt;)&lt;/strong&gt; and &lt;strong&gt;post-operation (&lt;code&gt;PostOperation Callback&lt;/code&gt;)&lt;/strong&gt; callbacks, a Minifilter can monitor or control I/O operations at the system level when they occur.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Pre-operation callback (&lt;code&gt;PFLT_PRE_OPERATION_CALLBACK&lt;/code&gt;)&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;PFLT_PRE_OPERATION_CALLBACK PfltPreOperationCallback;
+
+&lt;span class=&#34;hljs-function&#34;&gt;FLT_PREOP_CALLBACK_STATUS &lt;span class=&#34;hljs-title&#34;&gt;PfltPreOperationCallback&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, out] PFLT_CALLBACK_DATA Data,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]      PCFLT_RELATED_OBJECTS FltObjects,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [out]     PVOID *CompletionContext&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{...}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Called before the I/O request is passed to the file system or lower drivers.&lt;/p&gt;
+&lt;p&gt;This is where the core logic of the Minifilter runs, with powerful capabilities such as returning&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;FLT_PREOP_COMPLETE&lt;/code&gt;, &lt;code&gt;FLT_PREOP_SUCCESS_WITH_CALLBACK&lt;/code&gt;, or &lt;code&gt;FLT_PREOP_SUCCESS_NO_CALLBACK&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/nc-fltkernel-pflt_pre_operation_callback&#34;&gt;&lt;strong&gt;PFLT_PRE_OPERATION_CALLBACK callback function (fltkernel.h)&lt;/strong&gt;&lt;/a&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Post-operation callback (&lt;code&gt;PFLT_POST_OPERATION_CALLBACK&lt;/code&gt;)&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;PFLT_POST_OPERATION_CALLBACK PfltPostOperationCallback;
+
+&lt;span class=&#34;hljs-function&#34;&gt;FLT_POSTOP_CALLBACK_STATUS &lt;span class=&#34;hljs-title&#34;&gt;PfltPostOperationCallback&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, out]      PFLT_CALLBACK_DATA Data,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]           PCFLT_RELATED_OBJECTS FltObjects,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional] PVOID CompletionContext,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]           FLT_POST_OPERATION_FLAGS Flags&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{...}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Called on the way back after the I/O request has been fully processed by lower drivers and the file system.&lt;/p&gt;
+&lt;p&gt;It is typically used to verify the success of the operation, log results, or modify the outcome if needed.&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/nc-fltkernel-pflt_post_operation_callback&#34;&gt;&lt;strong&gt;PFLT_POST_OPERATION_CALLBACK callback function (fltkernel.h)&lt;/strong&gt;&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;In short, these callbacks are registered in the &lt;code&gt;FLT_OPERATION_REGISTRATION&lt;/code&gt; structure, which specifies &lt;strong&gt;which pre-/post-operation callbacks are associated with which I/O operations (MajorFunctions)&lt;/strong&gt;.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;1-3-Communication-Between-Minifilter-and-User-Mode&#34;&gt;&lt;a href=&#34;#1-3-Communication-Between-Minifilter-and-User-Mode&#34; class=&#34;headerlink&#34; title=&#34;1.3 Communication Between Minifilter and User-Mode&#34;&gt;&lt;/a&gt;1.3 Communication Between Minifilter and User-Mode&lt;/h2&gt;&lt;p&gt;Communication between a Minifilter driver and a User-Mode application is handled via a &lt;strong&gt;filter communication port&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;This port acts as a dedicated high-speed communication channel between the Minifilter and the application, allowing safe message exchange between Kernel-Mode drivers and User-Mode processes.&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s look into the code and explore the APIs provided by Microsoft for this purpose.&lt;/p&gt;
+&lt;h3 id=&#34;Driver-Code&#34;&gt;&lt;a href=&#34;#Driver-Code&#34; class=&#34;headerlink&#34; title=&#34;Driver Code&#34;&gt;&lt;/a&gt;Driver Code&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;fltKernel.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+
+PFLT_FILTER gFilter = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+PFLT_PORT gServerPort = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, gClientPort = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+
+&lt;span class=&#34;hljs-function&#34;&gt;VOID &lt;span class=&#34;hljs-title&#34;&gt;OnDisconnect&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(PVOID Cookie)&lt;/span&gt; &lt;/span&gt;{
+    UNREFERENCED_PARAMETER(Cookie);
+    FltCloseClientPort(gFilter, &amp;amp;gClientPort);
+    gClientPort = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+}
+
+&lt;span class=&#34;hljs-function&#34;&gt;NTSTATUS &lt;span class=&#34;hljs-title&#34;&gt;OnConnect&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(PFLT_PORT ClientPort, PVOID SrvCookie, PVOID Ctx, ULONG Size, PVOID* ConnCookie)&lt;/span&gt; &lt;/span&gt;{
+    UNREFERENCED_PARAMETER(SrvCookie);
+    UNREFERENCED_PARAMETER(Ctx);
+    UNREFERENCED_PARAMETER(Size);
+    UNREFERENCED_PARAMETER(ConnCookie);
+    gClientPort = ClientPort;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; STATUS_SUCCESS;
+}
+
+&lt;span class=&#34;hljs-function&#34;&gt;FLT_PREOP_CALLBACK_STATUS &lt;span class=&#34;hljs-title&#34;&gt;PreCreate&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(PFLT_CALLBACK_DATA Data, PCFLT_RELATED_OBJECTS FltObjects, PVOID* Buff)&lt;/span&gt; &lt;/span&gt;{
+    UNREFERENCED_PARAMETER(FltObjects);
+    UNREFERENCED_PARAMETER(Buff);
+    PFLT_FILE_NAME_INFORMATION nameInfo;
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (gClientPort &amp;amp;&amp;amp; NT_SUCCESS(FltGetFileNameInformation(Data, FLT_FILE_NAME_NORMALIZED, &amp;amp;nameInfo))) {
+        FltSendMessage(gFilter, &amp;amp;gClientPort, nameInfo-&amp;gt;Name.Buffer, nameInfo-&amp;gt;Name.Length, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;);
+        FltReleaseFileNameInformation(nameInfo);
+    }
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; FLT_PREOP_SUCCESS_NO_CALLBACK;
+}
+
+&lt;span class=&#34;hljs-function&#34;&gt;NTSTATUS &lt;span class=&#34;hljs-title&#34;&gt;Unload&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(FLT_FILTER_UNLOAD_FLAGS Flags)&lt;/span&gt; &lt;/span&gt;{
+    UNREFERENCED_PARAMETER(Flags);
+    FltCloseCommunicationPort(gServerPort);
+    FltUnregisterFilter(gFilter);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; STATUS_SUCCESS;
+}
+
+&lt;span class=&#34;hljs-function&#34;&gt;NTSTATUS &lt;span class=&#34;hljs-title&#34;&gt;DriverEntry&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)&lt;/span&gt; &lt;/span&gt;{
+    UNREFERENCED_PARAMETER(RegistryPath);
+    NTSTATUS status;
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; FLT_OPERATION_REGISTRATION Cbs[] = { { IRP_MJ_CREATE, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, PreCreate, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt; }, { IRP_MJ_OPERATION_END } };
+    &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; FLT_REGISTRATION Reg = { &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(FLT_REGISTRATION), FLT_REGISTRATION_VERSION, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, Cbs, Unload };
+
+    status = FltRegisterFilter(DriverObject, &amp;amp;Reg, &amp;amp;gFilter);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (!NT_SUCCESS(status)) &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; status;
+
+    UNICODE_STRING portName = RTL_CONSTANT_STRING(&lt;span class=&#34;hljs-string&#34;&gt;L&amp;quot;\\FileActivityMonitorPort&amp;quot;&lt;/span&gt;);
+    OBJECT_ATTRIBUTES oa = { &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(oa), &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &amp;amp;portName, OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt; };
+
+    status = FltCreateCommunicationPort(gFilter, &amp;amp;gServerPort, &amp;amp;oa, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, OnConnect, OnDisconnect, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (!NT_SUCCESS(status)) {
+        FltUnregisterFilter(gFilter);
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; status;
+    }
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; FltStartFiltering(gFilter);
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Focusing on the representative driver code APIs &lt;code&gt;FltCreateCommunicationPort()&lt;/code&gt;, &lt;code&gt;FltSendMessage()&lt;/code&gt;, and &lt;code&gt;FltCloseCommunicationPort()&lt;/code&gt;, I have implemented an example Minifilter driver code.&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s walk through the flow together:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;p&gt;The driver registers itself using &lt;code&gt;FltRegisterFilter()&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt; At this stage, it specifies a &lt;strong&gt;PreCreateCallback&lt;/strong&gt; function to monitor file creation and open (&lt;code&gt;IRP_MJ_CREATE&lt;/code&gt;) requests, and starts I/O monitoring with &lt;code&gt;FltStartFiltering()&lt;/code&gt;.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;Using the &lt;code&gt;FltCreateCommunicationPort()&lt;/code&gt; function, the driver can create a communication port.&lt;/p&gt;
+&lt;p&gt; In the code above, it creates the port &lt;code&gt;\\FileActivityMonitorPort&lt;/code&gt;, which allows a User-Mode application to connect and receive notifications.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;When a file create/open event occurs, &lt;strong&gt;PreCreateCallback&lt;/strong&gt; is invoked, and the function collects information about which process accessed which file.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;The driver then uses &lt;code&gt;FltSendMessage()&lt;/code&gt; to immediately send the real-time file access information collected in &lt;strong&gt;PreCreateCallback&lt;/strong&gt; to the connected User-Mode application.&lt;/li&gt;
+&lt;li&gt;Finally, in the &lt;strong&gt;FilterUnload&lt;/strong&gt; routine, when the driver is unloaded, it closes the communication port with &lt;code&gt;FltCloseCommunicationPort()&lt;/code&gt; and unregisters the filter.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3 id=&#34;User-Mode-Application-Code&#34;&gt;&lt;a href=&#34;#User-Mode-Application-Code&#34; class=&#34;headerlink&#34; title=&#34;User-Mode Application Code&#34;&gt;&lt;/a&gt;User-Mode Application Code&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;windows.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;fltuser.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;stdio.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;pragma&lt;/span&gt; comment(lib, &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;quot;fltlib.lib&amp;quot;&lt;/span&gt;)&lt;/span&gt;
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;main&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;()&lt;/span&gt; &lt;/span&gt;{
+    HANDLE port;
+    HRESULT hr;
+    
+    BYTE buffer[&lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(FILTER_MESSAGE_HEADER) + &lt;span class=&#34;hljs-number&#34;&gt;1024&lt;/span&gt;];
+    PFILTER_MESSAGE_HEADER header = (PFILTER_MESSAGE_HEADER)buffer;
+
+    &lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Connecting to driver...\n&amp;quot;&lt;/span&gt;);
+
+    hr = FilterConnectCommunicationPort(&lt;span class=&#34;hljs-string&#34;&gt;L&amp;quot;\\FileActivityMonitorPort&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &amp;amp;port);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (IS_ERROR(hr)) {
+        &lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Connection failed. Error 0x%X\n&amp;quot;&lt;/span&gt;, hr);
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+    }
+
+    &lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Connected. Waiting for file events...\n&amp;quot;&lt;/span&gt;);
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; (TRUE) {
+        hr = FilterGetMessage(port, header, &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(buffer), &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;);
+        
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (SUCCEEDED(hr)) {
+            &lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;File Accessed: %S\n&amp;quot;&lt;/span&gt;, (PWSTR)header-&amp;gt;MessageBody);
+        } &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+            &lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Connection lost. Error 0x%X\n&amp;quot;&lt;/span&gt;, hr);
+            &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;;
+        }
+    }
+
+    CloseHandle(port);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Let&amp;#x2019;s now look at the communication flow from the User-Mode application side.&lt;/p&gt;
+&lt;p&gt;Representative APIs include &lt;code&gt;FilterConnectCommunicationPort()&lt;/code&gt; and &lt;code&gt;FilterSendMessage()&lt;/code&gt;.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;First, the application uses &lt;code&gt;FilterConnectCommunicationPort()&lt;/code&gt; to connect to the Minifilter driver&amp;#x2019;s communication port in the kernel, &lt;code&gt;\\FileActivityMonitorPort&lt;/code&gt;, and obtains a HANDLE for communication.&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;It then calls &lt;code&gt;FilterGetMessage()&lt;/code&gt; to directly receive the file path string from the driver.&lt;/p&gt;
+&lt;p&gt; If the message is received successfully, the application outputs the file path to the screen.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h1 id=&#34;2-CVE-2024-30085-1-Day-Analysis&#34;&gt;&lt;a href=&#34;#2-CVE-2024-30085-1-Day-Analysis&#34; class=&#34;headerlink&#34; title=&#34;2. [CVE-2024-30085] 1-Day Analysis&#34;&gt;&lt;/a&gt;2. [CVE-2024-30085] 1-Day Analysis&lt;/h1&gt;&lt;hr&gt;
+&lt;p&gt;This is a Windows Minifilter Driver vulnerability that was also introduced in &amp;#x201C;1day1line&amp;#x201D; (&lt;a href=&#34;https://hackyboiz.github.io/2025/01/11/OUYA77/2025-01-11/&#34;&gt;reference&lt;/a&gt;).&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s try to reproduce CVE-2024-30085 and, in the process, learn more about Minifilter drivers.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&amp;#x1FA9F; Environment: Windows 11 22H2/23H2 10.0.2261.3672&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image4.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;The Windows Cloud Files Mini Filter driver is responsible for the Windows cloud sync feature.&lt;/p&gt;
+&lt;p&gt;For example, I&amp;#x2019;ve taken a screenshot of one of my folders.&lt;/p&gt;
+&lt;p&gt;To understand this Minifilter driver vulnerability, we first need some background knowledge about Stub Files and Reparse Points.&lt;/p&gt;
+&lt;h3 id=&#34;What-is-a-Stub-File&#34;&gt;&lt;a href=&#34;#What-is-a-Stub-File&#34; class=&#34;headerlink&#34; title=&#34;What is a Stub File?&#34;&gt;&lt;/a&gt;What is a Stub File?&lt;/h3&gt;&lt;p&gt;A stub file refers to a file that exists only as a placeholder locally, without containing any actual data.&lt;/p&gt;
+&lt;p&gt;As shown in the image above, the &amp;#x201C;Pictures&amp;#x201D; folder has a blue cloud icon in its status &amp;#x2014; this indicates that the file is in a stub state.&lt;/p&gt;
+&lt;p&gt;On NTFS, its size, name, and icon are displayed, but its actual contents are not stored locally.&lt;/p&gt;
+&lt;h3 id=&#34;Reparse-Point-Metadata&#34;&gt;&lt;a href=&#34;#Reparse-Point-Metadata&#34; class=&#34;headerlink&#34; title=&#34;Reparse Point Metadata&#34;&gt;&lt;/a&gt;Reparse Point Metadata&lt;/h3&gt;&lt;p&gt;So, what happens when a user tries to access such a file?&lt;/p&gt;
+&lt;p&gt;NTFS checks the Reparse Tag and determines, &lt;strong&gt;&amp;#x201C;Oh&amp;#x2026; this is a stub file!&amp;#x201D;&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;At this point, the Windows Cloud Files Minifilter (&lt;code&gt;cldflt.sys&lt;/code&gt;) reads the &lt;code&gt;Reparse Point&lt;/code&gt; metadata structure and decides how to handle the file.&lt;/p&gt;
+&lt;p&gt;After that, the Minifilter prepares for communication with the remote server.&lt;/p&gt;
+&lt;p&gt;However, &lt;code&gt;cldflt.sys&lt;/code&gt; itself does not communicate directly with the server &amp;#x2014; instead, it delegates the actual work to a User-Mode process.&lt;/p&gt;
+&lt;p&gt;This matches the concept we saw earlier: the Minifilter plays the role of an I/O interpreter, while the User-Mode client handles the actual data manipulation.&lt;/p&gt;
+&lt;p&gt;I&amp;#x2019;ve added the Windows Cloud Files Minifilter&amp;#x2019;s Reparse Point structure definitions to Local Types.&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s take a look at the CldFlt structure set I defined.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;typedef&lt;/span&gt; &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; _&lt;span class=&#34;hljs-title&#34;&gt;REPARSE_DATA_BUFFER&lt;/span&gt; {&lt;/span&gt;
+    DWORD ReparseTag;
+    WORD ReparseDataLength;
+    WORD Reserved;
+    WORD Flags;
+    WORD UncompressedSize;
+    REPARSE_CLD_BUFFER ReparseCldBuffer;
+} REPARSE_DATA_BUFFER, *PREPARSE_DATA_BUFFER;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;REPARSE_DATA_BUFFER&lt;/code&gt; is the standard header structure used to represent all Reparse Point data on NTFS.&lt;/p&gt;
+&lt;p&gt;Here, however, we use a redefined version to make analyzing Cloud Files easier.&lt;/p&gt;
+&lt;p&gt;This structure stores top-level metadata such as &lt;code&gt;ReparseTag&lt;/code&gt; (to identify the owning driver), &lt;code&gt;ReparseDataLength&lt;/code&gt;, and &lt;code&gt;Flags&lt;/code&gt;, and then points to the actual data, which continues as an &lt;code&gt;HSM_REPARSE&lt;/code&gt; structure.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;HSM_REPARSE&lt;/span&gt; {&lt;/span&gt;
+    USHORT hsmFlags;
+    USHORT hsmSize;
+    &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;HSM_RP_DATA&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;fileData&lt;/span&gt;;&lt;/span&gt;
+};&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;HSM_REPARSE&lt;/code&gt; is the full container for a Cloud Files-specific Reparse Point.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;hsmFlags&lt;/code&gt; and &lt;code&gt;hsmSize&lt;/code&gt; indicate whether compression is used and the total size of the HSM block.&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;fileData&lt;/code&gt; field contains an &lt;code&gt;HSM_RP_DATA&lt;/code&gt; structure.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;HSM_RP_DATA&lt;/span&gt; {&lt;/span&gt;
+    ULONG magic;
+    ULONG crc32;
+    ULONG totalSize;
+    USHORT dataFlags;
+    USHORT elemCount;
+    &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;HSM_RP_ELEMENT&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;elements&lt;/span&gt;[5];&lt;/span&gt;
+};&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;HSM_RP_DATA&lt;/code&gt; is the main header, containing the layout and structure of the entire metadata block.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;magic&lt;/code&gt; identifies the data type, and if the CRC bit is set in &lt;code&gt;dataFlags&lt;/code&gt;, &lt;code&gt;crc32&lt;/code&gt; is validated using &lt;code&gt;RtlComputeCrc32&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;elements[]&lt;/code&gt; array stores &lt;code&gt;HSM_RP_ELEMENT&lt;/code&gt; structures that define the type, size, and offset of each metadata element.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;HSM_RP_ELEMENT&lt;/span&gt; {&lt;/span&gt;
+    USHORT elemType;
+    USHORT elemSize;
+    ULONG elemOffset;
+};
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;typedef&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;enum&lt;/span&gt; HSM_RP_ELEM_TYPE {
+    HSM_RP_ELEMENT_NONE   = &lt;span class=&#34;hljs-number&#34;&gt;0x00&lt;/span&gt;,
+    HSM_RP_ELEMENT_U64    = &lt;span class=&#34;hljs-number&#34;&gt;0x06&lt;/span&gt;,
+    HSM_RP_ELEMENT_BYTE   = &lt;span class=&#34;hljs-number&#34;&gt;0x07&lt;/span&gt;,
+    HSM_RP_ELEMENT_U32    = &lt;span class=&#34;hljs-number&#34;&gt;0x0a&lt;/span&gt;,
+    HSM_RP_ELEMENT_BITMAP = &lt;span class=&#34;hljs-number&#34;&gt;0x11&lt;/span&gt;,
+    HSM_RP_ELEMENT_MAX    = &lt;span class=&#34;hljs-number&#34;&gt;0x12&lt;/span&gt;
+} HSM_RP_ELEMENT_TYPE;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;HSM_RP_ELEMENT&lt;/code&gt; defines each individual metadata element&amp;#x2019;s type, size, and offset.&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;HSM_RP_ELEMENT_TYPE&lt;/code&gt; enumeration is used to classify element types.&lt;/p&gt;
+&lt;h2 id=&#34;2-1-Root-Cause-Analysis&#34;&gt;&lt;a href=&#34;#2-1-Root-Cause-Analysis&#34; class=&#34;headerlink&#34; title=&#34;2.1 Root Cause Analysis&#34;&gt;&lt;/a&gt;2.1 Root Cause Analysis&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image5.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;The vulnerability occurs when a file is created and the &lt;code&gt;HsmFltPostCREATE&lt;/code&gt; callback is executed to process the file&amp;#x2019;s Reparse Point.&lt;/p&gt;
+&lt;p&gt;Within &lt;code&gt;HsmFltPostCREATE&lt;/code&gt;, when handling the bitmap information stored in the Reparse Point, the function &lt;code&gt;HsmIBitmapNORMALOpen()&lt;/code&gt; is called &amp;#x2014; and this is where the flaw exists.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;bitmap_size&lt;/code&gt; is read directly from the User-Mode request buffer.&lt;/li&gt;
+&lt;li&gt;A fixed-size buffer of 0x1000 bytes is allocated via &lt;code&gt;ExAllocatePoolWithTag&lt;/code&gt;, but the user-controlled &lt;code&gt;bitmap_size&lt;/code&gt; value is passed directly to &lt;code&gt;memmove&lt;/code&gt; without any boundary checks.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Therefore, if &lt;code&gt;bitmap_size&lt;/code&gt; is greater than 0x1000, a Heap-based Buffer Overflow is expected to occur.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image6.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Looking at the &lt;code&gt;HsmpBitmapIsReparseBufferSupported()&lt;/code&gt; function, it returns an error if &lt;code&gt;hdr-&amp;gt;elements[4].elemSize&lt;/code&gt; is greater than &lt;code&gt;0x1000&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image7.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Looking a bit further up at the conditional statement code, we can see that &lt;code&gt;hdr-&amp;gt;elements[2]&lt;/code&gt; is being strictly validated. Checks such as &lt;code&gt;total &amp;#x2265; 0x18&lt;/code&gt; and &lt;code&gt;hdr-&amp;gt;elemCount&lt;/code&gt; boundary verification must all be passed in order to proceed. If these conditions are not met, it would return a failure, right?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image8.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;However, in the same function, if &lt;code&gt;hasBuf&lt;/code&gt; is set to &lt;code&gt;false&lt;/code&gt;, the code returns &lt;code&gt;result = 0&lt;/code&gt; (success) simply by checking the 1-byte flag of &lt;code&gt;element[1]&lt;/code&gt;, without performing any separate bitmap length validation. In this path, there is no check to determine whether the bitmap length exceeds &lt;code&gt;0x1000&lt;/code&gt;, so the validation is skipped and the data is treated as valid.&lt;/p&gt;
+&lt;h2 id=&#34;2-2-Exploit&#34;&gt;&lt;a href=&#34;#2-2-Exploit&#34; class=&#34;headerlink&#34; title=&#34;2.2 Exploit&#34;&gt;&lt;/a&gt;2.2 Exploit&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image9.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;cldflt.sys&lt;/code&gt; minifilter driver does not scan all file system I/O by default; instead, it only operates on paths within the Sync Root that are registered through the CfAPI. Therefore, the first step was to reach the root directory of a cloud sync folder by calling the &lt;code&gt;CfRegisterSyncRoot()&lt;/code&gt; function.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image10.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Once the Sync Root registration code is built and executed, such a folder is created. Inside this folder, cloud stub files and metadata may appear, and this becomes the point I can exploit.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;-&amp;gt; HsmFltPostCREATE()
+-&amp;gt; HsmiFltPostECPCREATE()
+-&amp;gt; HsmpSetupContexts()
+-&amp;gt; HsmpCtxCreateStreamContext()
+-&amp;gt; HsmIBitmapNORMALOpen()
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Through dynamic analysis, it was confirmed that in order to reach the vulnerable function &lt;code&gt;HsmIBitmapNORMALOpen()&lt;/code&gt;, the execution must sequentially pass through the above function chain and satisfy all conditional checks. My goal, therefore, is to fulfill all those conditions and reach the vulnerable &lt;code&gt;memmove&lt;/code&gt; inside &lt;code&gt;HsmIBitmapNORMALOpen()&lt;/code&gt;.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Understanding the Flow as a Minifilter Driver&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Earlier, I mentioned that a minifilter driver calls specific callbacks depending on the IRP code when an I/O request occurs. To enter the vulnerable path, the process must begin at the &lt;code&gt;IRP_MJ_CREATE&lt;/code&gt; Post-Create Callback (&lt;code&gt;HsmFltPostCREATE&lt;/code&gt;) and proceed sequentially to the target function. These intermediate functions validate entry conditions based on file/stream attributes and Reparse Point information, so we can bypass them by crafting a special file structure.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Use &lt;code&gt;MakeDataBuffer()&lt;/code&gt; to create an &lt;code&gt;IO_REPARSE_TAG_CLOUD&lt;/code&gt; structure &amp;#x2192; The minifilter recognizes the file as a cloud stub file and enters the Reparse Point parsing logic.&lt;/li&gt;
+&lt;li&gt;Set Item Tag = &lt;code&gt;0x11&lt;/code&gt; (Bitmap) &amp;#x2192; Configure &lt;code&gt;Size&lt;/code&gt; to &lt;code&gt;0x1000 + overSize&lt;/code&gt; to trigger a heap overflow in &lt;code&gt;memmove()&lt;/code&gt; by copying more than the allocated size. Ensure that other elements (Tags &lt;code&gt;0x7&lt;/code&gt;, &lt;code&gt;0x6&lt;/code&gt;, &lt;code&gt;0xA&lt;/code&gt;, etc.) are also set to pass the minifilter&amp;#x2019;s boundary checks.&lt;/li&gt;
+&lt;li&gt;Include a fake kernel object pointer in the overflow data &amp;#x2192; Apply it with &lt;code&gt;FSCTL_SET_REPARSE_POINT&lt;/code&gt;, then trigger &lt;code&gt;HsmIBitmapNORMALOpen()&lt;/code&gt; by calling &lt;code&gt;CreateFile()&lt;/code&gt;.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image11.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;When these conditions are met, we can confirm that the flow starts from &lt;code&gt;FltMgr&lt;/code&gt; and reaches &lt;code&gt;HsmIBitmapNORMALOpen()&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;I&amp;#x2019;d like to cover the full exploit process, but since today&amp;#x2019;s focus is on explaining the minifilter and I&amp;#x2019;ve already gone overboard with the length&amp;#x2026; let&amp;#x2019;s wrap up with a summary of the entire exploit scenario.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image12.png&#34; alt&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Proof of Concept Overview&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;EPROCESS Structure Analysis and Token Field Offset Calculation&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Calculate the offset of the Token field within the EPROCESS structure to prepare for the subsequent SYSTEM token swap.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;First &lt;code&gt;WNF_STATE_DATA&lt;/code&gt; Spray and Hole Creation&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Mass-allocate (&lt;code&gt;spray&lt;/code&gt;) &lt;code&gt;WNF_STATE_DATA&lt;/code&gt; objects of size 0x1000 (0xff0 data) and then free them to create heap holes in the kernel heap.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Open Vulnerable Bitmap File and Trigger First Overflow&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Use &lt;code&gt;CfRegisterSyncRoot()&lt;/code&gt; and manipulate the Reparse Point directory to prepare a vulnerable bitmap file within the Sync Root. Then, open the file with &lt;code&gt;CreateFile()&lt;/code&gt; to reach the path:&lt;/p&gt;
+&lt;p&gt; &lt;code&gt;IRP_MJ_CREATE()&lt;/code&gt; &amp;#x2192; &lt;code&gt;HsmFltPostCREATE()&lt;/code&gt; &amp;#x2192; &lt;code&gt;HsmiFltPostECPCREATE()&lt;/code&gt; &amp;#x2192; &lt;code&gt;HsmpSetupContexts()&lt;/code&gt; &amp;#x2192; &lt;code&gt;HsmpCtxCreateStreamContext()&lt;/code&gt; &amp;#x2192; &lt;code&gt;HsmIBitmapNORMALOpen()&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt; Trigger a heap overflow to modify the &lt;code&gt;DataSize&lt;/code&gt; of an adjacent &lt;code&gt;WNF_STATE_DATA&lt;/code&gt;, gaining OOB (Out-of-Bounds) read/write capability.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Kernel Pointer Leak&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Use the modified &lt;code&gt;WNF_STATE_DATA&lt;/code&gt; to read the &lt;code&gt;_KALPC_RESERVE&lt;/code&gt; pointer and leak a kernel address.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Second &lt;code&gt;WNF_STATE_DATA&lt;/code&gt; Spray and Hole Creation&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Repeat the same spray-and-free process for &lt;code&gt;WNF_STATE_DATA&lt;/code&gt; objects, but this time arrange for a &lt;code&gt;PipeAttribute&lt;/code&gt; structure to be placed adjacent to the WNF object.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Second Overflow to Manipulate &lt;code&gt;PipeAttribute&lt;/code&gt;&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Open a second bitmap file to trigger another heap overflow, overwriting the &lt;code&gt;Flink&lt;/code&gt; pointer of the adjacent &lt;code&gt;PipeAttribute&lt;/code&gt; with the address of a user-space fake &lt;code&gt;PipeAttribute&lt;/code&gt; structure.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Arbitrary Read to Retrieve EPROCESS/Token Addresses&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Use the fake &lt;code&gt;PipeAttribute&lt;/code&gt; to access the ALPC Port structure, sequentially reading the EPROCESS address and Token address of the target process.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Token Swapping and SYSTEM Privilege Escalation&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Perform an arbitrary write to replace the current process&amp;#x2019;s Token value with the SYSTEM Token value, then launch &lt;code&gt;cmd.exe&lt;/code&gt; with SYSTEM privileges.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3 id=&#34;ALPC-WNF&#34;&gt;&lt;a href=&#34;#ALPC-WNF&#34; class=&#34;headerlink&#34; title=&#34;ALPC / WNF&#34;&gt;&lt;/a&gt;ALPC / WNF&lt;/h3&gt;&lt;p&gt;The &lt;code&gt;_WNF_STATE_DATA&lt;/code&gt; and &lt;code&gt;_ALPC_HANDLE_TABLE&lt;/code&gt; structures are used to allocate arbitrary-sized kernel objects for heap holes and to leak kernel memory addresses. Since ALPC and WNF might be unfamiliar concepts, here is a brief explanation of the two subsystems relevant to this exploit:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;ALPC (Asynchronous Local Procedure Call)&lt;/strong&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image13.webp&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;ALPC is an inter-process communication (IPC) mechanism within the Windows kernel that uses client and server ports to exchange messages. By leveraging the &lt;code&gt;_ALPC_HANDLE_ENTRY&lt;/code&gt; in the ALPC handle table, it is possible to store message buffer addresses. Since the size of this table is variable, it allows the creation of kernel objects of arbitrary size.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;When an ALPC port is created, an &lt;code&gt;_ALPC_HANDLE_TABLE&lt;/code&gt; is allocated in the &lt;strong&gt;paged pool&lt;/strong&gt; with a size of 0x80.&lt;/li&gt;
+&lt;li&gt;Each call to &lt;code&gt;NtAlpcCreateResourceReserve&lt;/code&gt; creates a &lt;code&gt;_KALPC_RESERVE&lt;/code&gt; object, and its address is added to the handle table.&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;By tampering with this structure, it becomes possible to obtain arbitrary kernel address read/write primitives.&lt;/p&gt;
+&lt;p&gt;  &amp;#x2192; In the PoC, a fake &lt;code&gt;_KALPC_RESERVE&lt;/code&gt; is injected to achieve arbitrary R/W.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;ALPC handles can also be controlled from user mode, making them highly useful for exploitation.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;WNF (Windows Notification Facility)&lt;/strong&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image14.webp&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;WNF is the Windows Notification Facility, and the &lt;code&gt;WNF_NAME_INSTANCE&lt;/code&gt; kernel object contains an internal &lt;code&gt;_WNF_STATE_DATA&lt;/code&gt; field whose size is variable. This allows direct control of the kernel object size from user mode using &lt;code&gt;NtCreateWnfStateName&lt;/code&gt; + &lt;code&gt;NtUpdateWnfStateData&lt;/code&gt;.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;_WNF_STATE_DATA&lt;/code&gt; can be allocated with a size of 0x1000 (0x10 header + 0xFF0 data).&lt;/li&gt;
+&lt;li&gt;WNF objects can be mass-created for heap spraying, placing them adjacent to a target structure (e.g., an ALPC object).&lt;/li&gt;
+&lt;li&gt;In the PoC, WNF is used to create heap holes and then place them next to ALPC objects to trigger an overflow into the ALPC handle table.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;In particular, the PoC required registering a routine to create a pipe, which I found interesting.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;PipeAttribute&lt;/span&gt; {&lt;/span&gt;
+    LIST_ENTRY &lt;span class=&#34;hljs-built_in&#34;&gt;list&lt;/span&gt;;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *AttributeName;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;uint64_t&lt;/span&gt; AttributeValueSize;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *AttributeValue;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; data[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;];
+};&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The pipe is configured so that the &lt;code&gt;AttributeValue&lt;/code&gt; pointer in the modified &lt;code&gt;PipeAttribute&lt;/code&gt; structure is set to a kernel memory address. This causes the kernel to read data from that address and return it to user mode. By combining the memory layout control achieved via ALPC with the WNF overflow, the pipe can be turned into an arbitrary read primitive, allowing leakage of kernel addresses.&lt;/p&gt;
+&lt;h1 id=&#34;3-Conclusion&#34;&gt;&lt;a href=&#34;#3-Conclusion&#34; class=&#34;headerlink&#34; title=&#34;3. Conclusion&#34;&gt;&lt;/a&gt;3. Conclusion&lt;/h1&gt;&lt;hr&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image15.gif&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;I&amp;#x2019;ll wrap up by sharing the results of the LPE I implemented using the characteristics of the &lt;code&gt;cldflt.sys&lt;/code&gt; Minifilter driver combined with the WNF + ALPC technique.&lt;/p&gt;
+&lt;p&gt;While studying Minifilters, I realized that although their operation, functions, and concepts may feel a bit unfamiliar, the way vulnerabilities are triggered and their root causes are, in the end, quite similar. So, there&amp;#x2019;s no need to be too intimidated about diving into Minifilter exploitation!&lt;/p&gt;
+&lt;p&gt;If I get the chance, I&amp;#x2019;d like to explore and study various other drivers I haven&amp;#x2019;t looked into yet. I hope you&amp;#x2019;ll look forward to my next write-up as well!&lt;/p&gt;
+&lt;h1 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;&lt;strong&gt;Reference&lt;/strong&gt;&lt;/h1&gt;&lt;hr&gt;
+&lt;p&gt;&lt;a href=&#34;https://exploitreversing.com/2023/04/11/exploiting-reversing-er-series/&#34;&gt;https://exploitreversing.com/2023/04/11/exploiting-reversing-er-series/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/filter-manager-concepts&#34;&gt;https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/filter-manager-concepts&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://starlabs.sg/blog/2024/all-i-want-for-christmas-is-a-cve-2024-30085-exploit/&#34;&gt;https://starlabs.sg/blog/2024/all-i-want-for-christmas-is-a-cve-2024-30085-exploit/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://ssd-disclosure.com/ssd-advisory-cldflt-heap-based-overflow-pe/&#34;&gt;https://ssd-disclosure.com/ssd-advisory-cldflt-heap-based-overflow-pe/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://reddogsecurity.substack.com/p/elevating-privileges-in-windows-insights?r=5awqb0&amp;amp;utm_campaign=post&amp;amp;utm_medium=web&amp;amp;triedRedirect=true&#34;&gt;https://reddogsecurity.substack.com/p/elevating-privileges-in-windows-insights?r=5awqb0&amp;amp;utm_campaign=post&amp;amp;utm_medium=web&amp;amp;triedRedirect=true&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://medium.com/@WaterBucket/understanding-mini-filter-drivers-for-windows-vulnerability-research-exploit-development-391153c945d6&#34;&gt;https://medium.com/@WaterBucket/understanding-mini-filter-drivers-for-windows-vulnerability-research-exploit-development-391153c945d6&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] Walking Through Windows Minifilter Drivers (EN) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;Hello, this is banda. This is my first time greeting you with an article on Windows Minifilter Drivers. &amp;#x1F917;&lt;/p&gt;
+&lt;p&gt;While studying Windows Kernel Drivers recently, I discovered that there are various types of drivers categorized by purpose, such as Bus Drivers, Filter Drivers, FSDs, and Minifilters. I became curious about the structural differences between Bus or Filter Drivers and traditional Function Drivers, as well as how vulnerabilities manifest in these different types.&lt;/p&gt;
+&lt;p&gt;Today, we will explore the structure and operation of Minifilter Drivers, examine their internal components, and analyze potential vulnerabilities.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image1.png&#34; alt&gt;&lt;/p&gt;
+&lt;h1 id=&#34;1-About-Minifilter-Drivers&#34;&gt;&lt;a href=&#34;#1-About-Minifilter-Drivers&#34; class=&#34;headerlink&#34; title=&#34;1. About Minifilter Drivers&#34;&gt;&lt;/a&gt;1. About Minifilter Drivers&lt;/h1&gt;&lt;hr&gt;
+&lt;p&gt;A Minifilter driver is a specialized type of driver in Windows designed to monitor, intercept, and modify file system I/O requests such as file creation, opening, reading, writing, and deletion. It is commonly used for precise monitoring of file system activity.&lt;/p&gt;
+&lt;p&gt;If you think about it in terms of &lt;strong&gt;&amp;#x201C;monitoring, blocking, or modifying file access&amp;#x201D;&lt;/strong&gt;, it starts to sound familiar, doesn&amp;#x2019;t it? Indeed &amp;#x2014; this functionality is well-suited for products like &lt;strong&gt;antivirus software, EDR solutions, and backup programs&lt;/strong&gt;. In fact, I&amp;#x2019;ve personally confirmed that many such products rely on Minifilter drivers.&lt;/p&gt;
+&lt;p&gt;A Minifilter driver can intercept or manipulate the following three types of requests:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;IRP (I/O Request Packet)&lt;/li&gt;
+&lt;li&gt;Fast I/O&lt;/li&gt;
+&lt;li&gt;File System Filter Callbacks&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h2 id=&#34;1-1-Filter-Manager-&amp;#x2192;-Minifilter-Flow&#34;&gt;&lt;a href=&#34;#1-1-Filter-Manager-&amp;#x2192;-Minifilter-Flow&#34; class=&#34;headerlink&#34; title=&#34;1.1 Filter Manager &amp;#x2192; Minifilter Flow&#34;&gt;&lt;/a&gt;1.1 Filter Manager &amp;#x2192; Minifilter Flow&lt;/h2&gt;&lt;p&gt;A Minifilter operates on top of the Windows Filter Manager (&lt;code&gt;fltmgr.sys&lt;/code&gt;). The Filter Manager receives file I/O requests from the I/O Manager and forwards them to the registered Minifilter drivers in the order determined by their &lt;strong&gt;altitude&lt;/strong&gt;. In other words, the altitude controls the order in which filters are loaded and invoked.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image2.gif&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s take a look at how file I/O requests are processed in Windows.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;An application issues an I/O operation by calling APIs such as &lt;code&gt;CreateFile&lt;/code&gt;, &lt;code&gt;ReadFile&lt;/code&gt;, or &lt;code&gt;WriteFile&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;The I/O Manager receives this request and forwards it to the Filter Manager (&lt;code&gt;fltmgr.sys&lt;/code&gt;).&lt;/li&gt;
+&lt;li&gt;The Filter Manager checks the list of all registered Minifilter drivers and passes the request to each driver in the order of their altitude.&lt;/li&gt;
+&lt;li&gt;After the Minifilter completes its processing, the request is passed on to the file system filter driver.&lt;/li&gt;
+&lt;li&gt;Finally, the request is delivered to the disk driver (Storage Driver Stack), which accesses the physical disk or processes the data accordingly.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image3.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;You can check the list of Minifilter drivers loaded on the system by running the &lt;code&gt;fltmc&lt;/code&gt; command in the Command Prompt.&lt;/p&gt;
+&lt;p&gt;The higher the altitude value, the higher the priority, meaning the Minifilter can intercept or modify I/O requests earlier. However, the processing order differs depending on whether it is a pre-operation or post-operation callback.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Pre-operation&lt;/strong&gt;: Called in &lt;strong&gt;descending altitude order&lt;/strong&gt; (high &amp;#x2192; low)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Post-operation&lt;/strong&gt;: Called in &lt;strong&gt;ascending altitude order&lt;/strong&gt; (low &amp;#x2192; high)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Looking back at the overall flow&amp;#x2026; a Minifilter driver does not directly handle IRPs in the traditional way.&lt;/p&gt;
+&lt;p&gt;Instead, the Filter Manager receives I/O requests on its behalf and passes them to the Minifilter through callback functions.&lt;/p&gt;
+&lt;p&gt;In other words, a Minifilter driver does &lt;strong&gt;not&lt;/strong&gt; need to set up the &lt;strong&gt;DispatchRoutine&lt;/strong&gt; that we commonly associate with traditional drivers!&lt;/p&gt;
+&lt;h2 id=&#34;1-2-Minifilter-Callback-Routine&#34;&gt;&lt;a href=&#34;#1-2-Minifilter-Callback-Routine&#34; class=&#34;headerlink&#34; title=&#34;1.2 Minifilter Callback Routine&#34;&gt;&lt;/a&gt;1.2 Minifilter Callback Routine&lt;/h2&gt;&lt;p&gt;How can a Minifilter driver operate only on specific file operations?&lt;/p&gt;
+&lt;p&gt;This is possible thanks to a mechanism called &lt;strong&gt;callbacks&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;As mentioned earlier, a Minifilter driver does &lt;strong&gt;not&lt;/strong&gt; directly process IRPs through a &lt;code&gt;DispatchRoutine&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Instead, it can &amp;#x201C;hook&amp;#x201D; I/O requests delivered via the Filter Manager.&lt;/p&gt;
+&lt;p&gt;By registering &lt;strong&gt;pre-operation (&lt;code&gt;PreOperation Callback&lt;/code&gt;)&lt;/strong&gt; and &lt;strong&gt;post-operation (&lt;code&gt;PostOperation Callback&lt;/code&gt;)&lt;/strong&gt; callbacks, a Minifilter can monitor or control I/O operations at the system level when they occur.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Pre-operation callback (&lt;code&gt;PFLT_PRE_OPERATION_CALLBACK&lt;/code&gt;)&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;PFLT_PRE_OPERATION_CALLBACK PfltPreOperationCallback;
+
+&lt;span class=&#34;hljs-function&#34;&gt;FLT_PREOP_CALLBACK_STATUS &lt;span class=&#34;hljs-title&#34;&gt;PfltPreOperationCallback&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, out] PFLT_CALLBACK_DATA Data,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]      PCFLT_RELATED_OBJECTS FltObjects,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [out]     PVOID *CompletionContext&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{...}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Called before the I/O request is passed to the file system or lower drivers.&lt;/p&gt;
+&lt;p&gt;This is where the core logic of the Minifilter runs, with powerful capabilities such as returning&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;FLT_PREOP_COMPLETE&lt;/code&gt;, &lt;code&gt;FLT_PREOP_SUCCESS_WITH_CALLBACK&lt;/code&gt;, or &lt;code&gt;FLT_PREOP_SUCCESS_NO_CALLBACK&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/nc-fltkernel-pflt_pre_operation_callback&#34;&gt;&lt;strong&gt;PFLT_PRE_OPERATION_CALLBACK callback function (fltkernel.h)&lt;/strong&gt;&lt;/a&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Post-operation callback (&lt;code&gt;PFLT_POST_OPERATION_CALLBACK&lt;/code&gt;)&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;PFLT_POST_OPERATION_CALLBACK PfltPostOperationCallback;
+
+&lt;span class=&#34;hljs-function&#34;&gt;FLT_POSTOP_CALLBACK_STATUS &lt;span class=&#34;hljs-title&#34;&gt;PfltPostOperationCallback&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, out]      PFLT_CALLBACK_DATA Data,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]           PCFLT_RELATED_OBJECTS FltObjects,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional] PVOID CompletionContext,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]           FLT_POST_OPERATION_FLAGS Flags&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{...}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Called on the way back after the I/O request has been fully processed by lower drivers and the file system.&lt;/p&gt;
+&lt;p&gt;It is typically used to verify the success of the operation, log results, or modify the outcome if needed.&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/nc-fltkernel-pflt_post_operation_callback&#34;&gt;&lt;strong&gt;PFLT_POST_OPERATION_CALLBACK callback function (fltkernel.h)&lt;/strong&gt;&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;In short, these callbacks are registered in the &lt;code&gt;FLT_OPERATION_REGISTRATION&lt;/code&gt; structure, which specifies &lt;strong&gt;which pre-/post-operation callbacks are associated with which I/O operations (MajorFunctions)&lt;/strong&gt;.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;1-3-Communication-Between-Minifilter-and-User-Mode&#34;&gt;&lt;a href=&#34;#1-3-Communication-Between-Minifilter-and-User-Mode&#34; class=&#34;headerlink&#34; title=&#34;1.3 Communication Between Minifilter and User-Mode&#34;&gt;&lt;/a&gt;1.3 Communication Between Minifilter and User-Mode&lt;/h2&gt;&lt;p&gt;Communication between a Minifilter driver and a User-Mode application is handled via a &lt;strong&gt;filter communication port&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;This port acts as a dedicated high-speed communication channel between the Minifilter and the application, allowing safe message exchange between Kernel-Mode drivers and User-Mode processes.&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s look into the code and explore the APIs provided by Microsoft for this purpose.&lt;/p&gt;
+&lt;h3 id=&#34;Driver-Code&#34;&gt;&lt;a href=&#34;#Driver-Code&#34; class=&#34;headerlink&#34; title=&#34;Driver Code&#34;&gt;&lt;/a&gt;Driver Code&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;fltKernel.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+
+PFLT_FILTER gFilter = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+PFLT_PORT gServerPort = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, gClientPort = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+
+&lt;span class=&#34;hljs-function&#34;&gt;VOID &lt;span class=&#34;hljs-title&#34;&gt;OnDisconnect&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(PVOID Cookie)&lt;/span&gt; &lt;/span&gt;{
+    UNREFERENCED_PARAMETER(Cookie);
+    FltCloseClientPort(gFilter, &amp;amp;gClientPort);
+    gClientPort = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+}
+
+&lt;span class=&#34;hljs-function&#34;&gt;NTSTATUS &lt;span class=&#34;hljs-title&#34;&gt;OnConnect&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(PFLT_PORT ClientPort, PVOID SrvCookie, PVOID Ctx, ULONG Size, PVOID* ConnCookie)&lt;/span&gt; &lt;/span&gt;{
+    UNREFERENCED_PARAMETER(SrvCookie);
+    UNREFERENCED_PARAMETER(Ctx);
+    UNREFERENCED_PARAMETER(Size);
+    UNREFERENCED_PARAMETER(ConnCookie);
+    gClientPort = ClientPort;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; STATUS_SUCCESS;
+}
+
+&lt;span class=&#34;hljs-function&#34;&gt;FLT_PREOP_CALLBACK_STATUS &lt;span class=&#34;hljs-title&#34;&gt;PreCreate&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(PFLT_CALLBACK_DATA Data, PCFLT_RELATED_OBJECTS FltObjects, PVOID* Buff)&lt;/span&gt; &lt;/span&gt;{
+    UNREFERENCED_PARAMETER(FltObjects);
+    UNREFERENCED_PARAMETER(Buff);
+    PFLT_FILE_NAME_INFORMATION nameInfo;
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (gClientPort &amp;amp;&amp;amp; NT_SUCCESS(FltGetFileNameInformation(Data, FLT_FILE_NAME_NORMALIZED, &amp;amp;nameInfo))) {
+        FltSendMessage(gFilter, &amp;amp;gClientPort, nameInfo-&amp;gt;Name.Buffer, nameInfo-&amp;gt;Name.Length, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;);
+        FltReleaseFileNameInformation(nameInfo);
+    }
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; FLT_PREOP_SUCCESS_NO_CALLBACK;
+}
+
+&lt;span class=&#34;hljs-function&#34;&gt;NTSTATUS &lt;span class=&#34;hljs-title&#34;&gt;Unload&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(FLT_FILTER_UNLOAD_FLAGS Flags)&lt;/span&gt; &lt;/span&gt;{
+    UNREFERENCED_PARAMETER(Flags);
+    FltCloseCommunicationPort(gServerPort);
+    FltUnregisterFilter(gFilter);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; STATUS_SUCCESS;
+}
+
+&lt;span class=&#34;hljs-function&#34;&gt;NTSTATUS &lt;span class=&#34;hljs-title&#34;&gt;DriverEntry&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)&lt;/span&gt; &lt;/span&gt;{
+    UNREFERENCED_PARAMETER(RegistryPath);
+    NTSTATUS status;
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; FLT_OPERATION_REGISTRATION Cbs[] = { { IRP_MJ_CREATE, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, PreCreate, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt; }, { IRP_MJ_OPERATION_END } };
+    &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; FLT_REGISTRATION Reg = { &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(FLT_REGISTRATION), FLT_REGISTRATION_VERSION, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, Cbs, Unload };
+
+    status = FltRegisterFilter(DriverObject, &amp;amp;Reg, &amp;amp;gFilter);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (!NT_SUCCESS(status)) &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; status;
+
+    UNICODE_STRING portName = RTL_CONSTANT_STRING(&lt;span class=&#34;hljs-string&#34;&gt;L&amp;quot;\\FileActivityMonitorPort&amp;quot;&lt;/span&gt;);
+    OBJECT_ATTRIBUTES oa = { &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(oa), &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &amp;amp;portName, OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt; };
+
+    status = FltCreateCommunicationPort(gFilter, &amp;amp;gServerPort, &amp;amp;oa, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, OnConnect, OnDisconnect, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (!NT_SUCCESS(status)) {
+        FltUnregisterFilter(gFilter);
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; status;
+    }
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; FltStartFiltering(gFilter);
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Focusing on the representative driver code APIs &lt;code&gt;FltCreateCommunicationPort()&lt;/code&gt;, &lt;code&gt;FltSendMessage()&lt;/code&gt;, and &lt;code&gt;FltCloseCommunicationPort()&lt;/code&gt;, I have implemented an example Minifilter driver code.&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s walk through the flow together:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;p&gt;The driver registers itself using &lt;code&gt;FltRegisterFilter()&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt; At this stage, it specifies a &lt;strong&gt;PreCreateCallback&lt;/strong&gt; function to monitor file creation and open (&lt;code&gt;IRP_MJ_CREATE&lt;/code&gt;) requests, and starts I/O monitoring with &lt;code&gt;FltStartFiltering()&lt;/code&gt;.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;Using the &lt;code&gt;FltCreateCommunicationPort()&lt;/code&gt; function, the driver can create a communication port.&lt;/p&gt;
+&lt;p&gt; In the code above, it creates the port &lt;code&gt;\\FileActivityMonitorPort&lt;/code&gt;, which allows a User-Mode application to connect and receive notifications.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;When a file create/open event occurs, &lt;strong&gt;PreCreateCallback&lt;/strong&gt; is invoked, and the function collects information about which process accessed which file.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;The driver then uses &lt;code&gt;FltSendMessage()&lt;/code&gt; to immediately send the real-time file access information collected in &lt;strong&gt;PreCreateCallback&lt;/strong&gt; to the connected User-Mode application.&lt;/li&gt;
+&lt;li&gt;Finally, in the &lt;strong&gt;FilterUnload&lt;/strong&gt; routine, when the driver is unloaded, it closes the communication port with &lt;code&gt;FltCloseCommunicationPort()&lt;/code&gt; and unregisters the filter.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3 id=&#34;User-Mode-Application-Code&#34;&gt;&lt;a href=&#34;#User-Mode-Application-Code&#34; class=&#34;headerlink&#34; title=&#34;User-Mode Application Code&#34;&gt;&lt;/a&gt;User-Mode Application Code&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;windows.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;fltuser.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;stdio.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;pragma&lt;/span&gt; comment(lib, &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;quot;fltlib.lib&amp;quot;&lt;/span&gt;)&lt;/span&gt;
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;main&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;()&lt;/span&gt; &lt;/span&gt;{
+    HANDLE port;
+    HRESULT hr;
+    
+    BYTE buffer[&lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(FILTER_MESSAGE_HEADER) + &lt;span class=&#34;hljs-number&#34;&gt;1024&lt;/span&gt;];
+    PFILTER_MESSAGE_HEADER header = (PFILTER_MESSAGE_HEADER)buffer;
+
+    &lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Connecting to driver...\n&amp;quot;&lt;/span&gt;);
+
+    hr = FilterConnectCommunicationPort(&lt;span class=&#34;hljs-string&#34;&gt;L&amp;quot;\\FileActivityMonitorPort&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &amp;amp;port);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (IS_ERROR(hr)) {
+        &lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Connection failed. Error 0x%X\n&amp;quot;&lt;/span&gt;, hr);
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+    }
+
+    &lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Connected. Waiting for file events...\n&amp;quot;&lt;/span&gt;);
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; (TRUE) {
+        hr = FilterGetMessage(port, header, &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(buffer), &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;);
+        
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (SUCCEEDED(hr)) {
+            &lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;File Accessed: %S\n&amp;quot;&lt;/span&gt;, (PWSTR)header-&amp;gt;MessageBody);
+        } &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+            &lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Connection lost. Error 0x%X\n&amp;quot;&lt;/span&gt;, hr);
+            &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;;
+        }
+    }
+
+    CloseHandle(port);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Let&amp;#x2019;s now look at the communication flow from the User-Mode application side.&lt;/p&gt;
+&lt;p&gt;Representative APIs include &lt;code&gt;FilterConnectCommunicationPort()&lt;/code&gt; and &lt;code&gt;FilterSendMessage()&lt;/code&gt;.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;First, the application uses &lt;code&gt;FilterConnectCommunicationPort()&lt;/code&gt; to connect to the Minifilter driver&amp;#x2019;s communication port in the kernel, &lt;code&gt;\\FileActivityMonitorPort&lt;/code&gt;, and obtains a HANDLE for communication.&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;It then calls &lt;code&gt;FilterGetMessage()&lt;/code&gt; to directly receive the file path string from the driver.&lt;/p&gt;
+&lt;p&gt; If the message is received successfully, the application outputs the file path to the screen.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h1 id=&#34;2-CVE-2024-30085-1-Day-Analysis&#34;&gt;&lt;a href=&#34;#2-CVE-2024-30085-1-Day-Analysis&#34; class=&#34;headerlink&#34; title=&#34;2. [CVE-2024-30085] 1-Day Analysis&#34;&gt;&lt;/a&gt;2. [CVE-2024-30085] 1-Day Analysis&lt;/h1&gt;&lt;hr&gt;
+&lt;p&gt;This is a Windows Minifilter Driver vulnerability that was also introduced in &amp;#x201C;1day1line&amp;#x201D; (&lt;a href=&#34;https://hackyboiz.github.io/2025/01/11/OUYA77/2025-01-11/&#34;&gt;reference&lt;/a&gt;).&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s try to reproduce CVE-2024-30085 and, in the process, learn more about Minifilter drivers.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&amp;#x1FA9F; Environment: Windows 11 22H2/23H2 10.0.2261.3672&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image4.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;The Windows Cloud Files Mini Filter driver is responsible for the Windows cloud sync feature.&lt;/p&gt;
+&lt;p&gt;For example, I&amp;#x2019;ve taken a screenshot of one of my folders.&lt;/p&gt;
+&lt;p&gt;To understand this Minifilter driver vulnerability, we first need some background knowledge about Stub Files and Reparse Points.&lt;/p&gt;
+&lt;h3 id=&#34;What-is-a-Stub-File&#34;&gt;&lt;a href=&#34;#What-is-a-Stub-File&#34; class=&#34;headerlink&#34; title=&#34;What is a Stub File?&#34;&gt;&lt;/a&gt;What is a Stub File?&lt;/h3&gt;&lt;p&gt;A stub file refers to a file that exists only as a placeholder locally, without containing any actual data.&lt;/p&gt;
+&lt;p&gt;As shown in the image above, the &amp;#x201C;Pictures&amp;#x201D; folder has a blue cloud icon in its status &amp;#x2014; this indicates that the file is in a stub state.&lt;/p&gt;
+&lt;p&gt;On NTFS, its size, name, and icon are displayed, but its actual contents are not stored locally.&lt;/p&gt;
+&lt;h3 id=&#34;Reparse-Point-Metadata&#34;&gt;&lt;a href=&#34;#Reparse-Point-Metadata&#34; class=&#34;headerlink&#34; title=&#34;Reparse Point Metadata&#34;&gt;&lt;/a&gt;Reparse Point Metadata&lt;/h3&gt;&lt;p&gt;So, what happens when a user tries to access such a file?&lt;/p&gt;
+&lt;p&gt;NTFS checks the Reparse Tag and determines, &lt;strong&gt;&amp;#x201C;Oh&amp;#x2026; this is a stub file!&amp;#x201D;&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;At this point, the Windows Cloud Files Minifilter (&lt;code&gt;cldflt.sys&lt;/code&gt;) reads the &lt;code&gt;Reparse Point&lt;/code&gt; metadata structure and decides how to handle the file.&lt;/p&gt;
+&lt;p&gt;After that, the Minifilter prepares for communication with the remote server.&lt;/p&gt;
+&lt;p&gt;However, &lt;code&gt;cldflt.sys&lt;/code&gt; itself does not communicate directly with the server &amp;#x2014; instead, it delegates the actual work to a User-Mode process.&lt;/p&gt;
+&lt;p&gt;This matches the concept we saw earlier: the Minifilter plays the role of an I/O interpreter, while the User-Mode client handles the actual data manipulation.&lt;/p&gt;
+&lt;p&gt;I&amp;#x2019;ve added the Windows Cloud Files Minifilter&amp;#x2019;s Reparse Point structure definitions to Local Types.&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s take a look at the CldFlt structure set I defined.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;typedef&lt;/span&gt; &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; _&lt;span class=&#34;hljs-title&#34;&gt;REPARSE_DATA_BUFFER&lt;/span&gt; {&lt;/span&gt;
+    DWORD ReparseTag;
+    WORD ReparseDataLength;
+    WORD Reserved;
+    WORD Flags;
+    WORD UncompressedSize;
+    REPARSE_CLD_BUFFER ReparseCldBuffer;
+} REPARSE_DATA_BUFFER, *PREPARSE_DATA_BUFFER;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;REPARSE_DATA_BUFFER&lt;/code&gt; is the standard header structure used to represent all Reparse Point data on NTFS.&lt;/p&gt;
+&lt;p&gt;Here, however, we use a redefined version to make analyzing Cloud Files easier.&lt;/p&gt;
+&lt;p&gt;This structure stores top-level metadata such as &lt;code&gt;ReparseTag&lt;/code&gt; (to identify the owning driver), &lt;code&gt;ReparseDataLength&lt;/code&gt;, and &lt;code&gt;Flags&lt;/code&gt;, and then points to the actual data, which continues as an &lt;code&gt;HSM_REPARSE&lt;/code&gt; structure.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;HSM_REPARSE&lt;/span&gt; {&lt;/span&gt;
+    USHORT hsmFlags;
+    USHORT hsmSize;
+    &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;HSM_RP_DATA&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;fileData&lt;/span&gt;;&lt;/span&gt;
+};&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;HSM_REPARSE&lt;/code&gt; is the full container for a Cloud Files-specific Reparse Point.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;hsmFlags&lt;/code&gt; and &lt;code&gt;hsmSize&lt;/code&gt; indicate whether compression is used and the total size of the HSM block.&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;fileData&lt;/code&gt; field contains an &lt;code&gt;HSM_RP_DATA&lt;/code&gt; structure.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;HSM_RP_DATA&lt;/span&gt; {&lt;/span&gt;
+    ULONG magic;
+    ULONG crc32;
+    ULONG totalSize;
+    USHORT dataFlags;
+    USHORT elemCount;
+    &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;HSM_RP_ELEMENT&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;elements&lt;/span&gt;[5];&lt;/span&gt;
+};&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;HSM_RP_DATA&lt;/code&gt; is the main header, containing the layout and structure of the entire metadata block.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;magic&lt;/code&gt; identifies the data type, and if the CRC bit is set in &lt;code&gt;dataFlags&lt;/code&gt;, &lt;code&gt;crc32&lt;/code&gt; is validated using &lt;code&gt;RtlComputeCrc32&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;elements[]&lt;/code&gt; array stores &lt;code&gt;HSM_RP_ELEMENT&lt;/code&gt; structures that define the type, size, and offset of each metadata element.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;HSM_RP_ELEMENT&lt;/span&gt; {&lt;/span&gt;
+    USHORT elemType;
+    USHORT elemSize;
+    ULONG elemOffset;
+};
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;typedef&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;enum&lt;/span&gt; HSM_RP_ELEM_TYPE {
+    HSM_RP_ELEMENT_NONE   = &lt;span class=&#34;hljs-number&#34;&gt;0x00&lt;/span&gt;,
+    HSM_RP_ELEMENT_U64    = &lt;span class=&#34;hljs-number&#34;&gt;0x06&lt;/span&gt;,
+    HSM_RP_ELEMENT_BYTE   = &lt;span class=&#34;hljs-number&#34;&gt;0x07&lt;/span&gt;,
+    HSM_RP_ELEMENT_U32    = &lt;span class=&#34;hljs-number&#34;&gt;0x0a&lt;/span&gt;,
+    HSM_RP_ELEMENT_BITMAP = &lt;span class=&#34;hljs-number&#34;&gt;0x11&lt;/span&gt;,
+    HSM_RP_ELEMENT_MAX    = &lt;span class=&#34;hljs-number&#34;&gt;0x12&lt;/span&gt;
+} HSM_RP_ELEMENT_TYPE;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;HSM_RP_ELEMENT&lt;/code&gt; defines each individual metadata element&amp;#x2019;s type, size, and offset.&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;HSM_RP_ELEMENT_TYPE&lt;/code&gt; enumeration is used to classify element types.&lt;/p&gt;
+&lt;h2 id=&#34;2-1-Root-Cause-Analysis&#34;&gt;&lt;a href=&#34;#2-1-Root-Cause-Analysis&#34; class=&#34;headerlink&#34; title=&#34;2.1 Root Cause Analysis&#34;&gt;&lt;/a&gt;2.1 Root Cause Analysis&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image5.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;The vulnerability occurs when a file is created and the &lt;code&gt;HsmFltPostCREATE&lt;/code&gt; callback is executed to process the file&amp;#x2019;s Reparse Point.&lt;/p&gt;
+&lt;p&gt;Within &lt;code&gt;HsmFltPostCREATE&lt;/code&gt;, when handling the bitmap information stored in the Reparse Point, the function &lt;code&gt;HsmIBitmapNORMALOpen()&lt;/code&gt; is called &amp;#x2014; and this is where the flaw exists.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;bitmap_size&lt;/code&gt; is read directly from the User-Mode request buffer.&lt;/li&gt;
+&lt;li&gt;A fixed-size buffer of 0x1000 bytes is allocated via &lt;code&gt;ExAllocatePoolWithTag&lt;/code&gt;, but the user-controlled &lt;code&gt;bitmap_size&lt;/code&gt; value is passed directly to &lt;code&gt;memmove&lt;/code&gt; without any boundary checks.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Therefore, if &lt;code&gt;bitmap_size&lt;/code&gt; is greater than 0x1000, a Heap-based Buffer Overflow is expected to occur.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image6.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Looking at the &lt;code&gt;HsmpBitmapIsReparseBufferSupported()&lt;/code&gt; function, it returns an error if &lt;code&gt;hdr-&amp;gt;elements[4].elemSize&lt;/code&gt; is greater than &lt;code&gt;0x1000&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image7.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Looking a bit further up at the conditional statement code, we can see that &lt;code&gt;hdr-&amp;gt;elements[2]&lt;/code&gt; is being strictly validated. Checks such as &lt;code&gt;total &amp;#x2265; 0x18&lt;/code&gt; and &lt;code&gt;hdr-&amp;gt;elemCount&lt;/code&gt; boundary verification must all be passed in order to proceed. If these conditions are not met, it would return a failure, right?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image8.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;However, in the same function, if &lt;code&gt;hasBuf&lt;/code&gt; is set to &lt;code&gt;false&lt;/code&gt;, the code returns &lt;code&gt;result = 0&lt;/code&gt; (success) simply by checking the 1-byte flag of &lt;code&gt;element[1]&lt;/code&gt;, without performing any separate bitmap length validation. In this path, there is no check to determine whether the bitmap length exceeds &lt;code&gt;0x1000&lt;/code&gt;, so the validation is skipped and the data is treated as valid.&lt;/p&gt;
+&lt;h2 id=&#34;2-2-Exploit&#34;&gt;&lt;a href=&#34;#2-2-Exploit&#34; class=&#34;headerlink&#34; title=&#34;2.2 Exploit&#34;&gt;&lt;/a&gt;2.2 Exploit&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image9.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;cldflt.sys&lt;/code&gt; minifilter driver does not scan all file system I/O by default; instead, it only operates on paths within the Sync Root that are registered through the CfAPI. Therefore, the first step was to reach the root directory of a cloud sync folder by calling the &lt;code&gt;CfRegisterSyncRoot()&lt;/code&gt; function.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image10.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Once the Sync Root registration code is built and executed, such a folder is created. Inside this folder, cloud stub files and metadata may appear, and this becomes the point I can exploit.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;-&amp;gt; HsmFltPostCREATE()
+-&amp;gt; HsmiFltPostECPCREATE()
+-&amp;gt; HsmpSetupContexts()
+-&amp;gt; HsmpCtxCreateStreamContext()
+-&amp;gt; HsmIBitmapNORMALOpen()
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Through dynamic analysis, it was confirmed that in order to reach the vulnerable function &lt;code&gt;HsmIBitmapNORMALOpen()&lt;/code&gt;, the execution must sequentially pass through the above function chain and satisfy all conditional checks. My goal, therefore, is to fulfill all those conditions and reach the vulnerable &lt;code&gt;memmove&lt;/code&gt; inside &lt;code&gt;HsmIBitmapNORMALOpen()&lt;/code&gt;.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Understanding the Flow as a Minifilter Driver&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Earlier, I mentioned that a minifilter driver calls specific callbacks depending on the IRP code when an I/O request occurs. To enter the vulnerable path, the process must begin at the &lt;code&gt;IRP_MJ_CREATE&lt;/code&gt; Post-Create Callback (&lt;code&gt;HsmFltPostCREATE&lt;/code&gt;) and proceed sequentially to the target function. These intermediate functions validate entry conditions based on file/stream attributes and Reparse Point information, so we can bypass them by crafting a special file structure.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Use &lt;code&gt;MakeDataBuffer()&lt;/code&gt; to create an &lt;code&gt;IO_REPARSE_TAG_CLOUD&lt;/code&gt; structure &amp;#x2192; The minifilter recognizes the file as a cloud stub file and enters the Reparse Point parsing logic.&lt;/li&gt;
+&lt;li&gt;Set Item Tag = &lt;code&gt;0x11&lt;/code&gt; (Bitmap) &amp;#x2192; Configure &lt;code&gt;Size&lt;/code&gt; to &lt;code&gt;0x1000 + overSize&lt;/code&gt; to trigger a heap overflow in &lt;code&gt;memmove()&lt;/code&gt; by copying more than the allocated size. Ensure that other elements (Tags &lt;code&gt;0x7&lt;/code&gt;, &lt;code&gt;0x6&lt;/code&gt;, &lt;code&gt;0xA&lt;/code&gt;, etc.) are also set to pass the minifilter&amp;#x2019;s boundary checks.&lt;/li&gt;
+&lt;li&gt;Include a fake kernel object pointer in the overflow data &amp;#x2192; Apply it with &lt;code&gt;FSCTL_SET_REPARSE_POINT&lt;/code&gt;, then trigger &lt;code&gt;HsmIBitmapNORMALOpen()&lt;/code&gt; by calling &lt;code&gt;CreateFile()&lt;/code&gt;.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image11.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;When these conditions are met, we can confirm that the flow starts from &lt;code&gt;FltMgr&lt;/code&gt; and reaches &lt;code&gt;HsmIBitmapNORMALOpen()&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;I&amp;#x2019;d like to cover the full exploit process, but since today&amp;#x2019;s focus is on explaining the minifilter and I&amp;#x2019;ve already gone overboard with the length&amp;#x2026; let&amp;#x2019;s wrap up with a summary of the entire exploit scenario.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image12.png&#34; alt&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Proof of Concept Overview&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;EPROCESS Structure Analysis and Token Field Offset Calculation&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Calculate the offset of the Token field within the EPROCESS structure to prepare for the subsequent SYSTEM token swap.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;First &lt;code&gt;WNF_STATE_DATA&lt;/code&gt; Spray and Hole Creation&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Mass-allocate (&lt;code&gt;spray&lt;/code&gt;) &lt;code&gt;WNF_STATE_DATA&lt;/code&gt; objects of size 0x1000 (0xff0 data) and then free them to create heap holes in the kernel heap.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Open Vulnerable Bitmap File and Trigger First Overflow&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Use &lt;code&gt;CfRegisterSyncRoot()&lt;/code&gt; and manipulate the Reparse Point directory to prepare a vulnerable bitmap file within the Sync Root. Then, open the file with &lt;code&gt;CreateFile()&lt;/code&gt; to reach the path:&lt;/p&gt;
+&lt;p&gt; &lt;code&gt;IRP_MJ_CREATE()&lt;/code&gt; &amp;#x2192; &lt;code&gt;HsmFltPostCREATE()&lt;/code&gt; &amp;#x2192; &lt;code&gt;HsmiFltPostECPCREATE()&lt;/code&gt; &amp;#x2192; &lt;code&gt;HsmpSetupContexts()&lt;/code&gt; &amp;#x2192; &lt;code&gt;HsmpCtxCreateStreamContext()&lt;/code&gt; &amp;#x2192; &lt;code&gt;HsmIBitmapNORMALOpen()&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt; Trigger a heap overflow to modify the &lt;code&gt;DataSize&lt;/code&gt; of an adjacent &lt;code&gt;WNF_STATE_DATA&lt;/code&gt;, gaining OOB (Out-of-Bounds) read/write capability.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Kernel Pointer Leak&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Use the modified &lt;code&gt;WNF_STATE_DATA&lt;/code&gt; to read the &lt;code&gt;_KALPC_RESERVE&lt;/code&gt; pointer and leak a kernel address.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Second &lt;code&gt;WNF_STATE_DATA&lt;/code&gt; Spray and Hole Creation&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Repeat the same spray-and-free process for &lt;code&gt;WNF_STATE_DATA&lt;/code&gt; objects, but this time arrange for a &lt;code&gt;PipeAttribute&lt;/code&gt; structure to be placed adjacent to the WNF object.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Second Overflow to Manipulate &lt;code&gt;PipeAttribute&lt;/code&gt;&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Open a second bitmap file to trigger another heap overflow, overwriting the &lt;code&gt;Flink&lt;/code&gt; pointer of the adjacent &lt;code&gt;PipeAttribute&lt;/code&gt; with the address of a user-space fake &lt;code&gt;PipeAttribute&lt;/code&gt; structure.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Arbitrary Read to Retrieve EPROCESS/Token Addresses&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Use the fake &lt;code&gt;PipeAttribute&lt;/code&gt; to access the ALPC Port structure, sequentially reading the EPROCESS address and Token address of the target process.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Token Swapping and SYSTEM Privilege Escalation&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Perform an arbitrary write to replace the current process&amp;#x2019;s Token value with the SYSTEM Token value, then launch &lt;code&gt;cmd.exe&lt;/code&gt; with SYSTEM privileges.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3 id=&#34;ALPC-WNF&#34;&gt;&lt;a href=&#34;#ALPC-WNF&#34; class=&#34;headerlink&#34; title=&#34;ALPC / WNF&#34;&gt;&lt;/a&gt;ALPC / WNF&lt;/h3&gt;&lt;p&gt;The &lt;code&gt;_WNF_STATE_DATA&lt;/code&gt; and &lt;code&gt;_ALPC_HANDLE_TABLE&lt;/code&gt; structures are used to allocate arbitrary-sized kernel objects for heap holes and to leak kernel memory addresses. Since ALPC and WNF might be unfamiliar concepts, here is a brief explanation of the two subsystems relevant to this exploit:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;ALPC (Asynchronous Local Procedure Call)&lt;/strong&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image13.webp&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;ALPC is an inter-process communication (IPC) mechanism within the Windows kernel that uses client and server ports to exchange messages. By leveraging the &lt;code&gt;_ALPC_HANDLE_ENTRY&lt;/code&gt; in the ALPC handle table, it is possible to store message buffer addresses. Since the size of this table is variable, it allows the creation of kernel objects of arbitrary size.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;When an ALPC port is created, an &lt;code&gt;_ALPC_HANDLE_TABLE&lt;/code&gt; is allocated in the &lt;strong&gt;paged pool&lt;/strong&gt; with a size of 0x80.&lt;/li&gt;
+&lt;li&gt;Each call to &lt;code&gt;NtAlpcCreateResourceReserve&lt;/code&gt; creates a &lt;code&gt;_KALPC_RESERVE&lt;/code&gt; object, and its address is added to the handle table.&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;By tampering with this structure, it becomes possible to obtain arbitrary kernel address read/write primitives.&lt;/p&gt;
+&lt;p&gt;  &amp;#x2192; In the PoC, a fake &lt;code&gt;_KALPC_RESERVE&lt;/code&gt; is injected to achieve arbitrary R/W.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;ALPC handles can also be controlled from user mode, making them highly useful for exploitation.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;WNF (Windows Notification Facility)&lt;/strong&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image14.webp&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;WNF is the Windows Notification Facility, and the &lt;code&gt;WNF_NAME_INSTANCE&lt;/code&gt; kernel object contains an internal &lt;code&gt;_WNF_STATE_DATA&lt;/code&gt; field whose size is variable. This allows direct control of the kernel object size from user mode using &lt;code&gt;NtCreateWnfStateName&lt;/code&gt; + &lt;code&gt;NtUpdateWnfStateData&lt;/code&gt;.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;_WNF_STATE_DATA&lt;/code&gt; can be allocated with a size of 0x1000 (0x10 header + 0xFF0 data).&lt;/li&gt;
+&lt;li&gt;WNF objects can be mass-created for heap spraying, placing them adjacent to a target structure (e.g., an ALPC object).&lt;/li&gt;
+&lt;li&gt;In the PoC, WNF is used to create heap holes and then place them next to ALPC objects to trigger an overflow into the ALPC handle table.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;In particular, the PoC required registering a routine to create a pipe, which I found interesting.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;PipeAttribute&lt;/span&gt; {&lt;/span&gt;
+    LIST_ENTRY &lt;span class=&#34;hljs-built_in&#34;&gt;list&lt;/span&gt;;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *AttributeName;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;uint64_t&lt;/span&gt; AttributeValueSize;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *AttributeValue;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; data[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;];
+};&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The pipe is configured so that the &lt;code&gt;AttributeValue&lt;/code&gt; pointer in the modified &lt;code&gt;PipeAttribute&lt;/code&gt; structure is set to a kernel memory address. This causes the kernel to read data from that address and return it to user mode. By combining the memory layout control achieved via ALPC with the WNF overflow, the pipe can be turned into an arbitrary read primitive, allowing leakage of kernel addresses.&lt;/p&gt;
+&lt;h1 id=&#34;3-Conclusion&#34;&gt;&lt;a href=&#34;#3-Conclusion&#34; class=&#34;headerlink&#34; title=&#34;3. Conclusion&#34;&gt;&lt;/a&gt;3. Conclusion&lt;/h1&gt;&lt;hr&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/15/banda/Minifilter-Driver/en/image15.gif&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;I&amp;#x2019;ll wrap up by sharing the results of the LPE I implemented using the characteristics of the &lt;code&gt;cldflt.sys&lt;/code&gt; Minifilter driver combined with the WNF + ALPC technique.&lt;/p&gt;
+&lt;p&gt;While studying Minifilters, I realized that although their operation, functions, and concepts may feel a bit unfamiliar, the way vulnerabilities are triggered and their root causes are, in the end, quite similar. So, there&amp;#x2019;s no need to be too intimidated about diving into Minifilter exploitation!&lt;/p&gt;
+&lt;p&gt;If I get the chance, I&amp;#x2019;d like to explore and study various other drivers I haven&amp;#x2019;t looked into yet. I hope you&amp;#x2019;ll look forward to my next write-up as well!&lt;/p&gt;
+&lt;h1 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;&lt;strong&gt;Reference&lt;/strong&gt;&lt;/h1&gt;&lt;hr&gt;
+&lt;p&gt;&lt;a href=&#34;https://exploitreversing.com/2023/04/11/exploiting-reversing-er-series/&#34;&gt;https://exploitreversing.com/2023/04/11/exploiting-reversing-er-series/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/filter-manager-concepts&#34;&gt;https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/filter-manager-concepts&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://starlabs.sg/blog/2024/all-i-want-for-christmas-is-a-cve-2024-30085-exploit/&#34;&gt;https://starlabs.sg/blog/2024/all-i-want-for-christmas-is-a-cve-2024-30085-exploit/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://ssd-disclosure.com/ssd-advisory-cldflt-heap-based-overflow-pe/&#34;&gt;https://ssd-disclosure.com/ssd-advisory-cldflt-heap-based-overflow-pe/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://reddogsecurity.substack.com/p/elevating-privileges-in-windows-insights?r=5awqb0&amp;amp;utm_campaign=post&amp;amp;utm_medium=web&amp;amp;triedRedirect=true&#34;&gt;https://reddogsecurity.substack.com/p/elevating-privileges-in-windows-insights?r=5awqb0&amp;amp;utm_campaign=post&amp;amp;utm_medium=web&amp;amp;triedRedirect=true&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://medium.com/@WaterBucket/understanding-mini-filter-drivers-for-windows-vulnerability-research-exploit-development-391153c945d6&#34;&gt;https://medium.com/@WaterBucket/understanding-mini-filter-drivers-for-windows-vulnerability-research-exploit-development-391153c945d6&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/08/15/banda/Minifilter-Driver/en/minifilter.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/08/15/banda/minifilter-driver/en/">
+
+  <title>[Research] Walking Through Windows Minifilter Drivers (EN) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-08-15 17:00" pubdate>
+      2025년 8월 15일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      3.4k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      67
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] Walking Through Windows Minifilter Drivers (EN)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p>Hello, this is banda. This is my first time greeting you with an article on Windows Minifilter Drivers. &#x1F917;</p>
+<p>While studying Windows Kernel Drivers recently, I discovered that there are various types of drivers categorized by purpose, such as Bus Drivers, Filter Drivers, FSDs, and Minifilters. I became curious about the structural differences between Bus or Filter Drivers and traditional Function Drivers, as well as how vulnerabilities manifest in these different types.</p>
+<p>Today, we will explore the structure and operation of Minifilter Drivers, examine their internal components, and analyze potential vulnerabilities.</p>
+<p><img src="/2025/08/15/banda/Minifilter-Driver/en/image1.png" srcset="/img/loading.gif" alt></p>
+<h1 id="1-About-Minifilter-Drivers"><a href="#1-About-Minifilter-Drivers" class="headerlink" title="1. About Minifilter Drivers"></a>1. About Minifilter Drivers</h1><hr>
+<p>A Minifilter driver is a specialized type of driver in Windows designed to monitor, intercept, and modify file system I/O requests such as file creation, opening, reading, writing, and deletion. It is commonly used for precise monitoring of file system activity.</p>
+<p>If you think about it in terms of <strong>&#x201C;monitoring, blocking, or modifying file access&#x201D;</strong>, it starts to sound familiar, doesn&#x2019;t it? Indeed &#x2014; this functionality is well-suited for products like <strong>antivirus software, EDR solutions, and backup programs</strong>. In fact, I&#x2019;ve personally confirmed that many such products rely on Minifilter drivers.</p>
+<p>A Minifilter driver can intercept or manipulate the following three types of requests:</p>
+<ol>
+<li>IRP (I/O Request Packet)</li>
+<li>Fast I/O</li>
+<li>File System Filter Callbacks</li>
+</ol>
+<h2 id="1-1-Filter-Manager-&#x2192;-Minifilter-Flow"><a href="#1-1-Filter-Manager-&#x2192;-Minifilter-Flow" class="headerlink" title="1.1 Filter Manager &#x2192; Minifilter Flow"></a>1.1 Filter Manager &#x2192; Minifilter Flow</h2><p>A Minifilter operates on top of the Windows Filter Manager (<code>fltmgr.sys</code>). The Filter Manager receives file I/O requests from the I/O Manager and forwards them to the registered Minifilter drivers in the order determined by their <strong>altitude</strong>. In other words, the altitude controls the order in which filters are loaded and invoked.</p>
+<p><img src="/2025/08/15/banda/Minifilter-Driver/en/image2.gif" srcset="/img/loading.gif" alt></p>
+<p>Let&#x2019;s take a look at how file I/O requests are processed in Windows.</p>
+<ol>
+<li>An application issues an I/O operation by calling APIs such as <code>CreateFile</code>, <code>ReadFile</code>, or <code>WriteFile</code>.</li>
+<li>The I/O Manager receives this request and forwards it to the Filter Manager (<code>fltmgr.sys</code>).</li>
+<li>The Filter Manager checks the list of all registered Minifilter drivers and passes the request to each driver in the order of their altitude.</li>
+<li>After the Minifilter completes its processing, the request is passed on to the file system filter driver.</li>
+<li>Finally, the request is delivered to the disk driver (Storage Driver Stack), which accesses the physical disk or processes the data accordingly.</li>
+</ol>
+<p><img src="/2025/08/15/banda/Minifilter-Driver/en/image3.png" srcset="/img/loading.gif" alt></p>
+<p>You can check the list of Minifilter drivers loaded on the system by running the <code>fltmc</code> command in the Command Prompt.</p>
+<p>The higher the altitude value, the higher the priority, meaning the Minifilter can intercept or modify I/O requests earlier. However, the processing order differs depending on whether it is a pre-operation or post-operation callback.</p>
+<ul>
+<li><strong>Pre-operation</strong>: Called in <strong>descending altitude order</strong> (high &#x2192; low)</li>
+<li><strong>Post-operation</strong>: Called in <strong>ascending altitude order</strong> (low &#x2192; high)</li>
+</ul>
+<p>Looking back at the overall flow&#x2026; a Minifilter driver does not directly handle IRPs in the traditional way.</p>
+<p>Instead, the Filter Manager receives I/O requests on its behalf and passes them to the Minifilter through callback functions.</p>
+<p>In other words, a Minifilter driver does <strong>not</strong> need to set up the <strong>DispatchRoutine</strong> that we commonly associate with traditional drivers!</p>
+<h2 id="1-2-Minifilter-Callback-Routine"><a href="#1-2-Minifilter-Callback-Routine" class="headerlink" title="1.2 Minifilter Callback Routine"></a>1.2 Minifilter Callback Routine</h2><p>How can a Minifilter driver operate only on specific file operations?</p>
+<p>This is possible thanks to a mechanism called <strong>callbacks</strong>.</p>
+<p>As mentioned earlier, a Minifilter driver does <strong>not</strong> directly process IRPs through a <code>DispatchRoutine</code>.</p>
+<p>Instead, it can &#x201C;hook&#x201D; I/O requests delivered via the Filter Manager.</p>
+<p>By registering <strong>pre-operation (<code>PreOperation Callback</code>)</strong> and <strong>post-operation (<code>PostOperation Callback</code>)</strong> callbacks, a Minifilter can monitor or control I/O operations at the system level when they occur.</p>
+<ul>
+<li><strong>Pre-operation callback (<code>PFLT_PRE_OPERATION_CALLBACK</code>)</strong></li>
+</ul>
+<pre><code class="hljs c">PFLT_PRE_OPERATION_CALLBACK PfltPreOperationCallback;
+
+<span class="hljs-function">FLT_PREOP_CALLBACK_STATUS <span class="hljs-title">PfltPreOperationCallback</span><span class="hljs-params">(</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in, out] PFLT_CALLBACK_DATA Data,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in]      PCFLT_RELATED_OBJECTS FltObjects,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [out]     PVOID *CompletionContext</span></span>
+<span class="hljs-function"><span class="hljs-params">)</span></span>
+<span class="hljs-function"></span>{...}</code></pre>
+<p>Called before the I/O request is passed to the file system or lower drivers.</p>
+<p>This is where the core logic of the Minifilter runs, with powerful capabilities such as returning</p>
+<p><code>FLT_PREOP_COMPLETE</code>, <code>FLT_PREOP_SUCCESS_WITH_CALLBACK</code>, or <code>FLT_PREOP_SUCCESS_NO_CALLBACK</code>.</p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/nc-fltkernel-pflt_pre_operation_callback"><strong>PFLT_PRE_OPERATION_CALLBACK callback function (fltkernel.h)</strong></a></p>
+<ul>
+<li><strong>Post-operation callback (<code>PFLT_POST_OPERATION_CALLBACK</code>)</strong></li>
+</ul>
+<pre><code class="hljs c">PFLT_POST_OPERATION_CALLBACK PfltPostOperationCallback;
+
+<span class="hljs-function">FLT_POSTOP_CALLBACK_STATUS <span class="hljs-title">PfltPostOperationCallback</span><span class="hljs-params">(</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in, out]      PFLT_CALLBACK_DATA Data,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in]           PCFLT_RELATED_OBJECTS FltObjects,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in, optional] PVOID CompletionContext,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in]           FLT_POST_OPERATION_FLAGS Flags</span></span>
+<span class="hljs-function"><span class="hljs-params">)</span></span>
+<span class="hljs-function"></span>{...}</code></pre>
+<p>Called on the way back after the I/O request has been fully processed by lower drivers and the file system.</p>
+<p>It is typically used to verify the success of the operation, log results, or modify the outcome if needed.</p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/nc-fltkernel-pflt_post_operation_callback"><strong>PFLT_POST_OPERATION_CALLBACK callback function (fltkernel.h)</strong></a></p>
+<p>In short, these callbacks are registered in the <code>FLT_OPERATION_REGISTRATION</code> structure, which specifies <strong>which pre-/post-operation callbacks are associated with which I/O operations (MajorFunctions)</strong>.</p>
+<hr>
+<h2 id="1-3-Communication-Between-Minifilter-and-User-Mode"><a href="#1-3-Communication-Between-Minifilter-and-User-Mode" class="headerlink" title="1.3 Communication Between Minifilter and User-Mode"></a>1.3 Communication Between Minifilter and User-Mode</h2><p>Communication between a Minifilter driver and a User-Mode application is handled via a <strong>filter communication port</strong>.</p>
+<p>This port acts as a dedicated high-speed communication channel between the Minifilter and the application, allowing safe message exchange between Kernel-Mode drivers and User-Mode processes.</p>
+<p>Let&#x2019;s look into the code and explore the APIs provided by Microsoft for this purpose.</p>
+<h3 id="Driver-Code"><a href="#Driver-Code" class="headerlink" title="Driver Code"></a>Driver Code</h3><pre><code class="hljs c"><span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;fltKernel.h&gt;</span></span>
+
+PFLT_FILTER gFilter = <span class="hljs-literal">NULL</span>;
+PFLT_PORT gServerPort = <span class="hljs-literal">NULL</span>, gClientPort = <span class="hljs-literal">NULL</span>;
+
+<span class="hljs-function">VOID <span class="hljs-title">OnDisconnect</span><span class="hljs-params">(PVOID Cookie)</span> </span>{
+    UNREFERENCED_PARAMETER(Cookie);
+    FltCloseClientPort(gFilter, &amp;gClientPort);
+    gClientPort = <span class="hljs-literal">NULL</span>;
+}
+
+<span class="hljs-function">NTSTATUS <span class="hljs-title">OnConnect</span><span class="hljs-params">(PFLT_PORT ClientPort, PVOID SrvCookie, PVOID Ctx, ULONG Size, PVOID* ConnCookie)</span> </span>{
+    UNREFERENCED_PARAMETER(SrvCookie);
+    UNREFERENCED_PARAMETER(Ctx);
+    UNREFERENCED_PARAMETER(Size);
+    UNREFERENCED_PARAMETER(ConnCookie);
+    gClientPort = ClientPort;
+    <span class="hljs-keyword">return</span> STATUS_SUCCESS;
+}
+
+<span class="hljs-function">FLT_PREOP_CALLBACK_STATUS <span class="hljs-title">PreCreate</span><span class="hljs-params">(PFLT_CALLBACK_DATA Data, PCFLT_RELATED_OBJECTS FltObjects, PVOID* Buff)</span> </span>{
+    UNREFERENCED_PARAMETER(FltObjects);
+    UNREFERENCED_PARAMETER(Buff);
+    PFLT_FILE_NAME_INFORMATION nameInfo;
+
+    <span class="hljs-keyword">if</span> (gClientPort &amp;&amp; NT_SUCCESS(FltGetFileNameInformation(Data, FLT_FILE_NAME_NORMALIZED, &amp;nameInfo))) {
+        FltSendMessage(gFilter, &amp;gClientPort, nameInfo-&gt;Name.Buffer, nameInfo-&gt;Name.Length, <span class="hljs-literal">NULL</span>, <span class="hljs-literal">NULL</span>, <span class="hljs-literal">NULL</span>);
+        FltReleaseFileNameInformation(nameInfo);
+    }
+    <span class="hljs-keyword">return</span> FLT_PREOP_SUCCESS_NO_CALLBACK;
+}
+
+<span class="hljs-function">NTSTATUS <span class="hljs-title">Unload</span><span class="hljs-params">(FLT_FILTER_UNLOAD_FLAGS Flags)</span> </span>{
+    UNREFERENCED_PARAMETER(Flags);
+    FltCloseCommunicationPort(gServerPort);
+    FltUnregisterFilter(gFilter);
+    <span class="hljs-keyword">return</span> STATUS_SUCCESS;
+}
+
+<span class="hljs-function">NTSTATUS <span class="hljs-title">DriverEntry</span><span class="hljs-params">(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)</span> </span>{
+    UNREFERENCED_PARAMETER(RegistryPath);
+    NTSTATUS status;
+
+    <span class="hljs-keyword">const</span> FLT_OPERATION_REGISTRATION Cbs[] = { { IRP_MJ_CREATE, <span class="hljs-number">0</span>, PreCreate, <span class="hljs-literal">NULL</span> }, { IRP_MJ_OPERATION_END } };
+    <span class="hljs-keyword">const</span> FLT_REGISTRATION Reg = { <span class="hljs-keyword">sizeof</span>(FLT_REGISTRATION), FLT_REGISTRATION_VERSION, <span class="hljs-number">0</span>, <span class="hljs-literal">NULL</span>, Cbs, Unload };
+
+    status = FltRegisterFilter(DriverObject, &amp;Reg, &amp;gFilter);
+    <span class="hljs-keyword">if</span> (!NT_SUCCESS(status)) <span class="hljs-keyword">return</span> status;
+
+    UNICODE_STRING portName = RTL_CONSTANT_STRING(<span class="hljs-string">L&quot;\\FileActivityMonitorPort&quot;</span>);
+    OBJECT_ATTRIBUTES oa = { <span class="hljs-keyword">sizeof</span>(oa), <span class="hljs-literal">NULL</span>, &amp;portName, OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE, <span class="hljs-literal">NULL</span> };
+
+    status = FltCreateCommunicationPort(gFilter, &amp;gServerPort, &amp;oa, <span class="hljs-literal">NULL</span>, OnConnect, OnDisconnect, <span class="hljs-literal">NULL</span>, <span class="hljs-number">1</span>);
+    <span class="hljs-keyword">if</span> (!NT_SUCCESS(status)) {
+        FltUnregisterFilter(gFilter);
+        <span class="hljs-keyword">return</span> status;
+    }
+
+    <span class="hljs-keyword">return</span> FltStartFiltering(gFilter);
+}</code></pre>
+<p>Focusing on the representative driver code APIs <code>FltCreateCommunicationPort()</code>, <code>FltSendMessage()</code>, and <code>FltCloseCommunicationPort()</code>, I have implemented an example Minifilter driver code.</p>
+<p>Let&#x2019;s walk through the flow together:</p>
+<ol>
+<li><p>The driver registers itself using <code>FltRegisterFilter()</code>.</p>
+<p> At this stage, it specifies a <strong>PreCreateCallback</strong> function to monitor file creation and open (<code>IRP_MJ_CREATE</code>) requests, and starts I/O monitoring with <code>FltStartFiltering()</code>.</p>
+</li>
+<li><p>Using the <code>FltCreateCommunicationPort()</code> function, the driver can create a communication port.</p>
+<p> In the code above, it creates the port <code>\\FileActivityMonitorPort</code>, which allows a User-Mode application to connect and receive notifications.</p>
+</li>
+<li><p>When a file create/open event occurs, <strong>PreCreateCallback</strong> is invoked, and the function collects information about which process accessed which file.</p>
+</li>
+<li>The driver then uses <code>FltSendMessage()</code> to immediately send the real-time file access information collected in <strong>PreCreateCallback</strong> to the connected User-Mode application.</li>
+<li>Finally, in the <strong>FilterUnload</strong> routine, when the driver is unloaded, it closes the communication port with <code>FltCloseCommunicationPort()</code> and unregisters the filter.</li>
+</ol>
+<h3 id="User-Mode-Application-Code"><a href="#User-Mode-Application-Code" class="headerlink" title="User-Mode Application Code"></a>User-Mode Application Code</h3><pre><code class="hljs c"><span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;windows.h&gt;</span></span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;fltuser.h&gt;</span></span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;stdio.h&gt;</span></span>
+
+<span class="hljs-meta">#<span class="hljs-meta-keyword">pragma</span> comment(lib, <span class="hljs-meta-string">&quot;fltlib.lib&quot;</span>)</span>
+
+<span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">main</span><span class="hljs-params">()</span> </span>{
+    HANDLE port;
+    HRESULT hr;
+    
+    BYTE buffer[<span class="hljs-keyword">sizeof</span>(FILTER_MESSAGE_HEADER) + <span class="hljs-number">1024</span>];
+    PFILTER_MESSAGE_HEADER header = (PFILTER_MESSAGE_HEADER)buffer;
+
+    <span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;Connecting to driver...\n&quot;</span>);
+
+    hr = FilterConnectCommunicationPort(<span class="hljs-string">L&quot;\\FileActivityMonitorPort&quot;</span>, <span class="hljs-number">0</span>, <span class="hljs-literal">NULL</span>, <span class="hljs-number">0</span>, <span class="hljs-literal">NULL</span>, &amp;port);
+    <span class="hljs-keyword">if</span> (IS_ERROR(hr)) {
+        <span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;Connection failed. Error 0x%X\n&quot;</span>, hr);
+        <span class="hljs-keyword">return</span> <span class="hljs-number">1</span>;
+    }
+
+    <span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;Connected. Waiting for file events...\n&quot;</span>);
+
+    <span class="hljs-keyword">while</span> (TRUE) {
+        hr = FilterGetMessage(port, header, <span class="hljs-keyword">sizeof</span>(buffer), <span class="hljs-literal">NULL</span>);
+        
+        <span class="hljs-keyword">if</span> (SUCCEEDED(hr)) {
+            <span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;File Accessed: %S\n&quot;</span>, (PWSTR)header-&gt;MessageBody);
+        } <span class="hljs-keyword">else</span> {
+            <span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;Connection lost. Error 0x%X\n&quot;</span>, hr);
+            <span class="hljs-keyword">break</span>;
+        }
+    }
+
+    CloseHandle(port);
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}</code></pre>
+<p>Let&#x2019;s now look at the communication flow from the User-Mode application side.</p>
+<p>Representative APIs include <code>FilterConnectCommunicationPort()</code> and <code>FilterSendMessage()</code>.</p>
+<ol>
+<li>First, the application uses <code>FilterConnectCommunicationPort()</code> to connect to the Minifilter driver&#x2019;s communication port in the kernel, <code>\\FileActivityMonitorPort</code>, and obtains a HANDLE for communication.</li>
+<li><p>It then calls <code>FilterGetMessage()</code> to directly receive the file path string from the driver.</p>
+<p> If the message is received successfully, the application outputs the file path to the screen.</p>
+</li>
+</ol>
+<h1 id="2-CVE-2024-30085-1-Day-Analysis"><a href="#2-CVE-2024-30085-1-Day-Analysis" class="headerlink" title="2. [CVE-2024-30085] 1-Day Analysis"></a>2. [CVE-2024-30085] 1-Day Analysis</h1><hr>
+<p>This is a Windows Minifilter Driver vulnerability that was also introduced in &#x201C;1day1line&#x201D; (<a href="https://hackyboiz.github.io/2025/01/11/OUYA77/2025-01-11/">reference</a>).</p>
+<p>Let&#x2019;s try to reproduce CVE-2024-30085 and, in the process, learn more about Minifilter drivers.</p>
+<blockquote>
+<p>&#x1FA9F; Environment: Windows 11 22H2/23H2 10.0.2261.3672</p>
+</blockquote>
+<p><img src="/2025/08/15/banda/Minifilter-Driver/en/image4.png" srcset="/img/loading.gif" alt></p>
+<p>The Windows Cloud Files Mini Filter driver is responsible for the Windows cloud sync feature.</p>
+<p>For example, I&#x2019;ve taken a screenshot of one of my folders.</p>
+<p>To understand this Minifilter driver vulnerability, we first need some background knowledge about Stub Files and Reparse Points.</p>
+<h3 id="What-is-a-Stub-File"><a href="#What-is-a-Stub-File" class="headerlink" title="What is a Stub File?"></a>What is a Stub File?</h3><p>A stub file refers to a file that exists only as a placeholder locally, without containing any actual data.</p>
+<p>As shown in the image above, the &#x201C;Pictures&#x201D; folder has a blue cloud icon in its status &#x2014; this indicates that the file is in a stub state.</p>
+<p>On NTFS, its size, name, and icon are displayed, but its actual contents are not stored locally.</p>
+<h3 id="Reparse-Point-Metadata"><a href="#Reparse-Point-Metadata" class="headerlink" title="Reparse Point Metadata"></a>Reparse Point Metadata</h3><p>So, what happens when a user tries to access such a file?</p>
+<p>NTFS checks the Reparse Tag and determines, <strong>&#x201C;Oh&#x2026; this is a stub file!&#x201D;</strong>.</p>
+<p>At this point, the Windows Cloud Files Minifilter (<code>cldflt.sys</code>) reads the <code>Reparse Point</code> metadata structure and decides how to handle the file.</p>
+<p>After that, the Minifilter prepares for communication with the remote server.</p>
+<p>However, <code>cldflt.sys</code> itself does not communicate directly with the server &#x2014; instead, it delegates the actual work to a User-Mode process.</p>
+<p>This matches the concept we saw earlier: the Minifilter plays the role of an I/O interpreter, while the User-Mode client handles the actual data manipulation.</p>
+<p>I&#x2019;ve added the Windows Cloud Files Minifilter&#x2019;s Reparse Point structure definitions to Local Types.</p>
+<p>Let&#x2019;s take a look at the CldFlt structure set I defined.</p>
+<pre><code class="hljs c"><span class="hljs-keyword">typedef</span> <span class="hljs-class"><span class="hljs-keyword">struct</span> _<span class="hljs-title">REPARSE_DATA_BUFFER</span> {</span>
+    DWORD ReparseTag;
+    WORD ReparseDataLength;
+    WORD Reserved;
+    WORD Flags;
+    WORD UncompressedSize;
+    REPARSE_CLD_BUFFER ReparseCldBuffer;
+} REPARSE_DATA_BUFFER, *PREPARSE_DATA_BUFFER;</code></pre>
+<p><code>REPARSE_DATA_BUFFER</code> is the standard header structure used to represent all Reparse Point data on NTFS.</p>
+<p>Here, however, we use a redefined version to make analyzing Cloud Files easier.</p>
+<p>This structure stores top-level metadata such as <code>ReparseTag</code> (to identify the owning driver), <code>ReparseDataLength</code>, and <code>Flags</code>, and then points to the actual data, which continues as an <code>HSM_REPARSE</code> structure.</p>
+<pre><code class="hljs c"><span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">HSM_REPARSE</span> {</span>
+    USHORT hsmFlags;
+    USHORT hsmSize;
+    <span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">HSM_RP_DATA</span> <span class="hljs-title">fileData</span>;</span>
+};</code></pre>
+<p><code>HSM_REPARSE</code> is the full container for a Cloud Files-specific Reparse Point.</p>
+<p><code>hsmFlags</code> and <code>hsmSize</code> indicate whether compression is used and the total size of the HSM block.</p>
+<p>The <code>fileData</code> field contains an <code>HSM_RP_DATA</code> structure.</p>
+<pre><code class="hljs c"><span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">HSM_RP_DATA</span> {</span>
+    ULONG magic;
+    ULONG crc32;
+    ULONG totalSize;
+    USHORT dataFlags;
+    USHORT elemCount;
+    <span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">HSM_RP_ELEMENT</span> <span class="hljs-title">elements</span>[5];</span>
+};</code></pre>
+<p><code>HSM_RP_DATA</code> is the main header, containing the layout and structure of the entire metadata block.</p>
+<p><code>magic</code> identifies the data type, and if the CRC bit is set in <code>dataFlags</code>, <code>crc32</code> is validated using <code>RtlComputeCrc32</code>.</p>
+<p>The <code>elements[]</code> array stores <code>HSM_RP_ELEMENT</code> structures that define the type, size, and offset of each metadata element.</p>
+<pre><code class="hljs c"><span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">HSM_RP_ELEMENT</span> {</span>
+    USHORT elemType;
+    USHORT elemSize;
+    ULONG elemOffset;
+};
+
+<span class="hljs-keyword">typedef</span> <span class="hljs-keyword">enum</span> HSM_RP_ELEM_TYPE {
+    HSM_RP_ELEMENT_NONE   = <span class="hljs-number">0x00</span>,
+    HSM_RP_ELEMENT_U64    = <span class="hljs-number">0x06</span>,
+    HSM_RP_ELEMENT_BYTE   = <span class="hljs-number">0x07</span>,
+    HSM_RP_ELEMENT_U32    = <span class="hljs-number">0x0a</span>,
+    HSM_RP_ELEMENT_BITMAP = <span class="hljs-number">0x11</span>,
+    HSM_RP_ELEMENT_MAX    = <span class="hljs-number">0x12</span>
+} HSM_RP_ELEMENT_TYPE;</code></pre>
+<p><code>HSM_RP_ELEMENT</code> defines each individual metadata element&#x2019;s type, size, and offset.</p>
+<p>The <code>HSM_RP_ELEMENT_TYPE</code> enumeration is used to classify element types.</p>
+<h2 id="2-1-Root-Cause-Analysis"><a href="#2-1-Root-Cause-Analysis" class="headerlink" title="2.1 Root Cause Analysis"></a>2.1 Root Cause Analysis</h2><p><img src="/2025/08/15/banda/Minifilter-Driver/en/image5.png" srcset="/img/loading.gif" alt></p>
+<p>The vulnerability occurs when a file is created and the <code>HsmFltPostCREATE</code> callback is executed to process the file&#x2019;s Reparse Point.</p>
+<p>Within <code>HsmFltPostCREATE</code>, when handling the bitmap information stored in the Reparse Point, the function <code>HsmIBitmapNORMALOpen()</code> is called &#x2014; and this is where the flaw exists.</p>
+<ul>
+<li><code>bitmap_size</code> is read directly from the User-Mode request buffer.</li>
+<li>A fixed-size buffer of 0x1000 bytes is allocated via <code>ExAllocatePoolWithTag</code>, but the user-controlled <code>bitmap_size</code> value is passed directly to <code>memmove</code> without any boundary checks.</li>
+</ul>
+<p>Therefore, if <code>bitmap_size</code> is greater than 0x1000, a Heap-based Buffer Overflow is expected to occur.</p>
+<p><img src="/2025/08/15/banda/Minifilter-Driver/en/image6.png" srcset="/img/loading.gif" alt></p>
+<p>Looking at the <code>HsmpBitmapIsReparseBufferSupported()</code> function, it returns an error if <code>hdr-&gt;elements[4].elemSize</code> is greater than <code>0x1000</code>.</p>
+<p><img src="/2025/08/15/banda/Minifilter-Driver/en/image7.png" srcset="/img/loading.gif" alt></p>
+<p>Looking a bit further up at the conditional statement code, we can see that <code>hdr-&gt;elements[2]</code> is being strictly validated. Checks such as <code>total &#x2265; 0x18</code> and <code>hdr-&gt;elemCount</code> boundary verification must all be passed in order to proceed. If these conditions are not met, it would return a failure, right?</p>
+<p><img src="/2025/08/15/banda/Minifilter-Driver/en/image8.png" srcset="/img/loading.gif" alt></p>
+<p>However, in the same function, if <code>hasBuf</code> is set to <code>false</code>, the code returns <code>result = 0</code> (success) simply by checking the 1-byte flag of <code>element[1]</code>, without performing any separate bitmap length validation. In this path, there is no check to determine whether the bitmap length exceeds <code>0x1000</code>, so the validation is skipped and the data is treated as valid.</p>
+<h2 id="2-2-Exploit"><a href="#2-2-Exploit" class="headerlink" title="2.2 Exploit"></a>2.2 Exploit</h2><p><img src="/2025/08/15/banda/Minifilter-Driver/en/image9.png" srcset="/img/loading.gif" alt></p>
+<p>The <code>cldflt.sys</code> minifilter driver does not scan all file system I/O by default; instead, it only operates on paths within the Sync Root that are registered through the CfAPI. Therefore, the first step was to reach the root directory of a cloud sync folder by calling the <code>CfRegisterSyncRoot()</code> function.</p>
+<p><img src="/2025/08/15/banda/Minifilter-Driver/en/image10.png" srcset="/img/loading.gif" alt></p>
+<p>Once the Sync Root registration code is built and executed, such a folder is created. Inside this folder, cloud stub files and metadata may appear, and this becomes the point I can exploit.</p>
+<pre><code class="hljs c">-&gt; HsmFltPostCREATE()
+-&gt; HsmiFltPostECPCREATE()
+-&gt; HsmpSetupContexts()
+-&gt; HsmpCtxCreateStreamContext()
+-&gt; HsmIBitmapNORMALOpen()
+</code></pre>
+<p>Through dynamic analysis, it was confirmed that in order to reach the vulnerable function <code>HsmIBitmapNORMALOpen()</code>, the execution must sequentially pass through the above function chain and satisfy all conditional checks. My goal, therefore, is to fulfill all those conditions and reach the vulnerable <code>memmove</code> inside <code>HsmIBitmapNORMALOpen()</code>.</p>
+<blockquote>
+<p>Understanding the Flow as a Minifilter Driver</p>
+</blockquote>
+<p>Earlier, I mentioned that a minifilter driver calls specific callbacks depending on the IRP code when an I/O request occurs. To enter the vulnerable path, the process must begin at the <code>IRP_MJ_CREATE</code> Post-Create Callback (<code>HsmFltPostCREATE</code>) and proceed sequentially to the target function. These intermediate functions validate entry conditions based on file/stream attributes and Reparse Point information, so we can bypass them by crafting a special file structure.</p>
+<ol>
+<li>Use <code>MakeDataBuffer()</code> to create an <code>IO_REPARSE_TAG_CLOUD</code> structure &#x2192; The minifilter recognizes the file as a cloud stub file and enters the Reparse Point parsing logic.</li>
+<li>Set Item Tag = <code>0x11</code> (Bitmap) &#x2192; Configure <code>Size</code> to <code>0x1000 + overSize</code> to trigger a heap overflow in <code>memmove()</code> by copying more than the allocated size. Ensure that other elements (Tags <code>0x7</code>, <code>0x6</code>, <code>0xA</code>, etc.) are also set to pass the minifilter&#x2019;s boundary checks.</li>
+<li>Include a fake kernel object pointer in the overflow data &#x2192; Apply it with <code>FSCTL_SET_REPARSE_POINT</code>, then trigger <code>HsmIBitmapNORMALOpen()</code> by calling <code>CreateFile()</code>.</li>
+</ol>
+<p><img src="/2025/08/15/banda/Minifilter-Driver/en/image11.png" srcset="/img/loading.gif" alt></p>
+<p>When these conditions are met, we can confirm that the flow starts from <code>FltMgr</code> and reaches <code>HsmIBitmapNORMALOpen()</code>.</p>
+<p>I&#x2019;d like to cover the full exploit process, but since today&#x2019;s focus is on explaining the minifilter and I&#x2019;ve already gone overboard with the length&#x2026; let&#x2019;s wrap up with a summary of the entire exploit scenario.</p>
+<p><img src="/2025/08/15/banda/Minifilter-Driver/en/image12.png" srcset="/img/loading.gif" alt></p>
+<blockquote>
+<p>Proof of Concept Overview</p>
+</blockquote>
+<ol>
+<li><p><strong>EPROCESS Structure Analysis and Token Field Offset Calculation</strong></p>
+<p> Calculate the offset of the Token field within the EPROCESS structure to prepare for the subsequent SYSTEM token swap.</p>
+</li>
+<li><p><strong>First <code>WNF_STATE_DATA</code> Spray and Hole Creation</strong></p>
+<p> Mass-allocate (<code>spray</code>) <code>WNF_STATE_DATA</code> objects of size 0x1000 (0xff0 data) and then free them to create heap holes in the kernel heap.</p>
+</li>
+<li><p><strong>Open Vulnerable Bitmap File and Trigger First Overflow</strong></p>
+<p> Use <code>CfRegisterSyncRoot()</code> and manipulate the Reparse Point directory to prepare a vulnerable bitmap file within the Sync Root. Then, open the file with <code>CreateFile()</code> to reach the path:</p>
+<p> <code>IRP_MJ_CREATE()</code> &#x2192; <code>HsmFltPostCREATE()</code> &#x2192; <code>HsmiFltPostECPCREATE()</code> &#x2192; <code>HsmpSetupContexts()</code> &#x2192; <code>HsmpCtxCreateStreamContext()</code> &#x2192; <code>HsmIBitmapNORMALOpen()</code></p>
+<p> Trigger a heap overflow to modify the <code>DataSize</code> of an adjacent <code>WNF_STATE_DATA</code>, gaining OOB (Out-of-Bounds) read/write capability.</p>
+</li>
+<li><p><strong>Kernel Pointer Leak</strong></p>
+<p> Use the modified <code>WNF_STATE_DATA</code> to read the <code>_KALPC_RESERVE</code> pointer and leak a kernel address.</p>
+</li>
+<li><p><strong>Second <code>WNF_STATE_DATA</code> Spray and Hole Creation</strong></p>
+<p> Repeat the same spray-and-free process for <code>WNF_STATE_DATA</code> objects, but this time arrange for a <code>PipeAttribute</code> structure to be placed adjacent to the WNF object.</p>
+</li>
+<li><p><strong>Second Overflow to Manipulate <code>PipeAttribute</code></strong></p>
+<p> Open a second bitmap file to trigger another heap overflow, overwriting the <code>Flink</code> pointer of the adjacent <code>PipeAttribute</code> with the address of a user-space fake <code>PipeAttribute</code> structure.</p>
+</li>
+<li><p><strong>Arbitrary Read to Retrieve EPROCESS/Token Addresses</strong></p>
+<p> Use the fake <code>PipeAttribute</code> to access the ALPC Port structure, sequentially reading the EPROCESS address and Token address of the target process.</p>
+</li>
+<li><p><strong>Token Swapping and SYSTEM Privilege Escalation</strong></p>
+<p> Perform an arbitrary write to replace the current process&#x2019;s Token value with the SYSTEM Token value, then launch <code>cmd.exe</code> with SYSTEM privileges.</p>
+</li>
+</ol>
+<h3 id="ALPC-WNF"><a href="#ALPC-WNF" class="headerlink" title="ALPC / WNF"></a>ALPC / WNF</h3><p>The <code>_WNF_STATE_DATA</code> and <code>_ALPC_HANDLE_TABLE</code> structures are used to allocate arbitrary-sized kernel objects for heap holes and to leak kernel memory addresses. Since ALPC and WNF might be unfamiliar concepts, here is a brief explanation of the two subsystems relevant to this exploit:</p>
+<blockquote>
+<p><strong>ALPC (Asynchronous Local Procedure Call)</strong></p>
+</blockquote>
+<p><img src="/2025/08/15/banda/Minifilter-Driver/en/image13.webp" srcset="/img/loading.gif" alt></p>
+<p>ALPC is an inter-process communication (IPC) mechanism within the Windows kernel that uses client and server ports to exchange messages. By leveraging the <code>_ALPC_HANDLE_ENTRY</code> in the ALPC handle table, it is possible to store message buffer addresses. Since the size of this table is variable, it allows the creation of kernel objects of arbitrary size.</p>
+<ul>
+<li>When an ALPC port is created, an <code>_ALPC_HANDLE_TABLE</code> is allocated in the <strong>paged pool</strong> with a size of 0x80.</li>
+<li>Each call to <code>NtAlpcCreateResourceReserve</code> creates a <code>_KALPC_RESERVE</code> object, and its address is added to the handle table.</li>
+<li><p>By tampering with this structure, it becomes possible to obtain arbitrary kernel address read/write primitives.</p>
+<p>  &#x2192; In the PoC, a fake <code>_KALPC_RESERVE</code> is injected to achieve arbitrary R/W.</p>
+</li>
+<li><p>ALPC handles can also be controlled from user mode, making them highly useful for exploitation.</p>
+</li>
+</ul>
+<blockquote>
+<p><strong>WNF (Windows Notification Facility)</strong></p>
+</blockquote>
+<p><img src="/2025/08/15/banda/Minifilter-Driver/en/image14.webp" srcset="/img/loading.gif" alt></p>
+<p>WNF is the Windows Notification Facility, and the <code>WNF_NAME_INSTANCE</code> kernel object contains an internal <code>_WNF_STATE_DATA</code> field whose size is variable. This allows direct control of the kernel object size from user mode using <code>NtCreateWnfStateName</code> + <code>NtUpdateWnfStateData</code>.</p>
+<ul>
+<li><code>_WNF_STATE_DATA</code> can be allocated with a size of 0x1000 (0x10 header + 0xFF0 data).</li>
+<li>WNF objects can be mass-created for heap spraying, placing them adjacent to a target structure (e.g., an ALPC object).</li>
+<li>In the PoC, WNF is used to create heap holes and then place them next to ALPC objects to trigger an overflow into the ALPC handle table.</li>
+</ul>
+<p>In particular, the PoC required registering a routine to create a pipe, which I found interesting.</p>
+<pre><code class="hljs c"><span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">PipeAttribute</span> {</span>
+    LIST_ENTRY <span class="hljs-built_in">list</span>;
+    <span class="hljs-keyword">char</span> *AttributeName;
+    <span class="hljs-keyword">uint64_t</span> AttributeValueSize;
+    <span class="hljs-keyword">char</span> *AttributeValue;
+    <span class="hljs-keyword">char</span> data[<span class="hljs-number">0</span>];
+};</code></pre>
+<p>The pipe is configured so that the <code>AttributeValue</code> pointer in the modified <code>PipeAttribute</code> structure is set to a kernel memory address. This causes the kernel to read data from that address and return it to user mode. By combining the memory layout control achieved via ALPC with the WNF overflow, the pipe can be turned into an arbitrary read primitive, allowing leakage of kernel addresses.</p>
+<h1 id="3-Conclusion"><a href="#3-Conclusion" class="headerlink" title="3. Conclusion"></a>3. Conclusion</h1><hr>
+<p><img src="/2025/08/15/banda/Minifilter-Driver/en/image15.gif" srcset="/img/loading.gif" alt></p>
+<p>I&#x2019;ll wrap up by sharing the results of the LPE I implemented using the characteristics of the <code>cldflt.sys</code> Minifilter driver combined with the WNF + ALPC technique.</p>
+<p>While studying Minifilters, I realized that although their operation, functions, and concepts may feel a bit unfamiliar, the way vulnerabilities are triggered and their root causes are, in the end, quite similar. So, there&#x2019;s no need to be too intimidated about diving into Minifilter exploitation!</p>
+<p>If I get the chance, I&#x2019;d like to explore and study various other drivers I haven&#x2019;t looked into yet. I hope you&#x2019;ll look forward to my next write-up as well!</p>
+<h1 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a><strong>Reference</strong></h1><hr>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://exploitreversing.com/2023/04/11/exploiting-reversing-er-series/">https://exploitreversing.com/2023/04/11/exploiting-reversing-er-series/</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/filter-manager-concepts">https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/filter-manager-concepts</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://starlabs.sg/blog/2024/all-i-want-for-christmas-is-a-cve-2024-30085-exploit/">https://starlabs.sg/blog/2024/all-i-want-for-christmas-is-a-cve-2024-30085-exploit/</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://ssd-disclosure.com/ssd-advisory-cldflt-heap-based-overflow-pe/">https://ssd-disclosure.com/ssd-advisory-cldflt-heap-based-overflow-pe/</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://reddogsecurity.substack.com/p/elevating-privileges-in-windows-insights?r=5awqb0&amp;utm_campaign=post&amp;utm_medium=web&amp;triedRedirect=true">https://reddogsecurity.substack.com/p/elevating-privileges-in-windows-insights?r=5awqb0&amp;utm_campaign=post&amp;utm_medium=web&amp;triedRedirect=true</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://medium.com/@WaterBucket/understanding-mini-filter-drivers-for-windows-vulnerability-research-exploit-development-391153c945d6">https://medium.com/@WaterBucket/understanding-mini-filter-drivers-for-windows-vulnerability-research-exploit-development-391153c945d6</a></p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/banda/">banda</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Windows/">Windows</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Minifilter/">Minifilter</a>
+                  
+                  <a class="hover-with-bg" href="/tags/CVE-2024-30085/">CVE-2024-30085</a>
+                  
+                  <a class="hover-with-bg" href="/tags/CldFlt/">CldFlt</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_banda.jpg" srcset="/img/loading.gif" alt="banda">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">banda</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/banda">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/08/16/j0ker/2025-08-16/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2025-24919 : Dell ControlVault3의 입력 검증 미흡으로 인한 RCE 취약점</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/08/15/banda/Minifilter-Driver/ko/">
+                    <span class="hidden-mobile">[Research] 걸어서 Windows Minifilter Driver 속으로(KR)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/08/15/banda/Minifilter-Driver/en/';
+        this.page.identifier = '/2025/08/15/banda/Minifilter-Driver/en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] Walking Through Windows Minifilter Drivers (EN)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
