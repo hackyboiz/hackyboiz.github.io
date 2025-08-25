@@ -1,0 +1,870 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;h1 id=&#34;1-Introduction&#34;&gt;&lt;a href=&#34;#1-Introduction&#34; class=&#34;headerlink&#34; title=&#34;1. Introduction&#34;&gt;&lt;/a&gt;1. Introduction&lt;/h1&gt;&lt;p&gt;Hello, this is bekim! I was writing articles related to blockchain when I got a job and became too busy, so I will review some papers! I searched for papers from Usenix Security 24 or 25, and chose topics related to blockchain security, which I have been dealing with on a regular basis. So, I will review the papers assuming that the readers of this article have a basic understanding of blockchain.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/25/bekim/review/en/image.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Today&amp;#x2019;s review is on a paper titled &lt;strong&gt;Speculative DoS Attacks in Ethereum&lt;/strong&gt;. This paper presents a new form of denial-of-service (DoS) attack that could occur in Ethereum. The researchers demonstrate how three main attack methods &lt;strong&gt;(ConditionalExhaust, MemPurge, and GhostTX)&lt;/strong&gt; can exploit Ethereum&amp;#x2019;s transaction processing and resource management structure. All experiments were conducted on the Ethereum testnet.&lt;/p&gt;
+&lt;h1 id=&#34;2-Paper-Review&#34;&gt;&lt;a href=&#34;#2-Paper-Review&#34; class=&#34;headerlink&#34; title=&#34;2. Paper Review&#34;&gt;&lt;/a&gt;2. Paper Review&lt;/h1&gt;&lt;p&gt;In my previous research paper &lt;a href=&#34;https://hackyboiz.github.io/2025/07/13/bekim/smartcontract/en/&#34;&gt;From Paper to Code: Smart Contract&lt;/a&gt;&amp;#x201D;, I briefly explained the gas mechanism in the section describing how Ethereum works. If you find this concept difficult to understand, you may want to read it first!&lt;/p&gt;
+&lt;h2 id=&#34;2-1-Background&#34;&gt;&lt;a href=&#34;#2-1-Background&#34; class=&#34;headerlink&#34; title=&#34;2.1 Background&#34;&gt;&lt;/a&gt;2.1 Background&lt;/h2&gt;&lt;p&gt;Ethereum primarily utilizes the gas mechanism to prevent excessive computation and provides incentives to nodes (validators) operating the network. When executing a transaction, gas must be paid based on the computational load, and this gas has served as a mechanism to protect network resources. Therefore, until now, there has been a perception that DoS attacks are very difficult on Ethereum.&lt;/p&gt;
+&lt;p&gt;However, this paper presents a different perspective.&lt;/p&gt;
+&lt;p&gt;Due to the Turing-complete nature of smart contracts, nodes must execute a transaction to verify whether it can actually be included in a block.&lt;br&gt;The costs incurred in this process are not compensated by fees unless the transaction is included in the block. In other words, attackers can create malicious transactions that &amp;#x201C;force work but do not provide compensation.&amp;#x201D;&lt;/p&gt;
+&lt;p&gt;The paper introduces three new attack techniques to demonstrate this.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;ConditionalExhaust&lt;/strong&gt;: A resource exhaustion attack that occurs only under specific conditions.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;MemPurge:&lt;/strong&gt; An attack that forces normal transactions out of the validator/builder&amp;#x2019;s mempool.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;GhostTX:&lt;/strong&gt; An attack that disrupts the reputation system of Ethereum&amp;#x2019;s PBS (Proposer-Builder Separation) ecosystem.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;In particular, using ConditionalExhaust and Mempurge simultaneously can deplete the computational resources of validators while blocking the mempool, preventing victims from including transactions in blocks. This could result in victims generating empty blocks and threatening the network&amp;#x2019;s activity.&lt;/p&gt;
+&lt;h2 id=&#34;2-2-Proposed-Attacks&#34;&gt;&lt;a href=&#34;#2-2-Proposed-Attacks&#34; class=&#34;headerlink&#34; title=&#34;2.2 Proposed Attacks&#34;&gt;&lt;/a&gt;2.2 Proposed Attacks&lt;/h2&gt;&lt;h3 id=&#34;2-2-1-The-ConditionalExhaust-Attack&#34;&gt;&lt;a href=&#34;#2-2-1-The-ConditionalExhaust-Attack&#34; class=&#34;headerlink&#34; title=&#34;2.2.1 The ConditionalExhaust Attack&#34;&gt;&lt;/a&gt;2.2.1 The ConditionalExhaust Attack&lt;/h3&gt;&lt;p&gt;The first attack we will introduce is the ConditionalExhaust attack, a conditional resource depletion attack.&lt;/p&gt;
+&lt;p&gt;The core idea of the attack is simple. Validators or block builders following censorship do not include transactions interacting with a specific censored address (&amp;#x3C3;) in the block. This is because, following the 2022 U.S. OFAC (Office of Foreign Assets Control) sanctions against the smart contract address associated with the Tornado Cash mixing service, some Ethereum validators began filtering out transactions related to that address from blocks. The problem is that &lt;strong&gt;to determine whether a transaction is related to a sanctioned entity (&amp;#x3C3;), the transaction must be executed unconditionally&lt;/strong&gt;. This execution process is exploited by ConditionalExhaust.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/25/bekim/review/en/image1.png&#34; alt&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Complete Overview of Decred&amp;#x2019;s Structure [source: &lt;a href=&#34;https://medium.com/decred/blockchain-governance-how-decred-iterates-upon-bitcoin-3cc7030c655e&#34;&gt;https://medium.com/decred/blockchain-governance-how-decred-iterates-upon-bitcoin-3cc7030c655e&lt;/a&gt;]&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Speculative DoS Attacks in Ethereum (USENIX Security 2024): ConditionalExhaust is a conditional REA, in which&lt;br&gt;an attacker creates transactions that invoke computationally complex code if the victim cannot include them in a block, for example due to its censoring policy&lt;/p&gt;
+&lt;p&gt;The attack is divided into two main stages.&lt;/p&gt;
+&lt;p&gt;First, in the &lt;strong&gt;deployment stage&lt;/strong&gt;, the attacker uploads a specially designed smart contract to the blockchain (1).&lt;/p&gt;
+&lt;p&gt;This contract contains the following conditions:&lt;/p&gt;
+&lt;p&gt;1) If the executor is a censoring validator, perform complex and heavy computations (2). (3)&lt;br&gt;2) If not, it performs simple operations and incurs minimal gas costs.&lt;/p&gt;
+&lt;p&gt;This condition is included in the contract.&lt;/p&gt;
+&lt;p&gt;Next, in the &lt;strong&gt;execution phase&lt;/strong&gt;, the attacker floods the network with multiple transactions calling this contract.&lt;/p&gt;
+&lt;p&gt;This causes censors to consume excessive CPU and memory resources for each computation, and only after execution completes do they realize the transaction cannot be included in the block because it interacts with the censored address (&amp;#x3C3;). (4) In other words, resources are wasted without any reward.&lt;/p&gt;
+&lt;p&gt;Although there is an implementation overview in the actual paper, I will not include it here due to the possibility of code misuse. Researchers designed the code to maximize resource consumption by modifying various elements, such as Ethereum&amp;#x2019;s storage structure and high-cost opcodes.&lt;/p&gt;
+&lt;p&gt;As a result, while it took only microseconds for the attacker to generate and sign transactions, it took an average of 0.1 seconds for the censor to verify them, resulting in a difference of approximately 1,972 times over two hours. In actual Ethereum, a block can process up to 120 transactions in 12 seconds, but if the attacker sends just 140 transactions, it could result in an empty block being generated without including normal transactions.&lt;/p&gt;
+&lt;p&gt;The economic cost of the attack was also not significant. Deploying the contract cost $27 (36,000 KRW), and in the worst case, if the attack transactions were included in the block, the cost would be $5.3 (7,000 KRW). Upon actual calculation, the total cost required to execute 140 attack transactions in a single block was only approximately $376 (500,000 KRW).&lt;/p&gt;
+&lt;h3 id=&#34;2-2-2-The-MemPurge-Attack&#34;&gt;&lt;a href=&#34;#2-2-2-The-MemPurge-Attack&#34; class=&#34;headerlink&#34; title=&#34;2.2.2 The MemPurge Attack&#34;&gt;&lt;/a&gt;2.2.2 The MemPurge Attack&lt;/h3&gt;&lt;p&gt;The second attack is, as the name suggests, an attack that purges the node&amp;#x2019;s mempool. Ethereum nodes store transactions that may be included in future blocks in a storage called &lt;strong&gt;mempool&lt;/strong&gt;, which has limited space, so transactions with higher fees are usually prioritized.&lt;/p&gt;
+&lt;p&gt;The attacker exploits this rule to push out profitable legitimate transactions from the mempool and replace them with their own meaningless transactions.&lt;br&gt;The core of the attack is to create a transaction chain (TXchain) with consecutive nonces (numbers).&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/25/bekim/review/en/image2.png&#34; alt&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Speculative DoS Attacks in Ethereum (USENIX Security 2024): The MemPurge attack lowers the cost to evict transactions from victims&amp;#x2019; mempools.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Speculative DoS Attacks in Ethereum (USENIX Security 2024): The MemPurge attack lowers the cost to evict transactions from victims&amp;#x2019; mempools.&lt;/p&gt;
+&lt;p&gt;1) First, the attacker creates the first transaction (nonce=N) to transfer funds from their account to a new address, and then adds meaningless transactions such as Nonce = N+1, N+2, &amp;#x2026; to form a TX Chain. (1)&lt;br&gt;2) The attacker sends subsequent transactions to the victim node (2), and since the victim node receives them without any preceding transactions, it temporarily stores them in the future queue (3).&lt;br&gt;3) Finally, when the attacker sends the first transaction (N), the victim node verifies it and moves the entire previous transaction chain to the pending queue (4).&lt;br&gt;4) However, since the attacker&amp;#x2019;s funds have already been withdrawn in the first transaction, subsequent transactions become invalid due to insufficient balance. As a result, the mempool is filled with meaningless transactions, and the originally profitable transactions are pushed out.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;ConditionalExhaust + MemPurge&lt;/strong&gt;&lt;br&gt;Mempurge and ConditionalExhaust can be combined. By setting the to address of each MemPurge transaction to ConditionalExhaust, MemPool space is occupied, and ConditionalExhaust consumes computation.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;By calling the ConditionalExhaust contract in the first transaction to impose CPU and memory computation burdens on the censor, and then invalidating subsequent transactions that only occupy mempool space, a more powerful attack can be executed.&lt;/p&gt;
+&lt;p&gt;Researchers verified this combined attack and reported that, compared to a single attack, the gas cost remained almost unchanged while maintaining the same effectiveness.&lt;/p&gt;
+&lt;h3 id=&#34;2-2-3-The-GhostTX-Attack&#34;&gt;&lt;a href=&#34;#2-2-3-The-GhostTX-Attack&#34; class=&#34;headerlink&#34; title=&#34;2.2.3 The GhostTX Attack&#34;&gt;&lt;/a&gt;2.2.3 The GhostTX Attack&lt;/h3&gt;&lt;p&gt;The GhostTX Attack directly targets the reputation of the Searcher in Flashbots&amp;#x2019; PBS (Proposer-Builder Separation) environment.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;PBS&lt;/strong&gt; is a structure that separates the roles of block proposers and builders to efficiently construct blocks. Proposers simply select and submit blocks, while builders create the most profitable transaction combinations (bundles) and submit them to proposers.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/25/bekim/review/en/image3.png&#34; alt&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Speculative DoS Attacks in Ethereum (USENIX Security 2024): Overview of Ethereum&amp;#x2019;s PBS ecosystem actors.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Flashbots&lt;/strong&gt; is an implementation of PBS, providing a &lt;strong&gt;Relay&lt;/strong&gt; service that connects Searchers (participants who create Bundles and deliver them to Builders), Builders, and Proposers. This system has a &lt;strong&gt;Reputation&lt;/strong&gt; system that scores Searchers based on their past performance, so Bundles from Searchers with high reputations are selected first.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Here, reputation is calculated based on &lt;strong&gt;how much profit was generated per gas unit&lt;/strong&gt;. Therefore, once reputation drops, the address must be changed to rebuild it, which means attackers can lower the victim&amp;#x2019;s trustworthiness and force them out of the ecosystem.&lt;br&gt;&amp;#x394;T: Amount paid to the Builder, pT: Fee, gT: Gas consumption &lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs erlang&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-title&#34;&gt;r&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(U)&lt;/span&gt; = &lt;span class=&#34;hljs-params&#34;&gt;(&amp;#x2211; (&amp;#x394;T + pT * gT)&lt;/span&gt;) / &lt;span class=&#34;hljs-params&#34;&gt;(&amp;#x2211; gT)&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/25/bekim/review/en/image4.png&#34; alt&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Speculative DoS Attacks in Ethereum (USENIX Security 2024): GhostTX&amp;#x2019;s censorship variant exploits an inconsistency between builder and relay censorship methods&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The attack process is divided into &lt;strong&gt;two types (Proposer Variant, Non-proposer Variant)&lt;/strong&gt;. Simply put, in the &lt;strong&gt;Proposer Variant&lt;/strong&gt;, if the attacker is a block proposer, they spread a bait transaction that appears to be profitable and then invalidate it in the first block to damage the Searcher&amp;#x2019;s reputation.&lt;/p&gt;
+&lt;p&gt;In the case of the &lt;strong&gt;Non-Proposer&lt;/strong&gt;, the attacker simultaneously spreads a collision transaction with the same nonce and fee as the Searcher&amp;#x2019;s bait transaction, ensuring that only the attacker&amp;#x2019;s transaction is recorded in the block.&lt;/p&gt;
+&lt;p&gt;1) The attacker sends a transaction that transfers funds to a sanctioned address (1)&lt;br&gt;2) The Searcher identifies this as a profitable transaction and includes it in the bundle. (2)&lt;br&gt;3) The Builder verifies the bundle (3) and adds the TX to the block (4).&lt;br&gt;4) The block is transmitted to the Relay, but the Relay detects the transaction related to the sanctioned address and discards the block (5), resulting in the Searcher&amp;#x2019;s bundle being invalidated and their Reputation score decreasing. (6)&lt;/p&gt;
+&lt;p&gt;The GhostTX Attack can be executed in various ways, one of which is the &lt;strong&gt;Censorship Variant&lt;/strong&gt;. This exploits the subtle differences in how Flashbots&amp;#x2019; Builder and Relay perform censorship.&lt;/p&gt;
+&lt;p&gt;While Builder&amp;#x2019;s internal verification does not consider 0 ETH transfers using the call operator as sanction targets, Relay&amp;#x2019;s verification API does consider them as such. Attackers can exploit this by creating transactions that send 0 ETH to sanctioned addresses, making them appear as normal transactions to Searcher and Builder, but only getting filtered out at the Relay stage. This results in Searcher&amp;#x2019;s bundles being invalidated again and its Reputation score decreasing.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/25/bekim/review/en/image5.png&#34; alt&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Speculative DoS Attacks in Ethereum (USENIX Security 2024): Figure 8: Cost of attacking average searchers with GhostTX&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The researchers evaluated the effectiveness of GhostTX attacks based on actual data. For top-tier Searchers, they were generating approximately 8,240 ETH in profits and 112 billion gas usage. To push them out of the top 50% in Reputation, it would require a cost of approximately 42.49 million dollars. While it is practically impossible to realistically bring down established large-scale Searchers, the results were different for average-level Searchers.&lt;/p&gt;
+&lt;p&gt;On average, they recorded approximately 0.95 ETH in profits, 3.28 million gas usage, and a Reputation score of 2.9&amp;#xD7;10&amp;#xB9;&amp;#xB9;. It was reported that only 9,820 dollars would be sufficient to push them down to the bottom 60% level. In other words, while the GhostTX attack is difficult to execute against large Searchers, it can relatively cheaply undermine the Reputation of medium-sized Searchers or newly entering Searchers.&lt;/p&gt;
+&lt;h1 id=&#34;3-Conclusion&#34;&gt;&lt;a href=&#34;#3-Conclusion&#34; class=&#34;headerlink&#34; title=&#34;3. Conclusion&#34;&gt;&lt;/a&gt;3. Conclusion&lt;/h1&gt;&lt;p&gt;As the authors of the paper also pointed out, there are several practical constraints that prevent the proposed attacks from being directly applied in real-world environments. For example, ConditionalExhaust requires the attacker to spread a large number of transactions simultaneously to maximize its effectiveness, which could incur significant network layer costs in practice. Additionally, there may be discrepancies between the attack costs mentioned in the paper and actual attack costs, leading to varying assessments of the threat level depending on the environment.&lt;/p&gt;
+&lt;p&gt;Personally, I wonder how realistic a threat this could be on the mainnet. ConditionalExhaust and MemPurge seem impractical for threatening the mainnet, while GhostTX appears to be a more feasible attack in reality&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;The paper does propose mitigations for these attacks, but upon reading them, most seem to either degrade user experience or reduce network efficiency, so they are not yet perfect solutions. In conclusion, while these attacks may not pose an immediate, substantial threat capable of destabilizing the mainnet, the paper does highlight some structural vulnerabilities in Ethereum&amp;#x2019;s architecture.&lt;/p&gt;
+&lt;p&gt;Thank you for reading this sudden paper review all the way through! &amp;#x1F64F; I&amp;#x2019;ll be back soon with more interesting topics.&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] Paper Review (USENIX ’24) Speculative DoS Attacks in Ethereum (en) - hackyboiz">
+  <meta property="og:description" content="&lt;h1 id=&#34;1-Introduction&#34;&gt;&lt;a href=&#34;#1-Introduction&#34; class=&#34;headerlink&#34; title=&#34;1. Introduction&#34;&gt;&lt;/a&gt;1. Introduction&lt;/h1&gt;&lt;p&gt;Hello, this is bekim! I was writing articles related to blockchain when I got a job and became too busy, so I will review some papers! I searched for papers from Usenix Security 24 or 25, and chose topics related to blockchain security, which I have been dealing with on a regular basis. So, I will review the papers assuming that the readers of this article have a basic understanding of blockchain.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/25/bekim/review/en/image.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Today&amp;#x2019;s review is on a paper titled &lt;strong&gt;Speculative DoS Attacks in Ethereum&lt;/strong&gt;. This paper presents a new form of denial-of-service (DoS) attack that could occur in Ethereum. The researchers demonstrate how three main attack methods &lt;strong&gt;(ConditionalExhaust, MemPurge, and GhostTX)&lt;/strong&gt; can exploit Ethereum&amp;#x2019;s transaction processing and resource management structure. All experiments were conducted on the Ethereum testnet.&lt;/p&gt;
+&lt;h1 id=&#34;2-Paper-Review&#34;&gt;&lt;a href=&#34;#2-Paper-Review&#34; class=&#34;headerlink&#34; title=&#34;2. Paper Review&#34;&gt;&lt;/a&gt;2. Paper Review&lt;/h1&gt;&lt;p&gt;In my previous research paper &lt;a href=&#34;https://hackyboiz.github.io/2025/07/13/bekim/smartcontract/en/&#34;&gt;From Paper to Code: Smart Contract&lt;/a&gt;&amp;#x201D;, I briefly explained the gas mechanism in the section describing how Ethereum works. If you find this concept difficult to understand, you may want to read it first!&lt;/p&gt;
+&lt;h2 id=&#34;2-1-Background&#34;&gt;&lt;a href=&#34;#2-1-Background&#34; class=&#34;headerlink&#34; title=&#34;2.1 Background&#34;&gt;&lt;/a&gt;2.1 Background&lt;/h2&gt;&lt;p&gt;Ethereum primarily utilizes the gas mechanism to prevent excessive computation and provides incentives to nodes (validators) operating the network. When executing a transaction, gas must be paid based on the computational load, and this gas has served as a mechanism to protect network resources. Therefore, until now, there has been a perception that DoS attacks are very difficult on Ethereum.&lt;/p&gt;
+&lt;p&gt;However, this paper presents a different perspective.&lt;/p&gt;
+&lt;p&gt;Due to the Turing-complete nature of smart contracts, nodes must execute a transaction to verify whether it can actually be included in a block.&lt;br&gt;The costs incurred in this process are not compensated by fees unless the transaction is included in the block. In other words, attackers can create malicious transactions that &amp;#x201C;force work but do not provide compensation.&amp;#x201D;&lt;/p&gt;
+&lt;p&gt;The paper introduces three new attack techniques to demonstrate this.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;ConditionalExhaust&lt;/strong&gt;: A resource exhaustion attack that occurs only under specific conditions.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;MemPurge:&lt;/strong&gt; An attack that forces normal transactions out of the validator/builder&amp;#x2019;s mempool.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;GhostTX:&lt;/strong&gt; An attack that disrupts the reputation system of Ethereum&amp;#x2019;s PBS (Proposer-Builder Separation) ecosystem.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;In particular, using ConditionalExhaust and Mempurge simultaneously can deplete the computational resources of validators while blocking the mempool, preventing victims from including transactions in blocks. This could result in victims generating empty blocks and threatening the network&amp;#x2019;s activity.&lt;/p&gt;
+&lt;h2 id=&#34;2-2-Proposed-Attacks&#34;&gt;&lt;a href=&#34;#2-2-Proposed-Attacks&#34; class=&#34;headerlink&#34; title=&#34;2.2 Proposed Attacks&#34;&gt;&lt;/a&gt;2.2 Proposed Attacks&lt;/h2&gt;&lt;h3 id=&#34;2-2-1-The-ConditionalExhaust-Attack&#34;&gt;&lt;a href=&#34;#2-2-1-The-ConditionalExhaust-Attack&#34; class=&#34;headerlink&#34; title=&#34;2.2.1 The ConditionalExhaust Attack&#34;&gt;&lt;/a&gt;2.2.1 The ConditionalExhaust Attack&lt;/h3&gt;&lt;p&gt;The first attack we will introduce is the ConditionalExhaust attack, a conditional resource depletion attack.&lt;/p&gt;
+&lt;p&gt;The core idea of the attack is simple. Validators or block builders following censorship do not include transactions interacting with a specific censored address (&amp;#x3C3;) in the block. This is because, following the 2022 U.S. OFAC (Office of Foreign Assets Control) sanctions against the smart contract address associated with the Tornado Cash mixing service, some Ethereum validators began filtering out transactions related to that address from blocks. The problem is that &lt;strong&gt;to determine whether a transaction is related to a sanctioned entity (&amp;#x3C3;), the transaction must be executed unconditionally&lt;/strong&gt;. This execution process is exploited by ConditionalExhaust.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/25/bekim/review/en/image1.png&#34; alt&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Complete Overview of Decred&amp;#x2019;s Structure [source: &lt;a href=&#34;https://medium.com/decred/blockchain-governance-how-decred-iterates-upon-bitcoin-3cc7030c655e&#34;&gt;https://medium.com/decred/blockchain-governance-how-decred-iterates-upon-bitcoin-3cc7030c655e&lt;/a&gt;]&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Speculative DoS Attacks in Ethereum (USENIX Security 2024): ConditionalExhaust is a conditional REA, in which&lt;br&gt;an attacker creates transactions that invoke computationally complex code if the victim cannot include them in a block, for example due to its censoring policy&lt;/p&gt;
+&lt;p&gt;The attack is divided into two main stages.&lt;/p&gt;
+&lt;p&gt;First, in the &lt;strong&gt;deployment stage&lt;/strong&gt;, the attacker uploads a specially designed smart contract to the blockchain (1).&lt;/p&gt;
+&lt;p&gt;This contract contains the following conditions:&lt;/p&gt;
+&lt;p&gt;1) If the executor is a censoring validator, perform complex and heavy computations (2). (3)&lt;br&gt;2) If not, it performs simple operations and incurs minimal gas costs.&lt;/p&gt;
+&lt;p&gt;This condition is included in the contract.&lt;/p&gt;
+&lt;p&gt;Next, in the &lt;strong&gt;execution phase&lt;/strong&gt;, the attacker floods the network with multiple transactions calling this contract.&lt;/p&gt;
+&lt;p&gt;This causes censors to consume excessive CPU and memory resources for each computation, and only after execution completes do they realize the transaction cannot be included in the block because it interacts with the censored address (&amp;#x3C3;). (4) In other words, resources are wasted without any reward.&lt;/p&gt;
+&lt;p&gt;Although there is an implementation overview in the actual paper, I will not include it here due to the possibility of code misuse. Researchers designed the code to maximize resource consumption by modifying various elements, such as Ethereum&amp;#x2019;s storage structure and high-cost opcodes.&lt;/p&gt;
+&lt;p&gt;As a result, while it took only microseconds for the attacker to generate and sign transactions, it took an average of 0.1 seconds for the censor to verify them, resulting in a difference of approximately 1,972 times over two hours. In actual Ethereum, a block can process up to 120 transactions in 12 seconds, but if the attacker sends just 140 transactions, it could result in an empty block being generated without including normal transactions.&lt;/p&gt;
+&lt;p&gt;The economic cost of the attack was also not significant. Deploying the contract cost $27 (36,000 KRW), and in the worst case, if the attack transactions were included in the block, the cost would be $5.3 (7,000 KRW). Upon actual calculation, the total cost required to execute 140 attack transactions in a single block was only approximately $376 (500,000 KRW).&lt;/p&gt;
+&lt;h3 id=&#34;2-2-2-The-MemPurge-Attack&#34;&gt;&lt;a href=&#34;#2-2-2-The-MemPurge-Attack&#34; class=&#34;headerlink&#34; title=&#34;2.2.2 The MemPurge Attack&#34;&gt;&lt;/a&gt;2.2.2 The MemPurge Attack&lt;/h3&gt;&lt;p&gt;The second attack is, as the name suggests, an attack that purges the node&amp;#x2019;s mempool. Ethereum nodes store transactions that may be included in future blocks in a storage called &lt;strong&gt;mempool&lt;/strong&gt;, which has limited space, so transactions with higher fees are usually prioritized.&lt;/p&gt;
+&lt;p&gt;The attacker exploits this rule to push out profitable legitimate transactions from the mempool and replace them with their own meaningless transactions.&lt;br&gt;The core of the attack is to create a transaction chain (TXchain) with consecutive nonces (numbers).&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/25/bekim/review/en/image2.png&#34; alt&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Speculative DoS Attacks in Ethereum (USENIX Security 2024): The MemPurge attack lowers the cost to evict transactions from victims&amp;#x2019; mempools.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Speculative DoS Attacks in Ethereum (USENIX Security 2024): The MemPurge attack lowers the cost to evict transactions from victims&amp;#x2019; mempools.&lt;/p&gt;
+&lt;p&gt;1) First, the attacker creates the first transaction (nonce=N) to transfer funds from their account to a new address, and then adds meaningless transactions such as Nonce = N+1, N+2, &amp;#x2026; to form a TX Chain. (1)&lt;br&gt;2) The attacker sends subsequent transactions to the victim node (2), and since the victim node receives them without any preceding transactions, it temporarily stores them in the future queue (3).&lt;br&gt;3) Finally, when the attacker sends the first transaction (N), the victim node verifies it and moves the entire previous transaction chain to the pending queue (4).&lt;br&gt;4) However, since the attacker&amp;#x2019;s funds have already been withdrawn in the first transaction, subsequent transactions become invalid due to insufficient balance. As a result, the mempool is filled with meaningless transactions, and the originally profitable transactions are pushed out.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;ConditionalExhaust + MemPurge&lt;/strong&gt;&lt;br&gt;Mempurge and ConditionalExhaust can be combined. By setting the to address of each MemPurge transaction to ConditionalExhaust, MemPool space is occupied, and ConditionalExhaust consumes computation.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;By calling the ConditionalExhaust contract in the first transaction to impose CPU and memory computation burdens on the censor, and then invalidating subsequent transactions that only occupy mempool space, a more powerful attack can be executed.&lt;/p&gt;
+&lt;p&gt;Researchers verified this combined attack and reported that, compared to a single attack, the gas cost remained almost unchanged while maintaining the same effectiveness.&lt;/p&gt;
+&lt;h3 id=&#34;2-2-3-The-GhostTX-Attack&#34;&gt;&lt;a href=&#34;#2-2-3-The-GhostTX-Attack&#34; class=&#34;headerlink&#34; title=&#34;2.2.3 The GhostTX Attack&#34;&gt;&lt;/a&gt;2.2.3 The GhostTX Attack&lt;/h3&gt;&lt;p&gt;The GhostTX Attack directly targets the reputation of the Searcher in Flashbots&amp;#x2019; PBS (Proposer-Builder Separation) environment.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;PBS&lt;/strong&gt; is a structure that separates the roles of block proposers and builders to efficiently construct blocks. Proposers simply select and submit blocks, while builders create the most profitable transaction combinations (bundles) and submit them to proposers.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/25/bekim/review/en/image3.png&#34; alt&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Speculative DoS Attacks in Ethereum (USENIX Security 2024): Overview of Ethereum&amp;#x2019;s PBS ecosystem actors.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Flashbots&lt;/strong&gt; is an implementation of PBS, providing a &lt;strong&gt;Relay&lt;/strong&gt; service that connects Searchers (participants who create Bundles and deliver them to Builders), Builders, and Proposers. This system has a &lt;strong&gt;Reputation&lt;/strong&gt; system that scores Searchers based on their past performance, so Bundles from Searchers with high reputations are selected first.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Here, reputation is calculated based on &lt;strong&gt;how much profit was generated per gas unit&lt;/strong&gt;. Therefore, once reputation drops, the address must be changed to rebuild it, which means attackers can lower the victim&amp;#x2019;s trustworthiness and force them out of the ecosystem.&lt;br&gt;&amp;#x394;T: Amount paid to the Builder, pT: Fee, gT: Gas consumption &lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs erlang&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-title&#34;&gt;r&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(U)&lt;/span&gt; = &lt;span class=&#34;hljs-params&#34;&gt;(&amp;#x2211; (&amp;#x394;T + pT * gT)&lt;/span&gt;) / &lt;span class=&#34;hljs-params&#34;&gt;(&amp;#x2211; gT)&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/25/bekim/review/en/image4.png&#34; alt&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Speculative DoS Attacks in Ethereum (USENIX Security 2024): GhostTX&amp;#x2019;s censorship variant exploits an inconsistency between builder and relay censorship methods&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The attack process is divided into &lt;strong&gt;two types (Proposer Variant, Non-proposer Variant)&lt;/strong&gt;. Simply put, in the &lt;strong&gt;Proposer Variant&lt;/strong&gt;, if the attacker is a block proposer, they spread a bait transaction that appears to be profitable and then invalidate it in the first block to damage the Searcher&amp;#x2019;s reputation.&lt;/p&gt;
+&lt;p&gt;In the case of the &lt;strong&gt;Non-Proposer&lt;/strong&gt;, the attacker simultaneously spreads a collision transaction with the same nonce and fee as the Searcher&amp;#x2019;s bait transaction, ensuring that only the attacker&amp;#x2019;s transaction is recorded in the block.&lt;/p&gt;
+&lt;p&gt;1) The attacker sends a transaction that transfers funds to a sanctioned address (1)&lt;br&gt;2) The Searcher identifies this as a profitable transaction and includes it in the bundle. (2)&lt;br&gt;3) The Builder verifies the bundle (3) and adds the TX to the block (4).&lt;br&gt;4) The block is transmitted to the Relay, but the Relay detects the transaction related to the sanctioned address and discards the block (5), resulting in the Searcher&amp;#x2019;s bundle being invalidated and their Reputation score decreasing. (6)&lt;/p&gt;
+&lt;p&gt;The GhostTX Attack can be executed in various ways, one of which is the &lt;strong&gt;Censorship Variant&lt;/strong&gt;. This exploits the subtle differences in how Flashbots&amp;#x2019; Builder and Relay perform censorship.&lt;/p&gt;
+&lt;p&gt;While Builder&amp;#x2019;s internal verification does not consider 0 ETH transfers using the call operator as sanction targets, Relay&amp;#x2019;s verification API does consider them as such. Attackers can exploit this by creating transactions that send 0 ETH to sanctioned addresses, making them appear as normal transactions to Searcher and Builder, but only getting filtered out at the Relay stage. This results in Searcher&amp;#x2019;s bundles being invalidated again and its Reputation score decreasing.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/25/bekim/review/en/image5.png&#34; alt&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Speculative DoS Attacks in Ethereum (USENIX Security 2024): Figure 8: Cost of attacking average searchers with GhostTX&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The researchers evaluated the effectiveness of GhostTX attacks based on actual data. For top-tier Searchers, they were generating approximately 8,240 ETH in profits and 112 billion gas usage. To push them out of the top 50% in Reputation, it would require a cost of approximately 42.49 million dollars. While it is practically impossible to realistically bring down established large-scale Searchers, the results were different for average-level Searchers.&lt;/p&gt;
+&lt;p&gt;On average, they recorded approximately 0.95 ETH in profits, 3.28 million gas usage, and a Reputation score of 2.9&amp;#xD7;10&amp;#xB9;&amp;#xB9;. It was reported that only 9,820 dollars would be sufficient to push them down to the bottom 60% level. In other words, while the GhostTX attack is difficult to execute against large Searchers, it can relatively cheaply undermine the Reputation of medium-sized Searchers or newly entering Searchers.&lt;/p&gt;
+&lt;h1 id=&#34;3-Conclusion&#34;&gt;&lt;a href=&#34;#3-Conclusion&#34; class=&#34;headerlink&#34; title=&#34;3. Conclusion&#34;&gt;&lt;/a&gt;3. Conclusion&lt;/h1&gt;&lt;p&gt;As the authors of the paper also pointed out, there are several practical constraints that prevent the proposed attacks from being directly applied in real-world environments. For example, ConditionalExhaust requires the attacker to spread a large number of transactions simultaneously to maximize its effectiveness, which could incur significant network layer costs in practice. Additionally, there may be discrepancies between the attack costs mentioned in the paper and actual attack costs, leading to varying assessments of the threat level depending on the environment.&lt;/p&gt;
+&lt;p&gt;Personally, I wonder how realistic a threat this could be on the mainnet. ConditionalExhaust and MemPurge seem impractical for threatening the mainnet, while GhostTX appears to be a more feasible attack in reality&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;The paper does propose mitigations for these attacks, but upon reading them, most seem to either degrade user experience or reduce network efficiency, so they are not yet perfect solutions. In conclusion, while these attacks may not pose an immediate, substantial threat capable of destabilizing the mainnet, the paper does highlight some structural vulnerabilities in Ethereum&amp;#x2019;s architecture.&lt;/p&gt;
+&lt;p&gt;Thank you for reading this sudden paper review all the way through! &amp;#x1F64F; I&amp;#x2019;ll be back soon with more interesting topics.&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/08/25/bekim/review/en/image.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/08/25/bekim/review/en/">
+
+  <title>[Research] Paper Review (USENIX ’24) Speculative DoS Attacks in Ethereum (en) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-08-25 17:00" pubdate>
+      2025년 8월 25일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      2.1k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      42
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] Paper Review (USENIX ’24) Speculative DoS Attacks in Ethereum (en)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <h1 id="1-Introduction"><a href="#1-Introduction" class="headerlink" title="1. Introduction"></a>1. Introduction</h1><p>Hello, this is bekim! I was writing articles related to blockchain when I got a job and became too busy, so I will review some papers! I searched for papers from Usenix Security 24 or 25, and chose topics related to blockchain security, which I have been dealing with on a regular basis. So, I will review the papers assuming that the readers of this article have a basic understanding of blockchain.</p>
+<p><img src="/2025/08/25/bekim/review/en/image.png" srcset="/img/loading.gif" alt></p>
+<p>Today&#x2019;s review is on a paper titled <strong>Speculative DoS Attacks in Ethereum</strong>. This paper presents a new form of denial-of-service (DoS) attack that could occur in Ethereum. The researchers demonstrate how three main attack methods <strong>(ConditionalExhaust, MemPurge, and GhostTX)</strong> can exploit Ethereum&#x2019;s transaction processing and resource management structure. All experiments were conducted on the Ethereum testnet.</p>
+<h1 id="2-Paper-Review"><a href="#2-Paper-Review" class="headerlink" title="2. Paper Review"></a>2. Paper Review</h1><p>In my previous research paper <a href="https://hackyboiz.github.io/2025/07/13/bekim/smartcontract/en/">From Paper to Code: Smart Contract</a>&#x201D;, I briefly explained the gas mechanism in the section describing how Ethereum works. If you find this concept difficult to understand, you may want to read it first!</p>
+<h2 id="2-1-Background"><a href="#2-1-Background" class="headerlink" title="2.1 Background"></a>2.1 Background</h2><p>Ethereum primarily utilizes the gas mechanism to prevent excessive computation and provides incentives to nodes (validators) operating the network. When executing a transaction, gas must be paid based on the computational load, and this gas has served as a mechanism to protect network resources. Therefore, until now, there has been a perception that DoS attacks are very difficult on Ethereum.</p>
+<p>However, this paper presents a different perspective.</p>
+<p>Due to the Turing-complete nature of smart contracts, nodes must execute a transaction to verify whether it can actually be included in a block.<br>The costs incurred in this process are not compensated by fees unless the transaction is included in the block. In other words, attackers can create malicious transactions that &#x201C;force work but do not provide compensation.&#x201D;</p>
+<p>The paper introduces three new attack techniques to demonstrate this.</p>
+<ul>
+<li><strong>ConditionalExhaust</strong>: A resource exhaustion attack that occurs only under specific conditions.</li>
+<li><strong>MemPurge:</strong> An attack that forces normal transactions out of the validator/builder&#x2019;s mempool.</li>
+<li><strong>GhostTX:</strong> An attack that disrupts the reputation system of Ethereum&#x2019;s PBS (Proposer-Builder Separation) ecosystem.</li>
+</ul>
+<p>In particular, using ConditionalExhaust and Mempurge simultaneously can deplete the computational resources of validators while blocking the mempool, preventing victims from including transactions in blocks. This could result in victims generating empty blocks and threatening the network&#x2019;s activity.</p>
+<h2 id="2-2-Proposed-Attacks"><a href="#2-2-Proposed-Attacks" class="headerlink" title="2.2 Proposed Attacks"></a>2.2 Proposed Attacks</h2><h3 id="2-2-1-The-ConditionalExhaust-Attack"><a href="#2-2-1-The-ConditionalExhaust-Attack" class="headerlink" title="2.2.1 The ConditionalExhaust Attack"></a>2.2.1 The ConditionalExhaust Attack</h3><p>The first attack we will introduce is the ConditionalExhaust attack, a conditional resource depletion attack.</p>
+<p>The core idea of the attack is simple. Validators or block builders following censorship do not include transactions interacting with a specific censored address (&#x3C3;) in the block. This is because, following the 2022 U.S. OFAC (Office of Foreign Assets Control) sanctions against the smart contract address associated with the Tornado Cash mixing service, some Ethereum validators began filtering out transactions related to that address from blocks. The problem is that <strong>to determine whether a transaction is related to a sanctioned entity (&#x3C3;), the transaction must be executed unconditionally</strong>. This execution process is exploited by ConditionalExhaust.</p>
+<p><img src="/2025/08/25/bekim/review/en/image1.png" srcset="/img/loading.gif" alt></p>
+<blockquote>
+<p>Complete Overview of Decred&#x2019;s Structure [source: <a target="_blank" rel="external nofollow noopener noreferrer" href="https://medium.com/decred/blockchain-governance-how-decred-iterates-upon-bitcoin-3cc7030c655e">https://medium.com/decred/blockchain-governance-how-decred-iterates-upon-bitcoin-3cc7030c655e</a>]</p>
+</blockquote>
+<p>Speculative DoS Attacks in Ethereum (USENIX Security 2024): ConditionalExhaust is a conditional REA, in which<br>an attacker creates transactions that invoke computationally complex code if the victim cannot include them in a block, for example due to its censoring policy</p>
+<p>The attack is divided into two main stages.</p>
+<p>First, in the <strong>deployment stage</strong>, the attacker uploads a specially designed smart contract to the blockchain (1).</p>
+<p>This contract contains the following conditions:</p>
+<p>1) If the executor is a censoring validator, perform complex and heavy computations (2). (3)<br>2) If not, it performs simple operations and incurs minimal gas costs.</p>
+<p>This condition is included in the contract.</p>
+<p>Next, in the <strong>execution phase</strong>, the attacker floods the network with multiple transactions calling this contract.</p>
+<p>This causes censors to consume excessive CPU and memory resources for each computation, and only after execution completes do they realize the transaction cannot be included in the block because it interacts with the censored address (&#x3C3;). (4) In other words, resources are wasted without any reward.</p>
+<p>Although there is an implementation overview in the actual paper, I will not include it here due to the possibility of code misuse. Researchers designed the code to maximize resource consumption by modifying various elements, such as Ethereum&#x2019;s storage structure and high-cost opcodes.</p>
+<p>As a result, while it took only microseconds for the attacker to generate and sign transactions, it took an average of 0.1 seconds for the censor to verify them, resulting in a difference of approximately 1,972 times over two hours. In actual Ethereum, a block can process up to 120 transactions in 12 seconds, but if the attacker sends just 140 transactions, it could result in an empty block being generated without including normal transactions.</p>
+<p>The economic cost of the attack was also not significant. Deploying the contract cost $27 (36,000 KRW), and in the worst case, if the attack transactions were included in the block, the cost would be $5.3 (7,000 KRW). Upon actual calculation, the total cost required to execute 140 attack transactions in a single block was only approximately $376 (500,000 KRW).</p>
+<h3 id="2-2-2-The-MemPurge-Attack"><a href="#2-2-2-The-MemPurge-Attack" class="headerlink" title="2.2.2 The MemPurge Attack"></a>2.2.2 The MemPurge Attack</h3><p>The second attack is, as the name suggests, an attack that purges the node&#x2019;s mempool. Ethereum nodes store transactions that may be included in future blocks in a storage called <strong>mempool</strong>, which has limited space, so transactions with higher fees are usually prioritized.</p>
+<p>The attacker exploits this rule to push out profitable legitimate transactions from the mempool and replace them with their own meaningless transactions.<br>The core of the attack is to create a transaction chain (TXchain) with consecutive nonces (numbers).</p>
+<p><img src="/2025/08/25/bekim/review/en/image2.png" srcset="/img/loading.gif" alt></p>
+<blockquote>
+<p>Speculative DoS Attacks in Ethereum (USENIX Security 2024): The MemPurge attack lowers the cost to evict transactions from victims&#x2019; mempools.</p>
+</blockquote>
+<p>Speculative DoS Attacks in Ethereum (USENIX Security 2024): The MemPurge attack lowers the cost to evict transactions from victims&#x2019; mempools.</p>
+<p>1) First, the attacker creates the first transaction (nonce=N) to transfer funds from their account to a new address, and then adds meaningless transactions such as Nonce = N+1, N+2, &#x2026; to form a TX Chain. (1)<br>2) The attacker sends subsequent transactions to the victim node (2), and since the victim node receives them without any preceding transactions, it temporarily stores them in the future queue (3).<br>3) Finally, when the attacker sends the first transaction (N), the victim node verifies it and moves the entire previous transaction chain to the pending queue (4).<br>4) However, since the attacker&#x2019;s funds have already been withdrawn in the first transaction, subsequent transactions become invalid due to insufficient balance. As a result, the mempool is filled with meaningless transactions, and the originally profitable transactions are pushed out.</p>
+<ul>
+<li><strong>ConditionalExhaust + MemPurge</strong><br>Mempurge and ConditionalExhaust can be combined. By setting the to address of each MemPurge transaction to ConditionalExhaust, MemPool space is occupied, and ConditionalExhaust consumes computation.</li>
+</ul>
+<p>By calling the ConditionalExhaust contract in the first transaction to impose CPU and memory computation burdens on the censor, and then invalidating subsequent transactions that only occupy mempool space, a more powerful attack can be executed.</p>
+<p>Researchers verified this combined attack and reported that, compared to a single attack, the gas cost remained almost unchanged while maintaining the same effectiveness.</p>
+<h3 id="2-2-3-The-GhostTX-Attack"><a href="#2-2-3-The-GhostTX-Attack" class="headerlink" title="2.2.3 The GhostTX Attack"></a>2.2.3 The GhostTX Attack</h3><p>The GhostTX Attack directly targets the reputation of the Searcher in Flashbots&#x2019; PBS (Proposer-Builder Separation) environment.</p>
+<ul>
+<li><strong>PBS</strong> is a structure that separates the roles of block proposers and builders to efficiently construct blocks. Proposers simply select and submit blocks, while builders create the most profitable transaction combinations (bundles) and submit them to proposers.</li>
+</ul>
+<p><img src="/2025/08/25/bekim/review/en/image3.png" srcset="/img/loading.gif" alt></p>
+<blockquote>
+<p>Speculative DoS Attacks in Ethereum (USENIX Security 2024): Overview of Ethereum&#x2019;s PBS ecosystem actors.</p>
+</blockquote>
+<ul>
+<li><strong>Flashbots</strong> is an implementation of PBS, providing a <strong>Relay</strong> service that connects Searchers (participants who create Bundles and deliver them to Builders), Builders, and Proposers. This system has a <strong>Reputation</strong> system that scores Searchers based on their past performance, so Bundles from Searchers with high reputations are selected first.</li>
+</ul>
+<p>Here, reputation is calculated based on <strong>how much profit was generated per gas unit</strong>. Therefore, once reputation drops, the address must be changed to rebuild it, which means attackers can lower the victim&#x2019;s trustworthiness and force them out of the ecosystem.<br>&#x394;T: Amount paid to the Builder, pT: Fee, gT: Gas consumption </p>
+<pre><code class="hljs erlang"><span class="hljs-function"><span class="hljs-title">r</span><span class="hljs-params">(U)</span> = <span class="hljs-params">(&#x2211; (&#x394;T + pT * gT)</span>) / <span class="hljs-params">(&#x2211; gT)</span></span></code></pre>
+<p><img src="/2025/08/25/bekim/review/en/image4.png" srcset="/img/loading.gif" alt></p>
+<blockquote>
+<p>Speculative DoS Attacks in Ethereum (USENIX Security 2024): GhostTX&#x2019;s censorship variant exploits an inconsistency between builder and relay censorship methods</p>
+</blockquote>
+<p>The attack process is divided into <strong>two types (Proposer Variant, Non-proposer Variant)</strong>. Simply put, in the <strong>Proposer Variant</strong>, if the attacker is a block proposer, they spread a bait transaction that appears to be profitable and then invalidate it in the first block to damage the Searcher&#x2019;s reputation.</p>
+<p>In the case of the <strong>Non-Proposer</strong>, the attacker simultaneously spreads a collision transaction with the same nonce and fee as the Searcher&#x2019;s bait transaction, ensuring that only the attacker&#x2019;s transaction is recorded in the block.</p>
+<p>1) The attacker sends a transaction that transfers funds to a sanctioned address (1)<br>2) The Searcher identifies this as a profitable transaction and includes it in the bundle. (2)<br>3) The Builder verifies the bundle (3) and adds the TX to the block (4).<br>4) The block is transmitted to the Relay, but the Relay detects the transaction related to the sanctioned address and discards the block (5), resulting in the Searcher&#x2019;s bundle being invalidated and their Reputation score decreasing. (6)</p>
+<p>The GhostTX Attack can be executed in various ways, one of which is the <strong>Censorship Variant</strong>. This exploits the subtle differences in how Flashbots&#x2019; Builder and Relay perform censorship.</p>
+<p>While Builder&#x2019;s internal verification does not consider 0 ETH transfers using the call operator as sanction targets, Relay&#x2019;s verification API does consider them as such. Attackers can exploit this by creating transactions that send 0 ETH to sanctioned addresses, making them appear as normal transactions to Searcher and Builder, but only getting filtered out at the Relay stage. This results in Searcher&#x2019;s bundles being invalidated again and its Reputation score decreasing.</p>
+<p><img src="/2025/08/25/bekim/review/en/image5.png" srcset="/img/loading.gif" alt></p>
+<blockquote>
+<p>Speculative DoS Attacks in Ethereum (USENIX Security 2024): Figure 8: Cost of attacking average searchers with GhostTX</p>
+</blockquote>
+<p>The researchers evaluated the effectiveness of GhostTX attacks based on actual data. For top-tier Searchers, they were generating approximately 8,240 ETH in profits and 112 billion gas usage. To push them out of the top 50% in Reputation, it would require a cost of approximately 42.49 million dollars. While it is practically impossible to realistically bring down established large-scale Searchers, the results were different for average-level Searchers.</p>
+<p>On average, they recorded approximately 0.95 ETH in profits, 3.28 million gas usage, and a Reputation score of 2.9&#xD7;10&#xB9;&#xB9;. It was reported that only 9,820 dollars would be sufficient to push them down to the bottom 60% level. In other words, while the GhostTX attack is difficult to execute against large Searchers, it can relatively cheaply undermine the Reputation of medium-sized Searchers or newly entering Searchers.</p>
+<h1 id="3-Conclusion"><a href="#3-Conclusion" class="headerlink" title="3. Conclusion"></a>3. Conclusion</h1><p>As the authors of the paper also pointed out, there are several practical constraints that prevent the proposed attacks from being directly applied in real-world environments. For example, ConditionalExhaust requires the attacker to spread a large number of transactions simultaneously to maximize its effectiveness, which could incur significant network layer costs in practice. Additionally, there may be discrepancies between the attack costs mentioned in the paper and actual attack costs, leading to varying assessments of the threat level depending on the environment.</p>
+<p>Personally, I wonder how realistic a threat this could be on the mainnet. ConditionalExhaust and MemPurge seem impractical for threatening the mainnet, while GhostTX appears to be a more feasible attack in reality&#x2026;</p>
+<p>The paper does propose mitigations for these attacks, but upon reading them, most seem to either degrade user experience or reduce network efficiency, so they are not yet perfect solutions. In conclusion, while these attacks may not pose an immediate, substantial threat capable of destabilizing the mainnet, the paper does highlight some structural vulnerabilities in Ethereum&#x2019;s architecture.</p>
+<p>Thank you for reading this sudden paper review all the way through! &#x1F64F; I&#x2019;ll be back soon with more interesting topics.</p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/bekim/">bekim</a>
+                  
+                  <a class="hover-with-bg" href="/tags/review/">review</a>
+                  
+                  <a class="hover-with-bg" href="/tags/blockchain/">blockchain</a>
+                  
+                  <a class="hover-with-bg" href="/tags/ethereum/">ethereum</a>
+                  
+                  <a class="hover-with-bg" href="/tags/usenix/">usenix</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Dos/">Dos</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_bekim.jpg" srcset="/img/loading.gif" alt="bekim">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">bekim</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/bekim">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/08/25/bekim/review/ko/">
+                    <span class="hidden-mobile">[Research] Paper Review (USENIX ’24) Speculative DoS Attacks in Ethereum (ko)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/08/25/bekim/review/en/';
+        this.page.identifier = '/2025/08/25/bekim/review/en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] Paper Review (USENIX ’24) Speculative DoS Attacks in Ethereum (en)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
