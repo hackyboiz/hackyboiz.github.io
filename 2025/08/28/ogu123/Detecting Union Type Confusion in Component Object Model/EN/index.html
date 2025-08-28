@@ -1,0 +1,1056 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;h2 id=&#34;Introduction&#34;&gt;&lt;a href=&#34;#Introduction&#34; class=&#34;headerlink&#34; title=&#34;Introduction&#34;&gt;&lt;/a&gt;Introduction&lt;/h2&gt;&lt;p&gt;Hello! It&amp;#x2019;s ogu123, back on COM after a long time!&lt;/p&gt;
+&lt;p&gt;I was busy with other things, but I wanted to find a vulnerability on COM and wrap things up, so I&amp;#x2019;m back..!&lt;/p&gt;
+&lt;p&gt;Today I&amp;#x2019;ve prepared a &lt;a href=&#34;https://www.usenix.org/conference/usenixsecurity23/presentation/zhang-yuxing&#34;&gt;paper review on COM&lt;/a&gt;. It mentions that using union variables in a COM server can lead to type confusion? Let&amp;#x2019;s take a closer look!&lt;/p&gt;
+&lt;h2 id=&#34;Background&#34;&gt;&lt;a href=&#34;#Background&#34; class=&#34;headerlink&#34; title=&#34;Background&#34;&gt;&lt;/a&gt;Background&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/2.png&#34; alt&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;reference: Struct VS Union (Introduction to Unions in C - Youtube) &lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;First, a union is a user-defined type where all member variables share the same memory location!&lt;/p&gt;
+&lt;p&gt;Looking at the picture above makes it easy to understand, right? As shown in the picture , member variables declared within a union share a single memory space, so a union can only store one member variable at a time!&lt;/p&gt;
+&lt;p&gt;So why use a union instead of a struct? Since a union allocates memory based on the size of its largest member variable, it can be useful when memory is limited!&lt;/p&gt;
+&lt;p&gt;COM is a technology introduced in 1993. To conserve memory for past system performance, COM developers reportedly used unions extensively instead of structs.&lt;/p&gt;
+&lt;p&gt;Even now, 30 years later, COM remains the foundation for core Microsoft technologies like OLE, ActiveX, and Windows Shell. However, the paper states that the union type confusion problem persists from past COM development.&lt;/p&gt;
+&lt;p&gt;Therefore, this paper proposes COMFUSION to detect union type confusion in COM.&lt;/p&gt;
+&lt;p&gt;First, to find union type confusion in COM, the paper researched how unions are presented in COM and the conventions under which they are used.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/3.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;In Windows 10 (versions 1803 and 21H2) and Windows 11 (version 21H2), after exploring and collecting all custom structures in COM that are connected to or directly/indirectly referenced by unions via MS COM code and documentation, it was determined that the general union declaration form was defined as shown above.&lt;/p&gt;
+&lt;p&gt;Figure 1 illustrates the three representative union forms in COM.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Non-encapsulated Union&lt;ul&gt;
+&lt;li&gt;The basic form where only the union is used alone&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;Encapsulated Union&lt;ul&gt;
+&lt;li&gt;Enclosing the union within a struct or class and adding a selector member variable&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;Re-encapsulated Union&lt;ul&gt;
+&lt;li&gt;A form where an encapsulated union is included as a struct member; viewing only the struct reveals no direct use of the union, but it exists indirectly&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Here, the Selector member variable serves as a selector to determine the type of a union variable before using its value!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/4.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Looking at the figure above, you can see that 34&amp;#x2013;35% of the custom structures are unions. You can also see that the three union types examined earlier are used in combination.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/5.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Then, let&amp;#x2019;s examine a simple example in Figure 3 to see how union type confusion can occur.&lt;/p&gt;
+&lt;p&gt;First, the union MetaInfo consists of a string pointer and an integer member. In the main function, the value of user.info.name is printed using a for loop. At this point, the type value of UserInfo, which acts as the discriminator, should be checked first. However, without this step, the integer value is used as a string pointer, causing type confusion.&lt;/p&gt;
+&lt;p&gt;Over 50% of COM&amp;#x2019;s custom unions use both pointer and non-pointer members together, which can lead to potential issues like those shown in Figure 3.&lt;/p&gt;
+&lt;p&gt;Suppose a client can send values from the users array to the server via a specific COM interface. In this case, the client performs marshaling to convert the calling COM interface and arguments according to IDL (Interface Definition Language) rules before transmitting the data.&lt;/p&gt;
+&lt;p&gt;The server receiving the marshaled data obtains the original data through unmarshaling, enabling execution on the server side. Here, we will explore IDL and marshaling.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/6.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;First, IDL is a language that defines the interfaces and functions possessed by a COM server, as shown in the figure above. Since IDL itself is a language, it is compiled using the MIDL compiler created by Microsoft to generate .dil files. This process yields header files, type libraries, and files for Proxy and Stub, enabling continued COM development.&lt;/p&gt;
+&lt;p&gt;Earlier, we mentioned that marshaling follows IDL rules. Therefore, while the client must adhere to IDL rules when sending data to the server, if the server fails to properly validate the data (such as argument values) received from the client, COM type confusion occurs, as shown in Figure 3.&lt;/p&gt;
+&lt;p&gt;Simply put, marshaling does all the work, but if the server side doesn&amp;#x2019;t do its part, it&amp;#x2019;s all for naught.&lt;/p&gt;
+&lt;h2 id=&#34;Design-of-COMFUSION&#34;&gt;&lt;a href=&#34;#Design-of-COMFUSION&#34; class=&#34;headerlink&#34; title=&#34;Design of COMFUSION&#34;&gt;&lt;/a&gt;Design of COMFUSION&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/7.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Now let&amp;#x2019;s examine the workflow of the COMFUSION tool, which explores type confusion vulnerabilities in numerous COM binaries within Windows, as shown in Figure 3!&lt;/p&gt;
+&lt;p&gt;The goal of COMFUSION is to efficiently and accurately detect union type confusion in COM binaries! Let&amp;#x2019;s look at it step by step!&lt;/p&gt;
+&lt;h3 id=&#34;1-Extracting-COM-Objects&#34;&gt;&lt;a href=&#34;#1-Extracting-COM-Objects&#34; class=&#34;headerlink&#34; title=&#34;1. Extracting COM Objects&#34;&gt;&lt;/a&gt;1. Extracting COM Objects&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/8.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;First, obtain all CLSIDs and their corresponding COM binaries from the Windows registry using the path below.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;HKEY_CLASSES_ROOT/CLSID/$CLSID/InprocServer32&lt;/li&gt;
+&lt;li&gt;HKEY_CLASSES_ROOT/CLSID/$CLSID/LocalServer32&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;It is said that you can recover the MIDL file by analyzing the marshaling rules of the COM object using oleviewdotnet.&lt;/p&gt;
+&lt;p&gt;Finally, each interface can be accessed via a pointer with a specific interface pointer identifier (IPID). Since all IPIDs are organized in a table called the IPIDTable within the COM server process&amp;#x2019;s memory space, it is also possible to parse the IPIDTable using oleviewdotnet and calculate the offset of each interface function table after the COM server has started.&lt;/p&gt;
+&lt;h3 id=&#34;2-Exploring-Union-Declarations&#34;&gt;&lt;a href=&#34;#2-Exploring-Union-Declarations&#34; class=&#34;headerlink&#34; title=&#34;2. Exploring Union Declarations&#34;&gt;&lt;/a&gt;2. Exploring Union Declarations&lt;/h3&gt;&lt;p&gt;To detect union type confusion, information is required about the variable acting as a discriminator, valid discriminator values, and union members; however, this information can be obtained from the previously recovered MIDL file.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/9.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Algorithm1 is used to analyze the relationships between user-defined structures declared in MIDL files.&lt;/p&gt;
+&lt;p&gt;A simplified overview of Algorithm1 involves creating all structs and unions within the MIDL file as nodes in a graph. If structure &lt;code&gt;u&lt;/code&gt; contains another structure &lt;code&gt;v&lt;/code&gt; as a variable or pointer, an edge is created from &lt;code&gt;u&lt;/code&gt; to &lt;code&gt;v&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;It then assigns labels based on the previously discussed Non-encapsulated Union, encapsulated Union, etc., and identifies the discriminator according to the union type&amp;#x2026; &amp;#x2190; We will examine this content immediately below.&lt;/p&gt;
+&lt;p&gt;As a result of Algorithm1, a DAG (Directed Acyclic Graph) is constructed as shown in Figure 5 below.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/10.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;When examining the DAG, you&amp;#x2019;ll see System Defined Union - VARIANT. VARIANT functions similarly to a union, but internally, the data type is specified in a field called vt. Therefore, just as you must first check the discriminator value to use a union correctly, you must also check the VARIANT&amp;#x2192; vt value before using the data in a VARIANT.&lt;/p&gt;
+&lt;p&gt;In union type confusion, finding the discriminator of a union variable is crucial. This paper categorizes them based on the union form as follows&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Encapsulated Union&lt;ul&gt;
+&lt;li&gt;Variables located immediately before the union declaration are recognized as discriminators&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;System Defined Union&lt;ul&gt;
+&lt;li&gt;The vt member variable of VARIANT is recognized as a discriminator&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;Re-encapsulated Union&lt;ul&gt;
+&lt;li&gt;As shown in Figure 6, if a VARIANT type exists in Struct_20, the discriminator for Struct_20 is recognized as Member10&amp;#x2192;vt&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;When recognizing a discriminator, it is important to know the values that discriminator can hold. For VARIANT, I referred to the MS documentation, and for other union types, I used the case list for the union variable, which was commented out in the recovered MIDL file.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/11.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Figure 6 shows an example of a recovered MIDL file. Theoretically, union type confusion checks should be performed for all functions using union variables, but&amp;#x2026; analyzing every function in the COM binary to find union variables is inefficient. There are simply too many&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;Therefore, COMFUSION only checks functions that are directly or indirectly called by interface functions using union variables as arguments, as declared in the MIDL file. Function arguments are designated as taint sources, and CONFUSION distinguishes between union member taint and discriminant taint during analysis.&lt;/p&gt;
+&lt;p&gt;Referring to Figure 6, each function argument has the [IN], [OUT], or [IN, OUT] attribute. Only [IN] and [IN, OUT] attributes, where an attacker can send data, are subject to Taint Source Filtering.&lt;/p&gt;
+&lt;p&gt;Additionally, COMFUSION utilizes Angr to set specific variables as tainted. It then tracks whether these tainted variables flow into other variables or memory at the instruction level. &lt;a href=&#34;https://hackyboiz.github.io/2021/07/10/j0ker/angr_part1/&#34;&gt;For more details on Angr, please refer to the blog!&lt;/a&gt;&lt;/p&gt;
+&lt;h3 id=&#34;3-Locate-Union-Variables&#34;&gt;&lt;a href=&#34;#3-Locate-Union-Variables&#34; class=&#34;headerlink&#34; title=&#34;3. Locate Union Variables&#34;&gt;&lt;/a&gt;3. Locate Union Variables&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/12.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Algorithm 2 demonstrates how COMFUSION finds union variables step by step.&lt;/p&gt;
+&lt;p&gt;First, as seen in MAIN, COMFUSION uses DFS (Depth-First Search) when exploring execution paths. For interface functions with multiple union arguments, COMFUSION taints only one argument at a time.&lt;/p&gt;
+&lt;p&gt;One complex situation during analysis is handling function calls. COMFUSION addresses this by processing functions in the following four scenarios&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Summarized functions&lt;ul&gt;
+&lt;li&gt;Functions like &lt;code&gt;memcpy&lt;/code&gt; and &lt;code&gt;strcpy&lt;/code&gt; update the taint map by applying predefined rules without analyzing their internal code.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;Internal functions&lt;ul&gt;
+&lt;li&gt;Functions implemented within the analyzed binary. The analysis enters these functions, tracks taint, and updates the taint map.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;External functions&lt;ul&gt;
+&lt;li&gt;Functions implemented outside the analyzed binary. These functions are skipped and not analyzed. It is assumed that taint disappears at this point.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;Address-taken functions&lt;ul&gt;
+&lt;li&gt;Functions whose call address is determined at runtime. These are skipped due to their high complexity.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Additionally, COMFUSION has set the following thresholds to address three potential issues that may arise during binary analysis:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;LOOP_THOLD (infinite loop prevention): 2&lt;/li&gt;
+&lt;li&gt;CALL_THOLD (function recursion/depth issues): 5&lt;/li&gt;
+&lt;li&gt;TOTAL_THOLD (analysis time): 10,000&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3 id=&#34;4-Identify-Union-Type-Confusion&#34;&gt;&lt;a href=&#34;#4-Identify-Union-Type-Confusion&#34; class=&#34;headerlink&#34; title=&#34;4. Identify Union Type Confusion&#34;&gt;&lt;/a&gt;4. Identify Union Type Confusion&lt;/h3&gt;&lt;p&gt;Union type confusion occurs when a union variable is used and its discriminator can represent multiple types. In other words, it arises when there is uncertainty about the specific type of data stored within.&lt;/p&gt;
+&lt;p&gt;Previously, we discussed how taint propagation identifies the origin of data. By converting variables and discriminators into symbolic representations through symbolic execution, we can analyze all possible program paths to determine which variables are discriminators and which are union variables.&lt;/p&gt;
+&lt;p&gt;Therefore, before program execution, we must define which variables should be treated symbolically. While we only want to compute the discriminator value of the union, all arguments are symbolized because other arguments of the interface function also influence the program execution flow.&lt;/p&gt;
+&lt;p&gt;Symbolic execution can also encounter issues like infinite loops, recursion, or concurrency problems during execution. However, these can be addressed using mechanisms like LOOP_THOLD and CALL_THOLD. It is assumed that all code executes on a single thread, allowing concurrency issues to be ignored. Additionally, COMFUSION checks whether a discriminator can take multiple values whenever a new execution path arises. If it can only take one value, that path is pruned.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/13.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;COMFUSION states that when tracking union variables, tracking is primarily done in three ways:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;When used as a function argument&lt;/li&gt;
+&lt;li&gt;When used as an address, like a pointer&lt;/li&gt;
+&lt;li&gt;When used in arithmetic and comparison operations&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;If a memory address or operand is confirmed to be tainted from a union variable, COMFUSION calculates all possible values the union&amp;#x2019;s discriminator could hold. If it can hold one or more values, COMFUSION determines that union type confusion exists and reports it.&lt;/p&gt;
+&lt;p&gt;Based on information obtained through COMFUSION analysis (vulnerability location, union members, discriminators, etc.), we directly write a PoC to reproduce the bug. However, when the arguments of the interface function are complex, we resolve it through fuzzing.&lt;/p&gt;
+&lt;p&gt;The goal in Figure 7 is to make an &lt;code&gt;if&lt;/code&gt; statement false within the &lt;code&gt;CUxxxame&lt;/code&gt; function, thereby executing the &lt;code&gt;while&lt;/code&gt; loop. Here, it was known that the &lt;code&gt;Initialize()&lt;/code&gt; function modifies the value at &lt;code&gt;this + 0x18&lt;/code&gt;, but fuzzing is used because the function arguments are complex. Specifically, they set a breakpoint on the &lt;code&gt;ret&lt;/code&gt; instruction in the &lt;code&gt;Initialize()&lt;/code&gt; function. If the value at the address &lt;code&gt;this + 0x18&lt;/code&gt; is non-zero, they consider this an indication that they have found a suitable argument value capable of executing the vulnerable code.&lt;/p&gt;
+&lt;p&gt;The current version of fuzzing requires manually writing the harness, but the goal is to develop a more automated solution in the future.&lt;/p&gt;
+&lt;h2 id=&#34;Evaluation&#34;&gt;&lt;a href=&#34;#Evaluation&#34; class=&#34;headerlink&#34; title=&#34;Evaluation&#34;&gt;&lt;/a&gt;Evaluation&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/14.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;COMFUSION was developed using Python, PowerShell, C++, and other languages, and also utilized external tools (OleViewDotNet, Angr, Cppcheck, TitanEngine).&lt;/p&gt;
+&lt;p&gt;Testing on Windows 10 (1809, 21H2) and Windows 11 (21H2) identified approximately 1,800 sensitive functions out of about 2 million total functions. The 411 sensitive functions discovered on Windows 11 were significantly fewer. This is attributed to compatibility issues where oleviewdotnet failed to properly recognize union types on Windows 11 or classified &lt;code&gt;VARIANT&lt;/code&gt; as &lt;code&gt;FC_USER_MARSHAL&lt;/code&gt;, preventing the efficient identification of necessary functions.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/15.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Next, it shows how accurately COMFUSION identifies type confusion. On Windows 10 (1809, 21H2), nearly half were false positives, and on Windows 11, over 70% were false positives.&lt;/p&gt;
+&lt;p&gt;Analysis of the cause of the high false positives revealed that when COMFUSION analyzes functions implemented in external libraries, it uses a strategy that checks only four arguments because it does not know the exact number of arguments. If the actual function uses fewer than four arguments, COMFUSION incorrectly recognizes the data stored in the remaining registers as invalid union members.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/16.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;The paper classified the discovered union type confusions into CoP and CoNP. Among the 19 CoPs identified, 5 triggered LPE, while the rest triggered DoS. Although false positives were high, the COMFUSION tool proved effective as it efficiently filtered sensitive functions.&lt;/p&gt;
+&lt;h2 id=&#34;Conclusion&#34;&gt;&lt;a href=&#34;#Conclusion&#34; class=&#34;headerlink&#34; title=&#34;Conclusion&#34;&gt;&lt;/a&gt;Conclusion&lt;/h2&gt;&lt;p&gt;Through this paper, I learned that improper use of unions in COM servers can lead to type confusion. While I didn&amp;#x2019;t fully grasp the entire paper, it gave me a fresh perspective on finding vulnerabilities in COM and prompted me to revisit concepts like marshaling and IDL.&lt;/p&gt;
+&lt;p&gt;Reading this paper made me realize that even just the introduction of a paper in a field you&amp;#x2019;re interested in can be incredibly helpful.&lt;/p&gt;
+&lt;p&gt;Thank you for reading this long post.&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] Detecting Union Type Confusion in Component Object Model - Paper Review (EN) - hackyboiz">
+  <meta property="og:description" content="&lt;h2 id=&#34;Introduction&#34;&gt;&lt;a href=&#34;#Introduction&#34; class=&#34;headerlink&#34; title=&#34;Introduction&#34;&gt;&lt;/a&gt;Introduction&lt;/h2&gt;&lt;p&gt;Hello! It&amp;#x2019;s ogu123, back on COM after a long time!&lt;/p&gt;
+&lt;p&gt;I was busy with other things, but I wanted to find a vulnerability on COM and wrap things up, so I&amp;#x2019;m back..!&lt;/p&gt;
+&lt;p&gt;Today I&amp;#x2019;ve prepared a &lt;a href=&#34;https://www.usenix.org/conference/usenixsecurity23/presentation/zhang-yuxing&#34;&gt;paper review on COM&lt;/a&gt;. It mentions that using union variables in a COM server can lead to type confusion? Let&amp;#x2019;s take a closer look!&lt;/p&gt;
+&lt;h2 id=&#34;Background&#34;&gt;&lt;a href=&#34;#Background&#34; class=&#34;headerlink&#34; title=&#34;Background&#34;&gt;&lt;/a&gt;Background&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/2.png&#34; alt&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;reference: Struct VS Union (Introduction to Unions in C - Youtube) &lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;First, a union is a user-defined type where all member variables share the same memory location!&lt;/p&gt;
+&lt;p&gt;Looking at the picture above makes it easy to understand, right? As shown in the picture , member variables declared within a union share a single memory space, so a union can only store one member variable at a time!&lt;/p&gt;
+&lt;p&gt;So why use a union instead of a struct? Since a union allocates memory based on the size of its largest member variable, it can be useful when memory is limited!&lt;/p&gt;
+&lt;p&gt;COM is a technology introduced in 1993. To conserve memory for past system performance, COM developers reportedly used unions extensively instead of structs.&lt;/p&gt;
+&lt;p&gt;Even now, 30 years later, COM remains the foundation for core Microsoft technologies like OLE, ActiveX, and Windows Shell. However, the paper states that the union type confusion problem persists from past COM development.&lt;/p&gt;
+&lt;p&gt;Therefore, this paper proposes COMFUSION to detect union type confusion in COM.&lt;/p&gt;
+&lt;p&gt;First, to find union type confusion in COM, the paper researched how unions are presented in COM and the conventions under which they are used.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/3.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;In Windows 10 (versions 1803 and 21H2) and Windows 11 (version 21H2), after exploring and collecting all custom structures in COM that are connected to or directly/indirectly referenced by unions via MS COM code and documentation, it was determined that the general union declaration form was defined as shown above.&lt;/p&gt;
+&lt;p&gt;Figure 1 illustrates the three representative union forms in COM.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Non-encapsulated Union&lt;ul&gt;
+&lt;li&gt;The basic form where only the union is used alone&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;Encapsulated Union&lt;ul&gt;
+&lt;li&gt;Enclosing the union within a struct or class and adding a selector member variable&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;Re-encapsulated Union&lt;ul&gt;
+&lt;li&gt;A form where an encapsulated union is included as a struct member; viewing only the struct reveals no direct use of the union, but it exists indirectly&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Here, the Selector member variable serves as a selector to determine the type of a union variable before using its value!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/4.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Looking at the figure above, you can see that 34&amp;#x2013;35% of the custom structures are unions. You can also see that the three union types examined earlier are used in combination.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/5.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Then, let&amp;#x2019;s examine a simple example in Figure 3 to see how union type confusion can occur.&lt;/p&gt;
+&lt;p&gt;First, the union MetaInfo consists of a string pointer and an integer member. In the main function, the value of user.info.name is printed using a for loop. At this point, the type value of UserInfo, which acts as the discriminator, should be checked first. However, without this step, the integer value is used as a string pointer, causing type confusion.&lt;/p&gt;
+&lt;p&gt;Over 50% of COM&amp;#x2019;s custom unions use both pointer and non-pointer members together, which can lead to potential issues like those shown in Figure 3.&lt;/p&gt;
+&lt;p&gt;Suppose a client can send values from the users array to the server via a specific COM interface. In this case, the client performs marshaling to convert the calling COM interface and arguments according to IDL (Interface Definition Language) rules before transmitting the data.&lt;/p&gt;
+&lt;p&gt;The server receiving the marshaled data obtains the original data through unmarshaling, enabling execution on the server side. Here, we will explore IDL and marshaling.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/6.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;First, IDL is a language that defines the interfaces and functions possessed by a COM server, as shown in the figure above. Since IDL itself is a language, it is compiled using the MIDL compiler created by Microsoft to generate .dil files. This process yields header files, type libraries, and files for Proxy and Stub, enabling continued COM development.&lt;/p&gt;
+&lt;p&gt;Earlier, we mentioned that marshaling follows IDL rules. Therefore, while the client must adhere to IDL rules when sending data to the server, if the server fails to properly validate the data (such as argument values) received from the client, COM type confusion occurs, as shown in Figure 3.&lt;/p&gt;
+&lt;p&gt;Simply put, marshaling does all the work, but if the server side doesn&amp;#x2019;t do its part, it&amp;#x2019;s all for naught.&lt;/p&gt;
+&lt;h2 id=&#34;Design-of-COMFUSION&#34;&gt;&lt;a href=&#34;#Design-of-COMFUSION&#34; class=&#34;headerlink&#34; title=&#34;Design of COMFUSION&#34;&gt;&lt;/a&gt;Design of COMFUSION&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/7.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Now let&amp;#x2019;s examine the workflow of the COMFUSION tool, which explores type confusion vulnerabilities in numerous COM binaries within Windows, as shown in Figure 3!&lt;/p&gt;
+&lt;p&gt;The goal of COMFUSION is to efficiently and accurately detect union type confusion in COM binaries! Let&amp;#x2019;s look at it step by step!&lt;/p&gt;
+&lt;h3 id=&#34;1-Extracting-COM-Objects&#34;&gt;&lt;a href=&#34;#1-Extracting-COM-Objects&#34; class=&#34;headerlink&#34; title=&#34;1. Extracting COM Objects&#34;&gt;&lt;/a&gt;1. Extracting COM Objects&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/8.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;First, obtain all CLSIDs and their corresponding COM binaries from the Windows registry using the path below.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;HKEY_CLASSES_ROOT/CLSID/$CLSID/InprocServer32&lt;/li&gt;
+&lt;li&gt;HKEY_CLASSES_ROOT/CLSID/$CLSID/LocalServer32&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;It is said that you can recover the MIDL file by analyzing the marshaling rules of the COM object using oleviewdotnet.&lt;/p&gt;
+&lt;p&gt;Finally, each interface can be accessed via a pointer with a specific interface pointer identifier (IPID). Since all IPIDs are organized in a table called the IPIDTable within the COM server process&amp;#x2019;s memory space, it is also possible to parse the IPIDTable using oleviewdotnet and calculate the offset of each interface function table after the COM server has started.&lt;/p&gt;
+&lt;h3 id=&#34;2-Exploring-Union-Declarations&#34;&gt;&lt;a href=&#34;#2-Exploring-Union-Declarations&#34; class=&#34;headerlink&#34; title=&#34;2. Exploring Union Declarations&#34;&gt;&lt;/a&gt;2. Exploring Union Declarations&lt;/h3&gt;&lt;p&gt;To detect union type confusion, information is required about the variable acting as a discriminator, valid discriminator values, and union members; however, this information can be obtained from the previously recovered MIDL file.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/9.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Algorithm1 is used to analyze the relationships between user-defined structures declared in MIDL files.&lt;/p&gt;
+&lt;p&gt;A simplified overview of Algorithm1 involves creating all structs and unions within the MIDL file as nodes in a graph. If structure &lt;code&gt;u&lt;/code&gt; contains another structure &lt;code&gt;v&lt;/code&gt; as a variable or pointer, an edge is created from &lt;code&gt;u&lt;/code&gt; to &lt;code&gt;v&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;It then assigns labels based on the previously discussed Non-encapsulated Union, encapsulated Union, etc., and identifies the discriminator according to the union type&amp;#x2026; &amp;#x2190; We will examine this content immediately below.&lt;/p&gt;
+&lt;p&gt;As a result of Algorithm1, a DAG (Directed Acyclic Graph) is constructed as shown in Figure 5 below.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/10.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;When examining the DAG, you&amp;#x2019;ll see System Defined Union - VARIANT. VARIANT functions similarly to a union, but internally, the data type is specified in a field called vt. Therefore, just as you must first check the discriminator value to use a union correctly, you must also check the VARIANT&amp;#x2192; vt value before using the data in a VARIANT.&lt;/p&gt;
+&lt;p&gt;In union type confusion, finding the discriminator of a union variable is crucial. This paper categorizes them based on the union form as follows&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Encapsulated Union&lt;ul&gt;
+&lt;li&gt;Variables located immediately before the union declaration are recognized as discriminators&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;System Defined Union&lt;ul&gt;
+&lt;li&gt;The vt member variable of VARIANT is recognized as a discriminator&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;Re-encapsulated Union&lt;ul&gt;
+&lt;li&gt;As shown in Figure 6, if a VARIANT type exists in Struct_20, the discriminator for Struct_20 is recognized as Member10&amp;#x2192;vt&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;When recognizing a discriminator, it is important to know the values that discriminator can hold. For VARIANT, I referred to the MS documentation, and for other union types, I used the case list for the union variable, which was commented out in the recovered MIDL file.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/11.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Figure 6 shows an example of a recovered MIDL file. Theoretically, union type confusion checks should be performed for all functions using union variables, but&amp;#x2026; analyzing every function in the COM binary to find union variables is inefficient. There are simply too many&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;Therefore, COMFUSION only checks functions that are directly or indirectly called by interface functions using union variables as arguments, as declared in the MIDL file. Function arguments are designated as taint sources, and CONFUSION distinguishes between union member taint and discriminant taint during analysis.&lt;/p&gt;
+&lt;p&gt;Referring to Figure 6, each function argument has the [IN], [OUT], or [IN, OUT] attribute. Only [IN] and [IN, OUT] attributes, where an attacker can send data, are subject to Taint Source Filtering.&lt;/p&gt;
+&lt;p&gt;Additionally, COMFUSION utilizes Angr to set specific variables as tainted. It then tracks whether these tainted variables flow into other variables or memory at the instruction level. &lt;a href=&#34;https://hackyboiz.github.io/2021/07/10/j0ker/angr_part1/&#34;&gt;For more details on Angr, please refer to the blog!&lt;/a&gt;&lt;/p&gt;
+&lt;h3 id=&#34;3-Locate-Union-Variables&#34;&gt;&lt;a href=&#34;#3-Locate-Union-Variables&#34; class=&#34;headerlink&#34; title=&#34;3. Locate Union Variables&#34;&gt;&lt;/a&gt;3. Locate Union Variables&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/12.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Algorithm 2 demonstrates how COMFUSION finds union variables step by step.&lt;/p&gt;
+&lt;p&gt;First, as seen in MAIN, COMFUSION uses DFS (Depth-First Search) when exploring execution paths. For interface functions with multiple union arguments, COMFUSION taints only one argument at a time.&lt;/p&gt;
+&lt;p&gt;One complex situation during analysis is handling function calls. COMFUSION addresses this by processing functions in the following four scenarios&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Summarized functions&lt;ul&gt;
+&lt;li&gt;Functions like &lt;code&gt;memcpy&lt;/code&gt; and &lt;code&gt;strcpy&lt;/code&gt; update the taint map by applying predefined rules without analyzing their internal code.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;Internal functions&lt;ul&gt;
+&lt;li&gt;Functions implemented within the analyzed binary. The analysis enters these functions, tracks taint, and updates the taint map.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;External functions&lt;ul&gt;
+&lt;li&gt;Functions implemented outside the analyzed binary. These functions are skipped and not analyzed. It is assumed that taint disappears at this point.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;Address-taken functions&lt;ul&gt;
+&lt;li&gt;Functions whose call address is determined at runtime. These are skipped due to their high complexity.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Additionally, COMFUSION has set the following thresholds to address three potential issues that may arise during binary analysis:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;LOOP_THOLD (infinite loop prevention): 2&lt;/li&gt;
+&lt;li&gt;CALL_THOLD (function recursion/depth issues): 5&lt;/li&gt;
+&lt;li&gt;TOTAL_THOLD (analysis time): 10,000&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3 id=&#34;4-Identify-Union-Type-Confusion&#34;&gt;&lt;a href=&#34;#4-Identify-Union-Type-Confusion&#34; class=&#34;headerlink&#34; title=&#34;4. Identify Union Type Confusion&#34;&gt;&lt;/a&gt;4. Identify Union Type Confusion&lt;/h3&gt;&lt;p&gt;Union type confusion occurs when a union variable is used and its discriminator can represent multiple types. In other words, it arises when there is uncertainty about the specific type of data stored within.&lt;/p&gt;
+&lt;p&gt;Previously, we discussed how taint propagation identifies the origin of data. By converting variables and discriminators into symbolic representations through symbolic execution, we can analyze all possible program paths to determine which variables are discriminators and which are union variables.&lt;/p&gt;
+&lt;p&gt;Therefore, before program execution, we must define which variables should be treated symbolically. While we only want to compute the discriminator value of the union, all arguments are symbolized because other arguments of the interface function also influence the program execution flow.&lt;/p&gt;
+&lt;p&gt;Symbolic execution can also encounter issues like infinite loops, recursion, or concurrency problems during execution. However, these can be addressed using mechanisms like LOOP_THOLD and CALL_THOLD. It is assumed that all code executes on a single thread, allowing concurrency issues to be ignored. Additionally, COMFUSION checks whether a discriminator can take multiple values whenever a new execution path arises. If it can only take one value, that path is pruned.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/13.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;COMFUSION states that when tracking union variables, tracking is primarily done in three ways:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;When used as a function argument&lt;/li&gt;
+&lt;li&gt;When used as an address, like a pointer&lt;/li&gt;
+&lt;li&gt;When used in arithmetic and comparison operations&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;If a memory address or operand is confirmed to be tainted from a union variable, COMFUSION calculates all possible values the union&amp;#x2019;s discriminator could hold. If it can hold one or more values, COMFUSION determines that union type confusion exists and reports it.&lt;/p&gt;
+&lt;p&gt;Based on information obtained through COMFUSION analysis (vulnerability location, union members, discriminators, etc.), we directly write a PoC to reproduce the bug. However, when the arguments of the interface function are complex, we resolve it through fuzzing.&lt;/p&gt;
+&lt;p&gt;The goal in Figure 7 is to make an &lt;code&gt;if&lt;/code&gt; statement false within the &lt;code&gt;CUxxxame&lt;/code&gt; function, thereby executing the &lt;code&gt;while&lt;/code&gt; loop. Here, it was known that the &lt;code&gt;Initialize()&lt;/code&gt; function modifies the value at &lt;code&gt;this + 0x18&lt;/code&gt;, but fuzzing is used because the function arguments are complex. Specifically, they set a breakpoint on the &lt;code&gt;ret&lt;/code&gt; instruction in the &lt;code&gt;Initialize()&lt;/code&gt; function. If the value at the address &lt;code&gt;this + 0x18&lt;/code&gt; is non-zero, they consider this an indication that they have found a suitable argument value capable of executing the vulnerable code.&lt;/p&gt;
+&lt;p&gt;The current version of fuzzing requires manually writing the harness, but the goal is to develop a more automated solution in the future.&lt;/p&gt;
+&lt;h2 id=&#34;Evaluation&#34;&gt;&lt;a href=&#34;#Evaluation&#34; class=&#34;headerlink&#34; title=&#34;Evaluation&#34;&gt;&lt;/a&gt;Evaluation&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/14.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;COMFUSION was developed using Python, PowerShell, C++, and other languages, and also utilized external tools (OleViewDotNet, Angr, Cppcheck, TitanEngine).&lt;/p&gt;
+&lt;p&gt;Testing on Windows 10 (1809, 21H2) and Windows 11 (21H2) identified approximately 1,800 sensitive functions out of about 2 million total functions. The 411 sensitive functions discovered on Windows 11 were significantly fewer. This is attributed to compatibility issues where oleviewdotnet failed to properly recognize union types on Windows 11 or classified &lt;code&gt;VARIANT&lt;/code&gt; as &lt;code&gt;FC_USER_MARSHAL&lt;/code&gt;, preventing the efficient identification of necessary functions.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/15.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Next, it shows how accurately COMFUSION identifies type confusion. On Windows 10 (1809, 21H2), nearly half were false positives, and on Windows 11, over 70% were false positives.&lt;/p&gt;
+&lt;p&gt;Analysis of the cause of the high false positives revealed that when COMFUSION analyzes functions implemented in external libraries, it uses a strategy that checks only four arguments because it does not know the exact number of arguments. If the actual function uses fewer than four arguments, COMFUSION incorrectly recognizes the data stored in the remaining registers as invalid union members.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/16.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;The paper classified the discovered union type confusions into CoP and CoNP. Among the 19 CoPs identified, 5 triggered LPE, while the rest triggered DoS. Although false positives were high, the COMFUSION tool proved effective as it efficiently filtered sensitive functions.&lt;/p&gt;
+&lt;h2 id=&#34;Conclusion&#34;&gt;&lt;a href=&#34;#Conclusion&#34; class=&#34;headerlink&#34; title=&#34;Conclusion&#34;&gt;&lt;/a&gt;Conclusion&lt;/h2&gt;&lt;p&gt;Through this paper, I learned that improper use of unions in COM servers can lead to type confusion. While I didn&amp;#x2019;t fully grasp the entire paper, it gave me a fresh perspective on finding vulnerabilities in COM and prompted me to revisit concepts like marshaling and IDL.&lt;/p&gt;
+&lt;p&gt;Reading this paper made me realize that even just the introduction of a paper in a field you&amp;#x2019;re interested in can be incredibly helpful.&lt;/p&gt;
+&lt;p&gt;Thank you for reading this long post.&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/08/28/ogu123/Detecting Union Type Confusion in Component Object Model/EN/1.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/08/28/ogu123/detecting union type confusion in component object model/en/">
+
+  <title>[Research] Detecting Union Type Confusion in Component Object Model - Paper Review (EN) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-08-28 17:00" pubdate>
+      2025년 8월 28일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      2.3k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      45
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] Detecting Union Type Confusion in Component Object Model - Paper Review (EN)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <h2 id="Introduction"><a href="#Introduction" class="headerlink" title="Introduction"></a>Introduction</h2><p>Hello! It&#x2019;s ogu123, back on COM after a long time!</p>
+<p>I was busy with other things, but I wanted to find a vulnerability on COM and wrap things up, so I&#x2019;m back..!</p>
+<p>Today I&#x2019;ve prepared a <a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.usenix.org/conference/usenixsecurity23/presentation/zhang-yuxing">paper review on COM</a>. It mentions that using union variables in a COM server can lead to type confusion? Let&#x2019;s take a closer look!</p>
+<h2 id="Background"><a href="#Background" class="headerlink" title="Background"></a>Background</h2><p><img src="/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/2.png" srcset="/img/loading.gif" alt></p>
+<blockquote>
+<p>reference: Struct VS Union (Introduction to Unions in C - Youtube) </p>
+</blockquote>
+<p>First, a union is a user-defined type where all member variables share the same memory location!</p>
+<p>Looking at the picture above makes it easy to understand, right? As shown in the picture , member variables declared within a union share a single memory space, so a union can only store one member variable at a time!</p>
+<p>So why use a union instead of a struct? Since a union allocates memory based on the size of its largest member variable, it can be useful when memory is limited!</p>
+<p>COM is a technology introduced in 1993. To conserve memory for past system performance, COM developers reportedly used unions extensively instead of structs.</p>
+<p>Even now, 30 years later, COM remains the foundation for core Microsoft technologies like OLE, ActiveX, and Windows Shell. However, the paper states that the union type confusion problem persists from past COM development.</p>
+<p>Therefore, this paper proposes COMFUSION to detect union type confusion in COM.</p>
+<p>First, to find union type confusion in COM, the paper researched how unions are presented in COM and the conventions under which they are used.</p>
+<p><img src="/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/3.png" srcset="/img/loading.gif" alt></p>
+<p>In Windows 10 (versions 1803 and 21H2) and Windows 11 (version 21H2), after exploring and collecting all custom structures in COM that are connected to or directly/indirectly referenced by unions via MS COM code and documentation, it was determined that the general union declaration form was defined as shown above.</p>
+<p>Figure 1 illustrates the three representative union forms in COM.</p>
+<ol>
+<li>Non-encapsulated Union<ul>
+<li>The basic form where only the union is used alone</li>
+</ul>
+</li>
+<li>Encapsulated Union<ul>
+<li>Enclosing the union within a struct or class and adding a selector member variable</li>
+</ul>
+</li>
+<li>Re-encapsulated Union<ul>
+<li>A form where an encapsulated union is included as a struct member; viewing only the struct reveals no direct use of the union, but it exists indirectly</li>
+</ul>
+</li>
+</ol>
+<p>Here, the Selector member variable serves as a selector to determine the type of a union variable before using its value!</p>
+<p><img src="/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/4.png" srcset="/img/loading.gif" alt></p>
+<p>Looking at the figure above, you can see that 34&#x2013;35% of the custom structures are unions. You can also see that the three union types examined earlier are used in combination.</p>
+<p><img src="/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/5.png" srcset="/img/loading.gif" alt></p>
+<p>Then, let&#x2019;s examine a simple example in Figure 3 to see how union type confusion can occur.</p>
+<p>First, the union MetaInfo consists of a string pointer and an integer member. In the main function, the value of user.info.name is printed using a for loop. At this point, the type value of UserInfo, which acts as the discriminator, should be checked first. However, without this step, the integer value is used as a string pointer, causing type confusion.</p>
+<p>Over 50% of COM&#x2019;s custom unions use both pointer and non-pointer members together, which can lead to potential issues like those shown in Figure 3.</p>
+<p>Suppose a client can send values from the users array to the server via a specific COM interface. In this case, the client performs marshaling to convert the calling COM interface and arguments according to IDL (Interface Definition Language) rules before transmitting the data.</p>
+<p>The server receiving the marshaled data obtains the original data through unmarshaling, enabling execution on the server side. Here, we will explore IDL and marshaling.</p>
+<p><img src="/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/6.png" srcset="/img/loading.gif" alt></p>
+<p>First, IDL is a language that defines the interfaces and functions possessed by a COM server, as shown in the figure above. Since IDL itself is a language, it is compiled using the MIDL compiler created by Microsoft to generate .dil files. This process yields header files, type libraries, and files for Proxy and Stub, enabling continued COM development.</p>
+<p>Earlier, we mentioned that marshaling follows IDL rules. Therefore, while the client must adhere to IDL rules when sending data to the server, if the server fails to properly validate the data (such as argument values) received from the client, COM type confusion occurs, as shown in Figure 3.</p>
+<p>Simply put, marshaling does all the work, but if the server side doesn&#x2019;t do its part, it&#x2019;s all for naught.</p>
+<h2 id="Design-of-COMFUSION"><a href="#Design-of-COMFUSION" class="headerlink" title="Design of COMFUSION"></a>Design of COMFUSION</h2><p><img src="/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/7.png" srcset="/img/loading.gif" alt></p>
+<p>Now let&#x2019;s examine the workflow of the COMFUSION tool, which explores type confusion vulnerabilities in numerous COM binaries within Windows, as shown in Figure 3!</p>
+<p>The goal of COMFUSION is to efficiently and accurately detect union type confusion in COM binaries! Let&#x2019;s look at it step by step!</p>
+<h3 id="1-Extracting-COM-Objects"><a href="#1-Extracting-COM-Objects" class="headerlink" title="1. Extracting COM Objects"></a>1. Extracting COM Objects</h3><p><img src="/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/8.png" srcset="/img/loading.gif" alt></p>
+<p>First, obtain all CLSIDs and their corresponding COM binaries from the Windows registry using the path below.</p>
+<ul>
+<li>HKEY_CLASSES_ROOT/CLSID/$CLSID/InprocServer32</li>
+<li>HKEY_CLASSES_ROOT/CLSID/$CLSID/LocalServer32</li>
+</ul>
+<p>It is said that you can recover the MIDL file by analyzing the marshaling rules of the COM object using oleviewdotnet.</p>
+<p>Finally, each interface can be accessed via a pointer with a specific interface pointer identifier (IPID). Since all IPIDs are organized in a table called the IPIDTable within the COM server process&#x2019;s memory space, it is also possible to parse the IPIDTable using oleviewdotnet and calculate the offset of each interface function table after the COM server has started.</p>
+<h3 id="2-Exploring-Union-Declarations"><a href="#2-Exploring-Union-Declarations" class="headerlink" title="2. Exploring Union Declarations"></a>2. Exploring Union Declarations</h3><p>To detect union type confusion, information is required about the variable acting as a discriminator, valid discriminator values, and union members; however, this information can be obtained from the previously recovered MIDL file.</p>
+<p><img src="/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/9.png" srcset="/img/loading.gif" alt></p>
+<p>Algorithm1 is used to analyze the relationships between user-defined structures declared in MIDL files.</p>
+<p>A simplified overview of Algorithm1 involves creating all structs and unions within the MIDL file as nodes in a graph. If structure <code>u</code> contains another structure <code>v</code> as a variable or pointer, an edge is created from <code>u</code> to <code>v</code>.</p>
+<p>It then assigns labels based on the previously discussed Non-encapsulated Union, encapsulated Union, etc., and identifies the discriminator according to the union type&#x2026; &#x2190; We will examine this content immediately below.</p>
+<p>As a result of Algorithm1, a DAG (Directed Acyclic Graph) is constructed as shown in Figure 5 below.</p>
+<p><img src="/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/10.png" srcset="/img/loading.gif" alt></p>
+<p>When examining the DAG, you&#x2019;ll see System Defined Union - VARIANT. VARIANT functions similarly to a union, but internally, the data type is specified in a field called vt. Therefore, just as you must first check the discriminator value to use a union correctly, you must also check the VARIANT&#x2192; vt value before using the data in a VARIANT.</p>
+<p>In union type confusion, finding the discriminator of a union variable is crucial. This paper categorizes them based on the union form as follows</p>
+<ol>
+<li>Encapsulated Union<ul>
+<li>Variables located immediately before the union declaration are recognized as discriminators</li>
+</ul>
+</li>
+<li>System Defined Union<ul>
+<li>The vt member variable of VARIANT is recognized as a discriminator</li>
+</ul>
+</li>
+<li>Re-encapsulated Union<ul>
+<li>As shown in Figure 6, if a VARIANT type exists in Struct_20, the discriminator for Struct_20 is recognized as Member10&#x2192;vt</li>
+</ul>
+</li>
+</ol>
+<p>When recognizing a discriminator, it is important to know the values that discriminator can hold. For VARIANT, I referred to the MS documentation, and for other union types, I used the case list for the union variable, which was commented out in the recovered MIDL file.</p>
+<p><img src="/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/11.png" srcset="/img/loading.gif" alt></p>
+<p>Figure 6 shows an example of a recovered MIDL file. Theoretically, union type confusion checks should be performed for all functions using union variables, but&#x2026; analyzing every function in the COM binary to find union variables is inefficient. There are simply too many&#x2026;</p>
+<p>Therefore, COMFUSION only checks functions that are directly or indirectly called by interface functions using union variables as arguments, as declared in the MIDL file. Function arguments are designated as taint sources, and CONFUSION distinguishes between union member taint and discriminant taint during analysis.</p>
+<p>Referring to Figure 6, each function argument has the [IN], [OUT], or [IN, OUT] attribute. Only [IN] and [IN, OUT] attributes, where an attacker can send data, are subject to Taint Source Filtering.</p>
+<p>Additionally, COMFUSION utilizes Angr to set specific variables as tainted. It then tracks whether these tainted variables flow into other variables or memory at the instruction level. <a href="https://hackyboiz.github.io/2021/07/10/j0ker/angr_part1/">For more details on Angr, please refer to the blog!</a></p>
+<h3 id="3-Locate-Union-Variables"><a href="#3-Locate-Union-Variables" class="headerlink" title="3. Locate Union Variables"></a>3. Locate Union Variables</h3><p><img src="/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/12.png" srcset="/img/loading.gif" alt></p>
+<p>Algorithm 2 demonstrates how COMFUSION finds union variables step by step.</p>
+<p>First, as seen in MAIN, COMFUSION uses DFS (Depth-First Search) when exploring execution paths. For interface functions with multiple union arguments, COMFUSION taints only one argument at a time.</p>
+<p>One complex situation during analysis is handling function calls. COMFUSION addresses this by processing functions in the following four scenarios</p>
+<ol>
+<li>Summarized functions<ul>
+<li>Functions like <code>memcpy</code> and <code>strcpy</code> update the taint map by applying predefined rules without analyzing their internal code.</li>
+</ul>
+</li>
+<li>Internal functions<ul>
+<li>Functions implemented within the analyzed binary. The analysis enters these functions, tracks taint, and updates the taint map.</li>
+</ul>
+</li>
+<li>External functions<ul>
+<li>Functions implemented outside the analyzed binary. These functions are skipped and not analyzed. It is assumed that taint disappears at this point.</li>
+</ul>
+</li>
+<li>Address-taken functions<ul>
+<li>Functions whose call address is determined at runtime. These are skipped due to their high complexity.</li>
+</ul>
+</li>
+</ol>
+<p>Additionally, COMFUSION has set the following thresholds to address three potential issues that may arise during binary analysis:</p>
+<ol>
+<li>LOOP_THOLD (infinite loop prevention): 2</li>
+<li>CALL_THOLD (function recursion/depth issues): 5</li>
+<li>TOTAL_THOLD (analysis time): 10,000</li>
+</ol>
+<h3 id="4-Identify-Union-Type-Confusion"><a href="#4-Identify-Union-Type-Confusion" class="headerlink" title="4. Identify Union Type Confusion"></a>4. Identify Union Type Confusion</h3><p>Union type confusion occurs when a union variable is used and its discriminator can represent multiple types. In other words, it arises when there is uncertainty about the specific type of data stored within.</p>
+<p>Previously, we discussed how taint propagation identifies the origin of data. By converting variables and discriminators into symbolic representations through symbolic execution, we can analyze all possible program paths to determine which variables are discriminators and which are union variables.</p>
+<p>Therefore, before program execution, we must define which variables should be treated symbolically. While we only want to compute the discriminator value of the union, all arguments are symbolized because other arguments of the interface function also influence the program execution flow.</p>
+<p>Symbolic execution can also encounter issues like infinite loops, recursion, or concurrency problems during execution. However, these can be addressed using mechanisms like LOOP_THOLD and CALL_THOLD. It is assumed that all code executes on a single thread, allowing concurrency issues to be ignored. Additionally, COMFUSION checks whether a discriminator can take multiple values whenever a new execution path arises. If it can only take one value, that path is pruned.</p>
+<p><img src="/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/13.png" srcset="/img/loading.gif" alt></p>
+<p>COMFUSION states that when tracking union variables, tracking is primarily done in three ways:</p>
+<ol>
+<li>When used as a function argument</li>
+<li>When used as an address, like a pointer</li>
+<li>When used in arithmetic and comparison operations</li>
+</ol>
+<p>If a memory address or operand is confirmed to be tainted from a union variable, COMFUSION calculates all possible values the union&#x2019;s discriminator could hold. If it can hold one or more values, COMFUSION determines that union type confusion exists and reports it.</p>
+<p>Based on information obtained through COMFUSION analysis (vulnerability location, union members, discriminators, etc.), we directly write a PoC to reproduce the bug. However, when the arguments of the interface function are complex, we resolve it through fuzzing.</p>
+<p>The goal in Figure 7 is to make an <code>if</code> statement false within the <code>CUxxxame</code> function, thereby executing the <code>while</code> loop. Here, it was known that the <code>Initialize()</code> function modifies the value at <code>this + 0x18</code>, but fuzzing is used because the function arguments are complex. Specifically, they set a breakpoint on the <code>ret</code> instruction in the <code>Initialize()</code> function. If the value at the address <code>this + 0x18</code> is non-zero, they consider this an indication that they have found a suitable argument value capable of executing the vulnerable code.</p>
+<p>The current version of fuzzing requires manually writing the harness, but the goal is to develop a more automated solution in the future.</p>
+<h2 id="Evaluation"><a href="#Evaluation" class="headerlink" title="Evaluation"></a>Evaluation</h2><p><img src="/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/14.png" srcset="/img/loading.gif" alt></p>
+<p>COMFUSION was developed using Python, PowerShell, C++, and other languages, and also utilized external tools (OleViewDotNet, Angr, Cppcheck, TitanEngine).</p>
+<p>Testing on Windows 10 (1809, 21H2) and Windows 11 (21H2) identified approximately 1,800 sensitive functions out of about 2 million total functions. The 411 sensitive functions discovered on Windows 11 were significantly fewer. This is attributed to compatibility issues where oleviewdotnet failed to properly recognize union types on Windows 11 or classified <code>VARIANT</code> as <code>FC_USER_MARSHAL</code>, preventing the efficient identification of necessary functions.</p>
+<p><img src="/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/15.png" srcset="/img/loading.gif" alt></p>
+<p>Next, it shows how accurately COMFUSION identifies type confusion. On Windows 10 (1809, 21H2), nearly half were false positives, and on Windows 11, over 70% were false positives.</p>
+<p>Analysis of the cause of the high false positives revealed that when COMFUSION analyzes functions implemented in external libraries, it uses a strategy that checks only four arguments because it does not know the exact number of arguments. If the actual function uses fewer than four arguments, COMFUSION incorrectly recognizes the data stored in the remaining registers as invalid union members.</p>
+<p><img src="/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/16.png" srcset="/img/loading.gif" alt></p>
+<p>The paper classified the discovered union type confusions into CoP and CoNP. Among the 19 CoPs identified, 5 triggered LPE, while the rest triggered DoS. Although false positives were high, the COMFUSION tool proved effective as it efficiently filtered sensitive functions.</p>
+<h2 id="Conclusion"><a href="#Conclusion" class="headerlink" title="Conclusion"></a>Conclusion</h2><p>Through this paper, I learned that improper use of unions in COM servers can lead to type confusion. While I didn&#x2019;t fully grasp the entire paper, it gave me a fresh perspective on finding vulnerabilities in COM and prompted me to revisit concepts like marshaling and IDL.</p>
+<p>Reading this paper made me realize that even just the introduction of a paper in a field you&#x2019;re interested in can be incredibly helpful.</p>
+<p>Thank you for reading this long post.</p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/review/">review</a>
+                  
+                  <a class="hover-with-bg" href="/tags/ogu123/">ogu123</a>
+                  
+                  <a class="hover-with-bg" href="/tags/COM-Object/">COM Object</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Type-Confusion/">Type Confusion</a>
+                  
+                  <a class="hover-with-bg" href="/tags/usenix/">usenix</a>
+                  
+                  <a class="hover-with-bg" href="/tags/COMFUSION/">COMFUSION</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_ogu123.jpg" srcset="/img/loading.gif" alt="ogu123">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">ogu123</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/ogu123">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/KR/">
+                    <span class="hidden-mobile">[Research] Detecting Union Type Confusion in Component Object Model - Paper Review (KR)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/';
+        this.page.identifier = '/2025/08/28/ogu123/Detecting%20Union%20Type%20Confusion%20in%20Component%20Object%20Model/EN/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] Detecting Union Type Confusion in Component Object Model - Paper Review (EN)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
