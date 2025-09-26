@@ -1,5 +1,5 @@
 ---
-title: "[Research] Type Confusion 101으로 시작하는 Chrome Exploit ^-^☆Part 3.(KR)"
+title: "[Research] Starting Chrome Exploitation with Type Confusion 101 ^-^☆ Part 3.(EN)"
 author: OUYA77
 tags: [Type Confusion 101, CVE-2018-17463, Chrome, Chromium, OUYA77, RCE, Type Confusion, pwnable]
 categories: [Research]
