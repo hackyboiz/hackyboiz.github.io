@@ -181,7 +181,7 @@ Instructions are stored in 4-byte little-endian format. By substituting the offs
 
 Using this method or by examining the luadec errors discussed later, you can confirm the existence of custom elements or parts that differ from a standard Lua file.
 
-### 3.2. 비정상적인 테이블 초기화
+### 3.2. Abnormal table initialization
 
 This error, which appears with the message `SetList fails`, is caused by an abnormal table initialization in `SetList`. This problem occurs when the `SETLIST` instruction tries to fill a table starting from index 0, which is different from the Lua standard.
 
