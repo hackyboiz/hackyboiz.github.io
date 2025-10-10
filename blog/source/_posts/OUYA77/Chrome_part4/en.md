@@ -757,7 +757,7 @@ With the sandbox, the difficulty of Chrome exploitation increased dramatically. 
 
 But raising the difficulty only goes so far — if you can escape the sandbox…?
 
-![image (2).jpg](image_(2).jpg)
+![image.jpg](image%2011.jpg)
 
 In the next post I’ll cover how renderer RCE is achieved after the sandbox was introduced.
 
