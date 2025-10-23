@@ -1,5 +1,5 @@
 ---
-title: "[Research] [Research] ImageIO: iOS/macOS DNG Image Processing Memory Corruption (En)"
+title: "[Research] ImageIO: iOS/macOS DNG Image Processing Memory Corruption (En)"
 author: clalxk
 tags: [CVE-2025-43300, ImageIO, MacOS, MemoryCorruption, iOS, clalxk]
 categories: [Research]
