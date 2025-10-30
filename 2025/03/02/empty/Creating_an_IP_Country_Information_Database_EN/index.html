@@ -1,0 +1,1394 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;&lt;img src=&#34;/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/1.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Hello, I&amp;#x2019;m empty &amp;#x1F44B;. In the field of security, we often need to analyze suspicious IP addresses. When using various IP lookup services, the verdict on whether an IP is malicious may differ, but &amp;#x201C;country information, ASN information, ISP information&amp;#x201D; are consistently provided. I became curious about where and how this data is obtained and served, so I decided to investigate.&lt;/p&gt;
+&lt;h1 id=&#34;&amp;#x1F50D;-Ways-to-Look-Up-IP-Information&#34;&gt;&lt;a href=&#34;#&amp;#x1F50D;-Ways-to-Look-Up-IP-Information&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F50D; Ways to Look Up IP Information&#34;&gt;&lt;/a&gt;&amp;#x1F50D; Ways to Look Up IP Information&lt;/h1&gt;&lt;p&gt;Broadly speaking, IP information can be retrieved via:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;IP information lookup services&lt;/li&gt;
+&lt;li&gt;IP information databases&lt;/li&gt;
+&lt;li&gt;The Whois protocol&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Each method offers different speeds, accuracy, and freshness of data, so it&amp;#x2019;s important to choose the method that best fits your needs.&lt;/p&gt;
+&lt;h2 id=&#34;&amp;#x1F310;-IP-Information-Lookup-Services&#34;&gt;&lt;a href=&#34;#&amp;#x1F310;-IP-Information-Lookup-Services&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F310; IP Information Lookup Services&#34;&gt;&lt;/a&gt;&amp;#x1F310; IP Information Lookup Services&lt;/h2&gt;&lt;p&gt;Some services provide reputation (malicious or fraud-related) information, others provide port scanning results, and others geographic location information. However, country, ASN, and ISP name are virtually always provided, no matter which service you use.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;&lt;strong&gt;Type of Service&lt;/strong&gt;&lt;/th&gt;
+&lt;th&gt;&lt;strong&gt;Examples&lt;/strong&gt;&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;Reputation Check&lt;/td&gt;
+&lt;td&gt;Virustotal, AbuseIPDB&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Port Scanner&lt;/td&gt;
+&lt;td&gt;Censys, Shodan, Criminal IP&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;IP Geolocation&lt;/td&gt;
+&lt;td&gt;MaxMind, ipinfo, IP2Location, IPQualityScore&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;Although the data scope and content may differ subtly by service, almost every IP lookup service commonly returns the IP&amp;#x2019;s country, ASN, and ISP name. Personally, I often use the &lt;code&gt;ipinfo&lt;/code&gt; service via a simple &lt;code&gt;curl&lt;/code&gt; command in the terminal.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/2.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Interestingly, different services can display different countries or location info for the exact same IP. For example, when looking up an IP address from the Hong Kong-based cloud provider SonderCloud Limited on VirusTotal, it shows as being in the United States, while ipinfo displays Hong Kong.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/3.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;These discrepancies arise from a range of factors. Even if a company is registered in Hong Kong, its actual server could be physically located in the US, or vice versa. Additionally, some services base the IP&amp;#x2019;s country not on the physical location but on the country in which the business is registered, or on the IP block assignment recorded by a Regional Internet Registry (RIR).&lt;/p&gt;
+&lt;p&gt;On top of that, the update frequency and data collection methods vary by service, so even the same IP may give different results from different sources.&lt;/p&gt;
+&lt;h2 id=&#34;&amp;#x1F4BE;-Database-Lookup&#34;&gt;&lt;a href=&#34;#&amp;#x1F4BE;-Database-Lookup&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F4BE; Database Lookup&#34;&gt;&lt;/a&gt;&amp;#x1F4BE; Database Lookup&lt;/h2&gt;&lt;p&gt;Here, &amp;#x201C;database&amp;#x201D; doesn&amp;#x2019;t refer to applications like MySQL or PostgreSQL; rather, it refers to a prestructured &amp;#x201C;IP information database file&amp;#x201D; that lists IP addresses along with details such as country and ASN. These can be implemented in various formats&amp;#x2014;like JSON, CSV, or MMDB&amp;#x2014;and are commonly used in &lt;code&gt;.mmdb&lt;/code&gt; format.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/4.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;MMDB&lt;/strong&gt; is a file format developed and published by MaxMind. Because it&amp;#x2019;s an open format, MaxMind and many other IP information services provide their IP database files in &lt;code&gt;.mmdb&lt;/code&gt; format. Many security devices that require real-time performance load the mmdb file into memory for super-fast lookups (on the order of less than 0.00n seconds per IP).&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Example Lookup Code:&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; maxminddb
+
+ip = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;8.8.8.8&amp;quot;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; maxminddb.open_database(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;country_asn.mmdb&amp;quot;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; reader:
+    result = reader.get(ip)
+    print(result)&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;Output:&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;{
+  &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;as_domain&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;google.com&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;as_name&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Google LLC&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;asn&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;AS15169&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;continent&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;NA&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;continent_name&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;North America&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;country&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;US&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;country_name&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;United States&amp;quot;&lt;/span&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;However, because data such as ASN can change daily, you need to periodically update your local database file to stay current.&lt;/p&gt;
+&lt;h2 id=&#34;&amp;#x1F6F0;&amp;#xFE0F;-Whois-Protocol-TCP-43&#34;&gt;&lt;a href=&#34;#&amp;#x1F6F0;&amp;#xFE0F;-Whois-Protocol-TCP-43&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F6F0;&amp;#xFE0F; Whois Protocol (TCP, 43)&#34;&gt;&lt;/a&gt;&amp;#x1F6F0;&amp;#xFE0F; Whois Protocol (TCP, 43)&lt;/h2&gt;&lt;p&gt;Lastly, there&amp;#x2019;s the Whois protocol. When you query an IP address using Whois, it sends a request to the appropriate RIR&amp;#x2019;s Whois server, which then returns detailed information about the IP. Since the data is maintained directly by an RIR, it&amp;#x2019;s typically highly accurate.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/5.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Windows doesn&amp;#x2019;t include a built-in Whois command, so I sometimes use the NirSoft tool &lt;strong&gt;IPNetInfo&lt;/strong&gt;, which is particularly handy for bulk lookups.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/6.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Because Whois is a query-based method that communicates with a remote server, network latency is inevitable; and if the server is under heavy load or the queries are excessive, your requests might get blocked. For instance, the IPNetInfo product page states:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Sometimes the ARIN Whois server may be down and fail to respond to IPNetInfo&amp;#x2019;s WHOIS queries, which prevents IPNetInfo from retrieving IP addresses. If this happens, try again later.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Below is a summary of each method:&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;&lt;strong&gt;Method&lt;/strong&gt;&lt;/th&gt;
+&lt;th&gt;&lt;strong&gt;Freshness&lt;/strong&gt;&lt;/th&gt;
+&lt;th&gt;&lt;strong&gt;Accuracy&lt;/strong&gt;&lt;/th&gt;
+&lt;th&gt;&lt;strong&gt;Speed&lt;/strong&gt;&lt;/th&gt;
+&lt;th&gt;&lt;strong&gt;Notes&lt;/strong&gt;&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;1) External Service&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&amp;#x1F44D; (frequently updated)&lt;/td&gt;
+&lt;td&gt;&amp;#x1F44D; (various sources)&lt;/td&gt;
+&lt;td&gt;&amp;#x1F44E; (network latency)&lt;/td&gt;
+&lt;td&gt;- Many services are updated in real-time or very often, so you can get the latest data - However, there may be network delays depending on traffic or server conditions - Excessive queries or poor server conditions can cause slow or blocked responses&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;2) Build Your Own DB&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&amp;#x1F44E; (periodic updates)&lt;/td&gt;
+&lt;td&gt;&amp;#x1F914; (aggregated data)&lt;/td&gt;
+&lt;td&gt;&amp;#x1F44D; (local lookups)&lt;/td&gt;
+&lt;td&gt;- Very fast since you&amp;#x2019;re querying locally - If the update cycle is too long, freshness and accuracy can suffer&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;3) Whois Server&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&amp;#x1F44D; (RIR data)&lt;/td&gt;
+&lt;td&gt;&amp;#x1F44D; (official info)&lt;/td&gt;
+&lt;td&gt;&amp;#x1F44E; (network latency)&lt;/td&gt;
+&lt;td&gt;- Highly accurate, since the info comes directly from RIRs - Excessive queries or server issues can cause slow or blocked responses&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;Therefore, if you frequently query IPs and need quick responses in an environment where external internet access might not be possible, building your own local country database is the best approach. Below, I&amp;#x2019;ll show you how to collect source data from RIRs and build an IP-country information database in your local environment.&lt;/p&gt;
+&lt;h1 id=&#34;&amp;#x1F310;-Understanding-How-IP-Addresses-Are-Managed&#34;&gt;&lt;a href=&#34;#&amp;#x1F310;-Understanding-How-IP-Addresses-Are-Managed&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F310; Understanding How IP Addresses Are Managed&#34;&gt;&lt;/a&gt;&amp;#x1F310; Understanding How IP Addresses Are Managed&lt;/h1&gt;&lt;p&gt;The public IP addresses we use&amp;#x2014;around 3.7 billion&amp;#x2014;are limited resources. To manage them effectively, a central coordinating body is required. That role is filled by &lt;strong&gt;ICANN (Internet Corporation for Assigned Names and Numbers)&lt;/strong&gt; in the United States.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/7.jpg&#34; alt=&#34;iana.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;ICANN manages top-level internet resources like IP addresses, DNS, and protocol numbers. Because ICANN can&amp;#x2019;t manage all IP addresses directly, the &lt;strong&gt;IANA (Internet Assigned Numbers Authority)&lt;/strong&gt;&amp;#x2014;an organization under ICANN&amp;#x2014;allocates IP address ranges to &lt;strong&gt;RIRs (Regional Internet Registries)&lt;/strong&gt; by region.&lt;/p&gt;
+&lt;p&gt;There are currently five RIRs: &lt;strong&gt;ARIN (North America)&lt;/strong&gt;, &lt;strong&gt;RIPENCC (Europe)&lt;/strong&gt;, &lt;strong&gt;LACNIC (Latin America)&lt;/strong&gt;, &lt;strong&gt;AFRINIC (Africa)&lt;/strong&gt;, and &lt;strong&gt;APNIC (Asia)&lt;/strong&gt;. Of these, LACNIC and APNIC maintain &lt;strong&gt;NIRs (National Internet Registries)&lt;/strong&gt; to further subdivide responsibilities at a national level:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;APNIC includes KRNIC (Korea), CNNIC (China), JPNIC (Japan), TWNIC (Taiwan), VNNIC (Vietnam), etc.&lt;/li&gt;
+&lt;li&gt;LACNIC includes NIC Brazil (Brazil), NIC Chile (Chile), NIC Mexico (Mexico)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;In other words, IP addresses are managed in this chain: &lt;strong&gt;ICANN &amp;#x2192; IANA &amp;#x2192; RIR &amp;#x2192; NIR &amp;#x2192; ISP&lt;/strong&gt;.&lt;/p&gt;
+&lt;h1 id=&#34;&amp;#x1F3D7;&amp;#xFE0F;-Building-an-IP-Country-Database&#34;&gt;&lt;a href=&#34;#&amp;#x1F3D7;&amp;#xFE0F;-Building-an-IP-Country-Database&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F3D7;&amp;#xFE0F; Building an IP-Country Database&#34;&gt;&lt;/a&gt;&amp;#x1F3D7;&amp;#xFE0F; Building an IP-Country Database&lt;/h1&gt;&lt;p&gt;Each RIR routinely uploads statistics in a specific format to a specific path (named &lt;code&gt;stats&lt;/code&gt;) on their FTP server, at a specific time (23:59:59), under a specific file name.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/8.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;You can learn more about file format details by checking out APNIC&amp;#x2019;s &lt;a href=&#34;https://www.apnic.net/about-apnic/corporate-documents/documents/resource-guidelines/rir-statistics-exchange-format/&#34;&gt;RIR statistics exchange format&lt;/a&gt;.&lt;/p&gt;
+&lt;h1 id=&#34;&amp;#x1F4BB;-Creating-a-Program-to-Query-an-IP-&amp;#x2194;-Country-Database&#34;&gt;&lt;a href=&#34;#&amp;#x1F4BB;-Creating-a-Program-to-Query-an-IP-&amp;#x2194;-Country-Database&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F4BB; Creating a Program to Query an IP &amp;#x2194; Country Database&#34;&gt;&lt;/a&gt;&amp;#x1F4BB; Creating a Program to Query an IP &amp;#x2194; Country Database&lt;/h1&gt;&lt;p&gt;Now that we know the data sources (RIR FTP servers) and the file formats, we can build a tool. For example, you could:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Every day at 09:00 (UTC+9), download each &lt;code&gt;delegated-{REGISTRY}-latest&lt;/code&gt; file from every RIR&amp;#x2019;s FTP server&lt;/li&gt;
+&lt;li&gt;Extract each country / IPv4 / IP range from the downloaded file&lt;/li&gt;
+&lt;li&gt;Convert the IP range (start ~ end) into decimal, sort, then save to a file&lt;/li&gt;
+&lt;li&gt;Load the country-IP-range pairs into memory&lt;/li&gt;
+&lt;li&gt;Use binary search&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Here&amp;#x2019;s some sample code:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# builtin modules&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; os
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; ipaddress
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; asyncio
+&lt;span class=&#34;hljs-keyword&#34;&gt;from&lt;/span&gt; datetime &lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; datetime
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# install modules&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; aiohttp
+
+intervals = []
+
+today = datetime.now().strftime(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;%Y%m%d&amp;quot;&lt;/span&gt;)
+
+RIR_URLS = [
+    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;https://ftp.apnic.net/stats/apnic/delegated-apnic-extended-latest&amp;quot;&lt;/span&gt;,
+    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;https://ftp.arin.net/pub/stats/arin/delegated-arin-extended-latest&amp;quot;&lt;/span&gt;,
+    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;https://ftp.lacnic.net/pub/stats/lacnic/delegated-lacnic-extended-latest&amp;quot;&lt;/span&gt;,
+    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;https://ftp.ripe.net/pub/stats/ripencc/delegated-ripencc-extended-latest&amp;quot;&lt;/span&gt;,
+    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;https://ftp.afrinic.net/stats/afrinic/delegated-afrinic-extended-latest&amp;quot;&lt;/span&gt;,
+]
+
+MAPPING_DATABASE = &lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;./rsc/&lt;span class=&#34;hljs-subst&#34;&gt;{today}&lt;/span&gt;_mapping.db&amp;quot;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# Download&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;async&lt;/span&gt; &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;fetch&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;session, url&lt;/span&gt;):&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;async&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; session.get(url) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; response:
+        print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;[&lt;span class=&#34;hljs-subst&#34;&gt;{response.status}&lt;/span&gt;] - &lt;span class=&#34;hljs-subst&#34;&gt;{url}&lt;/span&gt;&amp;quot;&lt;/span&gt;)
+        content = &lt;span class=&#34;hljs-keyword&#34;&gt;await&lt;/span&gt; response.read()
+        filename = url.split(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/&amp;quot;&lt;/span&gt;)[&lt;span class=&#34;hljs-number&#34;&gt;-1&lt;/span&gt;]
+        filepath = &lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;./rsc/&lt;span class=&#34;hljs-subst&#34;&gt;{today}&lt;/span&gt;_&lt;span class=&#34;hljs-subst&#34;&gt;{filename}&lt;/span&gt;&amp;quot;&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; open(filepath, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;wb&amp;quot;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; f:
+            f.write(content)
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# Download coroutine&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;async&lt;/span&gt; &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;download&lt;/span&gt;():&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;async&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; aiohttp.ClientSession() &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; session:
+        &lt;span class=&#34;hljs-keyword&#34;&gt;await&lt;/span&gt; asyncio.gather(*(fetch(session, url) &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; url &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; RIR_URLS))
+    print(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Download Complete&amp;quot;&lt;/span&gt;)
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# Load database&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;init_database&lt;/span&gt;():&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;not&lt;/span&gt; os.path.exists(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;./rsc&amp;quot;&lt;/span&gt;):
+        os.mkdir(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;./rsc&amp;quot;&lt;/span&gt;)
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;# If the IP database set exists, load it into memory&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; os.path.exists(MAPPING_DATABASE):
+        print(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Databse load&amp;quot;&lt;/span&gt;)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; open(MAPPING_DATABASE, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;r&amp;quot;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; f:
+            &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; line &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; f:
+                start_ip, end_ip, country = line.strip().split(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;,&amp;quot;&lt;/span&gt;)
+                intervals.append((int(start_ip), int(end_ip), country))
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;# If it doesn&amp;apos;t exist, download, process, and save&lt;/span&gt;
+    asyncio.run(download())
+    &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; rir_url &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; RIR_URLS:
+        filename = rir_url.split(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/&amp;quot;&lt;/span&gt;)[&lt;span class=&#34;hljs-number&#34;&gt;-1&lt;/span&gt;]
+        filepath = &lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;./rsc/&lt;span class=&#34;hljs-subst&#34;&gt;{today}&lt;/span&gt;_&lt;span class=&#34;hljs-subst&#34;&gt;{filename}&lt;/span&gt;&amp;quot;&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; open(filepath, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;r&amp;quot;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; f:
+            &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; line &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; f:
+                line = line.strip().split(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;|&amp;quot;&lt;/span&gt;)
+                &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; len(line) != &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;or&lt;/span&gt; line[&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;] != &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;ipv4&amp;quot;&lt;/span&gt;:
+                    &lt;span class=&#34;hljs-keyword&#34;&gt;continue&lt;/span&gt;
+                country = line[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;]
+                ip = line[&lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;]
+                ip_range = line[&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;]
+                start_ip = int(ipaddress.IPv4Address(ip))
+                end_ip = (int(ipaddress.IPv4Address(ip)) + int(ip_range)) - &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+                result = (start_ip, end_ip, country)
+                intervals.append(result)
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;# Save the data&lt;/span&gt;
+    intervals.sort(key=&lt;span class=&#34;hljs-keyword&#34;&gt;lambda&lt;/span&gt; x: x[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;])
+    &lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; open(MAPPING_DATABASE, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;w&amp;quot;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; f:
+        &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; interval &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; intervals:
+            line = &lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;&lt;span class=&#34;hljs-subst&#34;&gt;{interval[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;]}&lt;/span&gt;,&lt;span class=&#34;hljs-subst&#34;&gt;{interval[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;]}&lt;/span&gt;,&lt;span class=&#34;hljs-subst&#34;&gt;{interval[&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;]}&lt;/span&gt;&amp;quot;&lt;/span&gt;
+            f.write(line + &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;\n&amp;quot;&lt;/span&gt;)
+    print(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Databse load&amp;quot;&lt;/span&gt;)
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# Search&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;search&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;search_ip&lt;/span&gt;):&lt;/span&gt;
+    result = &lt;span class=&#34;hljs-literal&#34;&gt;None&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt;:
+        search_ip = int(ipaddress.IPv4Address(search_ip))
+    &lt;span class=&#34;hljs-keyword&#34;&gt;except&lt;/span&gt;:
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;None&lt;/span&gt;
+    left, right = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, len(intervals) - &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; left &amp;lt;= right:
+        mid = (left + right) // &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+        start_ip, end_ip, country = intervals[mid]
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; start_ip &amp;lt;= search_ip &amp;lt;= end_ip:
+            result = country
+            &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;elif&lt;/span&gt; start_ip &amp;gt; search_ip:
+            right = mid - &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;:
+            left = mid + &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; result
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;main&lt;/span&gt;():&lt;/span&gt;
+    init_database()
+    &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;:
+        ipv4 = input(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Insert IPv4: &amp;quot;&lt;/span&gt;)
+        r = search(ipv4)
+        print(r)
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; __name__ == &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;__main__&amp;quot;&lt;/span&gt;:
+    main()
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/9.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Once downloaded from the RIRs, you&amp;#x2019;ll see that around 253,714 IP ranges (covering the roughly 3.7 billion public IPs) exist. That effectively means you can figure out the country of any public IP. Interestingly, the program I wrote above seems to perform 30&amp;#x2013;250 times faster lookups than queries using &lt;code&gt;.mmdb&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;My guess is that MMDB might have more granularly subdivided IP ranges and also stores additional data (like ASN), so that could explain the difference.&lt;/p&gt;
+&lt;h1 id=&#34;&amp;#x2728;-Conclusion&#34;&gt;&lt;a href=&#34;#&amp;#x2728;-Conclusion&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x2728; Conclusion&#34;&gt;&lt;/a&gt;&amp;#x2728; Conclusion&lt;/h1&gt;&lt;p&gt;RIR data only contains information such as which IP addresses were assigned (e.g., IP block allocations). It doesn&amp;#x2019;t tell you which ASNs those IPs belong to. To figure that out, you&amp;#x2019;d need to collect data from BGP (Border Gateway Protocol) tables. Because this post has already grown quite long, I&amp;#x2019;ll continue this topic in a future article.&lt;/p&gt;
+&lt;p&gt;For sanity&amp;#x2019;s sake, I personally recommend regularly downloading an &lt;code&gt;.mmdb&lt;/code&gt; file from ipinfo or another provider, if feasible.&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] Creating an IP Country Information Database (en) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;&lt;img src=&#34;/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/1.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Hello, I&amp;#x2019;m empty &amp;#x1F44B;. In the field of security, we often need to analyze suspicious IP addresses. When using various IP lookup services, the verdict on whether an IP is malicious may differ, but &amp;#x201C;country information, ASN information, ISP information&amp;#x201D; are consistently provided. I became curious about where and how this data is obtained and served, so I decided to investigate.&lt;/p&gt;
+&lt;h1 id=&#34;&amp;#x1F50D;-Ways-to-Look-Up-IP-Information&#34;&gt;&lt;a href=&#34;#&amp;#x1F50D;-Ways-to-Look-Up-IP-Information&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F50D; Ways to Look Up IP Information&#34;&gt;&lt;/a&gt;&amp;#x1F50D; Ways to Look Up IP Information&lt;/h1&gt;&lt;p&gt;Broadly speaking, IP information can be retrieved via:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;IP information lookup services&lt;/li&gt;
+&lt;li&gt;IP information databases&lt;/li&gt;
+&lt;li&gt;The Whois protocol&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Each method offers different speeds, accuracy, and freshness of data, so it&amp;#x2019;s important to choose the method that best fits your needs.&lt;/p&gt;
+&lt;h2 id=&#34;&amp;#x1F310;-IP-Information-Lookup-Services&#34;&gt;&lt;a href=&#34;#&amp;#x1F310;-IP-Information-Lookup-Services&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F310; IP Information Lookup Services&#34;&gt;&lt;/a&gt;&amp;#x1F310; IP Information Lookup Services&lt;/h2&gt;&lt;p&gt;Some services provide reputation (malicious or fraud-related) information, others provide port scanning results, and others geographic location information. However, country, ASN, and ISP name are virtually always provided, no matter which service you use.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;&lt;strong&gt;Type of Service&lt;/strong&gt;&lt;/th&gt;
+&lt;th&gt;&lt;strong&gt;Examples&lt;/strong&gt;&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;Reputation Check&lt;/td&gt;
+&lt;td&gt;Virustotal, AbuseIPDB&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Port Scanner&lt;/td&gt;
+&lt;td&gt;Censys, Shodan, Criminal IP&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;IP Geolocation&lt;/td&gt;
+&lt;td&gt;MaxMind, ipinfo, IP2Location, IPQualityScore&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;Although the data scope and content may differ subtly by service, almost every IP lookup service commonly returns the IP&amp;#x2019;s country, ASN, and ISP name. Personally, I often use the &lt;code&gt;ipinfo&lt;/code&gt; service via a simple &lt;code&gt;curl&lt;/code&gt; command in the terminal.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/2.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Interestingly, different services can display different countries or location info for the exact same IP. For example, when looking up an IP address from the Hong Kong-based cloud provider SonderCloud Limited on VirusTotal, it shows as being in the United States, while ipinfo displays Hong Kong.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/3.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;These discrepancies arise from a range of factors. Even if a company is registered in Hong Kong, its actual server could be physically located in the US, or vice versa. Additionally, some services base the IP&amp;#x2019;s country not on the physical location but on the country in which the business is registered, or on the IP block assignment recorded by a Regional Internet Registry (RIR).&lt;/p&gt;
+&lt;p&gt;On top of that, the update frequency and data collection methods vary by service, so even the same IP may give different results from different sources.&lt;/p&gt;
+&lt;h2 id=&#34;&amp;#x1F4BE;-Database-Lookup&#34;&gt;&lt;a href=&#34;#&amp;#x1F4BE;-Database-Lookup&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F4BE; Database Lookup&#34;&gt;&lt;/a&gt;&amp;#x1F4BE; Database Lookup&lt;/h2&gt;&lt;p&gt;Here, &amp;#x201C;database&amp;#x201D; doesn&amp;#x2019;t refer to applications like MySQL or PostgreSQL; rather, it refers to a prestructured &amp;#x201C;IP information database file&amp;#x201D; that lists IP addresses along with details such as country and ASN. These can be implemented in various formats&amp;#x2014;like JSON, CSV, or MMDB&amp;#x2014;and are commonly used in &lt;code&gt;.mmdb&lt;/code&gt; format.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/4.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;MMDB&lt;/strong&gt; is a file format developed and published by MaxMind. Because it&amp;#x2019;s an open format, MaxMind and many other IP information services provide their IP database files in &lt;code&gt;.mmdb&lt;/code&gt; format. Many security devices that require real-time performance load the mmdb file into memory for super-fast lookups (on the order of less than 0.00n seconds per IP).&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Example Lookup Code:&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; maxminddb
+
+ip = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;8.8.8.8&amp;quot;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; maxminddb.open_database(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;country_asn.mmdb&amp;quot;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; reader:
+    result = reader.get(ip)
+    print(result)&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;Output:&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;{
+  &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;as_domain&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;google.com&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;as_name&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Google LLC&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;asn&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;AS15169&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;continent&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;NA&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;continent_name&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;North America&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;country&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;US&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;country_name&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;United States&amp;quot;&lt;/span&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;However, because data such as ASN can change daily, you need to periodically update your local database file to stay current.&lt;/p&gt;
+&lt;h2 id=&#34;&amp;#x1F6F0;&amp;#xFE0F;-Whois-Protocol-TCP-43&#34;&gt;&lt;a href=&#34;#&amp;#x1F6F0;&amp;#xFE0F;-Whois-Protocol-TCP-43&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F6F0;&amp;#xFE0F; Whois Protocol (TCP, 43)&#34;&gt;&lt;/a&gt;&amp;#x1F6F0;&amp;#xFE0F; Whois Protocol (TCP, 43)&lt;/h2&gt;&lt;p&gt;Lastly, there&amp;#x2019;s the Whois protocol. When you query an IP address using Whois, it sends a request to the appropriate RIR&amp;#x2019;s Whois server, which then returns detailed information about the IP. Since the data is maintained directly by an RIR, it&amp;#x2019;s typically highly accurate.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/5.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Windows doesn&amp;#x2019;t include a built-in Whois command, so I sometimes use the NirSoft tool &lt;strong&gt;IPNetInfo&lt;/strong&gt;, which is particularly handy for bulk lookups.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/6.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Because Whois is a query-based method that communicates with a remote server, network latency is inevitable; and if the server is under heavy load or the queries are excessive, your requests might get blocked. For instance, the IPNetInfo product page states:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Sometimes the ARIN Whois server may be down and fail to respond to IPNetInfo&amp;#x2019;s WHOIS queries, which prevents IPNetInfo from retrieving IP addresses. If this happens, try again later.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Below is a summary of each method:&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;&lt;strong&gt;Method&lt;/strong&gt;&lt;/th&gt;
+&lt;th&gt;&lt;strong&gt;Freshness&lt;/strong&gt;&lt;/th&gt;
+&lt;th&gt;&lt;strong&gt;Accuracy&lt;/strong&gt;&lt;/th&gt;
+&lt;th&gt;&lt;strong&gt;Speed&lt;/strong&gt;&lt;/th&gt;
+&lt;th&gt;&lt;strong&gt;Notes&lt;/strong&gt;&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;1) External Service&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&amp;#x1F44D; (frequently updated)&lt;/td&gt;
+&lt;td&gt;&amp;#x1F44D; (various sources)&lt;/td&gt;
+&lt;td&gt;&amp;#x1F44E; (network latency)&lt;/td&gt;
+&lt;td&gt;- Many services are updated in real-time or very often, so you can get the latest data - However, there may be network delays depending on traffic or server conditions - Excessive queries or poor server conditions can cause slow or blocked responses&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;2) Build Your Own DB&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&amp;#x1F44E; (periodic updates)&lt;/td&gt;
+&lt;td&gt;&amp;#x1F914; (aggregated data)&lt;/td&gt;
+&lt;td&gt;&amp;#x1F44D; (local lookups)&lt;/td&gt;
+&lt;td&gt;- Very fast since you&amp;#x2019;re querying locally - If the update cycle is too long, freshness and accuracy can suffer&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;3) Whois Server&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;&amp;#x1F44D; (RIR data)&lt;/td&gt;
+&lt;td&gt;&amp;#x1F44D; (official info)&lt;/td&gt;
+&lt;td&gt;&amp;#x1F44E; (network latency)&lt;/td&gt;
+&lt;td&gt;- Highly accurate, since the info comes directly from RIRs - Excessive queries or server issues can cause slow or blocked responses&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;Therefore, if you frequently query IPs and need quick responses in an environment where external internet access might not be possible, building your own local country database is the best approach. Below, I&amp;#x2019;ll show you how to collect source data from RIRs and build an IP-country information database in your local environment.&lt;/p&gt;
+&lt;h1 id=&#34;&amp;#x1F310;-Understanding-How-IP-Addresses-Are-Managed&#34;&gt;&lt;a href=&#34;#&amp;#x1F310;-Understanding-How-IP-Addresses-Are-Managed&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F310; Understanding How IP Addresses Are Managed&#34;&gt;&lt;/a&gt;&amp;#x1F310; Understanding How IP Addresses Are Managed&lt;/h1&gt;&lt;p&gt;The public IP addresses we use&amp;#x2014;around 3.7 billion&amp;#x2014;are limited resources. To manage them effectively, a central coordinating body is required. That role is filled by &lt;strong&gt;ICANN (Internet Corporation for Assigned Names and Numbers)&lt;/strong&gt; in the United States.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/7.jpg&#34; alt=&#34;iana.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;ICANN manages top-level internet resources like IP addresses, DNS, and protocol numbers. Because ICANN can&amp;#x2019;t manage all IP addresses directly, the &lt;strong&gt;IANA (Internet Assigned Numbers Authority)&lt;/strong&gt;&amp;#x2014;an organization under ICANN&amp;#x2014;allocates IP address ranges to &lt;strong&gt;RIRs (Regional Internet Registries)&lt;/strong&gt; by region.&lt;/p&gt;
+&lt;p&gt;There are currently five RIRs: &lt;strong&gt;ARIN (North America)&lt;/strong&gt;, &lt;strong&gt;RIPENCC (Europe)&lt;/strong&gt;, &lt;strong&gt;LACNIC (Latin America)&lt;/strong&gt;, &lt;strong&gt;AFRINIC (Africa)&lt;/strong&gt;, and &lt;strong&gt;APNIC (Asia)&lt;/strong&gt;. Of these, LACNIC and APNIC maintain &lt;strong&gt;NIRs (National Internet Registries)&lt;/strong&gt; to further subdivide responsibilities at a national level:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;APNIC includes KRNIC (Korea), CNNIC (China), JPNIC (Japan), TWNIC (Taiwan), VNNIC (Vietnam), etc.&lt;/li&gt;
+&lt;li&gt;LACNIC includes NIC Brazil (Brazil), NIC Chile (Chile), NIC Mexico (Mexico)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;In other words, IP addresses are managed in this chain: &lt;strong&gt;ICANN &amp;#x2192; IANA &amp;#x2192; RIR &amp;#x2192; NIR &amp;#x2192; ISP&lt;/strong&gt;.&lt;/p&gt;
+&lt;h1 id=&#34;&amp;#x1F3D7;&amp;#xFE0F;-Building-an-IP-Country-Database&#34;&gt;&lt;a href=&#34;#&amp;#x1F3D7;&amp;#xFE0F;-Building-an-IP-Country-Database&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F3D7;&amp;#xFE0F; Building an IP-Country Database&#34;&gt;&lt;/a&gt;&amp;#x1F3D7;&amp;#xFE0F; Building an IP-Country Database&lt;/h1&gt;&lt;p&gt;Each RIR routinely uploads statistics in a specific format to a specific path (named &lt;code&gt;stats&lt;/code&gt;) on their FTP server, at a specific time (23:59:59), under a specific file name.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/8.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;You can learn more about file format details by checking out APNIC&amp;#x2019;s &lt;a href=&#34;https://www.apnic.net/about-apnic/corporate-documents/documents/resource-guidelines/rir-statistics-exchange-format/&#34;&gt;RIR statistics exchange format&lt;/a&gt;.&lt;/p&gt;
+&lt;h1 id=&#34;&amp;#x1F4BB;-Creating-a-Program-to-Query-an-IP-&amp;#x2194;-Country-Database&#34;&gt;&lt;a href=&#34;#&amp;#x1F4BB;-Creating-a-Program-to-Query-an-IP-&amp;#x2194;-Country-Database&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F4BB; Creating a Program to Query an IP &amp;#x2194; Country Database&#34;&gt;&lt;/a&gt;&amp;#x1F4BB; Creating a Program to Query an IP &amp;#x2194; Country Database&lt;/h1&gt;&lt;p&gt;Now that we know the data sources (RIR FTP servers) and the file formats, we can build a tool. For example, you could:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Every day at 09:00 (UTC+9), download each &lt;code&gt;delegated-{REGISTRY}-latest&lt;/code&gt; file from every RIR&amp;#x2019;s FTP server&lt;/li&gt;
+&lt;li&gt;Extract each country / IPv4 / IP range from the downloaded file&lt;/li&gt;
+&lt;li&gt;Convert the IP range (start ~ end) into decimal, sort, then save to a file&lt;/li&gt;
+&lt;li&gt;Load the country-IP-range pairs into memory&lt;/li&gt;
+&lt;li&gt;Use binary search&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Here&amp;#x2019;s some sample code:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# builtin modules&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; os
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; ipaddress
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; asyncio
+&lt;span class=&#34;hljs-keyword&#34;&gt;from&lt;/span&gt; datetime &lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; datetime
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# install modules&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; aiohttp
+
+intervals = []
+
+today = datetime.now().strftime(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;%Y%m%d&amp;quot;&lt;/span&gt;)
+
+RIR_URLS = [
+    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;https://ftp.apnic.net/stats/apnic/delegated-apnic-extended-latest&amp;quot;&lt;/span&gt;,
+    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;https://ftp.arin.net/pub/stats/arin/delegated-arin-extended-latest&amp;quot;&lt;/span&gt;,
+    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;https://ftp.lacnic.net/pub/stats/lacnic/delegated-lacnic-extended-latest&amp;quot;&lt;/span&gt;,
+    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;https://ftp.ripe.net/pub/stats/ripencc/delegated-ripencc-extended-latest&amp;quot;&lt;/span&gt;,
+    &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;https://ftp.afrinic.net/stats/afrinic/delegated-afrinic-extended-latest&amp;quot;&lt;/span&gt;,
+]
+
+MAPPING_DATABASE = &lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;./rsc/&lt;span class=&#34;hljs-subst&#34;&gt;{today}&lt;/span&gt;_mapping.db&amp;quot;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# Download&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;async&lt;/span&gt; &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;fetch&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;session, url&lt;/span&gt;):&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;async&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; session.get(url) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; response:
+        print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;[&lt;span class=&#34;hljs-subst&#34;&gt;{response.status}&lt;/span&gt;] - &lt;span class=&#34;hljs-subst&#34;&gt;{url}&lt;/span&gt;&amp;quot;&lt;/span&gt;)
+        content = &lt;span class=&#34;hljs-keyword&#34;&gt;await&lt;/span&gt; response.read()
+        filename = url.split(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/&amp;quot;&lt;/span&gt;)[&lt;span class=&#34;hljs-number&#34;&gt;-1&lt;/span&gt;]
+        filepath = &lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;./rsc/&lt;span class=&#34;hljs-subst&#34;&gt;{today}&lt;/span&gt;_&lt;span class=&#34;hljs-subst&#34;&gt;{filename}&lt;/span&gt;&amp;quot;&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; open(filepath, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;wb&amp;quot;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; f:
+            f.write(content)
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# Download coroutine&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;async&lt;/span&gt; &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;download&lt;/span&gt;():&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;async&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; aiohttp.ClientSession() &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; session:
+        &lt;span class=&#34;hljs-keyword&#34;&gt;await&lt;/span&gt; asyncio.gather(*(fetch(session, url) &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; url &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; RIR_URLS))
+    print(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Download Complete&amp;quot;&lt;/span&gt;)
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# Load database&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;init_database&lt;/span&gt;():&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;not&lt;/span&gt; os.path.exists(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;./rsc&amp;quot;&lt;/span&gt;):
+        os.mkdir(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;./rsc&amp;quot;&lt;/span&gt;)
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;# If the IP database set exists, load it into memory&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; os.path.exists(MAPPING_DATABASE):
+        print(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Databse load&amp;quot;&lt;/span&gt;)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; open(MAPPING_DATABASE, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;r&amp;quot;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; f:
+            &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; line &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; f:
+                start_ip, end_ip, country = line.strip().split(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;,&amp;quot;&lt;/span&gt;)
+                intervals.append((int(start_ip), int(end_ip), country))
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;# If it doesn&amp;apos;t exist, download, process, and save&lt;/span&gt;
+    asyncio.run(download())
+    &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; rir_url &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; RIR_URLS:
+        filename = rir_url.split(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/&amp;quot;&lt;/span&gt;)[&lt;span class=&#34;hljs-number&#34;&gt;-1&lt;/span&gt;]
+        filepath = &lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;./rsc/&lt;span class=&#34;hljs-subst&#34;&gt;{today}&lt;/span&gt;_&lt;span class=&#34;hljs-subst&#34;&gt;{filename}&lt;/span&gt;&amp;quot;&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; open(filepath, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;r&amp;quot;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; f:
+            &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; line &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; f:
+                line = line.strip().split(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;|&amp;quot;&lt;/span&gt;)
+                &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; len(line) != &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;or&lt;/span&gt; line[&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;] != &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;ipv4&amp;quot;&lt;/span&gt;:
+                    &lt;span class=&#34;hljs-keyword&#34;&gt;continue&lt;/span&gt;
+                country = line[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;]
+                ip = line[&lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;]
+                ip_range = line[&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;]
+                start_ip = int(ipaddress.IPv4Address(ip))
+                end_ip = (int(ipaddress.IPv4Address(ip)) + int(ip_range)) - &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+                result = (start_ip, end_ip, country)
+                intervals.append(result)
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;# Save the data&lt;/span&gt;
+    intervals.sort(key=&lt;span class=&#34;hljs-keyword&#34;&gt;lambda&lt;/span&gt; x: x[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;])
+    &lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; open(MAPPING_DATABASE, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;w&amp;quot;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; f:
+        &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; interval &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; intervals:
+            line = &lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;&lt;span class=&#34;hljs-subst&#34;&gt;{interval[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;]}&lt;/span&gt;,&lt;span class=&#34;hljs-subst&#34;&gt;{interval[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;]}&lt;/span&gt;,&lt;span class=&#34;hljs-subst&#34;&gt;{interval[&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;]}&lt;/span&gt;&amp;quot;&lt;/span&gt;
+            f.write(line + &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;\n&amp;quot;&lt;/span&gt;)
+    print(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Databse load&amp;quot;&lt;/span&gt;)
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# Search&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;search&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;search_ip&lt;/span&gt;):&lt;/span&gt;
+    result = &lt;span class=&#34;hljs-literal&#34;&gt;None&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt;:
+        search_ip = int(ipaddress.IPv4Address(search_ip))
+    &lt;span class=&#34;hljs-keyword&#34;&gt;except&lt;/span&gt;:
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;None&lt;/span&gt;
+    left, right = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, len(intervals) - &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; left &amp;lt;= right:
+        mid = (left + right) // &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+        start_ip, end_ip, country = intervals[mid]
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; start_ip &amp;lt;= search_ip &amp;lt;= end_ip:
+            result = country
+            &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;elif&lt;/span&gt; start_ip &amp;gt; search_ip:
+            right = mid - &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;:
+            left = mid + &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; result
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;main&lt;/span&gt;():&lt;/span&gt;
+    init_database()
+    &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;:
+        ipv4 = input(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Insert IPv4: &amp;quot;&lt;/span&gt;)
+        r = search(ipv4)
+        print(r)
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; __name__ == &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;__main__&amp;quot;&lt;/span&gt;:
+    main()
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/9.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Once downloaded from the RIRs, you&amp;#x2019;ll see that around 253,714 IP ranges (covering the roughly 3.7 billion public IPs) exist. That effectively means you can figure out the country of any public IP. Interestingly, the program I wrote above seems to perform 30&amp;#x2013;250 times faster lookups than queries using &lt;code&gt;.mmdb&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;My guess is that MMDB might have more granularly subdivided IP ranges and also stores additional data (like ASN), so that could explain the difference.&lt;/p&gt;
+&lt;h1 id=&#34;&amp;#x2728;-Conclusion&#34;&gt;&lt;a href=&#34;#&amp;#x2728;-Conclusion&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x2728; Conclusion&#34;&gt;&lt;/a&gt;&amp;#x2728; Conclusion&lt;/h1&gt;&lt;p&gt;RIR data only contains information such as which IP addresses were assigned (e.g., IP block allocations). It doesn&amp;#x2019;t tell you which ASNs those IPs belong to. To figure that out, you&amp;#x2019;d need to collect data from BGP (Border Gateway Protocol) tables. Because this post has already grown quite long, I&amp;#x2019;ll continue this topic in a future article.&lt;/p&gt;
+&lt;p&gt;For sanity&amp;#x2019;s sake, I personally recommend regularly downloading an &lt;code&gt;.mmdb&lt;/code&gt; file from ipinfo or another provider, if feasible.&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/thumb_en.jpg">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/03/02/empty/creating_an_ip_country_information_database_en/">
+
+  <title>[Research] Creating an IP Country Information Database (en) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-03-02 11:47" pubdate>
+      2025년 3월 2일 오전
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      1.9k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      37
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] Creating an IP Country Information Database (en)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p><img src="/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/1.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Hello, I&#x2019;m empty &#x1F44B;. In the field of security, we often need to analyze suspicious IP addresses. When using various IP lookup services, the verdict on whether an IP is malicious may differ, but &#x201C;country information, ASN information, ISP information&#x201D; are consistently provided. I became curious about where and how this data is obtained and served, so I decided to investigate.</p>
+<h1 id="&#x1F50D;-Ways-to-Look-Up-IP-Information"><a href="#&#x1F50D;-Ways-to-Look-Up-IP-Information" class="headerlink" title="&#x1F50D; Ways to Look Up IP Information"></a>&#x1F50D; Ways to Look Up IP Information</h1><p>Broadly speaking, IP information can be retrieved via:</p>
+<ol>
+<li>IP information lookup services</li>
+<li>IP information databases</li>
+<li>The Whois protocol</li>
+</ol>
+<p>Each method offers different speeds, accuracy, and freshness of data, so it&#x2019;s important to choose the method that best fits your needs.</p>
+<h2 id="&#x1F310;-IP-Information-Lookup-Services"><a href="#&#x1F310;-IP-Information-Lookup-Services" class="headerlink" title="&#x1F310; IP Information Lookup Services"></a>&#x1F310; IP Information Lookup Services</h2><p>Some services provide reputation (malicious or fraud-related) information, others provide port scanning results, and others geographic location information. However, country, ASN, and ISP name are virtually always provided, no matter which service you use.</p>
+<div class="table-container">
+<table>
+<thead>
+<tr>
+<th><strong>Type of Service</strong></th>
+<th><strong>Examples</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Reputation Check</td>
+<td>Virustotal, AbuseIPDB</td>
+</tr>
+<tr>
+<td>Port Scanner</td>
+<td>Censys, Shodan, Criminal IP</td>
+</tr>
+<tr>
+<td>IP Geolocation</td>
+<td>MaxMind, ipinfo, IP2Location, IPQualityScore</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Although the data scope and content may differ subtly by service, almost every IP lookup service commonly returns the IP&#x2019;s country, ASN, and ISP name. Personally, I often use the <code>ipinfo</code> service via a simple <code>curl</code> command in the terminal.</p>
+<p><img src="/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/2.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Interestingly, different services can display different countries or location info for the exact same IP. For example, when looking up an IP address from the Hong Kong-based cloud provider SonderCloud Limited on VirusTotal, it shows as being in the United States, while ipinfo displays Hong Kong.</p>
+<p><img src="/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/3.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>These discrepancies arise from a range of factors. Even if a company is registered in Hong Kong, its actual server could be physically located in the US, or vice versa. Additionally, some services base the IP&#x2019;s country not on the physical location but on the country in which the business is registered, or on the IP block assignment recorded by a Regional Internet Registry (RIR).</p>
+<p>On top of that, the update frequency and data collection methods vary by service, so even the same IP may give different results from different sources.</p>
+<h2 id="&#x1F4BE;-Database-Lookup"><a href="#&#x1F4BE;-Database-Lookup" class="headerlink" title="&#x1F4BE; Database Lookup"></a>&#x1F4BE; Database Lookup</h2><p>Here, &#x201C;database&#x201D; doesn&#x2019;t refer to applications like MySQL or PostgreSQL; rather, it refers to a prestructured &#x201C;IP information database file&#x201D; that lists IP addresses along with details such as country and ASN. These can be implemented in various formats&#x2014;like JSON, CSV, or MMDB&#x2014;and are commonly used in <code>.mmdb</code> format.</p>
+<p><img src="/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/4.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p><strong>MMDB</strong> is a file format developed and published by MaxMind. Because it&#x2019;s an open format, MaxMind and many other IP information services provide their IP database files in <code>.mmdb</code> format. Many security devices that require real-time performance load the mmdb file into memory for super-fast lookups (on the order of less than 0.00n seconds per IP).</p>
+<ul>
+<li>Example Lookup Code:</li>
+</ul>
+<pre><code class="hljs python"><span class="hljs-keyword">import</span> maxminddb
+
+ip = <span class="hljs-string">&quot;8.8.8.8&quot;</span>
+
+<span class="hljs-keyword">with</span> maxminddb.open_database(<span class="hljs-string">&quot;country_asn.mmdb&quot;</span>) <span class="hljs-keyword">as</span> reader:
+    result = reader.get(ip)
+    print(result)</code></pre>
+<ul>
+<li>Output:</li>
+</ul>
+<pre><code class="hljs jsx">{
+  <span class="hljs-string">&quot;as_domain&quot;</span>: <span class="hljs-string">&quot;google.com&quot;</span>,
+  <span class="hljs-string">&quot;as_name&quot;</span>: <span class="hljs-string">&quot;Google LLC&quot;</span>,
+  <span class="hljs-string">&quot;asn&quot;</span>: <span class="hljs-string">&quot;AS15169&quot;</span>,
+  <span class="hljs-string">&quot;continent&quot;</span>: <span class="hljs-string">&quot;NA&quot;</span>,
+  <span class="hljs-string">&quot;continent_name&quot;</span>: <span class="hljs-string">&quot;North America&quot;</span>,
+  <span class="hljs-string">&quot;country&quot;</span>: <span class="hljs-string">&quot;US&quot;</span>,
+  <span class="hljs-string">&quot;country_name&quot;</span>: <span class="hljs-string">&quot;United States&quot;</span>
+}</code></pre>
+<p>However, because data such as ASN can change daily, you need to periodically update your local database file to stay current.</p>
+<h2 id="&#x1F6F0;&#xFE0F;-Whois-Protocol-TCP-43"><a href="#&#x1F6F0;&#xFE0F;-Whois-Protocol-TCP-43" class="headerlink" title="&#x1F6F0;&#xFE0F; Whois Protocol (TCP, 43)"></a>&#x1F6F0;&#xFE0F; Whois Protocol (TCP, 43)</h2><p>Lastly, there&#x2019;s the Whois protocol. When you query an IP address using Whois, it sends a request to the appropriate RIR&#x2019;s Whois server, which then returns detailed information about the IP. Since the data is maintained directly by an RIR, it&#x2019;s typically highly accurate.</p>
+<p><img src="/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/5.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Windows doesn&#x2019;t include a built-in Whois command, so I sometimes use the NirSoft tool <strong>IPNetInfo</strong>, which is particularly handy for bulk lookups.</p>
+<p><img src="/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/6.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Because Whois is a query-based method that communicates with a remote server, network latency is inevitable; and if the server is under heavy load or the queries are excessive, your requests might get blocked. For instance, the IPNetInfo product page states:</p>
+<blockquote>
+<p>Sometimes the ARIN Whois server may be down and fail to respond to IPNetInfo&#x2019;s WHOIS queries, which prevents IPNetInfo from retrieving IP addresses. If this happens, try again later.</p>
+</blockquote>
+<p>Below is a summary of each method:</p>
+<div class="table-container">
+<table>
+<thead>
+<tr>
+<th><strong>Method</strong></th>
+<th><strong>Freshness</strong></th>
+<th><strong>Accuracy</strong></th>
+<th><strong>Speed</strong></th>
+<th><strong>Notes</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>1) External Service</strong></td>
+<td>&#x1F44D; (frequently updated)</td>
+<td>&#x1F44D; (various sources)</td>
+<td>&#x1F44E; (network latency)</td>
+<td>- Many services are updated in real-time or very often, so you can get the latest data - However, there may be network delays depending on traffic or server conditions - Excessive queries or poor server conditions can cause slow or blocked responses</td>
+</tr>
+<tr>
+<td><strong>2) Build Your Own DB</strong></td>
+<td>&#x1F44E; (periodic updates)</td>
+<td>&#x1F914; (aggregated data)</td>
+<td>&#x1F44D; (local lookups)</td>
+<td>- Very fast since you&#x2019;re querying locally - If the update cycle is too long, freshness and accuracy can suffer</td>
+</tr>
+<tr>
+<td><strong>3) Whois Server</strong></td>
+<td>&#x1F44D; (RIR data)</td>
+<td>&#x1F44D; (official info)</td>
+<td>&#x1F44E; (network latency)</td>
+<td>- Highly accurate, since the info comes directly from RIRs - Excessive queries or server issues can cause slow or blocked responses</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Therefore, if you frequently query IPs and need quick responses in an environment where external internet access might not be possible, building your own local country database is the best approach. Below, I&#x2019;ll show you how to collect source data from RIRs and build an IP-country information database in your local environment.</p>
+<h1 id="&#x1F310;-Understanding-How-IP-Addresses-Are-Managed"><a href="#&#x1F310;-Understanding-How-IP-Addresses-Are-Managed" class="headerlink" title="&#x1F310; Understanding How IP Addresses Are Managed"></a>&#x1F310; Understanding How IP Addresses Are Managed</h1><p>The public IP addresses we use&#x2014;around 3.7 billion&#x2014;are limited resources. To manage them effectively, a central coordinating body is required. That role is filled by <strong>ICANN (Internet Corporation for Assigned Names and Numbers)</strong> in the United States.</p>
+<p><img src="/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/7.jpg" srcset="/img/loading.gif" alt="iana.jpg"></p>
+<p>ICANN manages top-level internet resources like IP addresses, DNS, and protocol numbers. Because ICANN can&#x2019;t manage all IP addresses directly, the <strong>IANA (Internet Assigned Numbers Authority)</strong>&#x2014;an organization under ICANN&#x2014;allocates IP address ranges to <strong>RIRs (Regional Internet Registries)</strong> by region.</p>
+<p>There are currently five RIRs: <strong>ARIN (North America)</strong>, <strong>RIPENCC (Europe)</strong>, <strong>LACNIC (Latin America)</strong>, <strong>AFRINIC (Africa)</strong>, and <strong>APNIC (Asia)</strong>. Of these, LACNIC and APNIC maintain <strong>NIRs (National Internet Registries)</strong> to further subdivide responsibilities at a national level:</p>
+<ul>
+<li>APNIC includes KRNIC (Korea), CNNIC (China), JPNIC (Japan), TWNIC (Taiwan), VNNIC (Vietnam), etc.</li>
+<li>LACNIC includes NIC Brazil (Brazil), NIC Chile (Chile), NIC Mexico (Mexico)</li>
+</ul>
+<p>In other words, IP addresses are managed in this chain: <strong>ICANN &#x2192; IANA &#x2192; RIR &#x2192; NIR &#x2192; ISP</strong>.</p>
+<h1 id="&#x1F3D7;&#xFE0F;-Building-an-IP-Country-Database"><a href="#&#x1F3D7;&#xFE0F;-Building-an-IP-Country-Database" class="headerlink" title="&#x1F3D7;&#xFE0F; Building an IP-Country Database"></a>&#x1F3D7;&#xFE0F; Building an IP-Country Database</h1><p>Each RIR routinely uploads statistics in a specific format to a specific path (named <code>stats</code>) on their FTP server, at a specific time (23:59:59), under a specific file name.</p>
+<p><img src="/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/8.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>You can learn more about file format details by checking out APNIC&#x2019;s <a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.apnic.net/about-apnic/corporate-documents/documents/resource-guidelines/rir-statistics-exchange-format/">RIR statistics exchange format</a>.</p>
+<h1 id="&#x1F4BB;-Creating-a-Program-to-Query-an-IP-&#x2194;-Country-Database"><a href="#&#x1F4BB;-Creating-a-Program-to-Query-an-IP-&#x2194;-Country-Database" class="headerlink" title="&#x1F4BB; Creating a Program to Query an IP &#x2194; Country Database"></a>&#x1F4BB; Creating a Program to Query an IP &#x2194; Country Database</h1><p>Now that we know the data sources (RIR FTP servers) and the file formats, we can build a tool. For example, you could:</p>
+<ol>
+<li>Every day at 09:00 (UTC+9), download each <code>delegated-{REGISTRY}-latest</code> file from every RIR&#x2019;s FTP server</li>
+<li>Extract each country / IPv4 / IP range from the downloaded file</li>
+<li>Convert the IP range (start ~ end) into decimal, sort, then save to a file</li>
+<li>Load the country-IP-range pairs into memory</li>
+<li>Use binary search</li>
+</ol>
+<p>Here&#x2019;s some sample code:</p>
+<pre><code class="hljs python"><span class="hljs-comment"># builtin modules</span>
+<span class="hljs-keyword">import</span> os
+<span class="hljs-keyword">import</span> ipaddress
+<span class="hljs-keyword">import</span> asyncio
+<span class="hljs-keyword">from</span> datetime <span class="hljs-keyword">import</span> datetime
+
+<span class="hljs-comment"># install modules</span>
+<span class="hljs-keyword">import</span> aiohttp
+
+intervals = []
+
+today = datetime.now().strftime(<span class="hljs-string">&quot;%Y%m%d&quot;</span>)
+
+RIR_URLS = [
+    <span class="hljs-string">&quot;https://ftp.apnic.net/stats/apnic/delegated-apnic-extended-latest&quot;</span>,
+    <span class="hljs-string">&quot;https://ftp.arin.net/pub/stats/arin/delegated-arin-extended-latest&quot;</span>,
+    <span class="hljs-string">&quot;https://ftp.lacnic.net/pub/stats/lacnic/delegated-lacnic-extended-latest&quot;</span>,
+    <span class="hljs-string">&quot;https://ftp.ripe.net/pub/stats/ripencc/delegated-ripencc-extended-latest&quot;</span>,
+    <span class="hljs-string">&quot;https://ftp.afrinic.net/stats/afrinic/delegated-afrinic-extended-latest&quot;</span>,
+]
+
+MAPPING_DATABASE = <span class="hljs-string">f&quot;./rsc/<span class="hljs-subst">{today}</span>_mapping.db&quot;</span>
+
+<span class="hljs-comment"># Download</span>
+<span class="hljs-keyword">async</span> <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">fetch</span>(<span class="hljs-params">session, url</span>):</span>
+    <span class="hljs-keyword">async</span> <span class="hljs-keyword">with</span> session.get(url) <span class="hljs-keyword">as</span> response:
+        print(<span class="hljs-string">f&quot;[<span class="hljs-subst">{response.status}</span>] - <span class="hljs-subst">{url}</span>&quot;</span>)
+        content = <span class="hljs-keyword">await</span> response.read()
+        filename = url.split(<span class="hljs-string">&quot;/&quot;</span>)[<span class="hljs-number">-1</span>]
+        filepath = <span class="hljs-string">f&quot;./rsc/<span class="hljs-subst">{today}</span>_<span class="hljs-subst">{filename}</span>&quot;</span>
+        <span class="hljs-keyword">with</span> open(filepath, <span class="hljs-string">&quot;wb&quot;</span>) <span class="hljs-keyword">as</span> f:
+            f.write(content)
+    <span class="hljs-keyword">return</span>
+
+<span class="hljs-comment"># Download coroutine</span>
+<span class="hljs-keyword">async</span> <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">download</span>():</span>
+    <span class="hljs-keyword">async</span> <span class="hljs-keyword">with</span> aiohttp.ClientSession() <span class="hljs-keyword">as</span> session:
+        <span class="hljs-keyword">await</span> asyncio.gather(*(fetch(session, url) <span class="hljs-keyword">for</span> url <span class="hljs-keyword">in</span> RIR_URLS))
+    print(<span class="hljs-string">&quot;Download Complete&quot;</span>)
+    <span class="hljs-keyword">return</span>
+
+<span class="hljs-comment"># Load database</span>
+<span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">init_database</span>():</span>
+    <span class="hljs-keyword">if</span> <span class="hljs-keyword">not</span> os.path.exists(<span class="hljs-string">&quot;./rsc&quot;</span>):
+        os.mkdir(<span class="hljs-string">&quot;./rsc&quot;</span>)
+
+    <span class="hljs-comment"># If the IP database set exists, load it into memory</span>
+    <span class="hljs-keyword">if</span> os.path.exists(MAPPING_DATABASE):
+        print(<span class="hljs-string">&quot;Databse load&quot;</span>)
+        <span class="hljs-keyword">with</span> open(MAPPING_DATABASE, <span class="hljs-string">&quot;r&quot;</span>) <span class="hljs-keyword">as</span> f:
+            <span class="hljs-keyword">for</span> line <span class="hljs-keyword">in</span> f:
+                start_ip, end_ip, country = line.strip().split(<span class="hljs-string">&quot;,&quot;</span>)
+                intervals.append((int(start_ip), int(end_ip), country))
+        <span class="hljs-keyword">return</span>
+
+    <span class="hljs-comment"># If it doesn&apos;t exist, download, process, and save</span>
+    asyncio.run(download())
+    <span class="hljs-keyword">for</span> rir_url <span class="hljs-keyword">in</span> RIR_URLS:
+        filename = rir_url.split(<span class="hljs-string">&quot;/&quot;</span>)[<span class="hljs-number">-1</span>]
+        filepath = <span class="hljs-string">f&quot;./rsc/<span class="hljs-subst">{today}</span>_<span class="hljs-subst">{filename}</span>&quot;</span>
+        <span class="hljs-keyword">with</span> open(filepath, <span class="hljs-string">&quot;r&quot;</span>) <span class="hljs-keyword">as</span> f:
+            <span class="hljs-keyword">for</span> line <span class="hljs-keyword">in</span> f:
+                line = line.strip().split(<span class="hljs-string">&quot;|&quot;</span>)
+                <span class="hljs-keyword">if</span> len(line) != <span class="hljs-number">8</span> <span class="hljs-keyword">or</span> line[<span class="hljs-number">2</span>] != <span class="hljs-string">&quot;ipv4&quot;</span>:
+                    <span class="hljs-keyword">continue</span>
+                country = line[<span class="hljs-number">1</span>]
+                ip = line[<span class="hljs-number">3</span>]
+                ip_range = line[<span class="hljs-number">4</span>]
+                start_ip = int(ipaddress.IPv4Address(ip))
+                end_ip = (int(ipaddress.IPv4Address(ip)) + int(ip_range)) - <span class="hljs-number">1</span>
+                result = (start_ip, end_ip, country)
+                intervals.append(result)
+
+    <span class="hljs-comment"># Save the data</span>
+    intervals.sort(key=<span class="hljs-keyword">lambda</span> x: x[<span class="hljs-number">0</span>])
+    <span class="hljs-keyword">with</span> open(MAPPING_DATABASE, <span class="hljs-string">&quot;w&quot;</span>) <span class="hljs-keyword">as</span> f:
+        <span class="hljs-keyword">for</span> interval <span class="hljs-keyword">in</span> intervals:
+            line = <span class="hljs-string">f&quot;<span class="hljs-subst">{interval[<span class="hljs-number">0</span>]}</span>,<span class="hljs-subst">{interval[<span class="hljs-number">1</span>]}</span>,<span class="hljs-subst">{interval[<span class="hljs-number">2</span>]}</span>&quot;</span>
+            f.write(line + <span class="hljs-string">&quot;\n&quot;</span>)
+    print(<span class="hljs-string">&quot;Databse load&quot;</span>)
+    <span class="hljs-keyword">return</span>
+
+<span class="hljs-comment"># Search</span>
+<span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">search</span>(<span class="hljs-params">search_ip</span>):</span>
+    result = <span class="hljs-literal">None</span>
+    <span class="hljs-keyword">try</span>:
+        search_ip = int(ipaddress.IPv4Address(search_ip))
+    <span class="hljs-keyword">except</span>:
+        <span class="hljs-keyword">return</span> <span class="hljs-literal">None</span>
+    left, right = <span class="hljs-number">0</span>, len(intervals) - <span class="hljs-number">1</span>
+    <span class="hljs-keyword">while</span> left &lt;= right:
+        mid = (left + right) // <span class="hljs-number">2</span>
+        start_ip, end_ip, country = intervals[mid]
+        <span class="hljs-keyword">if</span> start_ip &lt;= search_ip &lt;= end_ip:
+            result = country
+            <span class="hljs-keyword">break</span>
+        <span class="hljs-keyword">elif</span> start_ip &gt; search_ip:
+            right = mid - <span class="hljs-number">1</span>
+        <span class="hljs-keyword">else</span>:
+            left = mid + <span class="hljs-number">1</span>
+    <span class="hljs-keyword">return</span> result
+
+<span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">main</span>():</span>
+    init_database()
+    <span class="hljs-keyword">while</span> <span class="hljs-literal">True</span>:
+        ipv4 = input(<span class="hljs-string">&quot;Insert IPv4: &quot;</span>)
+        r = search(ipv4)
+        print(r)
+
+<span class="hljs-keyword">if</span> __name__ == <span class="hljs-string">&quot;__main__&quot;</span>:
+    main()
+</code></pre>
+<p><img src="/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/9.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Once downloaded from the RIRs, you&#x2019;ll see that around 253,714 IP ranges (covering the roughly 3.7 billion public IPs) exist. That effectively means you can figure out the country of any public IP. Interestingly, the program I wrote above seems to perform 30&#x2013;250 times faster lookups than queries using <code>.mmdb</code>.</p>
+<p>My guess is that MMDB might have more granularly subdivided IP ranges and also stores additional data (like ASN), so that could explain the difference.</p>
+<h1 id="&#x2728;-Conclusion"><a href="#&#x2728;-Conclusion" class="headerlink" title="&#x2728; Conclusion"></a>&#x2728; Conclusion</h1><p>RIR data only contains information such as which IP addresses were assigned (e.g., IP block allocations). It doesn&#x2019;t tell you which ASNs those IPs belong to. To figure that out, you&#x2019;d need to collect data from BGP (Border Gateway Protocol) tables. Because this post has already grown quite long, I&#x2019;ll continue this topic in a future article.</p>
+<p>For sanity&#x2019;s sake, I personally recommend regularly downloading an <code>.mmdb</code> file from ipinfo or another provider, if feasible.</p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/empty/">empty</a>
+                  
+                  <a class="hover-with-bg" href="/tags/research/">research</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Network/">Network</a>
+                  
+                  <a class="hover-with-bg" href="/tags/RIR/">RIR</a>
+                  
+                  <a class="hover-with-bg" href="/tags/IP/">IP</a>
+                  
+                  <a class="hover-with-bg" href="/tags/ipwhois/">ipwhois</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_empty.jpg" srcset="/img/loading.gif" alt="empty">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">empty</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/empty">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/03/05/ogu123/cve-2025-0693/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2025-0693: AWS IAM의 Timing Attack으로 인한 User Enumeration 취약점</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/03/02/empty/Creating_an_IP_Country_Information_Database_KO/">
+                    <span class="hidden-mobile">[Research] IP 국가 정보 데이터베이스 만들기 (ko)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/';
+        this.page.identifier = '/2025/03/02/empty/Creating_an_IP_Country_Information_Database_EN/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] Creating an IP Country Information Database (en)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>

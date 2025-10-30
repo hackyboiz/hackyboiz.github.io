@@ -1,0 +1,1312 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;h1 id=&#34;&amp;#x1F44B;-Prologue&#34;&gt;&lt;a href=&#34;#&amp;#x1F44B;-Prologue&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F44B; Prologue&#34;&gt;&lt;/a&gt;&amp;#x1F44B; Prologue&lt;/h1&gt;&lt;p&gt;In my previous post, &lt;a href=&#34;https://hackyboiz.github.io/2025/03/02/empty/Creating_an_IP_Country_Information_Database_KO/&#34;&gt;Building an IP-to-Country Database&lt;/a&gt;, we created a program that uses the RIR &lt;em&gt;delegated-&lt;/em&gt;.csv* files to map IP addresses to countries. But in real-world operations, country data alone often isn&amp;#x2019;t enough to make informed decisions.&lt;/p&gt;
+&lt;p&gt;Consider a few examples:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Malicious IPs&lt;/strong&gt; can&amp;#x2019;t be reliably distinguished as cloud-hosted or residential, risking false positives and overblocking.&lt;/li&gt;
+&lt;li&gt;You can&amp;#x2019;t pivot to additional threats lurking within the same AS, hampering threat-hunting efforts.&lt;/li&gt;
+&lt;li&gt;You can&amp;#x2019;t group indicators by CIDR or AS to block attacker infrastructure in bulk.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;In short, when assessing an IP, you need more than just its country; you need auxiliary indicators as well. One of the most widely used is AS (Autonomous System) information, which can be gathered via BGP (Border Gateway Protocol). In this post, we&amp;#x2019;ll explore practical ways to obtain and use AS data through BGP.&lt;/p&gt;
+&lt;h1 id=&#34;&amp;#x1F310;-Autonomous-System&#34;&gt;&lt;a href=&#34;#&amp;#x1F310;-Autonomous-System&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F310; Autonomous System&#34;&gt;&lt;/a&gt;&amp;#x1F310; Autonomous System&lt;/h1&gt;&lt;p&gt;The Internet we use is a collection of logical networks called Autonomous Systems (ASes). Each AS represents a network domain operated independently by an ISP, enterprise, or public organization, and the interconnection of these ASes forms the global Internet.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image00.png&#34; alt=&#34;png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.wallarm.com/what/bgp-routing-explanation&#34;&gt;https://www.wallarm.com/what/bgp-routing-explanation&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;For example, the IP address I use at home 124.54.178.xxx belongs to &lt;strong&gt;AS17858&lt;/strong&gt;, which is operated by LG Powercom (now LG Uplus). AS17858 contains roughly ten million IP addresses, divided into 207 individual prefixes.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image01.png&#34; alt=&#34;png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;AS numbers are managed as 4-byte integers, so values from &lt;strong&gt;AS1 up to AS 4,294,967,296 are reserved&lt;/strong&gt;. Like IP addresses, these numbers are administered by Regional Internet Registries (RIRs). In Korea, you can request your own unique ASN from the Korea Internet &amp;amp; Security Agency (KISA) once you meet the following requirements:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Operate infrastructure capable of running an independent network on the Internet&lt;/li&gt;
+&lt;li&gt;Be connected to&amp;#x2014;or have concrete plans to connect to two or more distinct networks&lt;/li&gt;
+&lt;li&gt;Be able to set and manage your own routing policies autonomously&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image02.png&#34; alt=&#34;png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;If you satisfy these criteria, &lt;strong&gt;individuals can also receive and operate an ASN&lt;/strong&gt;. One real-world example is &lt;strong&gt;AS 215343&lt;/strong&gt;, a network run by &lt;strong&gt;Minjae Kim&lt;/strong&gt; for research purposes. Interestingly, this ASN was assigned not by KISA but by the European RIR, &lt;strong&gt;RIPE NCC&lt;/strong&gt;&amp;#x2014;the exact reason isn&amp;#x2019;t publicly documented.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image03.png&#34; alt=&#34;png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Description of AS 215343: &lt;a href=&#34;https://prezi.com/p/uh9o2mavv3x2/as215343-isp/&#34;&gt;https://prezi.com/p/uh9o2mavv3x2/as215343-isp/&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h1 id=&#34;&amp;#x1F697;-BGP-Border-Gateway-Protocol&#34;&gt;&lt;a href=&#34;#&amp;#x1F697;-BGP-Border-Gateway-Protocol&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F697; BGP(Border Gateway Protocol)&#34;&gt;&lt;/a&gt;&lt;strong&gt;&amp;#x1F697;&lt;/strong&gt; BGP(Border Gateway Protocol)&lt;/h1&gt;&lt;p&gt;To send traffic to an AS that isn&amp;#x2019;t directly connected to yours, the routers in between need route information that tells them which ASes to traverse. &lt;strong&gt;BGP (Border Gateway Protocol)&lt;/strong&gt; is the Internet-standard routing protocol that lets neighboring ASes exchange this path information, so each router can choose the best route according to local policy.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image04.png&#34; alt=&#34;png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;a href=&#34;https://devopedia.org/border-gateway-protocol&#34;&gt;https://devopedia.org/border-gateway-protocol&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Depending on whether the exchange happens inside or outside an AS, BGP is classified as &lt;strong&gt;IBGP (Internal BGP)&lt;/strong&gt; or &lt;strong&gt;EBGP (External BGP)&lt;/strong&gt;. Routers in each AS &lt;em&gt;announce&lt;/em&gt; messages like the one below to their peers so everyone can find the optimal path (the &lt;strong&gt;AS Path&lt;/strong&gt;).&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;TIME: 07/10/25 14:00:00
+TYPE: TABLE_DUMP_V2/IPV4_UNICAST
+PREFIX: 3.166.152.0/23
+SEQUENCE: 7558
+FROM: 45.83.33.27 AS208821
+ORIGINATED: 07/09/25 00:01:40
+ORIGIN: IGP
+ASPATH: 208821 206119 9121 1299 16509
+NEXT_HOP: 45.83.33.27
+COMMUNITY: 1299:35000 9121:50000 9121:50008&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Key fields in a BGP update include:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;PREFIX:&lt;/strong&gt; the announced network (CIDR block)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;FROM:&lt;/strong&gt; IP address and AS number of the peer that sent this route&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;ORIGIN:&lt;/strong&gt; route origin attribute&amp;#x2014;&lt;em&gt;IGP&lt;/em&gt;, &lt;em&gt;EGP&lt;/em&gt;, or &lt;em&gt;INCOMPLETE&lt;/em&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;AS PATH:&lt;/strong&gt; list of AS numbers the route has traversed (leftmost is closest)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;NEXT HOP:&lt;/strong&gt; the actual next-hop IP to forward packets to&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;tells us that packets destined for &lt;strong&gt;3.166.152.0/23&lt;/strong&gt; (origin-AS 16509) should first go to &lt;strong&gt;45.83.33.27&lt;/strong&gt; (AS 208821), and from there traverse &lt;strong&gt;AS 208821 &amp;#x2192; AS 206119 &amp;#x2192; AS 9121 &amp;#x2192; AS 1299 &amp;#x2192; AS 16509&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;A traceroute to &lt;strong&gt;AS 215343 (Minjaes Network)&lt;/strong&gt; from my home connection shows the packets moving through &lt;strong&gt;AS 17858 (LG Powercom) &amp;#x2192; AS 3786 (LG Dacom) &amp;#x2192; AS 4637 (Telstra) &amp;#x2192; AS 20473 (Vultr) &amp;#x2192; AS 215343 (Minjaes Network)&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image05.png&#34; alt=&#34;png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Curiously, although this is traffic from Korea to Korea, it detours through Hong Kong and Japan before returning to Korea. That&amp;#x2019;s because AS 215343 advertises its prefixes via a transit arrangement with &lt;strong&gt;AS 20473&lt;/strong&gt;, and BGP propagates that route, leading to the path we observe.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;em&gt;(Depending on where you capture BGP data, certain hops&amp;#x2014;like AS 4637&amp;#x2014;may not appear.)&lt;/em&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image06.png&#34; alt=&#34;png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&amp;#xCD9C;&amp;#xCC98;: &lt;a href=&#34;https://api.bgpview.io/assets/graphs/AS215343_Combined.svg&#34;&gt;https://api.bgpview.io/assets/graphs/AS215343_Combined.svg&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;In short, BGP works like a global navigation system: every AS advertises the IP prefixes it owns along with path attributes, enabling everyone else to find the best route. In the next section, we&amp;#x2019;ll use this BGP data to &lt;strong&gt;build our own IP-to-Country-and-AS mapping database&lt;/strong&gt;.&lt;/p&gt;
+&lt;h1 id=&#34;&amp;#x1F527;-Building-an-IP-to-Country-Database-Based-on-BGP-Data&#34;&gt;&lt;a href=&#34;#&amp;#x1F527;-Building-an-IP-to-Country-Database-Based-on-BGP-Data&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F527; Building an IP-to-Country Database Based on BGP Data&#34;&gt;&lt;/a&gt;&lt;strong&gt;&amp;#x1F527;&lt;/strong&gt; Building an IP-to-Country Database Based on BGP Data&lt;/h1&gt;&lt;p&gt;Because Autonomous-System numbers are assigned by Regional Internet Registries (RIRs), we will&amp;#x2014;as in Part 1&amp;#x2014;download the allocation files directly from each registry. RIPE&amp;#x2019;s repository, for instance, publishes a daily, comma-separated list containing every AS in the world.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image07.png&#34; alt=&#34;png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;a href=&#34;https://ftp.ripe.net/ripe/asnames/asn.txt&#34;&gt;https://ftp.ripe.net/ripe/asnames/asn.txt&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Border-Gateway-Protocol (BGP) data comes from the &lt;strong&gt;RouteViews Archive&lt;/strong&gt;, a project run by the University of Oregon. RouteViews peers with numerous ISPs, collects their BGP feeds, and makes the data publicly available. The archive has been active since 2001 and still updates every two hours.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image08.png&#34; alt=&#34;png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;a href=&#34;http://ftp.routeviews.org/bgpdata/&#34;&gt;http://ftp.routeviews.org/bgpdata/&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;RouteViews distributes its snapshots in the &lt;strong&gt;MRT (Multi-Threaded Routing Toolkit Routing Information Export Format)&lt;/strong&gt; defined by RFC 6396. MRT is a structured binary format, so you can either process it with the &lt;strong&gt;bgpdump&lt;/strong&gt; tool or write your own parser.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image09.png&#34; alt=&#34;png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;With the raw sources in place, we can build the database using the following workflow:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Download the AS data&lt;/li&gt;
+&lt;li&gt;Parse the AS data&lt;/li&gt;
+&lt;li&gt;Download the BGP archive data&lt;/li&gt;
+&lt;li&gt;Parse the BGP archive data&lt;/li&gt;
+&lt;li&gt;Transform the ASN-to-prefix records (convert IP ranges to integers)&lt;/li&gt;
+&lt;li&gt;Store the ranges in a structure that supports binary search&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Coding these steps will give us a complete IP-to-Country-and-AS mapping database.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# -*- coding: utf-8 -*-&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# builtin modules&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;from&lt;/span&gt; ipaddress &lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; ip_network, IPv4Address
+&lt;span class=&#34;hljs-keyword&#34;&gt;from&lt;/span&gt; datetime &lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; datetime
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; os
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; bz2
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; readline
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# install modules&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; mrtparse
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; requests
+
+intervals=[]
+ASN_TABLE={}
+ASN_INFO_DB = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;asn.txt&amp;quot;&lt;/span&gt;
+IPINFO_DB = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;ipinfo_db.txt&amp;quot;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;search&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;ip&lt;/span&gt;):&lt;/span&gt;
+    result = &lt;span class=&#34;hljs-literal&#34;&gt;None&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt;:
+        search_ip = int(IPv4Address(ip))
+    &lt;span class=&#34;hljs-keyword&#34;&gt;except&lt;/span&gt; Exception &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; e:
+        print(e)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;None&lt;/span&gt;
+    left, right = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, len(intervals) - &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; left &amp;lt;= right:
+        mid = (left + right) // &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+        start_ip, end_ip, asn = intervals[mid]
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; start_ip &amp;lt;= search_ip &amp;lt;= end_ip:
+            result=(start_ip, end_ip, asn)
+            &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;elif&lt;/span&gt; start_ip &amp;gt; search_ip:
+            right = mid - &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;:
+            left = mid + &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; result:
+        start_ip, end_ip, asn = result
+        prefix = &lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;&lt;span class=&#34;hljs-subst&#34;&gt;{IPv4Address(start_ip)}&lt;/span&gt;/&lt;span class=&#34;hljs-subst&#34;&gt;{&lt;span class=&#34;hljs-number&#34;&gt;32&lt;/span&gt; - (end_ip - start_ip).bit_length()}&lt;/span&gt;&amp;quot;&lt;/span&gt;
+        result={ &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;ip&amp;quot;&lt;/span&gt;:ip, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;prefix&amp;quot;&lt;/span&gt;:prefix, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;country&amp;quot;&lt;/span&gt;:&lt;span class=&#34;hljs-literal&#34;&gt;None&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;asn&amp;quot;&lt;/span&gt;:asn, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;asn_description&amp;quot;&lt;/span&gt;:&lt;span class=&#34;hljs-literal&#34;&gt;None&lt;/span&gt; }
+        result.update(ASN_TABLE[asn])
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; result
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; result
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# MRT data parse&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;parse_rib_v4&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;path&lt;/span&gt;):&lt;/span&gt;
+    TDV2_PEER_IDX = mrtparse.TD_V2_ST[&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;PEER_INDEX_TABLE&amp;quot;&lt;/span&gt;]  &lt;span class=&#34;hljs-comment&#34;&gt;# 1&lt;/span&gt;
+    TDV2_RIB_V4 = mrtparse.TD_V2_ST[&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;RIB_IPV4_UNICAST&amp;quot;&lt;/span&gt;]    &lt;span class=&#34;hljs-comment&#34;&gt;# 2&lt;/span&gt;
+    TABLE_DUMP_V2 = mrtparse.MRT_T[&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;TABLE_DUMP_V2&amp;quot;&lt;/span&gt;]        &lt;span class=&#34;hljs-comment&#34;&gt;# 13&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; bz2.open(path, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;rb&amp;quot;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; fd:
+        &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; record &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; mrtparse.Reader(fd):
+            &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; record.err:
+                &lt;span class=&#34;hljs-keyword&#34;&gt;continue&lt;/span&gt;
+            RECORD_TYPE = next(iter(record.data[&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;].keys()))
+            RECORD_SUB_TYPE = next(iter(record.data[&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;subtype&amp;quot;&lt;/span&gt;].keys()))
+            &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (RECORD_TYPE != TABLE_DUMP_V2) &lt;span class=&#34;hljs-keyword&#34;&gt;or&lt;/span&gt; (RECORD_SUB_TYPE != TDV2_RIB_V4):
+                &lt;span class=&#34;hljs-keyword&#34;&gt;continue&lt;/span&gt;
+            prefix = &lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;&lt;span class=&#34;hljs-subst&#34;&gt;{record.data[&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;prefix&amp;apos;&lt;/span&gt;]}&lt;/span&gt;/&lt;span class=&#34;hljs-subst&#34;&gt;{record.data[&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;length&amp;apos;&lt;/span&gt;]}&lt;/span&gt;&amp;quot;&lt;/span&gt;
+            &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; entry &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; record.data[&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;rib_entries&amp;quot;&lt;/span&gt;]:
+                pidx = entry[&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;peer_index&amp;quot;&lt;/span&gt;]
+                as_path_attr = next((a &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; a &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; entry[&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;path_attributes&amp;quot;&lt;/span&gt;] &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; a[&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;]), &lt;span class=&#34;hljs-literal&#34;&gt;None&lt;/span&gt;)
+                path = []
+                &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; as_path_attr:
+                    &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; seg &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; as_path_attr[&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;value&amp;quot;&lt;/span&gt;]:
+                        path.extend(seg[&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;value&amp;quot;&lt;/span&gt;])
+                &lt;span class=&#34;hljs-keyword&#34;&gt;yield&lt;/span&gt; {&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;prefix&amp;quot;&lt;/span&gt;:prefix, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;asn&amp;quot;&lt;/span&gt;:path[&lt;span class=&#34;hljs-number&#34;&gt;-1&lt;/span&gt;]}
+                &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt; &lt;span class=&#34;hljs-comment&#34;&gt;# Since it does not deal with paths, each prefix is processed only once.&lt;/span&gt;
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;download_asn_list&lt;/span&gt;():&lt;/span&gt;
+    r = requests.get(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;https://ftp.ripe.net/ripe/asnames/asn.txt&amp;quot;&lt;/span&gt;)
+    r.raise_for_status()
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; r.status_code == &lt;span class=&#34;hljs-number&#34;&gt;200&lt;/span&gt;:
+        &lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; open(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;asn.txt&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;wb&amp;quot;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; f:
+            f.write(r.content)
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;build_ipinfo_db&lt;/span&gt;():&lt;/span&gt;
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;# When used in practice, the RIB data is updated every 2 hours.&lt;/span&gt;
+    r = requests.get(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;http://ftp.routeviews.org/bgpdata/2025.07/RIBS/rib.20250711.1000.bz2&amp;quot;&lt;/span&gt;)
+    &lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; open(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;rib.20250711.1000.bz2&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;wb&amp;quot;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; f:
+        f.write(r.content)
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; open(IPINFO_DB,&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;a&amp;quot;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; f:
+        &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; record &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; parse_rib_v4(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;rib.20250711.1000.bz2&amp;quot;&lt;/span&gt;):
+            asn = record[&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;asn&amp;apos;&lt;/span&gt;]
+            prefix = ip_network(record[&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;prefix&amp;apos;&lt;/span&gt;])
+            ip_start = int(prefix[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;])
+            ip_end = int(prefix[&lt;span class=&#34;hljs-number&#34;&gt;-1&lt;/span&gt;])
+            f.write(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;&lt;span class=&#34;hljs-subst&#34;&gt;{ip_start}&lt;/span&gt;,&lt;span class=&#34;hljs-subst&#34;&gt;{ip_end}&lt;/span&gt;,&lt;span class=&#34;hljs-subst&#34;&gt;{asn}&lt;/span&gt;\n&amp;quot;&lt;/span&gt;)
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# Load memory&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;init_database&lt;/span&gt;():&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;not&lt;/span&gt; os.path.exists(ASN_INFO_DB):
+        download_asn_list()
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;not&lt;/span&gt; os.path.exists(IPINFO_DB):
+        build_ipinfo_db()
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; open(ASN_INFO_DB, &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;r&amp;apos;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; f:
+        &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; line &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; f:
+            line = line.strip()
+            &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;,&amp;apos;&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;not&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; line:
+                &lt;span class=&#34;hljs-keyword&#34;&gt;continue&lt;/span&gt;
+            asn, description = line.split(&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos; &amp;apos;&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;)
+            description, country = description.rsplit(&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;, &amp;apos;&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;)
+            ASN_TABLE[asn] = {&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;country&amp;quot;&lt;/span&gt;: country, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;asn_description&amp;quot;&lt;/span&gt;: description}
+        print(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;ASN table loadd&amp;quot;&lt;/span&gt;)
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; open(IPINFO_DB, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;r&amp;quot;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; f:
+        &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; line &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; f:
+            start_ip, end_ip, asn = line.strip().split(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;,&amp;quot;&lt;/span&gt;)
+            intervals.append((int(start_ip), int(end_ip), asn))
+    print(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Databse load&amp;quot;&lt;/span&gt;)
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;main&lt;/span&gt;():&lt;/span&gt;
+    init_database()
+    &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;:
+        ip = input(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Search: &amp;quot;&lt;/span&gt;)
+        ip_info=search(ip)
+        print(ip_info)
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; __name__ == &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;__main__&amp;quot;&lt;/span&gt;:
+    main()&lt;/code&gt;&lt;/pre&gt;
+&lt;h1 id=&#34;&amp;#x1F44B;-Final-thoughts&#34;&gt;&lt;a href=&#34;#&amp;#x1F44B;-Final-thoughts&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F44B; Final thoughts&#34;&gt;&lt;/a&gt;&lt;strong&gt;&amp;#x1F44B;&lt;/strong&gt; Final thoughts&lt;/h1&gt;&lt;p&gt;In this article, the IP-lookup tool we built in Part 1 has been upgraded: when you query an IP address it now returns the ASN, prefix, and an ASN description in addition to the country code.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs json&#34;&gt;{
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;ip&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;1.1.1.1&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;prefix&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;1.1.1.0/24&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;country&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;US&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;asn&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;13335&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;asn_description&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;CLOUDFLARENET&amp;quot;&lt;/span&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Compared to the IP information lookup service ipinfo.io, we found that the same basic information is provided.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image10.png&#34; alt=&#34;png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Services like ipinfo.io also offer additional metadata such as physical location, ISP, and indicators of VPN or proxy usage. While such data is built upon each provider&amp;#x2019;s proprietary expertise and technology, the fundamental IP-to-country and AS information is likely generated using a methodology similar to what is introduced in this post.&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] Creating an IP Country Information Database Part2 (With BGP) (en) - hackyboiz">
+  <meta property="og:description" content="&lt;h1 id=&#34;&amp;#x1F44B;-Prologue&#34;&gt;&lt;a href=&#34;#&amp;#x1F44B;-Prologue&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F44B; Prologue&#34;&gt;&lt;/a&gt;&amp;#x1F44B; Prologue&lt;/h1&gt;&lt;p&gt;In my previous post, &lt;a href=&#34;https://hackyboiz.github.io/2025/03/02/empty/Creating_an_IP_Country_Information_Database_KO/&#34;&gt;Building an IP-to-Country Database&lt;/a&gt;, we created a program that uses the RIR &lt;em&gt;delegated-&lt;/em&gt;.csv* files to map IP addresses to countries. But in real-world operations, country data alone often isn&amp;#x2019;t enough to make informed decisions.&lt;/p&gt;
+&lt;p&gt;Consider a few examples:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Malicious IPs&lt;/strong&gt; can&amp;#x2019;t be reliably distinguished as cloud-hosted or residential, risking false positives and overblocking.&lt;/li&gt;
+&lt;li&gt;You can&amp;#x2019;t pivot to additional threats lurking within the same AS, hampering threat-hunting efforts.&lt;/li&gt;
+&lt;li&gt;You can&amp;#x2019;t group indicators by CIDR or AS to block attacker infrastructure in bulk.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;In short, when assessing an IP, you need more than just its country; you need auxiliary indicators as well. One of the most widely used is AS (Autonomous System) information, which can be gathered via BGP (Border Gateway Protocol). In this post, we&amp;#x2019;ll explore practical ways to obtain and use AS data through BGP.&lt;/p&gt;
+&lt;h1 id=&#34;&amp;#x1F310;-Autonomous-System&#34;&gt;&lt;a href=&#34;#&amp;#x1F310;-Autonomous-System&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F310; Autonomous System&#34;&gt;&lt;/a&gt;&amp;#x1F310; Autonomous System&lt;/h1&gt;&lt;p&gt;The Internet we use is a collection of logical networks called Autonomous Systems (ASes). Each AS represents a network domain operated independently by an ISP, enterprise, or public organization, and the interconnection of these ASes forms the global Internet.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image00.png&#34; alt=&#34;png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.wallarm.com/what/bgp-routing-explanation&#34;&gt;https://www.wallarm.com/what/bgp-routing-explanation&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;For example, the IP address I use at home 124.54.178.xxx belongs to &lt;strong&gt;AS17858&lt;/strong&gt;, which is operated by LG Powercom (now LG Uplus). AS17858 contains roughly ten million IP addresses, divided into 207 individual prefixes.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image01.png&#34; alt=&#34;png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;AS numbers are managed as 4-byte integers, so values from &lt;strong&gt;AS1 up to AS 4,294,967,296 are reserved&lt;/strong&gt;. Like IP addresses, these numbers are administered by Regional Internet Registries (RIRs). In Korea, you can request your own unique ASN from the Korea Internet &amp;amp; Security Agency (KISA) once you meet the following requirements:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Operate infrastructure capable of running an independent network on the Internet&lt;/li&gt;
+&lt;li&gt;Be connected to&amp;#x2014;or have concrete plans to connect to two or more distinct networks&lt;/li&gt;
+&lt;li&gt;Be able to set and manage your own routing policies autonomously&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image02.png&#34; alt=&#34;png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;If you satisfy these criteria, &lt;strong&gt;individuals can also receive and operate an ASN&lt;/strong&gt;. One real-world example is &lt;strong&gt;AS 215343&lt;/strong&gt;, a network run by &lt;strong&gt;Minjae Kim&lt;/strong&gt; for research purposes. Interestingly, this ASN was assigned not by KISA but by the European RIR, &lt;strong&gt;RIPE NCC&lt;/strong&gt;&amp;#x2014;the exact reason isn&amp;#x2019;t publicly documented.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image03.png&#34; alt=&#34;png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Description of AS 215343: &lt;a href=&#34;https://prezi.com/p/uh9o2mavv3x2/as215343-isp/&#34;&gt;https://prezi.com/p/uh9o2mavv3x2/as215343-isp/&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h1 id=&#34;&amp;#x1F697;-BGP-Border-Gateway-Protocol&#34;&gt;&lt;a href=&#34;#&amp;#x1F697;-BGP-Border-Gateway-Protocol&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F697; BGP(Border Gateway Protocol)&#34;&gt;&lt;/a&gt;&lt;strong&gt;&amp;#x1F697;&lt;/strong&gt; BGP(Border Gateway Protocol)&lt;/h1&gt;&lt;p&gt;To send traffic to an AS that isn&amp;#x2019;t directly connected to yours, the routers in between need route information that tells them which ASes to traverse. &lt;strong&gt;BGP (Border Gateway Protocol)&lt;/strong&gt; is the Internet-standard routing protocol that lets neighboring ASes exchange this path information, so each router can choose the best route according to local policy.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image04.png&#34; alt=&#34;png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;a href=&#34;https://devopedia.org/border-gateway-protocol&#34;&gt;https://devopedia.org/border-gateway-protocol&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Depending on whether the exchange happens inside or outside an AS, BGP is classified as &lt;strong&gt;IBGP (Internal BGP)&lt;/strong&gt; or &lt;strong&gt;EBGP (External BGP)&lt;/strong&gt;. Routers in each AS &lt;em&gt;announce&lt;/em&gt; messages like the one below to their peers so everyone can find the optimal path (the &lt;strong&gt;AS Path&lt;/strong&gt;).&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;TIME: 07/10/25 14:00:00
+TYPE: TABLE_DUMP_V2/IPV4_UNICAST
+PREFIX: 3.166.152.0/23
+SEQUENCE: 7558
+FROM: 45.83.33.27 AS208821
+ORIGINATED: 07/09/25 00:01:40
+ORIGIN: IGP
+ASPATH: 208821 206119 9121 1299 16509
+NEXT_HOP: 45.83.33.27
+COMMUNITY: 1299:35000 9121:50000 9121:50008&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Key fields in a BGP update include:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;PREFIX:&lt;/strong&gt; the announced network (CIDR block)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;FROM:&lt;/strong&gt; IP address and AS number of the peer that sent this route&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;ORIGIN:&lt;/strong&gt; route origin attribute&amp;#x2014;&lt;em&gt;IGP&lt;/em&gt;, &lt;em&gt;EGP&lt;/em&gt;, or &lt;em&gt;INCOMPLETE&lt;/em&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;AS PATH:&lt;/strong&gt; list of AS numbers the route has traversed (leftmost is closest)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;NEXT HOP:&lt;/strong&gt; the actual next-hop IP to forward packets to&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;tells us that packets destined for &lt;strong&gt;3.166.152.0/23&lt;/strong&gt; (origin-AS 16509) should first go to &lt;strong&gt;45.83.33.27&lt;/strong&gt; (AS 208821), and from there traverse &lt;strong&gt;AS 208821 &amp;#x2192; AS 206119 &amp;#x2192; AS 9121 &amp;#x2192; AS 1299 &amp;#x2192; AS 16509&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;A traceroute to &lt;strong&gt;AS 215343 (Minjaes Network)&lt;/strong&gt; from my home connection shows the packets moving through &lt;strong&gt;AS 17858 (LG Powercom) &amp;#x2192; AS 3786 (LG Dacom) &amp;#x2192; AS 4637 (Telstra) &amp;#x2192; AS 20473 (Vultr) &amp;#x2192; AS 215343 (Minjaes Network)&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image05.png&#34; alt=&#34;png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Curiously, although this is traffic from Korea to Korea, it detours through Hong Kong and Japan before returning to Korea. That&amp;#x2019;s because AS 215343 advertises its prefixes via a transit arrangement with &lt;strong&gt;AS 20473&lt;/strong&gt;, and BGP propagates that route, leading to the path we observe.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;em&gt;(Depending on where you capture BGP data, certain hops&amp;#x2014;like AS 4637&amp;#x2014;may not appear.)&lt;/em&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image06.png&#34; alt=&#34;png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&amp;#xCD9C;&amp;#xCC98;: &lt;a href=&#34;https://api.bgpview.io/assets/graphs/AS215343_Combined.svg&#34;&gt;https://api.bgpview.io/assets/graphs/AS215343_Combined.svg&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;In short, BGP works like a global navigation system: every AS advertises the IP prefixes it owns along with path attributes, enabling everyone else to find the best route. In the next section, we&amp;#x2019;ll use this BGP data to &lt;strong&gt;build our own IP-to-Country-and-AS mapping database&lt;/strong&gt;.&lt;/p&gt;
+&lt;h1 id=&#34;&amp;#x1F527;-Building-an-IP-to-Country-Database-Based-on-BGP-Data&#34;&gt;&lt;a href=&#34;#&amp;#x1F527;-Building-an-IP-to-Country-Database-Based-on-BGP-Data&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F527; Building an IP-to-Country Database Based on BGP Data&#34;&gt;&lt;/a&gt;&lt;strong&gt;&amp;#x1F527;&lt;/strong&gt; Building an IP-to-Country Database Based on BGP Data&lt;/h1&gt;&lt;p&gt;Because Autonomous-System numbers are assigned by Regional Internet Registries (RIRs), we will&amp;#x2014;as in Part 1&amp;#x2014;download the allocation files directly from each registry. RIPE&amp;#x2019;s repository, for instance, publishes a daily, comma-separated list containing every AS in the world.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image07.png&#34; alt=&#34;png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;a href=&#34;https://ftp.ripe.net/ripe/asnames/asn.txt&#34;&gt;https://ftp.ripe.net/ripe/asnames/asn.txt&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Border-Gateway-Protocol (BGP) data comes from the &lt;strong&gt;RouteViews Archive&lt;/strong&gt;, a project run by the University of Oregon. RouteViews peers with numerous ISPs, collects their BGP feeds, and makes the data publicly available. The archive has been active since 2001 and still updates every two hours.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image08.png&#34; alt=&#34;png&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;a href=&#34;http://ftp.routeviews.org/bgpdata/&#34;&gt;http://ftp.routeviews.org/bgpdata/&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;RouteViews distributes its snapshots in the &lt;strong&gt;MRT (Multi-Threaded Routing Toolkit Routing Information Export Format)&lt;/strong&gt; defined by RFC 6396. MRT is a structured binary format, so you can either process it with the &lt;strong&gt;bgpdump&lt;/strong&gt; tool or write your own parser.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image09.png&#34; alt=&#34;png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;With the raw sources in place, we can build the database using the following workflow:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Download the AS data&lt;/li&gt;
+&lt;li&gt;Parse the AS data&lt;/li&gt;
+&lt;li&gt;Download the BGP archive data&lt;/li&gt;
+&lt;li&gt;Parse the BGP archive data&lt;/li&gt;
+&lt;li&gt;Transform the ASN-to-prefix records (convert IP ranges to integers)&lt;/li&gt;
+&lt;li&gt;Store the ranges in a structure that supports binary search&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Coding these steps will give us a complete IP-to-Country-and-AS mapping database.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# -*- coding: utf-8 -*-&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# builtin modules&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;from&lt;/span&gt; ipaddress &lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; ip_network, IPv4Address
+&lt;span class=&#34;hljs-keyword&#34;&gt;from&lt;/span&gt; datetime &lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; datetime
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; os
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; bz2
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; readline
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# install modules&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; mrtparse
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; requests
+
+intervals=[]
+ASN_TABLE={}
+ASN_INFO_DB = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;asn.txt&amp;quot;&lt;/span&gt;
+IPINFO_DB = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;ipinfo_db.txt&amp;quot;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;search&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;ip&lt;/span&gt;):&lt;/span&gt;
+    result = &lt;span class=&#34;hljs-literal&#34;&gt;None&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt;:
+        search_ip = int(IPv4Address(ip))
+    &lt;span class=&#34;hljs-keyword&#34;&gt;except&lt;/span&gt; Exception &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; e:
+        print(e)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;None&lt;/span&gt;
+    left, right = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, len(intervals) - &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; left &amp;lt;= right:
+        mid = (left + right) // &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+        start_ip, end_ip, asn = intervals[mid]
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; start_ip &amp;lt;= search_ip &amp;lt;= end_ip:
+            result=(start_ip, end_ip, asn)
+            &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;elif&lt;/span&gt; start_ip &amp;gt; search_ip:
+            right = mid - &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;:
+            left = mid + &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; result:
+        start_ip, end_ip, asn = result
+        prefix = &lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;&lt;span class=&#34;hljs-subst&#34;&gt;{IPv4Address(start_ip)}&lt;/span&gt;/&lt;span class=&#34;hljs-subst&#34;&gt;{&lt;span class=&#34;hljs-number&#34;&gt;32&lt;/span&gt; - (end_ip - start_ip).bit_length()}&lt;/span&gt;&amp;quot;&lt;/span&gt;
+        result={ &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;ip&amp;quot;&lt;/span&gt;:ip, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;prefix&amp;quot;&lt;/span&gt;:prefix, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;country&amp;quot;&lt;/span&gt;:&lt;span class=&#34;hljs-literal&#34;&gt;None&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;asn&amp;quot;&lt;/span&gt;:asn, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;asn_description&amp;quot;&lt;/span&gt;:&lt;span class=&#34;hljs-literal&#34;&gt;None&lt;/span&gt; }
+        result.update(ASN_TABLE[asn])
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; result
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; result
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# MRT data parse&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;parse_rib_v4&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;path&lt;/span&gt;):&lt;/span&gt;
+    TDV2_PEER_IDX = mrtparse.TD_V2_ST[&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;PEER_INDEX_TABLE&amp;quot;&lt;/span&gt;]  &lt;span class=&#34;hljs-comment&#34;&gt;# 1&lt;/span&gt;
+    TDV2_RIB_V4 = mrtparse.TD_V2_ST[&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;RIB_IPV4_UNICAST&amp;quot;&lt;/span&gt;]    &lt;span class=&#34;hljs-comment&#34;&gt;# 2&lt;/span&gt;
+    TABLE_DUMP_V2 = mrtparse.MRT_T[&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;TABLE_DUMP_V2&amp;quot;&lt;/span&gt;]        &lt;span class=&#34;hljs-comment&#34;&gt;# 13&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; bz2.open(path, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;rb&amp;quot;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; fd:
+        &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; record &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; mrtparse.Reader(fd):
+            &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; record.err:
+                &lt;span class=&#34;hljs-keyword&#34;&gt;continue&lt;/span&gt;
+            RECORD_TYPE = next(iter(record.data[&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;].keys()))
+            RECORD_SUB_TYPE = next(iter(record.data[&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;subtype&amp;quot;&lt;/span&gt;].keys()))
+            &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (RECORD_TYPE != TABLE_DUMP_V2) &lt;span class=&#34;hljs-keyword&#34;&gt;or&lt;/span&gt; (RECORD_SUB_TYPE != TDV2_RIB_V4):
+                &lt;span class=&#34;hljs-keyword&#34;&gt;continue&lt;/span&gt;
+            prefix = &lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;&lt;span class=&#34;hljs-subst&#34;&gt;{record.data[&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;prefix&amp;apos;&lt;/span&gt;]}&lt;/span&gt;/&lt;span class=&#34;hljs-subst&#34;&gt;{record.data[&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;length&amp;apos;&lt;/span&gt;]}&lt;/span&gt;&amp;quot;&lt;/span&gt;
+            &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; entry &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; record.data[&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;rib_entries&amp;quot;&lt;/span&gt;]:
+                pidx = entry[&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;peer_index&amp;quot;&lt;/span&gt;]
+                as_path_attr = next((a &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; a &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; entry[&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;path_attributes&amp;quot;&lt;/span&gt;] &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; a[&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;]), &lt;span class=&#34;hljs-literal&#34;&gt;None&lt;/span&gt;)
+                path = []
+                &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; as_path_attr:
+                    &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; seg &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; as_path_attr[&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;value&amp;quot;&lt;/span&gt;]:
+                        path.extend(seg[&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;value&amp;quot;&lt;/span&gt;])
+                &lt;span class=&#34;hljs-keyword&#34;&gt;yield&lt;/span&gt; {&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;prefix&amp;quot;&lt;/span&gt;:prefix, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;asn&amp;quot;&lt;/span&gt;:path[&lt;span class=&#34;hljs-number&#34;&gt;-1&lt;/span&gt;]}
+                &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt; &lt;span class=&#34;hljs-comment&#34;&gt;# Since it does not deal with paths, each prefix is processed only once.&lt;/span&gt;
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;download_asn_list&lt;/span&gt;():&lt;/span&gt;
+    r = requests.get(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;https://ftp.ripe.net/ripe/asnames/asn.txt&amp;quot;&lt;/span&gt;)
+    r.raise_for_status()
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; r.status_code == &lt;span class=&#34;hljs-number&#34;&gt;200&lt;/span&gt;:
+        &lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; open(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;asn.txt&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;wb&amp;quot;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; f:
+            f.write(r.content)
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;build_ipinfo_db&lt;/span&gt;():&lt;/span&gt;
+
+    &lt;span class=&#34;hljs-comment&#34;&gt;# When used in practice, the RIB data is updated every 2 hours.&lt;/span&gt;
+    r = requests.get(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;http://ftp.routeviews.org/bgpdata/2025.07/RIBS/rib.20250711.1000.bz2&amp;quot;&lt;/span&gt;)
+    &lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; open(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;rib.20250711.1000.bz2&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;wb&amp;quot;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; f:
+        f.write(r.content)
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; open(IPINFO_DB,&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;a&amp;quot;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; f:
+        &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; record &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; parse_rib_v4(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;rib.20250711.1000.bz2&amp;quot;&lt;/span&gt;):
+            asn = record[&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;asn&amp;apos;&lt;/span&gt;]
+            prefix = ip_network(record[&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;prefix&amp;apos;&lt;/span&gt;])
+            ip_start = int(prefix[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;])
+            ip_end = int(prefix[&lt;span class=&#34;hljs-number&#34;&gt;-1&lt;/span&gt;])
+            f.write(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;&lt;span class=&#34;hljs-subst&#34;&gt;{ip_start}&lt;/span&gt;,&lt;span class=&#34;hljs-subst&#34;&gt;{ip_end}&lt;/span&gt;,&lt;span class=&#34;hljs-subst&#34;&gt;{asn}&lt;/span&gt;\n&amp;quot;&lt;/span&gt;)
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# Load memory&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;init_database&lt;/span&gt;():&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;not&lt;/span&gt; os.path.exists(ASN_INFO_DB):
+        download_asn_list()
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;not&lt;/span&gt; os.path.exists(IPINFO_DB):
+        build_ipinfo_db()
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; open(ASN_INFO_DB, &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;r&amp;apos;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; f:
+        &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; line &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; f:
+            line = line.strip()
+            &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;,&amp;apos;&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;not&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; line:
+                &lt;span class=&#34;hljs-keyword&#34;&gt;continue&lt;/span&gt;
+            asn, description = line.split(&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos; &amp;apos;&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;)
+            description, country = description.rsplit(&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;, &amp;apos;&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;)
+            ASN_TABLE[asn] = {&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;country&amp;quot;&lt;/span&gt;: country, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;asn_description&amp;quot;&lt;/span&gt;: description}
+        print(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;ASN table loadd&amp;quot;&lt;/span&gt;)
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; open(IPINFO_DB, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;r&amp;quot;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; f:
+        &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; line &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; f:
+            start_ip, end_ip, asn = line.strip().split(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;,&amp;quot;&lt;/span&gt;)
+            intervals.append((int(start_ip), int(end_ip), asn))
+    print(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Databse load&amp;quot;&lt;/span&gt;)
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;main&lt;/span&gt;():&lt;/span&gt;
+    init_database()
+    &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;:
+        ip = input(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Search: &amp;quot;&lt;/span&gt;)
+        ip_info=search(ip)
+        print(ip_info)
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; __name__ == &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;__main__&amp;quot;&lt;/span&gt;:
+    main()&lt;/code&gt;&lt;/pre&gt;
+&lt;h1 id=&#34;&amp;#x1F44B;-Final-thoughts&#34;&gt;&lt;a href=&#34;#&amp;#x1F44B;-Final-thoughts&#34; class=&#34;headerlink&#34; title=&#34;&amp;#x1F44B; Final thoughts&#34;&gt;&lt;/a&gt;&lt;strong&gt;&amp;#x1F44B;&lt;/strong&gt; Final thoughts&lt;/h1&gt;&lt;p&gt;In this article, the IP-lookup tool we built in Part 1 has been upgraded: when you query an IP address it now returns the ASN, prefix, and an ASN description in addition to the country code.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs json&#34;&gt;{
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;ip&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;1.1.1.1&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;prefix&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;1.1.1.0/24&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;country&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;US&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;asn&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;13335&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;asn_description&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;CLOUDFLARENET&amp;quot;&lt;/span&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Compared to the IP information lookup service ipinfo.io, we found that the same basic information is provided.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image10.png&#34; alt=&#34;png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Services like ipinfo.io also offer additional metadata such as physical location, ISP, and indicators of VPN or proxy usage. While such data is built upon each provider&amp;#x2019;s proprietary expertise and technology, the fundamental IP-to-country and AS information is likely generated using a methodology similar to what is introduced in this post.&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/thumb_en.jpg">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/07/27/empty/creating_an_ip_country_information_database_part2_en/">
+
+  <title>[Research] Creating an IP Country Information Database Part2 (With BGP) (en) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-07-27 23:00" pubdate>
+      2025년 7월 27일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      1.8k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      35
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] Creating an IP Country Information Database Part2 (With BGP) (en)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <h1 id="&#x1F44B;-Prologue"><a href="#&#x1F44B;-Prologue" class="headerlink" title="&#x1F44B; Prologue"></a>&#x1F44B; Prologue</h1><p>In my previous post, <a href="https://hackyboiz.github.io/2025/03/02/empty/Creating_an_IP_Country_Information_Database_KO/">Building an IP-to-Country Database</a>, we created a program that uses the RIR <em>delegated-</em>.csv* files to map IP addresses to countries. But in real-world operations, country data alone often isn&#x2019;t enough to make informed decisions.</p>
+<p>Consider a few examples:</p>
+<ul>
+<li><strong>Malicious IPs</strong> can&#x2019;t be reliably distinguished as cloud-hosted or residential, risking false positives and overblocking.</li>
+<li>You can&#x2019;t pivot to additional threats lurking within the same AS, hampering threat-hunting efforts.</li>
+<li>You can&#x2019;t group indicators by CIDR or AS to block attacker infrastructure in bulk.</li>
+</ul>
+<p>In short, when assessing an IP, you need more than just its country; you need auxiliary indicators as well. One of the most widely used is AS (Autonomous System) information, which can be gathered via BGP (Border Gateway Protocol). In this post, we&#x2019;ll explore practical ways to obtain and use AS data through BGP.</p>
+<h1 id="&#x1F310;-Autonomous-System"><a href="#&#x1F310;-Autonomous-System" class="headerlink" title="&#x1F310; Autonomous System"></a>&#x1F310; Autonomous System</h1><p>The Internet we use is a collection of logical networks called Autonomous Systems (ASes). Each AS represents a network domain operated independently by an ISP, enterprise, or public organization, and the interconnection of these ASes forms the global Internet.</p>
+<p><img src="/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image00.png" srcset="/img/loading.gif" alt="png"></p>
+<blockquote>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.wallarm.com/what/bgp-routing-explanation">https://www.wallarm.com/what/bgp-routing-explanation</a></p>
+</blockquote>
+<p>For example, the IP address I use at home 124.54.178.xxx belongs to <strong>AS17858</strong>, which is operated by LG Powercom (now LG Uplus). AS17858 contains roughly ten million IP addresses, divided into 207 individual prefixes.</p>
+<p><img src="/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image01.png" srcset="/img/loading.gif" alt="png"></p>
+<p>AS numbers are managed as 4-byte integers, so values from <strong>AS1 up to AS 4,294,967,296 are reserved</strong>. Like IP addresses, these numbers are administered by Regional Internet Registries (RIRs). In Korea, you can request your own unique ASN from the Korea Internet &amp; Security Agency (KISA) once you meet the following requirements:</p>
+<ul>
+<li>Operate infrastructure capable of running an independent network on the Internet</li>
+<li>Be connected to&#x2014;or have concrete plans to connect to two or more distinct networks</li>
+<li>Be able to set and manage your own routing policies autonomously</li>
+</ul>
+<p><img src="/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image02.png" srcset="/img/loading.gif" alt="png"></p>
+<p>If you satisfy these criteria, <strong>individuals can also receive and operate an ASN</strong>. One real-world example is <strong>AS 215343</strong>, a network run by <strong>Minjae Kim</strong> for research purposes. Interestingly, this ASN was assigned not by KISA but by the European RIR, <strong>RIPE NCC</strong>&#x2014;the exact reason isn&#x2019;t publicly documented.</p>
+<p><img src="/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image03.png" srcset="/img/loading.gif" alt="png"></p>
+<blockquote>
+<p>Description of AS 215343: <a target="_blank" rel="external nofollow noopener noreferrer" href="https://prezi.com/p/uh9o2mavv3x2/as215343-isp/">https://prezi.com/p/uh9o2mavv3x2/as215343-isp/</a></p>
+</blockquote>
+<h1 id="&#x1F697;-BGP-Border-Gateway-Protocol"><a href="#&#x1F697;-BGP-Border-Gateway-Protocol" class="headerlink" title="&#x1F697; BGP(Border Gateway Protocol)"></a><strong>&#x1F697;</strong> BGP(Border Gateway Protocol)</h1><p>To send traffic to an AS that isn&#x2019;t directly connected to yours, the routers in between need route information that tells them which ASes to traverse. <strong>BGP (Border Gateway Protocol)</strong> is the Internet-standard routing protocol that lets neighboring ASes exchange this path information, so each router can choose the best route according to local policy.</p>
+<p><img src="/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image04.png" srcset="/img/loading.gif" alt="png"></p>
+<blockquote>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://devopedia.org/border-gateway-protocol">https://devopedia.org/border-gateway-protocol</a></p>
+</blockquote>
+<p>Depending on whether the exchange happens inside or outside an AS, BGP is classified as <strong>IBGP (Internal BGP)</strong> or <strong>EBGP (External BGP)</strong>. Routers in each AS <em>announce</em> messages like the one below to their peers so everyone can find the optimal path (the <strong>AS Path</strong>).</p>
+<pre><code class="hljs bash">TIME: 07/10/25 14:00:00
+TYPE: TABLE_DUMP_V2/IPV4_UNICAST
+PREFIX: 3.166.152.0/23
+SEQUENCE: 7558
+FROM: 45.83.33.27 AS208821
+ORIGINATED: 07/09/25 00:01:40
+ORIGIN: IGP
+ASPATH: 208821 206119 9121 1299 16509
+NEXT_HOP: 45.83.33.27
+COMMUNITY: 1299:35000 9121:50000 9121:50008</code></pre>
+<p>Key fields in a BGP update include:</p>
+<ul>
+<li><strong>PREFIX:</strong> the announced network (CIDR block)</li>
+<li><strong>FROM:</strong> IP address and AS number of the peer that sent this route</li>
+<li><strong>ORIGIN:</strong> route origin attribute&#x2014;<em>IGP</em>, <em>EGP</em>, or <em>INCOMPLETE</em></li>
+<li><strong>AS PATH:</strong> list of AS numbers the route has traversed (leftmost is closest)</li>
+<li><strong>NEXT HOP:</strong> the actual next-hop IP to forward packets to</li>
+</ul>
+<p>tells us that packets destined for <strong>3.166.152.0/23</strong> (origin-AS 16509) should first go to <strong>45.83.33.27</strong> (AS 208821), and from there traverse <strong>AS 208821 &#x2192; AS 206119 &#x2192; AS 9121 &#x2192; AS 1299 &#x2192; AS 16509</strong>.</p>
+<p>A traceroute to <strong>AS 215343 (Minjaes Network)</strong> from my home connection shows the packets moving through <strong>AS 17858 (LG Powercom) &#x2192; AS 3786 (LG Dacom) &#x2192; AS 4637 (Telstra) &#x2192; AS 20473 (Vultr) &#x2192; AS 215343 (Minjaes Network)</strong>.</p>
+<p><img src="/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image05.png" srcset="/img/loading.gif" alt="png"></p>
+<p>Curiously, although this is traffic from Korea to Korea, it detours through Hong Kong and Japan before returning to Korea. That&#x2019;s because AS 215343 advertises its prefixes via a transit arrangement with <strong>AS 20473</strong>, and BGP propagates that route, leading to the path we observe.</p>
+<ul>
+<li><em>(Depending on where you capture BGP data, certain hops&#x2014;like AS 4637&#x2014;may not appear.)</em></li>
+</ul>
+<p><img src="/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image06.png" srcset="/img/loading.gif" alt="png"></p>
+<blockquote>
+<p>&#xCD9C;&#xCC98;: <a target="_blank" rel="external nofollow noopener noreferrer" href="https://api.bgpview.io/assets/graphs/AS215343_Combined.svg">https://api.bgpview.io/assets/graphs/AS215343_Combined.svg</a></p>
+</blockquote>
+<p>In short, BGP works like a global navigation system: every AS advertises the IP prefixes it owns along with path attributes, enabling everyone else to find the best route. In the next section, we&#x2019;ll use this BGP data to <strong>build our own IP-to-Country-and-AS mapping database</strong>.</p>
+<h1 id="&#x1F527;-Building-an-IP-to-Country-Database-Based-on-BGP-Data"><a href="#&#x1F527;-Building-an-IP-to-Country-Database-Based-on-BGP-Data" class="headerlink" title="&#x1F527; Building an IP-to-Country Database Based on BGP Data"></a><strong>&#x1F527;</strong> Building an IP-to-Country Database Based on BGP Data</h1><p>Because Autonomous-System numbers are assigned by Regional Internet Registries (RIRs), we will&#x2014;as in Part 1&#x2014;download the allocation files directly from each registry. RIPE&#x2019;s repository, for instance, publishes a daily, comma-separated list containing every AS in the world.</p>
+<p><img src="/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image07.png" srcset="/img/loading.gif" alt="png"></p>
+<blockquote>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://ftp.ripe.net/ripe/asnames/asn.txt">https://ftp.ripe.net/ripe/asnames/asn.txt</a></p>
+</blockquote>
+<p>Border-Gateway-Protocol (BGP) data comes from the <strong>RouteViews Archive</strong>, a project run by the University of Oregon. RouteViews peers with numerous ISPs, collects their BGP feeds, and makes the data publicly available. The archive has been active since 2001 and still updates every two hours.</p>
+<p><img src="/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image08.png" srcset="/img/loading.gif" alt="png"></p>
+<blockquote>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="http://ftp.routeviews.org/bgpdata/">http://ftp.routeviews.org/bgpdata/</a></p>
+</blockquote>
+<p>RouteViews distributes its snapshots in the <strong>MRT (Multi-Threaded Routing Toolkit Routing Information Export Format)</strong> defined by RFC 6396. MRT is a structured binary format, so you can either process it with the <strong>bgpdump</strong> tool or write your own parser.</p>
+<p><img src="/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image09.png" srcset="/img/loading.gif" alt="png"></p>
+<p>With the raw sources in place, we can build the database using the following workflow:</p>
+<ol>
+<li>Download the AS data</li>
+<li>Parse the AS data</li>
+<li>Download the BGP archive data</li>
+<li>Parse the BGP archive data</li>
+<li>Transform the ASN-to-prefix records (convert IP ranges to integers)</li>
+<li>Store the ranges in a structure that supports binary search</li>
+</ol>
+<p>Coding these steps will give us a complete IP-to-Country-and-AS mapping database.</p>
+<pre><code class="hljs python"><span class="hljs-comment"># -*- coding: utf-8 -*-</span>
+
+<span class="hljs-comment"># builtin modules</span>
+<span class="hljs-keyword">from</span> ipaddress <span class="hljs-keyword">import</span> ip_network, IPv4Address
+<span class="hljs-keyword">from</span> datetime <span class="hljs-keyword">import</span> datetime
+
+<span class="hljs-keyword">import</span> os
+<span class="hljs-keyword">import</span> bz2
+<span class="hljs-keyword">import</span> readline
+
+<span class="hljs-comment"># install modules</span>
+<span class="hljs-keyword">import</span> mrtparse
+<span class="hljs-keyword">import</span> requests
+
+intervals=[]
+ASN_TABLE={}
+ASN_INFO_DB = <span class="hljs-string">&quot;asn.txt&quot;</span>
+IPINFO_DB = <span class="hljs-string">&quot;ipinfo_db.txt&quot;</span>
+
+<span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">search</span>(<span class="hljs-params">ip</span>):</span>
+    result = <span class="hljs-literal">None</span>
+    <span class="hljs-keyword">try</span>:
+        search_ip = int(IPv4Address(ip))
+    <span class="hljs-keyword">except</span> Exception <span class="hljs-keyword">as</span> e:
+        print(e)
+        <span class="hljs-keyword">return</span> <span class="hljs-literal">None</span>
+    left, right = <span class="hljs-number">0</span>, len(intervals) - <span class="hljs-number">1</span>
+    <span class="hljs-keyword">while</span> left &lt;= right:
+        mid = (left + right) // <span class="hljs-number">2</span>
+        start_ip, end_ip, asn = intervals[mid]
+        <span class="hljs-keyword">if</span> start_ip &lt;= search_ip &lt;= end_ip:
+            result=(start_ip, end_ip, asn)
+            <span class="hljs-keyword">break</span>
+        <span class="hljs-keyword">elif</span> start_ip &gt; search_ip:
+            right = mid - <span class="hljs-number">1</span>
+        <span class="hljs-keyword">else</span>:
+            left = mid + <span class="hljs-number">1</span>
+    <span class="hljs-keyword">if</span> result:
+        start_ip, end_ip, asn = result
+        prefix = <span class="hljs-string">f&quot;<span class="hljs-subst">{IPv4Address(start_ip)}</span>/<span class="hljs-subst">{<span class="hljs-number">32</span> - (end_ip - start_ip).bit_length()}</span>&quot;</span>
+        result={ <span class="hljs-string">&quot;ip&quot;</span>:ip, <span class="hljs-string">&quot;prefix&quot;</span>:prefix, <span class="hljs-string">&quot;country&quot;</span>:<span class="hljs-literal">None</span>, <span class="hljs-string">&quot;asn&quot;</span>:asn, <span class="hljs-string">&quot;asn_description&quot;</span>:<span class="hljs-literal">None</span> }
+        result.update(ASN_TABLE[asn])
+        <span class="hljs-keyword">return</span> result
+    <span class="hljs-keyword">return</span> result
+
+<span class="hljs-comment"># MRT data parse</span>
+<span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">parse_rib_v4</span>(<span class="hljs-params">path</span>):</span>
+    TDV2_PEER_IDX = mrtparse.TD_V2_ST[<span class="hljs-string">&quot;PEER_INDEX_TABLE&quot;</span>]  <span class="hljs-comment"># 1</span>
+    TDV2_RIB_V4 = mrtparse.TD_V2_ST[<span class="hljs-string">&quot;RIB_IPV4_UNICAST&quot;</span>]    <span class="hljs-comment"># 2</span>
+    TABLE_DUMP_V2 = mrtparse.MRT_T[<span class="hljs-string">&quot;TABLE_DUMP_V2&quot;</span>]        <span class="hljs-comment"># 13</span>
+    <span class="hljs-keyword">with</span> bz2.open(path, <span class="hljs-string">&quot;rb&quot;</span>) <span class="hljs-keyword">as</span> fd:
+        <span class="hljs-keyword">for</span> record <span class="hljs-keyword">in</span> mrtparse.Reader(fd):
+            <span class="hljs-keyword">if</span> record.err:
+                <span class="hljs-keyword">continue</span>
+            RECORD_TYPE = next(iter(record.data[<span class="hljs-string">&quot;type&quot;</span>].keys()))
+            RECORD_SUB_TYPE = next(iter(record.data[<span class="hljs-string">&quot;subtype&quot;</span>].keys()))
+            <span class="hljs-keyword">if</span> (RECORD_TYPE != TABLE_DUMP_V2) <span class="hljs-keyword">or</span> (RECORD_SUB_TYPE != TDV2_RIB_V4):
+                <span class="hljs-keyword">continue</span>
+            prefix = <span class="hljs-string">f&quot;<span class="hljs-subst">{record.data[<span class="hljs-string">&apos;prefix&apos;</span>]}</span>/<span class="hljs-subst">{record.data[<span class="hljs-string">&apos;length&apos;</span>]}</span>&quot;</span>
+            <span class="hljs-keyword">for</span> entry <span class="hljs-keyword">in</span> record.data[<span class="hljs-string">&quot;rib_entries&quot;</span>]:
+                pidx = entry[<span class="hljs-string">&quot;peer_index&quot;</span>]
+                as_path_attr = next((a <span class="hljs-keyword">for</span> a <span class="hljs-keyword">in</span> entry[<span class="hljs-string">&quot;path_attributes&quot;</span>] <span class="hljs-keyword">if</span> <span class="hljs-number">2</span> <span class="hljs-keyword">in</span> a[<span class="hljs-string">&quot;type&quot;</span>]), <span class="hljs-literal">None</span>)
+                path = []
+                <span class="hljs-keyword">if</span> as_path_attr:
+                    <span class="hljs-keyword">for</span> seg <span class="hljs-keyword">in</span> as_path_attr[<span class="hljs-string">&quot;value&quot;</span>]:
+                        path.extend(seg[<span class="hljs-string">&quot;value&quot;</span>])
+                <span class="hljs-keyword">yield</span> {<span class="hljs-string">&quot;prefix&quot;</span>:prefix, <span class="hljs-string">&quot;asn&quot;</span>:path[<span class="hljs-number">-1</span>]}
+                <span class="hljs-keyword">break</span> <span class="hljs-comment"># Since it does not deal with paths, each prefix is processed only once.</span>
+
+<span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">download_asn_list</span>():</span>
+    r = requests.get(<span class="hljs-string">&quot;https://ftp.ripe.net/ripe/asnames/asn.txt&quot;</span>)
+    r.raise_for_status()
+    <span class="hljs-keyword">if</span> r.status_code == <span class="hljs-number">200</span>:
+        <span class="hljs-keyword">with</span> open(<span class="hljs-string">&quot;asn.txt&quot;</span>, <span class="hljs-string">&quot;wb&quot;</span>) <span class="hljs-keyword">as</span> f:
+            f.write(r.content)
+    <span class="hljs-keyword">return</span>
+
+<span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">build_ipinfo_db</span>():</span>
+
+    <span class="hljs-comment"># When used in practice, the RIB data is updated every 2 hours.</span>
+    r = requests.get(<span class="hljs-string">&quot;http://ftp.routeviews.org/bgpdata/2025.07/RIBS/rib.20250711.1000.bz2&quot;</span>)
+    <span class="hljs-keyword">with</span> open(<span class="hljs-string">&quot;rib.20250711.1000.bz2&quot;</span>, <span class="hljs-string">&quot;wb&quot;</span>) <span class="hljs-keyword">as</span> f:
+        f.write(r.content)
+
+    <span class="hljs-keyword">with</span> open(IPINFO_DB,<span class="hljs-string">&quot;a&quot;</span>) <span class="hljs-keyword">as</span> f:
+        <span class="hljs-keyword">for</span> record <span class="hljs-keyword">in</span> parse_rib_v4(<span class="hljs-string">&quot;rib.20250711.1000.bz2&quot;</span>):
+            asn = record[<span class="hljs-string">&apos;asn&apos;</span>]
+            prefix = ip_network(record[<span class="hljs-string">&apos;prefix&apos;</span>])
+            ip_start = int(prefix[<span class="hljs-number">0</span>])
+            ip_end = int(prefix[<span class="hljs-number">-1</span>])
+            f.write(<span class="hljs-string">f&quot;<span class="hljs-subst">{ip_start}</span>,<span class="hljs-subst">{ip_end}</span>,<span class="hljs-subst">{asn}</span>\n&quot;</span>)
+    <span class="hljs-keyword">return</span>
+
+<span class="hljs-comment"># Load memory</span>
+<span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">init_database</span>():</span>
+    <span class="hljs-keyword">if</span> <span class="hljs-keyword">not</span> os.path.exists(ASN_INFO_DB):
+        download_asn_list()
+    <span class="hljs-keyword">if</span> <span class="hljs-keyword">not</span> os.path.exists(IPINFO_DB):
+        build_ipinfo_db()
+
+    <span class="hljs-keyword">with</span> open(ASN_INFO_DB, <span class="hljs-string">&apos;r&apos;</span>) <span class="hljs-keyword">as</span> f:
+        <span class="hljs-keyword">for</span> line <span class="hljs-keyword">in</span> f:
+            line = line.strip()
+            <span class="hljs-keyword">if</span> <span class="hljs-string">&apos;,&apos;</span> <span class="hljs-keyword">not</span> <span class="hljs-keyword">in</span> line:
+                <span class="hljs-keyword">continue</span>
+            asn, description = line.split(<span class="hljs-string">&apos; &apos;</span>, <span class="hljs-number">1</span>)
+            description, country = description.rsplit(<span class="hljs-string">&apos;, &apos;</span>, <span class="hljs-number">1</span>)
+            ASN_TABLE[asn] = {<span class="hljs-string">&quot;country&quot;</span>: country, <span class="hljs-string">&quot;asn_description&quot;</span>: description}
+        print(<span class="hljs-string">&quot;ASN table loadd&quot;</span>)
+
+    <span class="hljs-keyword">with</span> open(IPINFO_DB, <span class="hljs-string">&quot;r&quot;</span>) <span class="hljs-keyword">as</span> f:
+        <span class="hljs-keyword">for</span> line <span class="hljs-keyword">in</span> f:
+            start_ip, end_ip, asn = line.strip().split(<span class="hljs-string">&quot;,&quot;</span>)
+            intervals.append((int(start_ip), int(end_ip), asn))
+    print(<span class="hljs-string">&quot;Databse load&quot;</span>)
+    <span class="hljs-keyword">return</span>
+
+<span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">main</span>():</span>
+    init_database()
+    <span class="hljs-keyword">while</span> <span class="hljs-literal">True</span>:
+        ip = input(<span class="hljs-string">&quot;Search: &quot;</span>)
+        ip_info=search(ip)
+        print(ip_info)
+
+<span class="hljs-keyword">if</span> __name__ == <span class="hljs-string">&quot;__main__&quot;</span>:
+    main()</code></pre>
+<h1 id="&#x1F44B;-Final-thoughts"><a href="#&#x1F44B;-Final-thoughts" class="headerlink" title="&#x1F44B; Final thoughts"></a><strong>&#x1F44B;</strong> Final thoughts</h1><p>In this article, the IP-lookup tool we built in Part 1 has been upgraded: when you query an IP address it now returns the ASN, prefix, and an ASN description in addition to the country code.</p>
+<pre><code class="hljs json">{
+  <span class="hljs-attr">&quot;ip&quot;</span>: <span class="hljs-string">&quot;1.1.1.1&quot;</span>,
+  <span class="hljs-attr">&quot;prefix&quot;</span>: <span class="hljs-string">&quot;1.1.1.0/24&quot;</span>,
+  <span class="hljs-attr">&quot;country&quot;</span>: <span class="hljs-string">&quot;US&quot;</span>,
+  <span class="hljs-attr">&quot;asn&quot;</span>: <span class="hljs-string">&quot;13335&quot;</span>,
+  <span class="hljs-attr">&quot;asn_description&quot;</span>: <span class="hljs-string">&quot;CLOUDFLARENET&quot;</span>
+}</code></pre>
+<p>Compared to the IP information lookup service ipinfo.io, we found that the same basic information is provided.</p>
+<p><img src="/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/image10.png" srcset="/img/loading.gif" alt="png"></p>
+<p>Services like ipinfo.io also offer additional metadata such as physical location, ISP, and indicators of VPN or proxy usage. While such data is built upon each provider&#x2019;s proprietary expertise and technology, the fundamental IP-to-country and AS information is likely generated using a methodology similar to what is introduced in this post.</p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/empty/">empty</a>
+                  
+                  <a class="hover-with-bg" href="/tags/research/">research</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Network/">Network</a>
+                  
+                  <a class="hover-with-bg" href="/tags/RIR/">RIR</a>
+                  
+                  <a class="hover-with-bg" href="/tags/IP/">IP</a>
+                  
+                  <a class="hover-with-bg" href="/tags/ipwhois/">ipwhois</a>
+                  
+                  <a class="hover-with-bg" href="/tags/bgp/">bgp</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_empty.jpg" srcset="/img/loading.gif" alt="empty">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">empty</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/empty">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/07/30/OUYA77/Chrome_part2/kr/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[Research] Type Confusion 101으로 시작하는 Chrome Exploit ^-^☆Part 2.(KR)</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_KO/">
+                    <span class="hidden-mobile">[Research] IP 국가 데이터베이스 만들기 Part 2 (With BGP) (ko)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/';
+        this.page.identifier = '/2025/07/27/empty/Creating_an_IP_Country_Information_Database_Part2_EN/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] Creating an IP Country Information Database Part2 (With BGP) (en)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
