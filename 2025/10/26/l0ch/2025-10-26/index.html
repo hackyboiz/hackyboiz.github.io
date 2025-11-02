@@ -1,0 +1,855 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;h2 id=&#34;URL&#34;&gt;&lt;a href=&#34;#URL&#34; class=&#34;headerlink&#34; title=&#34;URL&#34;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;p&gt;&lt;a href=&#34;https://streypaws.github.io/posts/Dissecting-a-1-Day-Vulnerability-in-Linux-XFRM-Subsystem/&#34;&gt;https://streypaws.github.io/posts/Dissecting-a-1-Day-Vulnerability-in-Linux-XFRM-Subsystem/&lt;/a&gt;&lt;/p&gt;
+&lt;h2 id=&#34;Target&#34;&gt;&lt;a href=&#34;#Target&#34; class=&#34;headerlink&#34; title=&#34;Target&#34;&gt;&lt;/a&gt;Target&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;Ubuntu: &lt;a href=&#34;https://ubuntu.com/security/CVE-2025-39965&#34;&gt;https://ubuntu.com/security/CVE-2025-39965&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Red Hat: &lt;a href=&#34;https://access.redhat.com/security/cve/cve-2025-39965&#34;&gt;https://access.redhat.com/security/cve/cve-2025-39965&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;SUSE: &lt;a href=&#34;https://www.suse.com/security/cve/CVE-2025-39965.html&#34;&gt;https://www.suse.com/security/cve/CVE-2025-39965.html&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Debian: &lt;a href=&#34;https://security-tracker.debian.org/tracker/CVE-2025-39965&#34;&gt;https://security-tracker.debian.org/tracker/CVE-2025-39965&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;Explain&#34;&gt;&lt;a href=&#34;#Explain&#34; class=&#34;headerlink&#34; title=&#34;Explain&#34;&gt;&lt;/a&gt;Explain&lt;/h2&gt;&lt;p&gt;&amp;#xB9AC;&amp;#xB205;&amp;#xC2A4; &amp;#xCEE4;&amp;#xB110;&amp;#xC758; IPsec &amp;#xD504;&amp;#xB85C;&amp;#xD1A0;&amp;#xCF5C;&amp;#xC744; &amp;#xAD6C;&amp;#xD604;&amp;#xD558;&amp;#xB294; XFRM &amp;#xD558;&amp;#xC704; &amp;#xC2DC;&amp;#xC2A4;&amp;#xD15C;&amp;#xC5D0;&amp;#xC11C; &amp;#xBC1C;&amp;#xACAC;&amp;#xB41C; Use-After-Free &amp;#xCDE8;&amp;#xC57D;&amp;#xC810; CVE-2025-39965&amp;#xC5D0; &amp;#xB300;&amp;#xD55C; &amp;#xC138;&amp;#xBD80; &amp;#xC815;&amp;#xBCF4;&amp;#xAC00; &amp;#xACF5;&amp;#xAC1C;&amp;#xB418;&amp;#xC5C8;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;&amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC740; &amp;#xCD5C;&amp;#xADFC; &lt;a href=&#34;https://github.com/torvalds/linux/commit/94f39804d891cffe4ce17737d295f3b195bc7299&#34;&gt;94f39804d891cffe4ce17737d295f3b195bc7299&lt;/a&gt; &amp;#xCEE4;&amp;#xBC0B;&amp;#xC5D0;&amp;#xC11C; &amp;#xBCC0;&amp;#xACBD;&amp;#xB41C; &lt;code&gt;net/xfrm/xfrm_state.c&lt;/code&gt; &amp;#xD30C;&amp;#xC77C;&amp;#xC758; &lt;code&gt;xfrm_alloc_spi&lt;/code&gt; &amp;#xD568;&amp;#xC218;&amp;#xC5D0; &amp;#xC874;&amp;#xC7AC;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;. &amp;#xD574;&amp;#xB2F9; &amp;#xD568;&amp;#xC218;&amp;#xB294; &amp;#xC0AC;&amp;#xC6A9;&amp;#xC790; &amp;#xACF5;&amp;#xAC04;&amp;#xC73C;&amp;#xB85C;&amp;#xBD80;&amp;#xD130; Netlink &amp;#xBA54;&amp;#xC2DC;&amp;#xC9C0;&amp;#xC778; &lt;code&gt;XFRM_MSG_ALLOCSPI&lt;/code&gt;&amp;#xB97C; &amp;#xD1B5;&amp;#xD574; &amp;#xD638;&amp;#xCD9C;&amp;#xB418;&amp;#xBA70;, SPI&amp;#xB97C; &amp;#xD560;&amp;#xB2F9;&amp;#xD558;&amp;#xB294; &amp;#xC5ED;&amp;#xD560;&amp;#xC744; &amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;xfrm_alloc_spi&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(struct xfrm_state *x, u32 low, u32 high,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;		   struct netlink_ext_ack *extack)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+&lt;span class=&#34;hljs-comment&#34;&gt;//... &lt;/span&gt;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (h = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; h &amp;lt; range; h++) {
+    &lt;span class=&#34;hljs-comment&#34;&gt;// Return value of get_random_u32_inclusive can be 0.&lt;/span&gt;
+    u32 spi = (low == high)? low : get_random_u32_inclusive(low, high);
+    newspi = htonl(spi);
+
+    spin_lock_bh(&amp;amp;net-&amp;gt;xfrm.xfrm_state_lock);
+    x0 = xfrm_state_lookup_spi_proto(net, newspi, x-&amp;gt;id.proto);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (!x0) {
+        x-&amp;gt;id.spi = newspi;
+        h = xfrm_spi_hash(net, &amp;amp;x-&amp;gt;id.daddr, newspi,
+                    x-&amp;gt;id.proto, x-&amp;gt;props.family);         
+        &lt;span class=&#34;hljs-comment&#34;&gt;// New xfrm_state obj with spi=0&lt;/span&gt;
+        hlist_add_head_rcu(&amp;amp;x-&amp;gt;byspi, net-&amp;gt;xfrm.state_byspi + h); 
+        err = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+        spin_unlock_bh(&amp;amp;net-&amp;gt;xfrm.xfrm_state_lock);
+        &lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; unlock;
+    }
+&lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xD574;&amp;#xB2F9; &amp;#xCEE4;&amp;#xBC0B;&amp;#xC740; SPI &amp;#xC911;&amp;#xBCF5; &amp;#xBC29;&amp;#xC9C0;&amp;#xB97C; &amp;#xC704;&amp;#xD574; &amp;#xD560;&amp;#xB2F9; &amp;#xB85C;&amp;#xC9C1;&amp;#xC744; &amp;#xBCC0;&amp;#xACBD;&amp;#xD558;&amp;#xC600;&amp;#xB294;&amp;#xB370;, &amp;#xADF8; &amp;#xACFC;&amp;#xC815;&amp;#xC5D0;&amp;#xC11C; &lt;code&gt;get_random_u32_inclusive&lt;/code&gt; &amp;#xD568;&amp;#xC218;&amp;#xAC00; 0&amp;#xC744; &amp;#xBC18;&amp;#xD658;&amp;#xD560; &amp;#xC218; &amp;#xC788;&amp;#xC9C0;&amp;#xB9CC; &amp;#xC774;&amp;#xB97C; &amp;#xAC80;&amp;#xC0AC;&amp;#xD558;&amp;#xC9C0; &amp;#xC54A;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;. &amp;#xC774;&amp;#xB85C; &amp;#xC778;&amp;#xD574; &lt;code&gt;xfrm_state&lt;/code&gt; &amp;#xAC1D;&amp;#xCCB4;&amp;#xAC00; &lt;code&gt;spi&lt;/code&gt; &amp;#xAC12;&amp;#xC774; 0&amp;#xC778; &amp;#xACBD;&amp;#xC6B0;&amp;#xC5D0;&amp;#xB3C4; &amp;#xACBD;&amp;#xC6B0; &amp;#xC720;&amp;#xD6A8;&amp;#xD55C; &amp;#xAC12;&amp;#xC73C;&amp;#xB85C; &amp;#xD560;&amp;#xB2F9;&amp;#xB418;&amp;#xC5B4; &lt;code&gt;byspi&lt;/code&gt; &amp;#xC804;&amp;#xC5ED; &amp;#xBAA9;&amp;#xB85D;&amp;#xC5D0; &amp;#xCD94;&amp;#xAC00;&amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; __xfrm_state_delete(struct xfrm_state *x)
+{
+    &lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;//If spi is 0, it&amp;apos;s not removed from byspi list.&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (x-&amp;gt;id.spi) { 
+        hlist_del_rcu(&amp;amp;x-&amp;gt;byspi);
+    }
+
+    xfrm_state_free(x);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xADF8;&amp;#xB7EC;&amp;#xB098; XFRM &amp;#xD558;&amp;#xC704; &amp;#xC2DC;&amp;#xC2A4;&amp;#xD15C;&amp;#xC5D0;&amp;#xC11C; &lt;code&gt;SPI=0&lt;/code&gt;&amp;#xC740; &amp;#xC77C;&amp;#xBC18;&amp;#xC801;&amp;#xC73C;&amp;#xB85C; &amp;#xD560;&amp;#xB2F9;&amp;#xB41C; SPI &amp;#xC5C6;&amp;#xC74C;&amp;#xC744; &amp;#xC758;&amp;#xBBF8;&amp;#xD558;&amp;#xAE30; &amp;#xB54C;&amp;#xBB38;&amp;#xC5D0;, &amp;#xD574;&amp;#xB2F9; &amp;#xAC1D;&amp;#xCCB4;&amp;#xB97C; &amp;#xC815;&amp;#xB9AC;&amp;#xD558;&amp;#xB294; &lt;code&gt;__xfrm_state_delete&lt;/code&gt; &amp;#xD568;&amp;#xC218;&amp;#xB294; &lt;code&gt;spi&lt;/code&gt; &amp;#xAC12;&amp;#xC774; 0&amp;#xC774;&amp;#xBA74; &lt;code&gt;byspi&lt;/code&gt; &amp;#xBAA9;&amp;#xB85D;&amp;#xC5D0;&amp;#xC11C; &amp;#xC81C;&amp;#xAC70;&amp;#xD558;&amp;#xC9C0; &amp;#xC54A;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;. &lt;/p&gt;
+&lt;p&gt;&amp;#xB530;&amp;#xB77C;&amp;#xC11C; &amp;#xBA54;&amp;#xBAA8;&amp;#xB9AC;&amp;#xB294; &amp;#xD574;&amp;#xC81C;&amp;#xB418;&amp;#xC9C0;&amp;#xB9CC;, &lt;code&gt;byspi&lt;/code&gt; &amp;#xBAA9;&amp;#xB85D;&amp;#xC5D0;&amp;#xB294; &amp;#xD574;&amp;#xB2F9; &amp;#xBA54;&amp;#xBAA8;&amp;#xB9AC;&amp;#xB97C; &amp;#xAC00;&amp;#xB9AC;&amp;#xD0A4;&amp;#xB294; dangling pointer&amp;#xAC00; &amp;#xB0A8;&amp;#xC544; UAF&amp;#xAC00; &amp;#xD2B8;&amp;#xB9AC;&amp;#xAC70;&amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;--- a/net/xfrm/xfrm_state.c
++++ b/net/xfrm/xfrm_state.c
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;xfrm_alloc_spi&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(struct xfrm_state *x, u32 low, u32 high,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;		   struct netlink_ext_ack *extack)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+&lt;span class=&#34;hljs-comment&#34;&gt;//... &lt;/span&gt;
+
+ 	&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (h = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; h &amp;lt; range; h++) {
+ 		u32 spi = (low == high)? low : get_random_u32_inclusive(low, high);
++		&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (spi == &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;)
++			&lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; next;
+ 		newspi = htonl(spi);
+&lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+
+ 		xfrm_state_put(x0);
+ 		spin_unlock_bh(&amp;amp;net-&amp;gt;xfrm.xfrm_state_lock);
++next:
+ 		&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (signal_pending(current)) {
+ 			err = -ERESTARTSYS;
+ 			&lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; unlock;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC758; &amp;#xD328;&amp;#xCE58; &amp;#xCEE4;&amp;#xBC0B;(&lt;a href=&#34;https://github.com/torvalds/linux/commit/cd8ae32e4e4652db55bce6b9c79267d8946765a9&#34;&gt;cd8ae32e4e4652db55bce6b9c79267d8946765a9&lt;/a&gt;)&amp;#xC740; &lt;code&gt;xfrm_alloc_spi&lt;/code&gt; &amp;#xD568;&amp;#xC218;&amp;#xAC00; spi &amp;#xAC1D;&amp;#xCCB4;&amp;#xB97C; &amp;#xD560;&amp;#xB2F9;&amp;#xD558;&amp;#xAE30; &amp;#xC804;, spi&amp;#xAC12;&amp;#xC774; 0&amp;#xC774;&amp;#xBA74; &amp;#xD560;&amp;#xB2F9;&amp;#xC744; &amp;#xD558;&amp;#xC9C0; &amp;#xC54A;&amp;#xB3C4;&amp;#xB85D; &amp;#xC774;&amp;#xB8E8;&amp;#xC5B4;&amp;#xC84C;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[하루한줄] CVE-2025-39965: Linux Kernel XFRM subsystem의 UAF 취약점 - hackyboiz">
+  <meta property="og:description" content="&lt;h2 id=&#34;URL&#34;&gt;&lt;a href=&#34;#URL&#34; class=&#34;headerlink&#34; title=&#34;URL&#34;&gt;&lt;/a&gt;URL&lt;/h2&gt;&lt;p&gt;&lt;a href=&#34;https://streypaws.github.io/posts/Dissecting-a-1-Day-Vulnerability-in-Linux-XFRM-Subsystem/&#34;&gt;https://streypaws.github.io/posts/Dissecting-a-1-Day-Vulnerability-in-Linux-XFRM-Subsystem/&lt;/a&gt;&lt;/p&gt;
+&lt;h2 id=&#34;Target&#34;&gt;&lt;a href=&#34;#Target&#34; class=&#34;headerlink&#34; title=&#34;Target&#34;&gt;&lt;/a&gt;Target&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;Ubuntu: &lt;a href=&#34;https://ubuntu.com/security/CVE-2025-39965&#34;&gt;https://ubuntu.com/security/CVE-2025-39965&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Red Hat: &lt;a href=&#34;https://access.redhat.com/security/cve/cve-2025-39965&#34;&gt;https://access.redhat.com/security/cve/cve-2025-39965&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;SUSE: &lt;a href=&#34;https://www.suse.com/security/cve/CVE-2025-39965.html&#34;&gt;https://www.suse.com/security/cve/CVE-2025-39965.html&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Debian: &lt;a href=&#34;https://security-tracker.debian.org/tracker/CVE-2025-39965&#34;&gt;https://security-tracker.debian.org/tracker/CVE-2025-39965&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;Explain&#34;&gt;&lt;a href=&#34;#Explain&#34; class=&#34;headerlink&#34; title=&#34;Explain&#34;&gt;&lt;/a&gt;Explain&lt;/h2&gt;&lt;p&gt;&amp;#xB9AC;&amp;#xB205;&amp;#xC2A4; &amp;#xCEE4;&amp;#xB110;&amp;#xC758; IPsec &amp;#xD504;&amp;#xB85C;&amp;#xD1A0;&amp;#xCF5C;&amp;#xC744; &amp;#xAD6C;&amp;#xD604;&amp;#xD558;&amp;#xB294; XFRM &amp;#xD558;&amp;#xC704; &amp;#xC2DC;&amp;#xC2A4;&amp;#xD15C;&amp;#xC5D0;&amp;#xC11C; &amp;#xBC1C;&amp;#xACAC;&amp;#xB41C; Use-After-Free &amp;#xCDE8;&amp;#xC57D;&amp;#xC810; CVE-2025-39965&amp;#xC5D0; &amp;#xB300;&amp;#xD55C; &amp;#xC138;&amp;#xBD80; &amp;#xC815;&amp;#xBCF4;&amp;#xAC00; &amp;#xACF5;&amp;#xAC1C;&amp;#xB418;&amp;#xC5C8;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;p&gt;&amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC740; &amp;#xCD5C;&amp;#xADFC; &lt;a href=&#34;https://github.com/torvalds/linux/commit/94f39804d891cffe4ce17737d295f3b195bc7299&#34;&gt;94f39804d891cffe4ce17737d295f3b195bc7299&lt;/a&gt; &amp;#xCEE4;&amp;#xBC0B;&amp;#xC5D0;&amp;#xC11C; &amp;#xBCC0;&amp;#xACBD;&amp;#xB41C; &lt;code&gt;net/xfrm/xfrm_state.c&lt;/code&gt; &amp;#xD30C;&amp;#xC77C;&amp;#xC758; &lt;code&gt;xfrm_alloc_spi&lt;/code&gt; &amp;#xD568;&amp;#xC218;&amp;#xC5D0; &amp;#xC874;&amp;#xC7AC;&amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;. &amp;#xD574;&amp;#xB2F9; &amp;#xD568;&amp;#xC218;&amp;#xB294; &amp;#xC0AC;&amp;#xC6A9;&amp;#xC790; &amp;#xACF5;&amp;#xAC04;&amp;#xC73C;&amp;#xB85C;&amp;#xBD80;&amp;#xD130; Netlink &amp;#xBA54;&amp;#xC2DC;&amp;#xC9C0;&amp;#xC778; &lt;code&gt;XFRM_MSG_ALLOCSPI&lt;/code&gt;&amp;#xB97C; &amp;#xD1B5;&amp;#xD574; &amp;#xD638;&amp;#xCD9C;&amp;#xB418;&amp;#xBA70;, SPI&amp;#xB97C; &amp;#xD560;&amp;#xB2F9;&amp;#xD558;&amp;#xB294; &amp;#xC5ED;&amp;#xD560;&amp;#xC744; &amp;#xD569;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;xfrm_alloc_spi&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(struct xfrm_state *x, u32 low, u32 high,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;		   struct netlink_ext_ack *extack)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+&lt;span class=&#34;hljs-comment&#34;&gt;//... &lt;/span&gt;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (h = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; h &amp;lt; range; h++) {
+    &lt;span class=&#34;hljs-comment&#34;&gt;// Return value of get_random_u32_inclusive can be 0.&lt;/span&gt;
+    u32 spi = (low == high)? low : get_random_u32_inclusive(low, high);
+    newspi = htonl(spi);
+
+    spin_lock_bh(&amp;amp;net-&amp;gt;xfrm.xfrm_state_lock);
+    x0 = xfrm_state_lookup_spi_proto(net, newspi, x-&amp;gt;id.proto);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (!x0) {
+        x-&amp;gt;id.spi = newspi;
+        h = xfrm_spi_hash(net, &amp;amp;x-&amp;gt;id.daddr, newspi,
+                    x-&amp;gt;id.proto, x-&amp;gt;props.family);         
+        &lt;span class=&#34;hljs-comment&#34;&gt;// New xfrm_state obj with spi=0&lt;/span&gt;
+        hlist_add_head_rcu(&amp;amp;x-&amp;gt;byspi, net-&amp;gt;xfrm.state_byspi + h); 
+        err = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+        spin_unlock_bh(&amp;amp;net-&amp;gt;xfrm.xfrm_state_lock);
+        &lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; unlock;
+    }
+&lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xD574;&amp;#xB2F9; &amp;#xCEE4;&amp;#xBC0B;&amp;#xC740; SPI &amp;#xC911;&amp;#xBCF5; &amp;#xBC29;&amp;#xC9C0;&amp;#xB97C; &amp;#xC704;&amp;#xD574; &amp;#xD560;&amp;#xB2F9; &amp;#xB85C;&amp;#xC9C1;&amp;#xC744; &amp;#xBCC0;&amp;#xACBD;&amp;#xD558;&amp;#xC600;&amp;#xB294;&amp;#xB370;, &amp;#xADF8; &amp;#xACFC;&amp;#xC815;&amp;#xC5D0;&amp;#xC11C; &lt;code&gt;get_random_u32_inclusive&lt;/code&gt; &amp;#xD568;&amp;#xC218;&amp;#xAC00; 0&amp;#xC744; &amp;#xBC18;&amp;#xD658;&amp;#xD560; &amp;#xC218; &amp;#xC788;&amp;#xC9C0;&amp;#xB9CC; &amp;#xC774;&amp;#xB97C; &amp;#xAC80;&amp;#xC0AC;&amp;#xD558;&amp;#xC9C0; &amp;#xC54A;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;. &amp;#xC774;&amp;#xB85C; &amp;#xC778;&amp;#xD574; &lt;code&gt;xfrm_state&lt;/code&gt; &amp;#xAC1D;&amp;#xCCB4;&amp;#xAC00; &lt;code&gt;spi&lt;/code&gt; &amp;#xAC12;&amp;#xC774; 0&amp;#xC778; &amp;#xACBD;&amp;#xC6B0;&amp;#xC5D0;&amp;#xB3C4; &amp;#xACBD;&amp;#xC6B0; &amp;#xC720;&amp;#xD6A8;&amp;#xD55C; &amp;#xAC12;&amp;#xC73C;&amp;#xB85C; &amp;#xD560;&amp;#xB2F9;&amp;#xB418;&amp;#xC5B4; &lt;code&gt;byspi&lt;/code&gt; &amp;#xC804;&amp;#xC5ED; &amp;#xBAA9;&amp;#xB85D;&amp;#xC5D0; &amp;#xCD94;&amp;#xAC00;&amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; __xfrm_state_delete(struct xfrm_state *x)
+{
+    &lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;//If spi is 0, it&amp;apos;s not removed from byspi list.&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (x-&amp;gt;id.spi) { 
+        hlist_del_rcu(&amp;amp;x-&amp;gt;byspi);
+    }
+
+    xfrm_state_free(x);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xADF8;&amp;#xB7EC;&amp;#xB098; XFRM &amp;#xD558;&amp;#xC704; &amp;#xC2DC;&amp;#xC2A4;&amp;#xD15C;&amp;#xC5D0;&amp;#xC11C; &lt;code&gt;SPI=0&lt;/code&gt;&amp;#xC740; &amp;#xC77C;&amp;#xBC18;&amp;#xC801;&amp;#xC73C;&amp;#xB85C; &amp;#xD560;&amp;#xB2F9;&amp;#xB41C; SPI &amp;#xC5C6;&amp;#xC74C;&amp;#xC744; &amp;#xC758;&amp;#xBBF8;&amp;#xD558;&amp;#xAE30; &amp;#xB54C;&amp;#xBB38;&amp;#xC5D0;, &amp;#xD574;&amp;#xB2F9; &amp;#xAC1D;&amp;#xCCB4;&amp;#xB97C; &amp;#xC815;&amp;#xB9AC;&amp;#xD558;&amp;#xB294; &lt;code&gt;__xfrm_state_delete&lt;/code&gt; &amp;#xD568;&amp;#xC218;&amp;#xB294; &lt;code&gt;spi&lt;/code&gt; &amp;#xAC12;&amp;#xC774; 0&amp;#xC774;&amp;#xBA74; &lt;code&gt;byspi&lt;/code&gt; &amp;#xBAA9;&amp;#xB85D;&amp;#xC5D0;&amp;#xC11C; &amp;#xC81C;&amp;#xAC70;&amp;#xD558;&amp;#xC9C0; &amp;#xC54A;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;. &lt;/p&gt;
+&lt;p&gt;&amp;#xB530;&amp;#xB77C;&amp;#xC11C; &amp;#xBA54;&amp;#xBAA8;&amp;#xB9AC;&amp;#xB294; &amp;#xD574;&amp;#xC81C;&amp;#xB418;&amp;#xC9C0;&amp;#xB9CC;, &lt;code&gt;byspi&lt;/code&gt; &amp;#xBAA9;&amp;#xB85D;&amp;#xC5D0;&amp;#xB294; &amp;#xD574;&amp;#xB2F9; &amp;#xBA54;&amp;#xBAA8;&amp;#xB9AC;&amp;#xB97C; &amp;#xAC00;&amp;#xB9AC;&amp;#xD0A4;&amp;#xB294; dangling pointer&amp;#xAC00; &amp;#xB0A8;&amp;#xC544; UAF&amp;#xAC00; &amp;#xD2B8;&amp;#xB9AC;&amp;#xAC70;&amp;#xB429;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;--- a/net/xfrm/xfrm_state.c
++++ b/net/xfrm/xfrm_state.c
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;xfrm_alloc_spi&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(struct xfrm_state *x, u32 low, u32 high,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;		   struct netlink_ext_ack *extack)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+&lt;span class=&#34;hljs-comment&#34;&gt;//... &lt;/span&gt;
+
+ 	&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (h = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;; h &amp;lt; range; h++) {
+ 		u32 spi = (low == high)? low : get_random_u32_inclusive(low, high);
++		&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (spi == &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;)
++			&lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; next;
+ 		newspi = htonl(spi);
+&lt;span class=&#34;hljs-comment&#34;&gt;//...&lt;/span&gt;
+
+ 		xfrm_state_put(x0);
+ 		spin_unlock_bh(&amp;amp;net-&amp;gt;xfrm.xfrm_state_lock);
++next:
+ 		&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (signal_pending(current)) {
+ 			err = -ERESTARTSYS;
+ 			&lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; unlock;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&amp;#xCDE8;&amp;#xC57D;&amp;#xC810;&amp;#xC758; &amp;#xD328;&amp;#xCE58; &amp;#xCEE4;&amp;#xBC0B;(&lt;a href=&#34;https://github.com/torvalds/linux/commit/cd8ae32e4e4652db55bce6b9c79267d8946765a9&#34;&gt;cd8ae32e4e4652db55bce6b9c79267d8946765a9&lt;/a&gt;)&amp;#xC740; &lt;code&gt;xfrm_alloc_spi&lt;/code&gt; &amp;#xD568;&amp;#xC218;&amp;#xAC00; spi &amp;#xAC1D;&amp;#xCCB4;&amp;#xB97C; &amp;#xD560;&amp;#xB2F9;&amp;#xD558;&amp;#xAE30; &amp;#xC804;, spi&amp;#xAC12;&amp;#xC774; 0&amp;#xC774;&amp;#xBA74; &amp;#xD560;&amp;#xB2F9;&amp;#xC744; &amp;#xD558;&amp;#xC9C0; &amp;#xC54A;&amp;#xB3C4;&amp;#xB85D; &amp;#xC774;&amp;#xB8E8;&amp;#xC5B4;&amp;#xC84C;&amp;#xC2B5;&amp;#xB2C8;&amp;#xB2E4;.&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/img/1day1line.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/10/26/l0ch/2025-10-26/">
+
+  <title>[하루한줄] CVE-2025-39965: Linux Kernel XFRM subsystem의 UAF 취약점 - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-10-26 17:00" pubdate>
+      2025년 10월 26일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      610 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      12
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[하루한줄] CVE-2025-39965: Linux Kernel XFRM subsystem의 UAF 취약점</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <h2 id="URL"><a href="#URL" class="headerlink" title="URL"></a>URL</h2><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://streypaws.github.io/posts/Dissecting-a-1-Day-Vulnerability-in-Linux-XFRM-Subsystem/">https://streypaws.github.io/posts/Dissecting-a-1-Day-Vulnerability-in-Linux-XFRM-Subsystem/</a></p>
+<h2 id="Target"><a href="#Target" class="headerlink" title="Target"></a>Target</h2><ul>
+<li>Ubuntu: <a target="_blank" rel="external nofollow noopener noreferrer" href="https://ubuntu.com/security/CVE-2025-39965">https://ubuntu.com/security/CVE-2025-39965</a></li>
+<li>Red Hat: <a target="_blank" rel="external nofollow noopener noreferrer" href="https://access.redhat.com/security/cve/cve-2025-39965">https://access.redhat.com/security/cve/cve-2025-39965</a></li>
+<li>SUSE: <a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.suse.com/security/cve/CVE-2025-39965.html">https://www.suse.com/security/cve/CVE-2025-39965.html</a></li>
+<li>Debian: <a target="_blank" rel="external nofollow noopener noreferrer" href="https://security-tracker.debian.org/tracker/CVE-2025-39965">https://security-tracker.debian.org/tracker/CVE-2025-39965</a></li>
+</ul>
+<h2 id="Explain"><a href="#Explain" class="headerlink" title="Explain"></a>Explain</h2><p>&#xB9AC;&#xB205;&#xC2A4; &#xCEE4;&#xB110;&#xC758; IPsec &#xD504;&#xB85C;&#xD1A0;&#xCF5C;&#xC744; &#xAD6C;&#xD604;&#xD558;&#xB294; XFRM &#xD558;&#xC704; &#xC2DC;&#xC2A4;&#xD15C;&#xC5D0;&#xC11C; &#xBC1C;&#xACAC;&#xB41C; Use-After-Free &#xCDE8;&#xC57D;&#xC810; CVE-2025-39965&#xC5D0; &#xB300;&#xD55C; &#xC138;&#xBD80; &#xC815;&#xBCF4;&#xAC00; &#xACF5;&#xAC1C;&#xB418;&#xC5C8;&#xC2B5;&#xB2C8;&#xB2E4;.</p>
+<p>&#xCDE8;&#xC57D;&#xC810;&#xC740; &#xCD5C;&#xADFC; <a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/torvalds/linux/commit/94f39804d891cffe4ce17737d295f3b195bc7299">94f39804d891cffe4ce17737d295f3b195bc7299</a> &#xCEE4;&#xBC0B;&#xC5D0;&#xC11C; &#xBCC0;&#xACBD;&#xB41C; <code>net/xfrm/xfrm_state.c</code> &#xD30C;&#xC77C;&#xC758; <code>xfrm_alloc_spi</code> &#xD568;&#xC218;&#xC5D0; &#xC874;&#xC7AC;&#xD569;&#xB2C8;&#xB2E4;. &#xD574;&#xB2F9; &#xD568;&#xC218;&#xB294; &#xC0AC;&#xC6A9;&#xC790; &#xACF5;&#xAC04;&#xC73C;&#xB85C;&#xBD80;&#xD130; Netlink &#xBA54;&#xC2DC;&#xC9C0;&#xC778; <code>XFRM_MSG_ALLOCSPI</code>&#xB97C; &#xD1B5;&#xD574; &#xD638;&#xCD9C;&#xB418;&#xBA70;, SPI&#xB97C; &#xD560;&#xB2F9;&#xD558;&#xB294; &#xC5ED;&#xD560;&#xC744; &#xD569;&#xB2C8;&#xB2E4;.</p>
+<pre><code class="hljs c"><span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">xfrm_alloc_spi</span><span class="hljs-params">(struct xfrm_state *x, u32 low, u32 high,</span></span>
+<span class="hljs-function"><span class="hljs-params">		   struct netlink_ext_ack *extack)</span></span>
+<span class="hljs-function"></span>{
+<span class="hljs-comment">//... </span>
+
+<span class="hljs-keyword">for</span> (h = <span class="hljs-number">0</span>; h &lt; range; h++) {
+    <span class="hljs-comment">// Return value of get_random_u32_inclusive can be 0.</span>
+    u32 spi = (low == high)? low : get_random_u32_inclusive(low, high);
+    newspi = htonl(spi);
+
+    spin_lock_bh(&amp;net-&gt;xfrm.xfrm_state_lock);
+    x0 = xfrm_state_lookup_spi_proto(net, newspi, x-&gt;id.proto);
+    <span class="hljs-keyword">if</span> (!x0) {
+        x-&gt;id.spi = newspi;
+        h = xfrm_spi_hash(net, &amp;x-&gt;id.daddr, newspi,
+                    x-&gt;id.proto, x-&gt;props.family);         
+        <span class="hljs-comment">// New xfrm_state obj with spi=0</span>
+        hlist_add_head_rcu(&amp;x-&gt;byspi, net-&gt;xfrm.state_byspi + h); 
+        err = <span class="hljs-number">0</span>;
+        spin_unlock_bh(&amp;net-&gt;xfrm.xfrm_state_lock);
+        <span class="hljs-keyword">goto</span> unlock;
+    }
+<span class="hljs-comment">//...</span>
+}</code></pre>
+<p>&#xD574;&#xB2F9; &#xCEE4;&#xBC0B;&#xC740; SPI &#xC911;&#xBCF5; &#xBC29;&#xC9C0;&#xB97C; &#xC704;&#xD574; &#xD560;&#xB2F9; &#xB85C;&#xC9C1;&#xC744; &#xBCC0;&#xACBD;&#xD558;&#xC600;&#xB294;&#xB370;, &#xADF8; &#xACFC;&#xC815;&#xC5D0;&#xC11C; <code>get_random_u32_inclusive</code> &#xD568;&#xC218;&#xAC00; 0&#xC744; &#xBC18;&#xD658;&#xD560; &#xC218; &#xC788;&#xC9C0;&#xB9CC; &#xC774;&#xB97C; &#xAC80;&#xC0AC;&#xD558;&#xC9C0; &#xC54A;&#xC2B5;&#xB2C8;&#xB2E4;. &#xC774;&#xB85C; &#xC778;&#xD574; <code>xfrm_state</code> &#xAC1D;&#xCCB4;&#xAC00; <code>spi</code> &#xAC12;&#xC774; 0&#xC778; &#xACBD;&#xC6B0;&#xC5D0;&#xB3C4; &#xACBD;&#xC6B0; &#xC720;&#xD6A8;&#xD55C; &#xAC12;&#xC73C;&#xB85C; &#xD560;&#xB2F9;&#xB418;&#xC5B4; <code>byspi</code> &#xC804;&#xC5ED; &#xBAA9;&#xB85D;&#xC5D0; &#xCD94;&#xAC00;&#xB429;&#xB2C8;&#xB2E4;.</p>
+<pre><code class="hljs c"><span class="hljs-keyword">int</span> __xfrm_state_delete(struct xfrm_state *x)
+{
+    <span class="hljs-comment">//...</span>
+    <span class="hljs-comment">//If spi is 0, it&apos;s not removed from byspi list.</span>
+    <span class="hljs-keyword">if</span> (x-&gt;id.spi) { 
+        hlist_del_rcu(&amp;x-&gt;byspi);
+    }
+
+    xfrm_state_free(x);
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}</code></pre>
+<p>&#xADF8;&#xB7EC;&#xB098; XFRM &#xD558;&#xC704; &#xC2DC;&#xC2A4;&#xD15C;&#xC5D0;&#xC11C; <code>SPI=0</code>&#xC740; &#xC77C;&#xBC18;&#xC801;&#xC73C;&#xB85C; &#xD560;&#xB2F9;&#xB41C; SPI &#xC5C6;&#xC74C;&#xC744; &#xC758;&#xBBF8;&#xD558;&#xAE30; &#xB54C;&#xBB38;&#xC5D0;, &#xD574;&#xB2F9; &#xAC1D;&#xCCB4;&#xB97C; &#xC815;&#xB9AC;&#xD558;&#xB294; <code>__xfrm_state_delete</code> &#xD568;&#xC218;&#xB294; <code>spi</code> &#xAC12;&#xC774; 0&#xC774;&#xBA74; <code>byspi</code> &#xBAA9;&#xB85D;&#xC5D0;&#xC11C; &#xC81C;&#xAC70;&#xD558;&#xC9C0; &#xC54A;&#xC2B5;&#xB2C8;&#xB2E4;. </p>
+<p>&#xB530;&#xB77C;&#xC11C; &#xBA54;&#xBAA8;&#xB9AC;&#xB294; &#xD574;&#xC81C;&#xB418;&#xC9C0;&#xB9CC;, <code>byspi</code> &#xBAA9;&#xB85D;&#xC5D0;&#xB294; &#xD574;&#xB2F9; &#xBA54;&#xBAA8;&#xB9AC;&#xB97C; &#xAC00;&#xB9AC;&#xD0A4;&#xB294; dangling pointer&#xAC00; &#xB0A8;&#xC544; UAF&#xAC00; &#xD2B8;&#xB9AC;&#xAC70;&#xB429;&#xB2C8;&#xB2E4;.</p>
+<pre><code class="hljs c">--- a/net/xfrm/xfrm_state.c
++++ b/net/xfrm/xfrm_state.c
+<span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">xfrm_alloc_spi</span><span class="hljs-params">(struct xfrm_state *x, u32 low, u32 high,</span></span>
+<span class="hljs-function"><span class="hljs-params">		   struct netlink_ext_ack *extack)</span></span>
+<span class="hljs-function"></span>{
+<span class="hljs-comment">//... </span>
+
+ 	<span class="hljs-keyword">for</span> (h = <span class="hljs-number">0</span>; h &lt; range; h++) {
+ 		u32 spi = (low == high)? low : get_random_u32_inclusive(low, high);
++		<span class="hljs-keyword">if</span> (spi == <span class="hljs-number">0</span>)
++			<span class="hljs-keyword">goto</span> next;
+ 		newspi = htonl(spi);
+<span class="hljs-comment">//...</span>
+
+ 		xfrm_state_put(x0);
+ 		spin_unlock_bh(&amp;net-&gt;xfrm.xfrm_state_lock);
++next:
+ 		<span class="hljs-keyword">if</span> (signal_pending(current)) {
+ 			err = -ERESTARTSYS;
+ 			<span class="hljs-keyword">goto</span> unlock;
+</code></pre>
+<p>&#xCDE8;&#xC57D;&#xC810;&#xC758; &#xD328;&#xCE58; &#xCEE4;&#xBC0B;(<a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/torvalds/linux/commit/cd8ae32e4e4652db55bce6b9c79267d8946765a9">cd8ae32e4e4652db55bce6b9c79267d8946765a9</a>)&#xC740; <code>xfrm_alloc_spi</code> &#xD568;&#xC218;&#xAC00; spi &#xAC1D;&#xCCB4;&#xB97C; &#xD560;&#xB2F9;&#xD558;&#xAE30; &#xC804;, spi&#xAC12;&#xC774; 0&#xC774;&#xBA74; &#xD560;&#xB2F9;&#xC744; &#xD558;&#xC9C0; &#xC54A;&#xB3C4;&#xB85D; &#xC774;&#xB8E8;&#xC5B4;&#xC84C;&#xC2B5;&#xB2C8;&#xB2E4;.</p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/1day1line/">1day1line</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/linux/">linux</a>
+                  
+                  <a class="hover-with-bg" href="/tags/lpe/">lpe</a>
+                  
+                  <a class="hover-with-bg" href="/tags/uaf/">uaf</a>
+                  
+                  <a class="hover-with-bg" href="/tags/L0ch/">L0ch</a>
+                  
+                  <a class="hover-with-bg" href="/tags/xfrm/">xfrm</a>
+                  
+                  <a class="hover-with-bg" href="/tags/cve-2025-39965/">cve-2025-39965</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_L0ch.jpg" srcset="/img/loading.gif" alt="L0ch">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">L0ch</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/L0ch">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/10/29/newp1ayer48/CVE-2025-49844/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2025-49844 : Redis의 Lua 스크립트를 통한 Use After Free로 인한 RCE 취약점</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/10/23/clalxk/imageIO_en/">
+                    <span class="hidden-mobile">[Research] ImageIO: iOS/macOS DNG Image Processing Memory Corruption (En)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/10/26/l0ch/2025-10-26/';
+        this.page.identifier = '/2025/10/26/l0ch/2025-10-26/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[하루한줄] CVE-2025-39965: Linux Kernel XFRM subsystem의 UAF 취약점&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
