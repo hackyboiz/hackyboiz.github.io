@@ -1,0 +1,903 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;h2 id=&#34;Intro&#34;&gt;&lt;a href=&#34;#Intro&#34; class=&#34;headerlink&#34; title=&#34;Intro&#34;&gt;&lt;/a&gt;Intro&lt;/h2&gt;&lt;p&gt;Hello! It&amp;#x2019;s tobe back with a research post. After getting feedback that my nickname poosic sounded like the sound of pooping, I was so shocked I changed it to tobe. Personally, I liked the original nickname because I thought it sounded like laughter, but everyone has their own perspective, sigh. Still, getting the nice nickname tobe feels like a good opportunity &amp;gt;_-&lt;/p&gt;
+&lt;p&gt;Getting back to the main topic, today&amp;#x2019;s research post is a review of HALucinator! Think of HALucinator as a hardware emulator. However, while FirmAE is software for emulating the entire firmware system, HALucinator focuses on solving hardware dependencies and emulating RTOS or bare-metal firmware. Honestly, I started studying it thinking, &amp;#x2018;Is this an amazing tool that can replace emulators?!&amp;#x2019; but it turned out to be more like an advanced application of emulators, which left me quite flustered.&lt;/p&gt;
+&lt;p&gt;Before diving into the review, I&amp;#x2019;ll first explain some concepts that might be unfamiliar (like rehosting, HAL, bare-metal firmware, etc.), then proceed with the main review.&lt;/p&gt;
+&lt;h2 id=&#34;1-About-Rehosting&#34;&gt;&lt;a href=&#34;#1-About-Rehosting&#34; class=&#34;headerlink&#34; title=&#34;1. About Rehosting&#34;&gt;&lt;/a&gt;1. About Rehosting&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2025/09/14/poosic/[Research]Rehosting/EN/thumbnail.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Rehosting is conceptually similar to emulation in that it separates firmware from hardware and ports it to a software-based virtual environment running on a computer. However, the goals of the two technologies differ slightly. An emulator aims to reproduce all the functions and behaviors of a specific SoC or board as accurately and comprehensively as possible within a virtual environment. Rehosting, however, does not aim for a perfect replica; its goal is to &lt;strong&gt;build the minimal environment necessary for the specific function being analyzed to execute correctly&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;Naturally, if perfect reproduction in a virtual environment were possible, emulation would be preferable. While feasible for single-board devices, it is practically impossible for systems requiring interaction with diverse peripherals.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/14/poosic/[Research]Rehosting/EN/1.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Just look at the inside of the village bus electronic display in the image above&amp;#x2014;various devices like Raspberry Pi and routers are interacting with each other. (&lt;del&gt;I&amp;#x2019;ve never had the chance to see a village bus display board either, so this was fascinating&lt;/del&gt;)&lt;/p&gt;
+&lt;p&gt;Take the AEB (Autonomous Emergency Braking) system in cars as an example. Its firmware interacts with peripheral devices like the front sensor for obstacle detection, the brake actuator controlling actual brake hydraulic pressure, and the CAN bus for internal communication. What happens if you just emulate the main board with the AEB firmware? Without the CAN bus, you can&amp;#x2019;t even receive vehicle speed data, causing it to stall. Even if you implement a virtual CAN bus, there are no sensors to send data, making proper analysis impossible. On the other hand, analyzing and emulating all these peripherals would be exhausting before you even start.&lt;/p&gt;
+&lt;p&gt;From a vulnerability analyst&amp;#x2019;s perspective, trying to examine a single feature could lead to the unfortunate situation of having to meticulously analyze and code multiple boards just to virtualize them. It&amp;#x2019;s like filling the bathtub to the brim, adding bath salts, lighting candles, and even floating rose petals (&lt;del&gt;I don&amp;#x2019;t usually go to such lengths for a bath&lt;/del&gt;) only to end up just washing your face and getting out.&lt;/p&gt;
+&lt;h3 id=&#34;1-1-Firmware-Type&#34;&gt;&lt;a href=&#34;#1-1-Firmware-Type&#34; class=&#34;headerlink&#34; title=&#34;1.1. Firmware Type&#34;&gt;&lt;/a&gt;1.1. Firmware Type&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/09/14/poosic/[Research]Rehosting/EN/2.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Rehosting is not always more effective than emulation for all firmware. From a firmware virtualization perspective, firmware types can be broadly categorized into the following three types:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Type I Firmware (Application-based): This is firmware that runs as a single application on top of a general-purpose OS like Linux or Windows.&lt;/li&gt;
+&lt;li&gt;Type II Firmware (OS-Based): Firmware that includes a customized OS, such as Linux or VxWorks.&lt;/li&gt;
+&lt;li&gt;Type III Firmware (Bare-Metal): Firmware that directly controls hardware without an OS. This includes most small IoT devices with MCUs, automotive ECUs, and industrial control equipment.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Rehosting technology primarily evolved for analyzing &lt;strong&gt;Type III, bare-metal firmware&lt;/strong&gt;. While Types I and II include some abstraction layer via the OS, Type III firmware, which directly controls hardware without an OS, exhibits extremely high hardware dependency.&lt;/p&gt;
+&lt;p&gt;Bare-metal literally means &amp;#x2018;bare metal&amp;#x2019;. Figuratively, it implies &amp;#x2018;nothing is layered over the hardware&amp;#x2019;. It refers to a method where firmware directly controls all aspects of the hardware in its raw state, without the abstraction layer provided by an OS.&lt;/p&gt;
+&lt;p&gt;Typically, on a PC, when a program saves a file, clicking the &lt;code&gt;Save&lt;/code&gt; button triggers the OS to write it to disk. In contrast, bare-metal firmware must perform this save operation by &amp;#x2018;sends a &amp;#x2018;ready&amp;#x2019; signal to address &lt;code&gt;0x40011000&lt;/code&gt; on the disk controller, writes the first byte of data to address &lt;code&gt;0x40011004&lt;/code&gt;, then waits until a specific bit in the status register turns to 1&amp;#x2019;. Because all communication is handled via &lt;strong&gt;MMIO (Memory-Mapped I/O)&lt;/strong&gt; reading and writing values to specific memory addresses the firmware becomes a stubborn child without the corresponding hardware.&lt;/p&gt;
+&lt;h3 id=&#34;1-2-The-Difference-Between-Rehosting-and-Emulating&#34;&gt;&lt;a href=&#34;#1-2-The-Difference-Between-Rehosting-and-Emulating&#34; class=&#34;headerlink&#34; title=&#34;1.2. The Difference Between Rehosting and Emulating&#34;&gt;&lt;/a&gt;1.2. The Difference Between Rehosting and Emulating&lt;/h3&gt;&lt;p&gt;While emulation aims to perfectly execute a CPU&amp;#x2019;s instruction set within a virtual environment, rehosting focuses less on perfect instruction replication and more on ensuring &lt;strong&gt;specific firmware functions execute as a complete flow&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;While I mentioned &amp;#x2018;differences,&amp;#x2019; Rehosting is closer to a complementary technology developed to address the shortcomings of Emulation. After all, implementing functionality via Rehosting requires an engine to execute the instructions composing that function, and this engine utilizes Emulation technology. In other words, &lt;strong&gt;the underlying technology is Emulation&lt;/strong&gt;.&lt;/p&gt;
+&lt;h3 id=&#34;1-3-Various-Rehosting-Methods&#34;&gt;&lt;a href=&#34;#1-3-Various-Rehosting-Methods&#34; class=&#34;headerlink&#34; title=&#34;1.3. Various Rehosting Methods&#34;&gt;&lt;/a&gt;1.3. Various Rehosting Methods&lt;/h3&gt;&lt;p&gt;There are three main approaches to rehosting. The first is an error-based inference method that &lt;strong&gt;runs the firmware through an emulator to analyze crash points and make corrections&lt;/strong&gt;. While not strictly necessary for analysis, replacing error-prone code with nops or setting flag values to True unconditionally during emulation can also be considered part of this approach. This is the most suitable method if you build an emulator specifically for a particular firmware function.&lt;/p&gt;
+&lt;p&gt;The second is an &lt;strong&gt;analysis-based method that analyzes the firmware before execution and performs rehosting&lt;/strong&gt;. This involves understanding the interaction logic with other hardware through code analysis and building virtual hardware based on that. While analysis can achieve high functional execution rates and high fidelity to actual behavior, rehosting itself takes a significant amount of time. However, this very aspect allows for analysis in an environment that closely mirrors actual operation!&lt;/p&gt;
+&lt;p&gt;The third method is &lt;strong&gt;rehosting using HAL layer hooking&lt;/strong&gt;, which I learned while writing this research paper. This is a very smart approach that leverages the fact most embedded systems rely on vendor-provided SDKs. Instead of directly analyzing and reproducing complex low-level register manipulations, it utilizes functions in the HAL layer or drivers where these register operations are abstracted.&lt;/p&gt;
+&lt;h3 id=&#34;1-4-About-HAL-Hardware-Abstraction-Layer&#34;&gt;&lt;a href=&#34;#1-4-About-HAL-Hardware-Abstraction-Layer&#34; class=&#34;headerlink&#34; title=&#34;1.4. About HAL(Hardware Abstraction Layer)&#34;&gt;&lt;/a&gt;1.4. About HAL(Hardware Abstraction Layer)&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/09/14/poosic/[Research]Rehosting/EN/3.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Before that, let&amp;#x2019;s briefly cover what HAL is. HAL stands for Hardware Abstraction Layer. It abstracts low-level operations that require direct hardware access and control, providing them at a higher level. Simply put, it enables C coding instead of assembly coding. HAL provides APIs that allow developers to work with hardware using standardized HAL libraries, even if they don&amp;#x2019;t know the hardware&amp;#x2019;s detailed operations. It&amp;#x2019;s a valuable tool that shields developers from the complexity and diversity of hardware.&lt;/p&gt;
+&lt;p&gt;The way hardware is controlled can vary between chip manufacturers, and even between chips from the same manufacturer.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// 1. GPIOC &amp;#xD3EC;&amp;#xD2B8;&amp;#xC758; &amp;#xD074;&amp;#xB7ED;&amp;#xC744; &amp;#xCF1C;&amp;#xC900;&amp;#xB2E4;.&lt;/span&gt;
+*(&lt;span class=&#34;hljs-keyword&#34;&gt;volatile&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt;*)&lt;span class=&#34;hljs-number&#34;&gt;0x40023830&lt;/span&gt; |= (&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; &amp;lt;&amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;);
+&lt;span class=&#34;hljs-comment&#34;&gt;// 2. PC13 &amp;#xD540;&amp;#xC744; &amp;#xCD9C;&amp;#xB825; &amp;#xBAA8;&amp;#xB4DC;&amp;#xB85C; &amp;#xC124;&amp;#xC815;&amp;#xD55C;&amp;#xB2E4;.&lt;/span&gt;
+*(&lt;span class=&#34;hljs-keyword&#34;&gt;volatile&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt;*)&lt;span class=&#34;hljs-number&#34;&gt;0x40020800&lt;/span&gt; &amp;amp;= ~(&lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt; &amp;lt;&amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;26&lt;/span&gt;);
+*(&lt;span class=&#34;hljs-keyword&#34;&gt;volatile&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt;*)&lt;span class=&#34;hljs-number&#34;&gt;0x40020800&lt;/span&gt; |= (&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; &amp;lt;&amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;26&lt;/span&gt;);
+&lt;span class=&#34;hljs-comment&#34;&gt;// 3. PC13 &amp;#xD540;&amp;#xC758; &amp;#xCD9C;&amp;#xB825; &amp;#xAC12;&amp;#xC744; 0&amp;#xC73C;&amp;#xB85C; &amp;#xB9CC;&amp;#xB4E0;&amp;#xB2E4; (LED ON)&lt;/span&gt;
+*(&lt;span class=&#34;hljs-keyword&#34;&gt;volatile&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt;*)&lt;span class=&#34;hljs-number&#34;&gt;0x40020814&lt;/span&gt; &amp;amp;= ~(&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; &amp;lt;&amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;13&lt;/span&gt;);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;For example, let&amp;#x2019;s consider turning on an LED by controlling a &lt;strong&gt;GPIO (General-Purpose Input/Output) pin&lt;/strong&gt;. Without HAL, developers would have to pore over dozens of pages of the chip&amp;#x2019;s datasheet and directly write values to specific memory addresses (registers), as shown in the example above. But as mentioned, even this approach requires re-reading the datasheet and rewriting the code whenever the chip changes.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;However, using the API provided by HAL, it can be written as easily and quickly as shown above with just one line of code. From a developer&amp;#x2019;s perspective, development becomes possible without needing to understand the hardware&amp;#x2019;s structure or operation in detail. The HAL library internally handles the complex register manipulation required for the currently used chip. &lt;/p&gt;
+&lt;h2 id=&#34;2-HALucinator&#34;&gt;&lt;a href=&#34;#2-HALucinator&#34; class=&#34;headerlink&#34; title=&#34;2. HALucinator&#34;&gt;&lt;/a&gt;2. HALucinator&lt;/h2&gt;&lt;p&gt;HALucinator, as you might infer from its name, is a firmware rehosting framework that utilizes the previously described HAL (Hardware Abstraction Layer) hooking method. (The concept of hallucination and rehosting blend so perfectly that I was truly impressed by the incredible naming sense.)&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/14/poosic/[Research]Rehosting/EN/4.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s take a look at HALucinator&amp;#x2019;s architecture diagram. It is structured as follows:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Config File: A YAML-formatted configuration file defining all operational settings for HALucinator.&lt;/li&gt;
+&lt;li&gt;QEMU Emulator: An emulator that understands architectures like ARM and MIPS and executes firmware binaries in a virtual environment.&lt;/li&gt;
+&lt;li&gt;GDB: A debugging interface utilizing QEMU&amp;#x2019;s debugging capabilities.&lt;/li&gt;
+&lt;li&gt;BP Handler: The core component of HALucinator&amp;#x2019;s hooking functionality, the breakpoint handler. When the address specified in the Config file is reached, it takes control and executes user-defined actions.&lt;/li&gt;
+&lt;li&gt;Peripheral Models: This is where the actual behavior of the virtual hardware is defined. The hooking logic we write in Python resides here.&lt;/li&gt;
+&lt;li&gt;Peripheral Server: Acts as a relay, either outputting the UART output of the emulated firmware to a real serial port or reading values from external sensors.&lt;/li&gt;
+&lt;li&gt;External Device: The actual hardware connected via the Peripheral Server. This enables a hybrid approach where complex chip operations, beyond simulation capabilities, are handled by the real device.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Just reading the descriptions of each component might not make it clear, so let me briefly explain the flow of operation. The user writes the memory map information for the binary to be rehosted, the addresses of functions to hook, etc., into the &lt;code&gt;Config File&lt;/code&gt;. HALucinator references this file to run the firmware in the &lt;code&gt;QEMU Emulator&lt;/code&gt;. When the firmware reaches the address of a function to hook, the &lt;code&gt;BP Handler&lt;/code&gt; intercepts the execution flow and calls the Python code defined in the &lt;code&gt;Peripheral Model&lt;/code&gt;. During this process, data can be exchanged with the actual device via the &lt;code&gt;Peripheral Server&lt;/code&gt; as needed. After the &lt;code&gt;Peripheral Model&lt;/code&gt;&amp;#x2018;s code executes, the result is returned back to the &lt;code&gt;QEMU Emulator&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/14/poosic/[Research]Rehosting/EN/5.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;As a result, one might mistakenly believe that interactions with peripheral devices are being handled correctly using this &lt;code&gt;BP Handler&lt;/code&gt;, enabling dynamic analysis of normal logic. Of course, if the Handler code is not written with care, it could lead to unfortunate consequences such as overlooking vulnerabilities arising from peripheral interactions or diverging from the actual execution flow. However, since the existing task of analyzing all low-level MIMO registers for building an analysis environment can now be focused solely on hooking HAL functions, resources can be drastically reduced. This means it should be covered diligently with a little(?) effort. Furthermore, HALucinator allows this hooking logic to be written directly in the familiar Python language, instilling confidence that it can cover all the shortcomings.&lt;/p&gt;
+&lt;h3 id=&#34;2-1-Env-Setting&#34;&gt;&lt;a href=&#34;#2-1-Env-Setting&#34; class=&#34;headerlink&#34; title=&#34;2.1. Env Setting&#34;&gt;&lt;/a&gt;2.1. Env Setting&lt;/h3&gt;&lt;p&gt;We will set up the environment within the Ubuntu environment of WSL. Since Avatar2, included in the submodule, has dependencies on Ubuntu, it is recommended to proceed within WSL.&lt;/p&gt;
+&lt;p&gt;You can download it via Git using the command below and conveniently retrieve the necessary files using the Git submodule. Afterwards, build and run it using Docker.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;git clone https://github.com/halucinator/halucinator.git
+cd ./halucinator
+git submodule update --init
+docker build -t halucinator ./
+docker run --name halucinator --rm -i -t halucinator bash&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Now it&amp;#x2019;s time to see if it works properly! To run HALucinator, you need the following:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Firmware file&lt;/li&gt;
+&lt;li&gt;Memory layout configuration&lt;/li&gt;
+&lt;li&gt;Address file&lt;/li&gt;
+&lt;li&gt;Interceptor file (interceptor function and its corresponding handler)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Just to check if it runs, I have to do all this work! If I finish all the setup only to find it doesn&amp;#x2019;t run, I&amp;#x2019;ll be pretty exhausted&amp;#x2026; Fortunately, the HALucinator Repo includes example files, so I&amp;#x2019;ll use those for testing.&lt;/p&gt;
+&lt;p&gt;In the current terminal, run the command &lt;code&gt;hal_dev_uart -i=1073811456&lt;/code&gt;. This command creates a virtual UART to attach to the firmware being emulated.&lt;/p&gt;
+&lt;p&gt;Now, open another terminal window and connect to the built Docker container using &lt;code&gt;docker exec -it halucinator bash&lt;/code&gt;. Then, run the &lt;code&gt;./test/STM32/example/run.sh&lt;/code&gt; command to emulate the MCU implemented in the example.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;#in current terminal&lt;/span&gt;
+hal_dev_uart -i=&lt;span class=&#34;hljs-number&#34;&gt;1073811456&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;#in new terminal&lt;/span&gt;
+docker &lt;span class=&#34;hljs-keyword&#34;&gt;exec&lt;/span&gt; -it halucinator bash
+./test/STM32/example/run.sh&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/14/poosic/[Research]Rehosting/EN/6.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;If you type &lt;code&gt;hackyboiz&lt;/code&gt; into the first terminal where you previously ran the virtual UART, you can see the virtualized device receiving this data (rx_data) in the second terminal!&lt;/p&gt;
+&lt;h2 id=&#34;Outro&#34;&gt;&lt;a href=&#34;#Outro&#34; class=&#34;headerlink&#34; title=&#34;Outro&#34;&gt;&lt;/a&gt;Outro&lt;/h2&gt;&lt;p&gt;That&amp;#x2019;s all for today&amp;#x2019;s research post! We&amp;#x2019;ve covered everything from rehosting to a brief overview of HALucinator. I intended to cover actual debugging with GDB and fuzzing using AFL on the built emulator, but I ended up rambling on about necessary concepts. To avoid oversizing the post and to provide a higher-quality example by showing application to an actual binary, I&amp;#x2019;ll cover this part in the upcoming Part 2! Part 2 will cover developing HAL directly using STM32, emulating the developed binary using HALucinator, and debugging with GDB. I&amp;#x2019;d appreciate it if you could come back for the next article.&lt;/p&gt;
+&lt;p&gt;I actually considered including the HALucinator installation process in Part 2 as well, but for those interested, I recommend following the &lt;a href=&#34;https://github.com/halucinator/halucinator/blob/master/doc/tutorial/2_run_uart_example.md&#34;&gt;tutorial&lt;/a&gt; on the HALucinator GitHub. In my case, I spent a lot of time building Docker on Windows, so I hope no one gets stuck during the installation phase&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;I&amp;#x2019;ll see you in the next post. Thank you!&lt;/p&gt;
+&lt;h2 id=&#34;Ref&#34;&gt;&lt;a href=&#34;#Ref&#34; class=&#34;headerlink&#34; title=&#34;Ref&#34;&gt;&lt;/a&gt;Ref&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://github.com/halucinator/halucinator&#34;&gt;HALucinator github&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://www.usenix.org/conference/usenixsecurity20/presentation/clements&#34;&gt;Usenix-HALucinator: Firmware Re-hosting Through Abstraction Layer Emulation&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] Rehosting - Part 1(EN) - hackyboiz">
+  <meta property="og:description" content="&lt;h2 id=&#34;Intro&#34;&gt;&lt;a href=&#34;#Intro&#34; class=&#34;headerlink&#34; title=&#34;Intro&#34;&gt;&lt;/a&gt;Intro&lt;/h2&gt;&lt;p&gt;Hello! It&amp;#x2019;s tobe back with a research post. After getting feedback that my nickname poosic sounded like the sound of pooping, I was so shocked I changed it to tobe. Personally, I liked the original nickname because I thought it sounded like laughter, but everyone has their own perspective, sigh. Still, getting the nice nickname tobe feels like a good opportunity &amp;gt;_-&lt;/p&gt;
+&lt;p&gt;Getting back to the main topic, today&amp;#x2019;s research post is a review of HALucinator! Think of HALucinator as a hardware emulator. However, while FirmAE is software for emulating the entire firmware system, HALucinator focuses on solving hardware dependencies and emulating RTOS or bare-metal firmware. Honestly, I started studying it thinking, &amp;#x2018;Is this an amazing tool that can replace emulators?!&amp;#x2019; but it turned out to be more like an advanced application of emulators, which left me quite flustered.&lt;/p&gt;
+&lt;p&gt;Before diving into the review, I&amp;#x2019;ll first explain some concepts that might be unfamiliar (like rehosting, HAL, bare-metal firmware, etc.), then proceed with the main review.&lt;/p&gt;
+&lt;h2 id=&#34;1-About-Rehosting&#34;&gt;&lt;a href=&#34;#1-About-Rehosting&#34; class=&#34;headerlink&#34; title=&#34;1. About Rehosting&#34;&gt;&lt;/a&gt;1. About Rehosting&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2025/09/14/poosic/[Research]Rehosting/EN/thumbnail.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Rehosting is conceptually similar to emulation in that it separates firmware from hardware and ports it to a software-based virtual environment running on a computer. However, the goals of the two technologies differ slightly. An emulator aims to reproduce all the functions and behaviors of a specific SoC or board as accurately and comprehensively as possible within a virtual environment. Rehosting, however, does not aim for a perfect replica; its goal is to &lt;strong&gt;build the minimal environment necessary for the specific function being analyzed to execute correctly&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;Naturally, if perfect reproduction in a virtual environment were possible, emulation would be preferable. While feasible for single-board devices, it is practically impossible for systems requiring interaction with diverse peripherals.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/14/poosic/[Research]Rehosting/EN/1.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Just look at the inside of the village bus electronic display in the image above&amp;#x2014;various devices like Raspberry Pi and routers are interacting with each other. (&lt;del&gt;I&amp;#x2019;ve never had the chance to see a village bus display board either, so this was fascinating&lt;/del&gt;)&lt;/p&gt;
+&lt;p&gt;Take the AEB (Autonomous Emergency Braking) system in cars as an example. Its firmware interacts with peripheral devices like the front sensor for obstacle detection, the brake actuator controlling actual brake hydraulic pressure, and the CAN bus for internal communication. What happens if you just emulate the main board with the AEB firmware? Without the CAN bus, you can&amp;#x2019;t even receive vehicle speed data, causing it to stall. Even if you implement a virtual CAN bus, there are no sensors to send data, making proper analysis impossible. On the other hand, analyzing and emulating all these peripherals would be exhausting before you even start.&lt;/p&gt;
+&lt;p&gt;From a vulnerability analyst&amp;#x2019;s perspective, trying to examine a single feature could lead to the unfortunate situation of having to meticulously analyze and code multiple boards just to virtualize them. It&amp;#x2019;s like filling the bathtub to the brim, adding bath salts, lighting candles, and even floating rose petals (&lt;del&gt;I don&amp;#x2019;t usually go to such lengths for a bath&lt;/del&gt;) only to end up just washing your face and getting out.&lt;/p&gt;
+&lt;h3 id=&#34;1-1-Firmware-Type&#34;&gt;&lt;a href=&#34;#1-1-Firmware-Type&#34; class=&#34;headerlink&#34; title=&#34;1.1. Firmware Type&#34;&gt;&lt;/a&gt;1.1. Firmware Type&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/09/14/poosic/[Research]Rehosting/EN/2.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Rehosting is not always more effective than emulation for all firmware. From a firmware virtualization perspective, firmware types can be broadly categorized into the following three types:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Type I Firmware (Application-based): This is firmware that runs as a single application on top of a general-purpose OS like Linux or Windows.&lt;/li&gt;
+&lt;li&gt;Type II Firmware (OS-Based): Firmware that includes a customized OS, such as Linux or VxWorks.&lt;/li&gt;
+&lt;li&gt;Type III Firmware (Bare-Metal): Firmware that directly controls hardware without an OS. This includes most small IoT devices with MCUs, automotive ECUs, and industrial control equipment.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Rehosting technology primarily evolved for analyzing &lt;strong&gt;Type III, bare-metal firmware&lt;/strong&gt;. While Types I and II include some abstraction layer via the OS, Type III firmware, which directly controls hardware without an OS, exhibits extremely high hardware dependency.&lt;/p&gt;
+&lt;p&gt;Bare-metal literally means &amp;#x2018;bare metal&amp;#x2019;. Figuratively, it implies &amp;#x2018;nothing is layered over the hardware&amp;#x2019;. It refers to a method where firmware directly controls all aspects of the hardware in its raw state, without the abstraction layer provided by an OS.&lt;/p&gt;
+&lt;p&gt;Typically, on a PC, when a program saves a file, clicking the &lt;code&gt;Save&lt;/code&gt; button triggers the OS to write it to disk. In contrast, bare-metal firmware must perform this save operation by &amp;#x2018;sends a &amp;#x2018;ready&amp;#x2019; signal to address &lt;code&gt;0x40011000&lt;/code&gt; on the disk controller, writes the first byte of data to address &lt;code&gt;0x40011004&lt;/code&gt;, then waits until a specific bit in the status register turns to 1&amp;#x2019;. Because all communication is handled via &lt;strong&gt;MMIO (Memory-Mapped I/O)&lt;/strong&gt; reading and writing values to specific memory addresses the firmware becomes a stubborn child without the corresponding hardware.&lt;/p&gt;
+&lt;h3 id=&#34;1-2-The-Difference-Between-Rehosting-and-Emulating&#34;&gt;&lt;a href=&#34;#1-2-The-Difference-Between-Rehosting-and-Emulating&#34; class=&#34;headerlink&#34; title=&#34;1.2. The Difference Between Rehosting and Emulating&#34;&gt;&lt;/a&gt;1.2. The Difference Between Rehosting and Emulating&lt;/h3&gt;&lt;p&gt;While emulation aims to perfectly execute a CPU&amp;#x2019;s instruction set within a virtual environment, rehosting focuses less on perfect instruction replication and more on ensuring &lt;strong&gt;specific firmware functions execute as a complete flow&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;While I mentioned &amp;#x2018;differences,&amp;#x2019; Rehosting is closer to a complementary technology developed to address the shortcomings of Emulation. After all, implementing functionality via Rehosting requires an engine to execute the instructions composing that function, and this engine utilizes Emulation technology. In other words, &lt;strong&gt;the underlying technology is Emulation&lt;/strong&gt;.&lt;/p&gt;
+&lt;h3 id=&#34;1-3-Various-Rehosting-Methods&#34;&gt;&lt;a href=&#34;#1-3-Various-Rehosting-Methods&#34; class=&#34;headerlink&#34; title=&#34;1.3. Various Rehosting Methods&#34;&gt;&lt;/a&gt;1.3. Various Rehosting Methods&lt;/h3&gt;&lt;p&gt;There are three main approaches to rehosting. The first is an error-based inference method that &lt;strong&gt;runs the firmware through an emulator to analyze crash points and make corrections&lt;/strong&gt;. While not strictly necessary for analysis, replacing error-prone code with nops or setting flag values to True unconditionally during emulation can also be considered part of this approach. This is the most suitable method if you build an emulator specifically for a particular firmware function.&lt;/p&gt;
+&lt;p&gt;The second is an &lt;strong&gt;analysis-based method that analyzes the firmware before execution and performs rehosting&lt;/strong&gt;. This involves understanding the interaction logic with other hardware through code analysis and building virtual hardware based on that. While analysis can achieve high functional execution rates and high fidelity to actual behavior, rehosting itself takes a significant amount of time. However, this very aspect allows for analysis in an environment that closely mirrors actual operation!&lt;/p&gt;
+&lt;p&gt;The third method is &lt;strong&gt;rehosting using HAL layer hooking&lt;/strong&gt;, which I learned while writing this research paper. This is a very smart approach that leverages the fact most embedded systems rely on vendor-provided SDKs. Instead of directly analyzing and reproducing complex low-level register manipulations, it utilizes functions in the HAL layer or drivers where these register operations are abstracted.&lt;/p&gt;
+&lt;h3 id=&#34;1-4-About-HAL-Hardware-Abstraction-Layer&#34;&gt;&lt;a href=&#34;#1-4-About-HAL-Hardware-Abstraction-Layer&#34; class=&#34;headerlink&#34; title=&#34;1.4. About HAL(Hardware Abstraction Layer)&#34;&gt;&lt;/a&gt;1.4. About HAL(Hardware Abstraction Layer)&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/09/14/poosic/[Research]Rehosting/EN/3.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Before that, let&amp;#x2019;s briefly cover what HAL is. HAL stands for Hardware Abstraction Layer. It abstracts low-level operations that require direct hardware access and control, providing them at a higher level. Simply put, it enables C coding instead of assembly coding. HAL provides APIs that allow developers to work with hardware using standardized HAL libraries, even if they don&amp;#x2019;t know the hardware&amp;#x2019;s detailed operations. It&amp;#x2019;s a valuable tool that shields developers from the complexity and diversity of hardware.&lt;/p&gt;
+&lt;p&gt;The way hardware is controlled can vary between chip manufacturers, and even between chips from the same manufacturer.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// 1. GPIOC &amp;#xD3EC;&amp;#xD2B8;&amp;#xC758; &amp;#xD074;&amp;#xB7ED;&amp;#xC744; &amp;#xCF1C;&amp;#xC900;&amp;#xB2E4;.&lt;/span&gt;
+*(&lt;span class=&#34;hljs-keyword&#34;&gt;volatile&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt;*)&lt;span class=&#34;hljs-number&#34;&gt;0x40023830&lt;/span&gt; |= (&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; &amp;lt;&amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;);
+&lt;span class=&#34;hljs-comment&#34;&gt;// 2. PC13 &amp;#xD540;&amp;#xC744; &amp;#xCD9C;&amp;#xB825; &amp;#xBAA8;&amp;#xB4DC;&amp;#xB85C; &amp;#xC124;&amp;#xC815;&amp;#xD55C;&amp;#xB2E4;.&lt;/span&gt;
+*(&lt;span class=&#34;hljs-keyword&#34;&gt;volatile&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt;*)&lt;span class=&#34;hljs-number&#34;&gt;0x40020800&lt;/span&gt; &amp;amp;= ~(&lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt; &amp;lt;&amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;26&lt;/span&gt;);
+*(&lt;span class=&#34;hljs-keyword&#34;&gt;volatile&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt;*)&lt;span class=&#34;hljs-number&#34;&gt;0x40020800&lt;/span&gt; |= (&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; &amp;lt;&amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;26&lt;/span&gt;);
+&lt;span class=&#34;hljs-comment&#34;&gt;// 3. PC13 &amp;#xD540;&amp;#xC758; &amp;#xCD9C;&amp;#xB825; &amp;#xAC12;&amp;#xC744; 0&amp;#xC73C;&amp;#xB85C; &amp;#xB9CC;&amp;#xB4E0;&amp;#xB2E4; (LED ON)&lt;/span&gt;
+*(&lt;span class=&#34;hljs-keyword&#34;&gt;volatile&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt;*)&lt;span class=&#34;hljs-number&#34;&gt;0x40020814&lt;/span&gt; &amp;amp;= ~(&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; &amp;lt;&amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;13&lt;/span&gt;);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;For example, let&amp;#x2019;s consider turning on an LED by controlling a &lt;strong&gt;GPIO (General-Purpose Input/Output) pin&lt;/strong&gt;. Without HAL, developers would have to pore over dozens of pages of the chip&amp;#x2019;s datasheet and directly write values to specific memory addresses (registers), as shown in the example above. But as mentioned, even this approach requires re-reading the datasheet and rewriting the code whenever the chip changes.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;However, using the API provided by HAL, it can be written as easily and quickly as shown above with just one line of code. From a developer&amp;#x2019;s perspective, development becomes possible without needing to understand the hardware&amp;#x2019;s structure or operation in detail. The HAL library internally handles the complex register manipulation required for the currently used chip. &lt;/p&gt;
+&lt;h2 id=&#34;2-HALucinator&#34;&gt;&lt;a href=&#34;#2-HALucinator&#34; class=&#34;headerlink&#34; title=&#34;2. HALucinator&#34;&gt;&lt;/a&gt;2. HALucinator&lt;/h2&gt;&lt;p&gt;HALucinator, as you might infer from its name, is a firmware rehosting framework that utilizes the previously described HAL (Hardware Abstraction Layer) hooking method. (The concept of hallucination and rehosting blend so perfectly that I was truly impressed by the incredible naming sense.)&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/14/poosic/[Research]Rehosting/EN/4.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s take a look at HALucinator&amp;#x2019;s architecture diagram. It is structured as follows:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Config File: A YAML-formatted configuration file defining all operational settings for HALucinator.&lt;/li&gt;
+&lt;li&gt;QEMU Emulator: An emulator that understands architectures like ARM and MIPS and executes firmware binaries in a virtual environment.&lt;/li&gt;
+&lt;li&gt;GDB: A debugging interface utilizing QEMU&amp;#x2019;s debugging capabilities.&lt;/li&gt;
+&lt;li&gt;BP Handler: The core component of HALucinator&amp;#x2019;s hooking functionality, the breakpoint handler. When the address specified in the Config file is reached, it takes control and executes user-defined actions.&lt;/li&gt;
+&lt;li&gt;Peripheral Models: This is where the actual behavior of the virtual hardware is defined. The hooking logic we write in Python resides here.&lt;/li&gt;
+&lt;li&gt;Peripheral Server: Acts as a relay, either outputting the UART output of the emulated firmware to a real serial port or reading values from external sensors.&lt;/li&gt;
+&lt;li&gt;External Device: The actual hardware connected via the Peripheral Server. This enables a hybrid approach where complex chip operations, beyond simulation capabilities, are handled by the real device.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Just reading the descriptions of each component might not make it clear, so let me briefly explain the flow of operation. The user writes the memory map information for the binary to be rehosted, the addresses of functions to hook, etc., into the &lt;code&gt;Config File&lt;/code&gt;. HALucinator references this file to run the firmware in the &lt;code&gt;QEMU Emulator&lt;/code&gt;. When the firmware reaches the address of a function to hook, the &lt;code&gt;BP Handler&lt;/code&gt; intercepts the execution flow and calls the Python code defined in the &lt;code&gt;Peripheral Model&lt;/code&gt;. During this process, data can be exchanged with the actual device via the &lt;code&gt;Peripheral Server&lt;/code&gt; as needed. After the &lt;code&gt;Peripheral Model&lt;/code&gt;&amp;#x2018;s code executes, the result is returned back to the &lt;code&gt;QEMU Emulator&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/14/poosic/[Research]Rehosting/EN/5.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;As a result, one might mistakenly believe that interactions with peripheral devices are being handled correctly using this &lt;code&gt;BP Handler&lt;/code&gt;, enabling dynamic analysis of normal logic. Of course, if the Handler code is not written with care, it could lead to unfortunate consequences such as overlooking vulnerabilities arising from peripheral interactions or diverging from the actual execution flow. However, since the existing task of analyzing all low-level MIMO registers for building an analysis environment can now be focused solely on hooking HAL functions, resources can be drastically reduced. This means it should be covered diligently with a little(?) effort. Furthermore, HALucinator allows this hooking logic to be written directly in the familiar Python language, instilling confidence that it can cover all the shortcomings.&lt;/p&gt;
+&lt;h3 id=&#34;2-1-Env-Setting&#34;&gt;&lt;a href=&#34;#2-1-Env-Setting&#34; class=&#34;headerlink&#34; title=&#34;2.1. Env Setting&#34;&gt;&lt;/a&gt;2.1. Env Setting&lt;/h3&gt;&lt;p&gt;We will set up the environment within the Ubuntu environment of WSL. Since Avatar2, included in the submodule, has dependencies on Ubuntu, it is recommended to proceed within WSL.&lt;/p&gt;
+&lt;p&gt;You can download it via Git using the command below and conveniently retrieve the necessary files using the Git submodule. Afterwards, build and run it using Docker.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;git clone https://github.com/halucinator/halucinator.git
+cd ./halucinator
+git submodule update --init
+docker build -t halucinator ./
+docker run --name halucinator --rm -i -t halucinator bash&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Now it&amp;#x2019;s time to see if it works properly! To run HALucinator, you need the following:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Firmware file&lt;/li&gt;
+&lt;li&gt;Memory layout configuration&lt;/li&gt;
+&lt;li&gt;Address file&lt;/li&gt;
+&lt;li&gt;Interceptor file (interceptor function and its corresponding handler)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Just to check if it runs, I have to do all this work! If I finish all the setup only to find it doesn&amp;#x2019;t run, I&amp;#x2019;ll be pretty exhausted&amp;#x2026; Fortunately, the HALucinator Repo includes example files, so I&amp;#x2019;ll use those for testing.&lt;/p&gt;
+&lt;p&gt;In the current terminal, run the command &lt;code&gt;hal_dev_uart -i=1073811456&lt;/code&gt;. This command creates a virtual UART to attach to the firmware being emulated.&lt;/p&gt;
+&lt;p&gt;Now, open another terminal window and connect to the built Docker container using &lt;code&gt;docker exec -it halucinator bash&lt;/code&gt;. Then, run the &lt;code&gt;./test/STM32/example/run.sh&lt;/code&gt; command to emulate the MCU implemented in the example.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;#in current terminal&lt;/span&gt;
+hal_dev_uart -i=&lt;span class=&#34;hljs-number&#34;&gt;1073811456&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;#in new terminal&lt;/span&gt;
+docker &lt;span class=&#34;hljs-keyword&#34;&gt;exec&lt;/span&gt; -it halucinator bash
+./test/STM32/example/run.sh&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/14/poosic/[Research]Rehosting/EN/6.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;If you type &lt;code&gt;hackyboiz&lt;/code&gt; into the first terminal where you previously ran the virtual UART, you can see the virtualized device receiving this data (rx_data) in the second terminal!&lt;/p&gt;
+&lt;h2 id=&#34;Outro&#34;&gt;&lt;a href=&#34;#Outro&#34; class=&#34;headerlink&#34; title=&#34;Outro&#34;&gt;&lt;/a&gt;Outro&lt;/h2&gt;&lt;p&gt;That&amp;#x2019;s all for today&amp;#x2019;s research post! We&amp;#x2019;ve covered everything from rehosting to a brief overview of HALucinator. I intended to cover actual debugging with GDB and fuzzing using AFL on the built emulator, but I ended up rambling on about necessary concepts. To avoid oversizing the post and to provide a higher-quality example by showing application to an actual binary, I&amp;#x2019;ll cover this part in the upcoming Part 2! Part 2 will cover developing HAL directly using STM32, emulating the developed binary using HALucinator, and debugging with GDB. I&amp;#x2019;d appreciate it if you could come back for the next article.&lt;/p&gt;
+&lt;p&gt;I actually considered including the HALucinator installation process in Part 2 as well, but for those interested, I recommend following the &lt;a href=&#34;https://github.com/halucinator/halucinator/blob/master/doc/tutorial/2_run_uart_example.md&#34;&gt;tutorial&lt;/a&gt; on the HALucinator GitHub. In my case, I spent a lot of time building Docker on Windows, so I hope no one gets stuck during the installation phase&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;I&amp;#x2019;ll see you in the next post. Thank you!&lt;/p&gt;
+&lt;h2 id=&#34;Ref&#34;&gt;&lt;a href=&#34;#Ref&#34; class=&#34;headerlink&#34; title=&#34;Ref&#34;&gt;&lt;/a&gt;Ref&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://github.com/halucinator/halucinator&#34;&gt;HALucinator github&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://www.usenix.org/conference/usenixsecurity20/presentation/clements&#34;&gt;Usenix-HALucinator: Firmware Re-hosting Through Abstraction Layer Emulation&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/09/14/poosic/[Research]Rehosting/EN/thumbnail.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/09/14/poosic/[research]rehosting/en/">
+
+  <title>[Research] Rehosting - Part 1(EN) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-09-14 17:00" pubdate>
+      2025년 9월 14일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      2.3k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      46
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] Rehosting - Part 1(EN)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <h2 id="Intro"><a href="#Intro" class="headerlink" title="Intro"></a>Intro</h2><p>Hello! It&#x2019;s tobe back with a research post. After getting feedback that my nickname poosic sounded like the sound of pooping, I was so shocked I changed it to tobe. Personally, I liked the original nickname because I thought it sounded like laughter, but everyone has their own perspective, sigh. Still, getting the nice nickname tobe feels like a good opportunity &gt;_-</p>
+<p>Getting back to the main topic, today&#x2019;s research post is a review of HALucinator! Think of HALucinator as a hardware emulator. However, while FirmAE is software for emulating the entire firmware system, HALucinator focuses on solving hardware dependencies and emulating RTOS or bare-metal firmware. Honestly, I started studying it thinking, &#x2018;Is this an amazing tool that can replace emulators?!&#x2019; but it turned out to be more like an advanced application of emulators, which left me quite flustered.</p>
+<p>Before diving into the review, I&#x2019;ll first explain some concepts that might be unfamiliar (like rehosting, HAL, bare-metal firmware, etc.), then proceed with the main review.</p>
+<h2 id="1-About-Rehosting"><a href="#1-About-Rehosting" class="headerlink" title="1. About Rehosting"></a>1. About Rehosting</h2><p><img src="/2025/09/14/poosic/[Research]Rehosting/EN/thumbnail.png" srcset="/img/loading.gif" alt></p>
+<p>Rehosting is conceptually similar to emulation in that it separates firmware from hardware and ports it to a software-based virtual environment running on a computer. However, the goals of the two technologies differ slightly. An emulator aims to reproduce all the functions and behaviors of a specific SoC or board as accurately and comprehensively as possible within a virtual environment. Rehosting, however, does not aim for a perfect replica; its goal is to <strong>build the minimal environment necessary for the specific function being analyzed to execute correctly</strong>.</p>
+<p>Naturally, if perfect reproduction in a virtual environment were possible, emulation would be preferable. While feasible for single-board devices, it is practically impossible for systems requiring interaction with diverse peripherals.</p>
+<p><img src="/2025/09/14/poosic/[Research]Rehosting/EN/1.png" srcset="/img/loading.gif" alt></p>
+<p>Just look at the inside of the village bus electronic display in the image above&#x2014;various devices like Raspberry Pi and routers are interacting with each other. (<del>I&#x2019;ve never had the chance to see a village bus display board either, so this was fascinating</del>)</p>
+<p>Take the AEB (Autonomous Emergency Braking) system in cars as an example. Its firmware interacts with peripheral devices like the front sensor for obstacle detection, the brake actuator controlling actual brake hydraulic pressure, and the CAN bus for internal communication. What happens if you just emulate the main board with the AEB firmware? Without the CAN bus, you can&#x2019;t even receive vehicle speed data, causing it to stall. Even if you implement a virtual CAN bus, there are no sensors to send data, making proper analysis impossible. On the other hand, analyzing and emulating all these peripherals would be exhausting before you even start.</p>
+<p>From a vulnerability analyst&#x2019;s perspective, trying to examine a single feature could lead to the unfortunate situation of having to meticulously analyze and code multiple boards just to virtualize them. It&#x2019;s like filling the bathtub to the brim, adding bath salts, lighting candles, and even floating rose petals (<del>I don&#x2019;t usually go to such lengths for a bath</del>) only to end up just washing your face and getting out.</p>
+<h3 id="1-1-Firmware-Type"><a href="#1-1-Firmware-Type" class="headerlink" title="1.1. Firmware Type"></a>1.1. Firmware Type</h3><p><img src="/2025/09/14/poosic/[Research]Rehosting/EN/2.png" srcset="/img/loading.gif" alt></p>
+<p>Rehosting is not always more effective than emulation for all firmware. From a firmware virtualization perspective, firmware types can be broadly categorized into the following three types:</p>
+<ol>
+<li>Type I Firmware (Application-based): This is firmware that runs as a single application on top of a general-purpose OS like Linux or Windows.</li>
+<li>Type II Firmware (OS-Based): Firmware that includes a customized OS, such as Linux or VxWorks.</li>
+<li>Type III Firmware (Bare-Metal): Firmware that directly controls hardware without an OS. This includes most small IoT devices with MCUs, automotive ECUs, and industrial control equipment.</li>
+</ol>
+<p>Rehosting technology primarily evolved for analyzing <strong>Type III, bare-metal firmware</strong>. While Types I and II include some abstraction layer via the OS, Type III firmware, which directly controls hardware without an OS, exhibits extremely high hardware dependency.</p>
+<p>Bare-metal literally means &#x2018;bare metal&#x2019;. Figuratively, it implies &#x2018;nothing is layered over the hardware&#x2019;. It refers to a method where firmware directly controls all aspects of the hardware in its raw state, without the abstraction layer provided by an OS.</p>
+<p>Typically, on a PC, when a program saves a file, clicking the <code>Save</code> button triggers the OS to write it to disk. In contrast, bare-metal firmware must perform this save operation by &#x2018;sends a &#x2018;ready&#x2019; signal to address <code>0x40011000</code> on the disk controller, writes the first byte of data to address <code>0x40011004</code>, then waits until a specific bit in the status register turns to 1&#x2019;. Because all communication is handled via <strong>MMIO (Memory-Mapped I/O)</strong> reading and writing values to specific memory addresses the firmware becomes a stubborn child without the corresponding hardware.</p>
+<h3 id="1-2-The-Difference-Between-Rehosting-and-Emulating"><a href="#1-2-The-Difference-Between-Rehosting-and-Emulating" class="headerlink" title="1.2. The Difference Between Rehosting and Emulating"></a>1.2. The Difference Between Rehosting and Emulating</h3><p>While emulation aims to perfectly execute a CPU&#x2019;s instruction set within a virtual environment, rehosting focuses less on perfect instruction replication and more on ensuring <strong>specific firmware functions execute as a complete flow</strong>.</p>
+<p>While I mentioned &#x2018;differences,&#x2019; Rehosting is closer to a complementary technology developed to address the shortcomings of Emulation. After all, implementing functionality via Rehosting requires an engine to execute the instructions composing that function, and this engine utilizes Emulation technology. In other words, <strong>the underlying technology is Emulation</strong>.</p>
+<h3 id="1-3-Various-Rehosting-Methods"><a href="#1-3-Various-Rehosting-Methods" class="headerlink" title="1.3. Various Rehosting Methods"></a>1.3. Various Rehosting Methods</h3><p>There are three main approaches to rehosting. The first is an error-based inference method that <strong>runs the firmware through an emulator to analyze crash points and make corrections</strong>. While not strictly necessary for analysis, replacing error-prone code with nops or setting flag values to True unconditionally during emulation can also be considered part of this approach. This is the most suitable method if you build an emulator specifically for a particular firmware function.</p>
+<p>The second is an <strong>analysis-based method that analyzes the firmware before execution and performs rehosting</strong>. This involves understanding the interaction logic with other hardware through code analysis and building virtual hardware based on that. While analysis can achieve high functional execution rates and high fidelity to actual behavior, rehosting itself takes a significant amount of time. However, this very aspect allows for analysis in an environment that closely mirrors actual operation!</p>
+<p>The third method is <strong>rehosting using HAL layer hooking</strong>, which I learned while writing this research paper. This is a very smart approach that leverages the fact most embedded systems rely on vendor-provided SDKs. Instead of directly analyzing and reproducing complex low-level register manipulations, it utilizes functions in the HAL layer or drivers where these register operations are abstracted.</p>
+<h3 id="1-4-About-HAL-Hardware-Abstraction-Layer"><a href="#1-4-About-HAL-Hardware-Abstraction-Layer" class="headerlink" title="1.4. About HAL(Hardware Abstraction Layer)"></a>1.4. About HAL(Hardware Abstraction Layer)</h3><p><img src="/2025/09/14/poosic/[Research]Rehosting/EN/3.png" srcset="/img/loading.gif" alt></p>
+<p>Before that, let&#x2019;s briefly cover what HAL is. HAL stands for Hardware Abstraction Layer. It abstracts low-level operations that require direct hardware access and control, providing them at a higher level. Simply put, it enables C coding instead of assembly coding. HAL provides APIs that allow developers to work with hardware using standardized HAL libraries, even if they don&#x2019;t know the hardware&#x2019;s detailed operations. It&#x2019;s a valuable tool that shields developers from the complexity and diversity of hardware.</p>
+<p>The way hardware is controlled can vary between chip manufacturers, and even between chips from the same manufacturer.</p>
+<pre><code class="hljs c"><span class="hljs-comment">// 1. GPIOC &#xD3EC;&#xD2B8;&#xC758; &#xD074;&#xB7ED;&#xC744; &#xCF1C;&#xC900;&#xB2E4;.</span>
+*(<span class="hljs-keyword">volatile</span> <span class="hljs-keyword">uint32_t</span>*)<span class="hljs-number">0x40023830</span> |= (<span class="hljs-number">1</span> &lt;&lt; <span class="hljs-number">2</span>);
+<span class="hljs-comment">// 2. PC13 &#xD540;&#xC744; &#xCD9C;&#xB825; &#xBAA8;&#xB4DC;&#xB85C; &#xC124;&#xC815;&#xD55C;&#xB2E4;.</span>
+*(<span class="hljs-keyword">volatile</span> <span class="hljs-keyword">uint32_t</span>*)<span class="hljs-number">0x40020800</span> &amp;= ~(<span class="hljs-number">3</span> &lt;&lt; <span class="hljs-number">26</span>);
+*(<span class="hljs-keyword">volatile</span> <span class="hljs-keyword">uint32_t</span>*)<span class="hljs-number">0x40020800</span> |= (<span class="hljs-number">1</span> &lt;&lt; <span class="hljs-number">26</span>);
+<span class="hljs-comment">// 3. PC13 &#xD540;&#xC758; &#xCD9C;&#xB825; &#xAC12;&#xC744; 0&#xC73C;&#xB85C; &#xB9CC;&#xB4E0;&#xB2E4; (LED ON)</span>
+*(<span class="hljs-keyword">volatile</span> <span class="hljs-keyword">uint32_t</span>*)<span class="hljs-number">0x40020814</span> &amp;= ~(<span class="hljs-number">1</span> &lt;&lt; <span class="hljs-number">13</span>);</code></pre>
+<p>For example, let&#x2019;s consider turning on an LED by controlling a <strong>GPIO (General-Purpose Input/Output) pin</strong>. Without HAL, developers would have to pore over dozens of pages of the chip&#x2019;s datasheet and directly write values to specific memory addresses (registers), as shown in the example above. But as mentioned, even this approach requires re-reading the datasheet and rewriting the code whenever the chip changes.</p>
+<pre><code class="hljs c">HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);</code></pre>
+<p>However, using the API provided by HAL, it can be written as easily and quickly as shown above with just one line of code. From a developer&#x2019;s perspective, development becomes possible without needing to understand the hardware&#x2019;s structure or operation in detail. The HAL library internally handles the complex register manipulation required for the currently used chip. </p>
+<h2 id="2-HALucinator"><a href="#2-HALucinator" class="headerlink" title="2. HALucinator"></a>2. HALucinator</h2><p>HALucinator, as you might infer from its name, is a firmware rehosting framework that utilizes the previously described HAL (Hardware Abstraction Layer) hooking method. (The concept of hallucination and rehosting blend so perfectly that I was truly impressed by the incredible naming sense.)</p>
+<p><img src="/2025/09/14/poosic/[Research]Rehosting/EN/4.png" srcset="/img/loading.gif" alt></p>
+<p>Let&#x2019;s take a look at HALucinator&#x2019;s architecture diagram. It is structured as follows:</p>
+<ul>
+<li>Config File: A YAML-formatted configuration file defining all operational settings for HALucinator.</li>
+<li>QEMU Emulator: An emulator that understands architectures like ARM and MIPS and executes firmware binaries in a virtual environment.</li>
+<li>GDB: A debugging interface utilizing QEMU&#x2019;s debugging capabilities.</li>
+<li>BP Handler: The core component of HALucinator&#x2019;s hooking functionality, the breakpoint handler. When the address specified in the Config file is reached, it takes control and executes user-defined actions.</li>
+<li>Peripheral Models: This is where the actual behavior of the virtual hardware is defined. The hooking logic we write in Python resides here.</li>
+<li>Peripheral Server: Acts as a relay, either outputting the UART output of the emulated firmware to a real serial port or reading values from external sensors.</li>
+<li>External Device: The actual hardware connected via the Peripheral Server. This enables a hybrid approach where complex chip operations, beyond simulation capabilities, are handled by the real device.</li>
+</ul>
+<p>Just reading the descriptions of each component might not make it clear, so let me briefly explain the flow of operation. The user writes the memory map information for the binary to be rehosted, the addresses of functions to hook, etc., into the <code>Config File</code>. HALucinator references this file to run the firmware in the <code>QEMU Emulator</code>. When the firmware reaches the address of a function to hook, the <code>BP Handler</code> intercepts the execution flow and calls the Python code defined in the <code>Peripheral Model</code>. During this process, data can be exchanged with the actual device via the <code>Peripheral Server</code> as needed. After the <code>Peripheral Model</code>&#x2018;s code executes, the result is returned back to the <code>QEMU Emulator</code>.</p>
+<p><img src="/2025/09/14/poosic/[Research]Rehosting/EN/5.png" srcset="/img/loading.gif" alt></p>
+<p>As a result, one might mistakenly believe that interactions with peripheral devices are being handled correctly using this <code>BP Handler</code>, enabling dynamic analysis of normal logic. Of course, if the Handler code is not written with care, it could lead to unfortunate consequences such as overlooking vulnerabilities arising from peripheral interactions or diverging from the actual execution flow. However, since the existing task of analyzing all low-level MIMO registers for building an analysis environment can now be focused solely on hooking HAL functions, resources can be drastically reduced. This means it should be covered diligently with a little(?) effort. Furthermore, HALucinator allows this hooking logic to be written directly in the familiar Python language, instilling confidence that it can cover all the shortcomings.</p>
+<h3 id="2-1-Env-Setting"><a href="#2-1-Env-Setting" class="headerlink" title="2.1. Env Setting"></a>2.1. Env Setting</h3><p>We will set up the environment within the Ubuntu environment of WSL. Since Avatar2, included in the submodule, has dependencies on Ubuntu, it is recommended to proceed within WSL.</p>
+<p>You can download it via Git using the command below and conveniently retrieve the necessary files using the Git submodule. Afterwards, build and run it using Docker.</p>
+<pre><code class="hljs python">git clone https://github.com/halucinator/halucinator.git
+cd ./halucinator
+git submodule update --init
+docker build -t halucinator ./
+docker run --name halucinator --rm -i -t halucinator bash</code></pre>
+<p>Now it&#x2019;s time to see if it works properly! To run HALucinator, you need the following:</p>
+<ul>
+<li>Firmware file</li>
+<li>Memory layout configuration</li>
+<li>Address file</li>
+<li>Interceptor file (interceptor function and its corresponding handler)</li>
+</ul>
+<p>Just to check if it runs, I have to do all this work! If I finish all the setup only to find it doesn&#x2019;t run, I&#x2019;ll be pretty exhausted&#x2026; Fortunately, the HALucinator Repo includes example files, so I&#x2019;ll use those for testing.</p>
+<p>In the current terminal, run the command <code>hal_dev_uart -i=1073811456</code>. This command creates a virtual UART to attach to the firmware being emulated.</p>
+<p>Now, open another terminal window and connect to the built Docker container using <code>docker exec -it halucinator bash</code>. Then, run the <code>./test/STM32/example/run.sh</code> command to emulate the MCU implemented in the example.</p>
+<pre><code class="hljs python"><span class="hljs-comment">#in current terminal</span>
+hal_dev_uart -i=<span class="hljs-number">1073811456</span>
+
+<span class="hljs-comment">#in new terminal</span>
+docker <span class="hljs-keyword">exec</span> -it halucinator bash
+./test/STM32/example/run.sh</code></pre>
+<p><img src="/2025/09/14/poosic/[Research]Rehosting/EN/6.png" srcset="/img/loading.gif" alt></p>
+<p>If you type <code>hackyboiz</code> into the first terminal where you previously ran the virtual UART, you can see the virtualized device receiving this data (rx_data) in the second terminal!</p>
+<h2 id="Outro"><a href="#Outro" class="headerlink" title="Outro"></a>Outro</h2><p>That&#x2019;s all for today&#x2019;s research post! We&#x2019;ve covered everything from rehosting to a brief overview of HALucinator. I intended to cover actual debugging with GDB and fuzzing using AFL on the built emulator, but I ended up rambling on about necessary concepts. To avoid oversizing the post and to provide a higher-quality example by showing application to an actual binary, I&#x2019;ll cover this part in the upcoming Part 2! Part 2 will cover developing HAL directly using STM32, emulating the developed binary using HALucinator, and debugging with GDB. I&#x2019;d appreciate it if you could come back for the next article.</p>
+<p>I actually considered including the HALucinator installation process in Part 2 as well, but for those interested, I recommend following the <a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/halucinator/halucinator/blob/master/doc/tutorial/2_run_uart_example.md">tutorial</a> on the HALucinator GitHub. In my case, I spent a lot of time building Docker on Windows, so I hope no one gets stuck during the installation phase&#x2026;</p>
+<p>I&#x2019;ll see you in the next post. Thank you!</p>
+<h2 id="Ref"><a href="#Ref" class="headerlink" title="Ref"></a>Ref</h2><ul>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/halucinator/halucinator">HALucinator github</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.usenix.org/conference/usenixsecurity20/presentation/clements">Usenix-HALucinator: Firmware Re-hosting Through Abstraction Layer Emulation</a></li>
+</ul>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/poosic/">poosic</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Embedded/">Embedded</a>
+                  
+                  <a class="hover-with-bg" href="/tags/rehosting/">rehosting</a>
+                  
+                  <a class="hover-with-bg" href="/tags/emulator/">emulator</a>
+                  
+                  <a class="hover-with-bg" href="/tags/HALucinator/">HALucinator</a>
+                  
+                  <a class="hover-with-bg" href="/tags/HAL/">HAL</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_poosic.jpg" srcset="/img/loading.gif" alt="poosic">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">poosic</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/poosic">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/09/17/newp1ayer48/CVE-2025-6752/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2025-6752 : Linksys WRT1900ACS, EA7200, EA7450, EA7500의 Stack-based Buffer Overflow로 인한 RCE 취약점</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/09/14/poosic/%5BResearch%5DRehosting/KR/">
+                    <span class="hidden-mobile">[Research] Rehosting - Part 1(KR)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/09/14/poosic/[Research]Rehosting/EN/';
+        this.page.identifier = '/2025/09/14/poosic/%5BResearch%5DRehosting/EN/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] Rehosting - Part 1(EN)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>

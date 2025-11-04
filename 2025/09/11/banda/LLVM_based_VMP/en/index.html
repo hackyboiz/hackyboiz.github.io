@@ -1,0 +1,1147 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;h1 id=&#34;Introduction&#34;&gt;&lt;a href=&#34;#Introduction&#34; class=&#34;headerlink&#34; title=&#34;Introduction&#34;&gt;&lt;/a&gt;Introduction&lt;/h1&gt;&lt;p&gt;&lt;img src=&#34;/2025/09/11/banda/LLVM_based_VMP/en/image1.jpg&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Hello, this is banda.&lt;/p&gt;
+&lt;p&gt;Among the well-known programs used for code obfuscation are VMProtect and Themida. Of these, VMProtect is particularly recognized for performing virtualization and obfuscation based on a virtual machine (VM). VMProtect transforms the original code into its own bytecode through a non-standard virtual architecture, making both static and dynamic analysis extremely difficult. (If you&amp;#x2019;re curious about a previously written research article on obfuscation, &lt;a href=&#34;https://hackyboiz.github.io/2025/04/28/OUYA77/Anti_part3/kr/&#34;&gt;(&amp;#x1F449;check it out here)&lt;/a&gt;)&lt;/p&gt;
+&lt;p&gt;Over time, there have been numerous papers and studies attempting to deobfuscate VMProtect. In this article, I will focus specifically on methodologies that leverage LLVM to achieve deobfuscation, and examine how feasible such approaches really are. (Note that in this post, I will focus exclusively on the virtualization option among VMProtect&amp;#x2019;s protection features.)&lt;/p&gt;
+&lt;h1 id=&#34;VMProtect&#34;&gt;&lt;a href=&#34;#VMProtect&#34; class=&#34;headerlink&#34; title=&#34;VMProtect&#34;&gt;&lt;/a&gt;VMProtect&lt;/h1&gt;&lt;p&gt;&lt;img src=&#34;/2025/09/10/banda/LLVM_based_VMP/en/image2.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;VMProtect is a software protection program that applies Anti-Reversing techniques. According to the official documentation, it is used to protect application code and prevent cracking, and it provides a custom scripting language and a built-in disassembler to finely control the code regions to be protected and the build process. It primarily performs binary obfuscation on Windows-based native applications such as C/C++, Delphi, and Visual Basic.&lt;/p&gt;
+&lt;p&gt;As of VMProtect 3.9.6, the available obfuscation options are:&lt;br&gt;&amp;#x2460; Memory Protection, &amp;#x2461; Import Protection, &amp;#x2462; Resource Protection, &amp;#x2463; Pack the Output File, &amp;#x2464; Debugger Detection, &amp;#x2465; Virtualization Tools Detection, and &amp;#x2466; Virtualization.&lt;/p&gt;
+&lt;p&gt;Among these, Virtualization is considered one of the strongest protection techniques. In this approach, the original x86/x64 code is transformed into custom bytecode defined by VMProtect, and during execution, an embedded virtual machine interprets and executes that bytecode. Furthermore, within a single binary, multiple types of VMs can be mixed together, and various parts of the code&amp;#x2014;including the entry point&amp;#x2014;can be selectively virtualized.&lt;/p&gt;
+&lt;h1 id=&#34;VMProtect-with-LLVM&#34;&gt;&lt;a href=&#34;#VMProtect-with-LLVM&#34; class=&#34;headerlink&#34; title=&#34;VMProtect with LLVM&#34;&gt;&lt;/a&gt;VMProtect with LLVM&lt;/h1&gt;&lt;p&gt;Research on analyzing VMProtect with LLVM has generally taken two directions: &lt;strong&gt;static lifting&lt;/strong&gt;, which aims to understand the internal structure of the VM, and &lt;strong&gt;dynamic tracing&lt;/strong&gt;, which focuses on the execution results rather than the internal details.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Static Lifting&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;  The first approach treats the VM internals as a White-Box and applies static lifting. In this method, each &lt;code&gt;VmHandler&lt;/code&gt; (the virtual instruction handlers that make up the VMProtect VM) is reversed and its behavior analyzed, then reimplemented as &lt;code&gt;Helper Functions&lt;/code&gt; in C++. The protected VM bytecode is then translated into a sequence of these helper function calls, ultimately reconstructing the entire program as LLVM-IR. However, this method requires deep understanding of the VM architecture. &lt;a href=&#34;https://secret.club/2021/09/08/vmprotect-llvm-lifting-1.html&#34;&gt;(reference)&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Dynamic Tracing&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;  The second approach uses dynamic tracing to execute the VM and applies a Black-Box method that focuses on &lt;strong&gt;uncovering the relationship between inputs and outputs to deobfuscate functions&lt;/strong&gt;. By supplying specific inputs and running the program, every executed instruction is recorded into a &amp;#x201C;trace.&amp;#x201D; This trace is then reconstructed through symbolic execution to derive the input-output relationship expressions. &lt;a href=&#34;https://github.com/JonathanSalwan/VMProtect-devirtualization&#34;&gt;(reference)&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;LLVM IR&amp;#xACFC; SSA (Single Static Assignment)&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/11/banda/LLVM_based_VMP/en/image3.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;LLVM IR uses an Intermediate Representation (IR) based on the SSA (Static Single Assignment) form. SSA follows the principle that each variable is assigned only once, and whenever a new value is computed, a new virtual register (SSA variable) is created.&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s compare the following assembly code with its LLVM IR equivalent.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;add rax, rcx
+sub rdx, rbx
+sub rax, rdx&lt;/code&gt;&lt;/pre&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs llvm&#34;&gt;&lt;span class=&#34;hljs-symbol&#34;&gt;%rax2&lt;/span&gt; = &lt;span class=&#34;hljs-keyword&#34;&gt;add&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;i64&lt;/span&gt; &lt;span class=&#34;hljs-symbol&#34;&gt;%rax&lt;/span&gt;, &lt;span class=&#34;hljs-symbol&#34;&gt;%rcx&lt;/span&gt;
+&lt;span class=&#34;hljs-symbol&#34;&gt;%rdx2&lt;/span&gt; = &lt;span class=&#34;hljs-keyword&#34;&gt;sub&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;i64&lt;/span&gt; &lt;span class=&#34;hljs-symbol&#34;&gt;%rdx&lt;/span&gt;, &lt;span class=&#34;hljs-symbol&#34;&gt;%rbx&lt;/span&gt;
+&lt;span class=&#34;hljs-symbol&#34;&gt;%rax3&lt;/span&gt; = &lt;span class=&#34;hljs-keyword&#34;&gt;sub&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;i64&lt;/span&gt; &lt;span class=&#34;hljs-symbol&#34;&gt;%rax2&lt;/span&gt;, &lt;span class=&#34;hljs-symbol&#34;&gt;%rdx2&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In the LLVM IR code, you&amp;#x2019;ll notice variable names like &lt;code&gt;%rax1&lt;/code&gt;, &lt;code&gt;%rax2&lt;/code&gt;, and so on. This happens because of the SSA principle: once an SSA variable is defined, it cannot be overwritten. As a result, LLVM IR provides the advantage of making data flow and computation results easy to track.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;So why is this SSA-based LLVM IR important for devirtualizing VMProtect?&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;VMProtect&amp;#x2019;s virtualization handlers introduce thousands of operations&amp;#x2014;bitwise logic, shifts, arithmetic&amp;#x2014;intentionally mixed to generate &lt;em&gt;noise&lt;/em&gt; and conceal the original logic. To achieve this, VMProtect often uses &lt;strong&gt;MBA (Mixed Boolean-Arithmetic)&lt;/strong&gt; expressions, which are complex algebraic transformations of simple operations.&lt;/p&gt;
+&lt;p&gt;Here&amp;#x2019;s an example of an MBA expression produced in VMProtect virtualization:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs llvm&#34;&gt;(bvor
+    (bvnot (bvor (bvnot (bvnot &lt;span class=&#34;hljs-keyword&#34;&gt;x&lt;/span&gt;)) (bvnot y)))
+    (bvnot (bvor (bvnot &lt;span class=&#34;hljs-keyword&#34;&gt;x&lt;/span&gt;) (bvnot (bvand (bvnot y) (bvnot y)))))
+)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The expression above is equivalent to a simple &lt;code&gt;x ^ y&lt;/code&gt; operation, but it isn&amp;#x2019;t straightforward to recognize at first glance, is it?&lt;/p&gt;
+&lt;p&gt;By converting such complex expressions into SSA-based LLVM IR, the data flow becomes much clearer. Leveraging LLVM optimizations such as &lt;strong&gt;Constant Propagation, Dead Code Elimination, and Pattern Recognition&lt;/strong&gt;, unnecessary operations and noise can be stripped away.&lt;/p&gt;
+&lt;p&gt;As a result, tens of thousands of VMP instructions can be reduced to just a few dozen SSA IR statements, allowing the recovery of a form that closely resembles the original operations!&lt;/p&gt;
+&lt;h1 id=&#34;Devirtualization&#34;&gt;&lt;a href=&#34;#Devirtualization&#34; class=&#34;headerlink&#34; title=&#34;Devirtualization&#34;&gt;&lt;/a&gt;Devirtualization&lt;/h1&gt;&lt;p&gt;In this research article, I built upon prior experience in understanding VM structures through static lifting, while also referring to a dynamic tracing&amp;#x2013;based deobfuscation approach. For the practical work, I utilized Jonathan Salwan&amp;#x2019;s &lt;strong&gt;VMProtect-devirtualization Project&lt;/strong&gt; to carry out dynamic tracing&amp;#x2013;based deobfuscation.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;pure function&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;stdint.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;f&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt; x)&lt;/span&gt; &lt;/span&gt;{
+  x ^= &lt;span class=&#34;hljs-number&#34;&gt;0xA3C59AC3&lt;/span&gt;u;
+  x = (x &amp;lt;&amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;) | (x &amp;gt;&amp;gt; &lt;span class=&#34;hljs-number&#34;&gt;25&lt;/span&gt;);
+  x += &lt;span class=&#34;hljs-number&#34;&gt;0x9E3779B9&lt;/span&gt;u;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; x;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The practical target in this study is &lt;strong&gt;pure functions&lt;/strong&gt;. A pure function is defined as one that always produces the same output given the same input, without relying on randomness, global variables, or I/O operations.&lt;/p&gt;
+&lt;p&gt;Because of these characteristics, pure functions are particularly well-suited for devirtualization.&lt;/p&gt;
+&lt;h3 id=&#34;How-It-Works&#34;&gt;&lt;a href=&#34;#How-It-Works&#34; class=&#34;headerlink&#34; title=&#34;How It Works?&#34;&gt;&lt;/a&gt;&lt;strong&gt;How It Works?&lt;/strong&gt;&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs llvm&#34;&gt;Execution trace of virtualized code (T&amp;#x2019;) =
+Execution trace of original code (T) + Execution trace of virtual machine (VM) instructions (VM(T))&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;A &lt;strong&gt;trace&lt;/strong&gt; can be thought of as a chronological log of the instructions executed by the CPU while the program runs. The goal here is to strip away the VMProtect layer (VM(T)) from the recorded execution trace T&amp;#x2019;, and recover the original pure trace T. The process can be broken down into the following five steps:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Identify the virtualized function and its arguments&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Determine which part of the program is protected by VMProtect, and identify what inputs the protected function takes.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Generate a VMProtect trace of the target&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Execute the protected function found in Step 1 and record a trace of every CPU instruction executed, capturing both the order and content of operations.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Construct symbolic expressions to obtain the relation between inputs and output&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Analyze the trace from Step 2. Instead of concrete values, replace them with symbolic variables to express how the program computes its results in mathematical form.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Apply optimizations on symbolic expressions to eliminate unnecessary VM instructions&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Simplify the symbolic expressions created in Step 3. During this step, instructions that only serve the VM&amp;#x2019;s execution (and not the function&amp;#x2019;s core logic) are removed.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Lift the symbolic representation to LLVM IR&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Convert the simplified symbolic representation into LLVM IR, a hardware-independent intermediate representation. This LLVM IR can then be recompiled to produce a clean version of the original program, free from VMProtect obfuscation.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Through this process, we can ultimately obtain LLVM IR code with VMProtect&amp;#x2019;s obfuscation effectively removed.&lt;/p&gt;
+&lt;h3 id=&#34;Example-Bitwise-Function&#34;&gt;&lt;a href=&#34;#Example-Bitwise-Function&#34; class=&#34;headerlink&#34; title=&#34;Example: Bitwise Function&#34;&gt;&lt;/a&gt;Example: Bitwise Function&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;bitwise_func&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; a, &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; b, &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; flag)&lt;/span&gt; &lt;/span&gt;{
+    VMProtectBegin(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;bitwise_func&amp;quot;&lt;/span&gt;);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; r;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (flag == &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;)
+        r = a &amp;amp; b;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (flag == &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;)
+        r = a | b;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+        r = a ^ b;
+    VMProtectEnd();
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; r;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In the provided example, a simple arithmetic operation was chosen, but I built code that also includes &lt;strong&gt;control flow&lt;/strong&gt;. To analyze functions containing branching logic (as opposed to plain arithmetic), it is necessary to generate multiple traces in order to reconstruct the full logic.&lt;/p&gt;
+&lt;p&gt;Since an LLVM IR module inherently contains a &lt;strong&gt;Control Flow Graph (CFG)&lt;/strong&gt;, additional steps are required to merge the traces obtained from each branch into a unified CFG representation.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/11/banda/LLVM_based_VMP/en/image4.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;When comparing a binary before and after applying VMProtect&amp;#x2019;s virtualization option, you&amp;#x2019;ll notice a dramatic increase in file size. This is because the original code is transformed into VMProtect&amp;#x2019;s custom bytecode, and an interpreter (the virtual machine responsible for decoding and executing that bytecode) is embedded into the binary.&lt;/p&gt;
+&lt;p&gt;(As a side note, this increase in size can be significant enough that some developers choose not to enable the virtualization option. Still, when applied, the obfuscation effect is extremely powerful.)&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/11/banda/LLVM_based_VMP/en/image5.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;When examining the &lt;code&gt;bitwise.vmp.bin&lt;/code&gt; file with the virtualization option applied, several interesting points can be observed. In my case, applying the basic VMProtect virtualization option did not change the function&amp;#x2019;s RVA, though depending on the chosen options, it may be altered.&lt;/p&gt;
+&lt;p&gt;Another notable characteristic is that instead of returning with a &lt;code&gt;ret&lt;/code&gt;, the execution flow jumps via &lt;code&gt;jmp&lt;/code&gt; to &lt;code&gt;loc_407675&lt;/code&gt;, redirecting control not to the original code but to the VMProtect entry point. This behavior is a representative feature of virtualization.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/11/banda/LLVM_based_VMP/en/image6.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s step into &lt;code&gt;loc_407675&lt;/code&gt;. At the beginning, instructions like &lt;code&gt;push 3987A4B2h&lt;/code&gt;, &lt;code&gt;call sub_4A4BBB&lt;/code&gt;, and &lt;code&gt;int 3&lt;/code&gt; push the context value &lt;code&gt;3987A4B2h&lt;/code&gt; onto the stack and then call the &lt;code&gt;sub_4A4BBB&lt;/code&gt; function, which marks the entry into the interpreter.&lt;/p&gt;
+&lt;p&gt;After this point, the execution proceeds into code blocks known as &lt;strong&gt;VmHandlers&lt;/strong&gt;. Inside the loop entered via the &lt;code&gt;call&lt;/code&gt; instruction, the interpreter repeatedly reads bytecode using the &lt;strong&gt;VIP&lt;/strong&gt; (Virtual Instruction Pointer), locates the corresponding handler, and executes the defined operation. This loop forms the core of VMProtect&amp;#x2019;s virtual instruction processing.&lt;/p&gt;
+&lt;h3 id=&#34;Trace-collection-Intel-Pin&#34;&gt;&lt;a href=&#34;#Trace-collection-Intel-Pin&#34; class=&#34;headerlink&#34; title=&#34;Trace collection (Intel Pin)&#34;&gt;&lt;/a&gt;&lt;strong&gt;Trace collection (Intel Pin)&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;&amp;#x1F4CC; What is Pin?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/11/banda/LLVM_based_VMP/en/image7.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Pin is a &lt;strong&gt;Dynamic Binary Instrumentation (DBI) framework&lt;/strong&gt; provided by Intel that supports both x86 and x64 binaries on Windows and Linux environments. Instead of modifying the target program directly, Pin intervenes in the execution flow through &lt;strong&gt;JIT (Just-In-Time) based code translation&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;With Pin, users can insert their own custom &lt;strong&gt;pintools&lt;/strong&gt; to monitor and record runtime behaviors such as instruction execution, memory accesses, and function calls.&lt;/p&gt;
+&lt;p&gt;By leveraging these characteristics, Pin allows you to intercept execution at the JIT stage, inject a user-defined pintool, and effectively collect traces of specific code regions you wish to analyze.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;TRACE_AddInstrumentFunction(OnTrace, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+
+&lt;span class=&#34;hljs-function&#34;&gt;VOID &lt;span class=&#34;hljs-title&#34;&gt;OnTrace&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(TRACE t, VOID*)&lt;/span&gt; &lt;/span&gt;{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (BBL b = TRACE_BblHead(t); BBL_Valid(b); b = BBL_Next(b)) {
+    &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (INS i = BBL_InsHead(b); INS_Valid(i); i = INS_Next(i)) {
+      &lt;span class=&#34;hljs-comment&#34;&gt;// actual hook insertion&lt;/span&gt;
+    }
+  }
+}
+&lt;span class=&#34;hljs-comment&#34;&gt;// registration&lt;/span&gt;
+TRACE_AddInstrumentFunction(OnTrace, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Pin operates in the following sequence:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;When the program runs, Pin intercepts the execution of a &lt;strong&gt;code block (Trace)&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;Instead of executing that trace immediately, Pin first invokes the user-registered &lt;strong&gt;callback function (&lt;code&gt;OnTrace&lt;/code&gt;)&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;Inside &lt;code&gt;OnTrace&lt;/code&gt;, analysis code can be inserted or hooks can be added for specific instructions (essentially &amp;#x201C;code injection&amp;#x201D;).&lt;/li&gt;
+&lt;li&gt;The original code and the injected analysis code are then JIT-compiled together, so the program ultimately executes with both its &lt;strong&gt;original behavior + logging/analysis functionality&lt;/strong&gt;.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Through this process, Pin can record every executed machine instruction &lt;strong&gt;without distortion&lt;/strong&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;./pin -t ./source/tools/VMP_Trace/obj-intel64/VMP_Trace.so \
+  -start &lt;span class=&#34;hljs-number&#34;&gt;0x401156&lt;/span&gt; -end &lt;span class=&#34;hljs-number&#34;&gt;0x4011AA&lt;/span&gt; \
+  -- ./bitwise.vmp.bin &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; &amp;amp;&amp;gt; ./bitwise.vmp.trace&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;To collect a trace, you first need to confirm through prior static analysis the start address of the function to be analyzed (&lt;code&gt;0x401156&lt;/code&gt;), the end address (&lt;code&gt;0x4011AA&lt;/code&gt;), and approximately how many arguments it takes. Based on this address range, you can then use the Intel Pin tool to collect the trace.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/11/banda/LLVM_based_VMP/en/image8.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;When examining the generated trace file, you can see that running &lt;code&gt;bitwise.vmp.bin&lt;/code&gt; with the argument &lt;code&gt;flag=0&lt;/code&gt; under Pin produces a log of every machine instruction executed by the CPU within the specified range. The file follows a paired format of &lt;code&gt;r:&lt;/code&gt; and &lt;code&gt;i:&lt;/code&gt; entries.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;r:&lt;/code&gt; (Registers): captures the state of all general-purpose CPU registers as hexadecimal values &lt;strong&gt;before&lt;/strong&gt; the corresponding &lt;code&gt;i:&lt;/code&gt; instruction executes.&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;code&gt;i:&lt;/code&gt; (Instruction): contains information about the actual executed instruction, formatted as &lt;code&gt;i:&amp;lt;instruction address&amp;gt;:&amp;lt;instruction size (bytes)&amp;gt;:&amp;lt;opcode&amp;gt;&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;  For example, &lt;code&gt;i:0x401156:1:55&lt;/code&gt; specifies that the instruction at address &lt;code&gt;0x401156&lt;/code&gt; was executed, with &lt;code&gt;0x55&lt;/code&gt; representing the opcode for &lt;code&gt;push rbp&lt;/code&gt;.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;However, the trace file is far too large for a human to read in full. Instead, we can use tools such as &lt;code&gt;attack_vmp.py&lt;/code&gt; to process it and generate LLVM IR that reflects the program&amp;#x2019;s original logic.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Finding vbraddr (Virtual Branch Address)&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/11/banda/LLVM_based_VMP/en/image9.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;To fully reconstruct the logic of a function that contains &lt;strong&gt;branches&lt;/strong&gt;, you need to analyze multiple trace files that represent different execution paths. However, VMProtect does not use straightforward branch instructions like &lt;code&gt;jmp&lt;/code&gt;, &lt;code&gt;jz&lt;/code&gt;, or &lt;code&gt;jnz&lt;/code&gt;; instead, it relies on virtualized branching logic. As a result, the attack script cannot automatically determine exactly where the execution paths diverge.&lt;/p&gt;
+&lt;p&gt;This is where the &lt;strong&gt;vbraddr&lt;/strong&gt; value comes in &amp;#x2014; it must be identified manually in IDA and provided as input. Specifically, you should look for the points in the trace where comparison instructions such as &lt;code&gt;cmp&lt;/code&gt; or &lt;code&gt;test&lt;/code&gt; occur that decide the virtual branch.&lt;/p&gt;
+&lt;p&gt;In my case, the address &lt;code&gt;0x4831A5&lt;/code&gt; corresponded to the virtual branch location. This vbraddr later serves as the reference point for where the CFG (Control Flow Graph) splits.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/11/banda/LLVM_based_VMP/en/image10.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s take a look at how the &lt;code&gt;attack_vmp.py&lt;/code&gt; script works. This script is built on top of the &lt;a href=&#34;https://github.com/jonathansalwan/Triton&#34;&gt;Triton framework&lt;/a&gt;.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Triton processes the executed instructions in the trace one by one, tracking registers and memory as &lt;strong&gt;symbolic variables&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;During this process, the states of registers and memory are represented in the form of an &lt;strong&gt;AST (Abstract Syntax Tree)&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;Using Triton&amp;#x2019;s symbolic execution engine, a &lt;strong&gt;path predicate&lt;/strong&gt; is constructed, mathematically modeling even conditional branches.&lt;/li&gt;
+&lt;li&gt;As a result, VMProtect&amp;#x2019;s noise is eliminated during the concretization phase (where irrelevant values are folded into constants). Then, through the &lt;strong&gt;simplification passes&lt;/strong&gt; and &lt;strong&gt;formula slicing&lt;/strong&gt; features, the final expressions are reduced to mathematical formulas that capture only the relationship between inputs and outputs.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;./attack_vmp.py \
+  --trace1 ./bitwise.vmp.trace0 \
+  --trace2 ./bitwise.vmp.trace1 \
+  --trace3 ./bitwise.vmp.trace2 \
+  --symsize &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt; \
+  --vbraddr &lt;span class=&#34;hljs-number&#34;&gt;0x4831a5&lt;/span&gt; \
+  --vbrflag af&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;With the script, you can provide three different trace files, each following a separate branch, and pass them along with the &lt;code&gt;--vbraddr&lt;/code&gt; and &lt;code&gt;--vbrflag&lt;/code&gt; options. By doing so, you explicitly indicate the virtual branch decision point and the condition flag that governs the divergence.&lt;/p&gt;
+&lt;p&gt;Originally, the &lt;code&gt;attack_vmp.py&lt;/code&gt; script supported only two traces at a time. I extended the functionality so that it can accept more traces, merge them, and reconstruct them into LLVM IR in a combined form.&lt;/p&gt;
+&lt;p&gt;The real question is: by supplying all three traces, can we successfully merge them and restore the function&amp;#x2019;s logic in a &lt;strong&gt;CFG (Control Flow Graph)&lt;/strong&gt; format? This experiment aims to determine whether multiple execution paths can be stitched together into a complete devirtualized representation.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/11/banda/LLVM_based_VMP/en/image11.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;When reviewing the generated LLVM IR, it becomes clear that it accurately reconstructs the original code&amp;#x2019;s &lt;code&gt;if-else&lt;/code&gt; structure along with the combinations of bitwise operations (XOR, AND, OR). (If you&amp;#x2019;re interested in the details, see the &lt;a href=&#34;https://llvm.org/docs/LangRef.html&#34;&gt;LLVM IR Language Reference&lt;/a&gt;.)&lt;/p&gt;
+&lt;p&gt;From the lifting results, we can see that for &lt;code&gt;%SymVar_0&lt;/code&gt; and &lt;code&gt;%SymVar_1&lt;/code&gt;, the operations first apply AND and OR, followed by an XOR, with each step undergoing conditional checks to determine the final outcome. Comparisons like &lt;code&gt;-88&lt;/code&gt; or &lt;code&gt;==16&lt;/code&gt; are simply noise introduced during VMProtect&amp;#x2019;s virtualization process and are not part of the core logic.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/11/banda/LLVM_based_VMP/en/image12.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;The graph above shows the result of devirtualizing a function that was virtualized with VMProtect, demonstrating a structure where the function&amp;#x2019;s return value is determined by a select operation. The first select node, depending on the condition &lt;code&gt;cond q&lt;/code&gt;, chooses either the result of &lt;code&gt;XOR&lt;/code&gt; between &lt;code&gt;SymVar_0&lt;/code&gt; and &lt;code&gt;SymVar_1&lt;/code&gt; on the left, or the result of another select node on the right. The select node on the right, depending on the condition &lt;code&gt;cond p&lt;/code&gt;, chooses the result of OR between &lt;code&gt;SymVar_0&lt;/code&gt; and &lt;code&gt;SymVar_1&lt;/code&gt; if true, or the result of &lt;code&gt;AND&lt;/code&gt; between &lt;code&gt;SymVar_0&lt;/code&gt; and &lt;code&gt;SymVar_1&lt;/code&gt; if false.&lt;/p&gt;
+&lt;h1 id=&#34;Conclusion&#34;&gt;&lt;a href=&#34;#Conclusion&#34; class=&#34;headerlink&#34; title=&#34;Conclusion&#34;&gt;&lt;/a&gt;Conclusion&lt;/h1&gt;&lt;p&gt;In fact, the LLVM-based devirtualization approach discussed in this article is effective for functions with a single path or only a few execution paths, but for programs with many paths, some code may be omitted. Therefore, applying this approach to real-world, large-scale code is still impractical. With that, I will conclude Part 1 of this research article here.&lt;/p&gt;
+&lt;p&gt;In the next part, we will explore the possibilities of devirtualization with a focus on static analysis based on related research papers, and we will also examine deobfuscation approaches not only for virtualization but for various other options as well.&lt;/p&gt;
+&lt;p&gt;Thank you for reading. XD&lt;/p&gt;
+&lt;h1 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h1&gt;&lt;p&gt;&lt;a href=&#34;https://koreascience.kr/article/JAKO202106153172639.pub?&amp;amp;lang=ko&#34;&gt;https://koreascience.kr/article/JAKO202106153172639.pub?&amp;amp;lang=ko&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/JonathanSalwan/VMProtect-devirtualization/tree/main&#34;&gt;https://github.com/JonathanSalwan/VMProtect-devirtualization/tree/main&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://scienceon.kisti.re.kr/commons/util/originalView.do?cn=JAKO202025356104834&amp;amp;oCn=JAKO202025356104834&amp;amp;dbt=JAKO&amp;amp;journal=NJOU00291865&#34;&gt;https://scienceon.kisti.re.kr/commons/util/originalView.do?cn=JAKO202025356104834&amp;amp;oCn=JAKO202025356104834&amp;amp;dbt=JAKO&amp;amp;journal=NJOU00291865&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.kc-ml2.com/posts/blog_LLVM&#34;&gt;https://www.kc-ml2.com/posts/blog_LLVM&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] LLVM based VMProtect Devirtualization: Part 1 (EN) - hackyboiz">
+  <meta property="og:description" content="&lt;h1 id=&#34;Introduction&#34;&gt;&lt;a href=&#34;#Introduction&#34; class=&#34;headerlink&#34; title=&#34;Introduction&#34;&gt;&lt;/a&gt;Introduction&lt;/h1&gt;&lt;p&gt;&lt;img src=&#34;/2025/09/11/banda/LLVM_based_VMP/en/image1.jpg&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Hello, this is banda.&lt;/p&gt;
+&lt;p&gt;Among the well-known programs used for code obfuscation are VMProtect and Themida. Of these, VMProtect is particularly recognized for performing virtualization and obfuscation based on a virtual machine (VM). VMProtect transforms the original code into its own bytecode through a non-standard virtual architecture, making both static and dynamic analysis extremely difficult. (If you&amp;#x2019;re curious about a previously written research article on obfuscation, &lt;a href=&#34;https://hackyboiz.github.io/2025/04/28/OUYA77/Anti_part3/kr/&#34;&gt;(&amp;#x1F449;check it out here)&lt;/a&gt;)&lt;/p&gt;
+&lt;p&gt;Over time, there have been numerous papers and studies attempting to deobfuscate VMProtect. In this article, I will focus specifically on methodologies that leverage LLVM to achieve deobfuscation, and examine how feasible such approaches really are. (Note that in this post, I will focus exclusively on the virtualization option among VMProtect&amp;#x2019;s protection features.)&lt;/p&gt;
+&lt;h1 id=&#34;VMProtect&#34;&gt;&lt;a href=&#34;#VMProtect&#34; class=&#34;headerlink&#34; title=&#34;VMProtect&#34;&gt;&lt;/a&gt;VMProtect&lt;/h1&gt;&lt;p&gt;&lt;img src=&#34;/2025/09/10/banda/LLVM_based_VMP/en/image2.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;VMProtect is a software protection program that applies Anti-Reversing techniques. According to the official documentation, it is used to protect application code and prevent cracking, and it provides a custom scripting language and a built-in disassembler to finely control the code regions to be protected and the build process. It primarily performs binary obfuscation on Windows-based native applications such as C/C++, Delphi, and Visual Basic.&lt;/p&gt;
+&lt;p&gt;As of VMProtect 3.9.6, the available obfuscation options are:&lt;br&gt;&amp;#x2460; Memory Protection, &amp;#x2461; Import Protection, &amp;#x2462; Resource Protection, &amp;#x2463; Pack the Output File, &amp;#x2464; Debugger Detection, &amp;#x2465; Virtualization Tools Detection, and &amp;#x2466; Virtualization.&lt;/p&gt;
+&lt;p&gt;Among these, Virtualization is considered one of the strongest protection techniques. In this approach, the original x86/x64 code is transformed into custom bytecode defined by VMProtect, and during execution, an embedded virtual machine interprets and executes that bytecode. Furthermore, within a single binary, multiple types of VMs can be mixed together, and various parts of the code&amp;#x2014;including the entry point&amp;#x2014;can be selectively virtualized.&lt;/p&gt;
+&lt;h1 id=&#34;VMProtect-with-LLVM&#34;&gt;&lt;a href=&#34;#VMProtect-with-LLVM&#34; class=&#34;headerlink&#34; title=&#34;VMProtect with LLVM&#34;&gt;&lt;/a&gt;VMProtect with LLVM&lt;/h1&gt;&lt;p&gt;Research on analyzing VMProtect with LLVM has generally taken two directions: &lt;strong&gt;static lifting&lt;/strong&gt;, which aims to understand the internal structure of the VM, and &lt;strong&gt;dynamic tracing&lt;/strong&gt;, which focuses on the execution results rather than the internal details.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Static Lifting&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;  The first approach treats the VM internals as a White-Box and applies static lifting. In this method, each &lt;code&gt;VmHandler&lt;/code&gt; (the virtual instruction handlers that make up the VMProtect VM) is reversed and its behavior analyzed, then reimplemented as &lt;code&gt;Helper Functions&lt;/code&gt; in C++. The protected VM bytecode is then translated into a sequence of these helper function calls, ultimately reconstructing the entire program as LLVM-IR. However, this method requires deep understanding of the VM architecture. &lt;a href=&#34;https://secret.club/2021/09/08/vmprotect-llvm-lifting-1.html&#34;&gt;(reference)&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Dynamic Tracing&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;  The second approach uses dynamic tracing to execute the VM and applies a Black-Box method that focuses on &lt;strong&gt;uncovering the relationship between inputs and outputs to deobfuscate functions&lt;/strong&gt;. By supplying specific inputs and running the program, every executed instruction is recorded into a &amp;#x201C;trace.&amp;#x201D; This trace is then reconstructed through symbolic execution to derive the input-output relationship expressions. &lt;a href=&#34;https://github.com/JonathanSalwan/VMProtect-devirtualization&#34;&gt;(reference)&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;LLVM IR&amp;#xACFC; SSA (Single Static Assignment)&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/11/banda/LLVM_based_VMP/en/image3.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;LLVM IR uses an Intermediate Representation (IR) based on the SSA (Static Single Assignment) form. SSA follows the principle that each variable is assigned only once, and whenever a new value is computed, a new virtual register (SSA variable) is created.&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s compare the following assembly code with its LLVM IR equivalent.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;add rax, rcx
+sub rdx, rbx
+sub rax, rdx&lt;/code&gt;&lt;/pre&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs llvm&#34;&gt;&lt;span class=&#34;hljs-symbol&#34;&gt;%rax2&lt;/span&gt; = &lt;span class=&#34;hljs-keyword&#34;&gt;add&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;i64&lt;/span&gt; &lt;span class=&#34;hljs-symbol&#34;&gt;%rax&lt;/span&gt;, &lt;span class=&#34;hljs-symbol&#34;&gt;%rcx&lt;/span&gt;
+&lt;span class=&#34;hljs-symbol&#34;&gt;%rdx2&lt;/span&gt; = &lt;span class=&#34;hljs-keyword&#34;&gt;sub&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;i64&lt;/span&gt; &lt;span class=&#34;hljs-symbol&#34;&gt;%rdx&lt;/span&gt;, &lt;span class=&#34;hljs-symbol&#34;&gt;%rbx&lt;/span&gt;
+&lt;span class=&#34;hljs-symbol&#34;&gt;%rax3&lt;/span&gt; = &lt;span class=&#34;hljs-keyword&#34;&gt;sub&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;i64&lt;/span&gt; &lt;span class=&#34;hljs-symbol&#34;&gt;%rax2&lt;/span&gt;, &lt;span class=&#34;hljs-symbol&#34;&gt;%rdx2&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In the LLVM IR code, you&amp;#x2019;ll notice variable names like &lt;code&gt;%rax1&lt;/code&gt;, &lt;code&gt;%rax2&lt;/code&gt;, and so on. This happens because of the SSA principle: once an SSA variable is defined, it cannot be overwritten. As a result, LLVM IR provides the advantage of making data flow and computation results easy to track.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;So why is this SSA-based LLVM IR important for devirtualizing VMProtect?&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;VMProtect&amp;#x2019;s virtualization handlers introduce thousands of operations&amp;#x2014;bitwise logic, shifts, arithmetic&amp;#x2014;intentionally mixed to generate &lt;em&gt;noise&lt;/em&gt; and conceal the original logic. To achieve this, VMProtect often uses &lt;strong&gt;MBA (Mixed Boolean-Arithmetic)&lt;/strong&gt; expressions, which are complex algebraic transformations of simple operations.&lt;/p&gt;
+&lt;p&gt;Here&amp;#x2019;s an example of an MBA expression produced in VMProtect virtualization:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs llvm&#34;&gt;(bvor
+    (bvnot (bvor (bvnot (bvnot &lt;span class=&#34;hljs-keyword&#34;&gt;x&lt;/span&gt;)) (bvnot y)))
+    (bvnot (bvor (bvnot &lt;span class=&#34;hljs-keyword&#34;&gt;x&lt;/span&gt;) (bvnot (bvand (bvnot y) (bvnot y)))))
+)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The expression above is equivalent to a simple &lt;code&gt;x ^ y&lt;/code&gt; operation, but it isn&amp;#x2019;t straightforward to recognize at first glance, is it?&lt;/p&gt;
+&lt;p&gt;By converting such complex expressions into SSA-based LLVM IR, the data flow becomes much clearer. Leveraging LLVM optimizations such as &lt;strong&gt;Constant Propagation, Dead Code Elimination, and Pattern Recognition&lt;/strong&gt;, unnecessary operations and noise can be stripped away.&lt;/p&gt;
+&lt;p&gt;As a result, tens of thousands of VMP instructions can be reduced to just a few dozen SSA IR statements, allowing the recovery of a form that closely resembles the original operations!&lt;/p&gt;
+&lt;h1 id=&#34;Devirtualization&#34;&gt;&lt;a href=&#34;#Devirtualization&#34; class=&#34;headerlink&#34; title=&#34;Devirtualization&#34;&gt;&lt;/a&gt;Devirtualization&lt;/h1&gt;&lt;p&gt;In this research article, I built upon prior experience in understanding VM structures through static lifting, while also referring to a dynamic tracing&amp;#x2013;based deobfuscation approach. For the practical work, I utilized Jonathan Salwan&amp;#x2019;s &lt;strong&gt;VMProtect-devirtualization Project&lt;/strong&gt; to carry out dynamic tracing&amp;#x2013;based deobfuscation.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;pure function&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;include&lt;/span&gt; &lt;span class=&#34;hljs-meta-string&#34;&gt;&amp;lt;stdint.h&amp;gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;f&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt; x)&lt;/span&gt; &lt;/span&gt;{
+  x ^= &lt;span class=&#34;hljs-number&#34;&gt;0xA3C59AC3&lt;/span&gt;u;
+  x = (x &amp;lt;&amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;) | (x &amp;gt;&amp;gt; &lt;span class=&#34;hljs-number&#34;&gt;25&lt;/span&gt;);
+  x += &lt;span class=&#34;hljs-number&#34;&gt;0x9E3779B9&lt;/span&gt;u;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; x;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The practical target in this study is &lt;strong&gt;pure functions&lt;/strong&gt;. A pure function is defined as one that always produces the same output given the same input, without relying on randomness, global variables, or I/O operations.&lt;/p&gt;
+&lt;p&gt;Because of these characteristics, pure functions are particularly well-suited for devirtualization.&lt;/p&gt;
+&lt;h3 id=&#34;How-It-Works&#34;&gt;&lt;a href=&#34;#How-It-Works&#34; class=&#34;headerlink&#34; title=&#34;How It Works?&#34;&gt;&lt;/a&gt;&lt;strong&gt;How It Works?&lt;/strong&gt;&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs llvm&#34;&gt;Execution trace of virtualized code (T&amp;#x2019;) =
+Execution trace of original code (T) + Execution trace of virtual machine (VM) instructions (VM(T))&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;A &lt;strong&gt;trace&lt;/strong&gt; can be thought of as a chronological log of the instructions executed by the CPU while the program runs. The goal here is to strip away the VMProtect layer (VM(T)) from the recorded execution trace T&amp;#x2019;, and recover the original pure trace T. The process can be broken down into the following five steps:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Identify the virtualized function and its arguments&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Determine which part of the program is protected by VMProtect, and identify what inputs the protected function takes.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Generate a VMProtect trace of the target&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Execute the protected function found in Step 1 and record a trace of every CPU instruction executed, capturing both the order and content of operations.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Construct symbolic expressions to obtain the relation between inputs and output&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Analyze the trace from Step 2. Instead of concrete values, replace them with symbolic variables to express how the program computes its results in mathematical form.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Apply optimizations on symbolic expressions to eliminate unnecessary VM instructions&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Simplify the symbolic expressions created in Step 3. During this step, instructions that only serve the VM&amp;#x2019;s execution (and not the function&amp;#x2019;s core logic) are removed.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Lift the symbolic representation to LLVM IR&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Convert the simplified symbolic representation into LLVM IR, a hardware-independent intermediate representation. This LLVM IR can then be recompiled to produce a clean version of the original program, free from VMProtect obfuscation.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Through this process, we can ultimately obtain LLVM IR code with VMProtect&amp;#x2019;s obfuscation effectively removed.&lt;/p&gt;
+&lt;h3 id=&#34;Example-Bitwise-Function&#34;&gt;&lt;a href=&#34;#Example-Bitwise-Function&#34; class=&#34;headerlink&#34; title=&#34;Example: Bitwise Function&#34;&gt;&lt;/a&gt;Example: Bitwise Function&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;bitwise_func&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; a, &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; b, &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; flag)&lt;/span&gt; &lt;/span&gt;{
+    VMProtectBegin(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;bitwise_func&amp;quot;&lt;/span&gt;);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; r;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (flag == &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;)
+        r = a &amp;amp; b;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (flag == &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;)
+        r = a | b;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+        r = a ^ b;
+    VMProtectEnd();
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; r;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In the provided example, a simple arithmetic operation was chosen, but I built code that also includes &lt;strong&gt;control flow&lt;/strong&gt;. To analyze functions containing branching logic (as opposed to plain arithmetic), it is necessary to generate multiple traces in order to reconstruct the full logic.&lt;/p&gt;
+&lt;p&gt;Since an LLVM IR module inherently contains a &lt;strong&gt;Control Flow Graph (CFG)&lt;/strong&gt;, additional steps are required to merge the traces obtained from each branch into a unified CFG representation.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/11/banda/LLVM_based_VMP/en/image4.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;When comparing a binary before and after applying VMProtect&amp;#x2019;s virtualization option, you&amp;#x2019;ll notice a dramatic increase in file size. This is because the original code is transformed into VMProtect&amp;#x2019;s custom bytecode, and an interpreter (the virtual machine responsible for decoding and executing that bytecode) is embedded into the binary.&lt;/p&gt;
+&lt;p&gt;(As a side note, this increase in size can be significant enough that some developers choose not to enable the virtualization option. Still, when applied, the obfuscation effect is extremely powerful.)&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/11/banda/LLVM_based_VMP/en/image5.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;When examining the &lt;code&gt;bitwise.vmp.bin&lt;/code&gt; file with the virtualization option applied, several interesting points can be observed. In my case, applying the basic VMProtect virtualization option did not change the function&amp;#x2019;s RVA, though depending on the chosen options, it may be altered.&lt;/p&gt;
+&lt;p&gt;Another notable characteristic is that instead of returning with a &lt;code&gt;ret&lt;/code&gt;, the execution flow jumps via &lt;code&gt;jmp&lt;/code&gt; to &lt;code&gt;loc_407675&lt;/code&gt;, redirecting control not to the original code but to the VMProtect entry point. This behavior is a representative feature of virtualization.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/11/banda/LLVM_based_VMP/en/image6.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s step into &lt;code&gt;loc_407675&lt;/code&gt;. At the beginning, instructions like &lt;code&gt;push 3987A4B2h&lt;/code&gt;, &lt;code&gt;call sub_4A4BBB&lt;/code&gt;, and &lt;code&gt;int 3&lt;/code&gt; push the context value &lt;code&gt;3987A4B2h&lt;/code&gt; onto the stack and then call the &lt;code&gt;sub_4A4BBB&lt;/code&gt; function, which marks the entry into the interpreter.&lt;/p&gt;
+&lt;p&gt;After this point, the execution proceeds into code blocks known as &lt;strong&gt;VmHandlers&lt;/strong&gt;. Inside the loop entered via the &lt;code&gt;call&lt;/code&gt; instruction, the interpreter repeatedly reads bytecode using the &lt;strong&gt;VIP&lt;/strong&gt; (Virtual Instruction Pointer), locates the corresponding handler, and executes the defined operation. This loop forms the core of VMProtect&amp;#x2019;s virtual instruction processing.&lt;/p&gt;
+&lt;h3 id=&#34;Trace-collection-Intel-Pin&#34;&gt;&lt;a href=&#34;#Trace-collection-Intel-Pin&#34; class=&#34;headerlink&#34; title=&#34;Trace collection (Intel Pin)&#34;&gt;&lt;/a&gt;&lt;strong&gt;Trace collection (Intel Pin)&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;&amp;#x1F4CC; What is Pin?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/11/banda/LLVM_based_VMP/en/image7.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Pin is a &lt;strong&gt;Dynamic Binary Instrumentation (DBI) framework&lt;/strong&gt; provided by Intel that supports both x86 and x64 binaries on Windows and Linux environments. Instead of modifying the target program directly, Pin intervenes in the execution flow through &lt;strong&gt;JIT (Just-In-Time) based code translation&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;With Pin, users can insert their own custom &lt;strong&gt;pintools&lt;/strong&gt; to monitor and record runtime behaviors such as instruction execution, memory accesses, and function calls.&lt;/p&gt;
+&lt;p&gt;By leveraging these characteristics, Pin allows you to intercept execution at the JIT stage, inject a user-defined pintool, and effectively collect traces of specific code regions you wish to analyze.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;TRACE_AddInstrumentFunction(OnTrace, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+
+&lt;span class=&#34;hljs-function&#34;&gt;VOID &lt;span class=&#34;hljs-title&#34;&gt;OnTrace&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(TRACE t, VOID*)&lt;/span&gt; &lt;/span&gt;{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (BBL b = TRACE_BblHead(t); BBL_Valid(b); b = BBL_Next(b)) {
+    &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (INS i = BBL_InsHead(b); INS_Valid(i); i = INS_Next(i)) {
+      &lt;span class=&#34;hljs-comment&#34;&gt;// actual hook insertion&lt;/span&gt;
+    }
+  }
+}
+&lt;span class=&#34;hljs-comment&#34;&gt;// registration&lt;/span&gt;
+TRACE_AddInstrumentFunction(OnTrace, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Pin operates in the following sequence:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;When the program runs, Pin intercepts the execution of a &lt;strong&gt;code block (Trace)&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;Instead of executing that trace immediately, Pin first invokes the user-registered &lt;strong&gt;callback function (&lt;code&gt;OnTrace&lt;/code&gt;)&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;Inside &lt;code&gt;OnTrace&lt;/code&gt;, analysis code can be inserted or hooks can be added for specific instructions (essentially &amp;#x201C;code injection&amp;#x201D;).&lt;/li&gt;
+&lt;li&gt;The original code and the injected analysis code are then JIT-compiled together, so the program ultimately executes with both its &lt;strong&gt;original behavior + logging/analysis functionality&lt;/strong&gt;.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Through this process, Pin can record every executed machine instruction &lt;strong&gt;without distortion&lt;/strong&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;./pin -t ./source/tools/VMP_Trace/obj-intel64/VMP_Trace.so \
+  -start &lt;span class=&#34;hljs-number&#34;&gt;0x401156&lt;/span&gt; -end &lt;span class=&#34;hljs-number&#34;&gt;0x4011AA&lt;/span&gt; \
+  -- ./bitwise.vmp.bin &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; &amp;amp;&amp;gt; ./bitwise.vmp.trace&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;To collect a trace, you first need to confirm through prior static analysis the start address of the function to be analyzed (&lt;code&gt;0x401156&lt;/code&gt;), the end address (&lt;code&gt;0x4011AA&lt;/code&gt;), and approximately how many arguments it takes. Based on this address range, you can then use the Intel Pin tool to collect the trace.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/11/banda/LLVM_based_VMP/en/image8.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;When examining the generated trace file, you can see that running &lt;code&gt;bitwise.vmp.bin&lt;/code&gt; with the argument &lt;code&gt;flag=0&lt;/code&gt; under Pin produces a log of every machine instruction executed by the CPU within the specified range. The file follows a paired format of &lt;code&gt;r:&lt;/code&gt; and &lt;code&gt;i:&lt;/code&gt; entries.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;r:&lt;/code&gt; (Registers): captures the state of all general-purpose CPU registers as hexadecimal values &lt;strong&gt;before&lt;/strong&gt; the corresponding &lt;code&gt;i:&lt;/code&gt; instruction executes.&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;code&gt;i:&lt;/code&gt; (Instruction): contains information about the actual executed instruction, formatted as &lt;code&gt;i:&amp;lt;instruction address&amp;gt;:&amp;lt;instruction size (bytes)&amp;gt;:&amp;lt;opcode&amp;gt;&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;  For example, &lt;code&gt;i:0x401156:1:55&lt;/code&gt; specifies that the instruction at address &lt;code&gt;0x401156&lt;/code&gt; was executed, with &lt;code&gt;0x55&lt;/code&gt; representing the opcode for &lt;code&gt;push rbp&lt;/code&gt;.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;However, the trace file is far too large for a human to read in full. Instead, we can use tools such as &lt;code&gt;attack_vmp.py&lt;/code&gt; to process it and generate LLVM IR that reflects the program&amp;#x2019;s original logic.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Finding vbraddr (Virtual Branch Address)&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/11/banda/LLVM_based_VMP/en/image9.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;To fully reconstruct the logic of a function that contains &lt;strong&gt;branches&lt;/strong&gt;, you need to analyze multiple trace files that represent different execution paths. However, VMProtect does not use straightforward branch instructions like &lt;code&gt;jmp&lt;/code&gt;, &lt;code&gt;jz&lt;/code&gt;, or &lt;code&gt;jnz&lt;/code&gt;; instead, it relies on virtualized branching logic. As a result, the attack script cannot automatically determine exactly where the execution paths diverge.&lt;/p&gt;
+&lt;p&gt;This is where the &lt;strong&gt;vbraddr&lt;/strong&gt; value comes in &amp;#x2014; it must be identified manually in IDA and provided as input. Specifically, you should look for the points in the trace where comparison instructions such as &lt;code&gt;cmp&lt;/code&gt; or &lt;code&gt;test&lt;/code&gt; occur that decide the virtual branch.&lt;/p&gt;
+&lt;p&gt;In my case, the address &lt;code&gt;0x4831A5&lt;/code&gt; corresponded to the virtual branch location. This vbraddr later serves as the reference point for where the CFG (Control Flow Graph) splits.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/11/banda/LLVM_based_VMP/en/image10.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s take a look at how the &lt;code&gt;attack_vmp.py&lt;/code&gt; script works. This script is built on top of the &lt;a href=&#34;https://github.com/jonathansalwan/Triton&#34;&gt;Triton framework&lt;/a&gt;.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Triton processes the executed instructions in the trace one by one, tracking registers and memory as &lt;strong&gt;symbolic variables&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;During this process, the states of registers and memory are represented in the form of an &lt;strong&gt;AST (Abstract Syntax Tree)&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;Using Triton&amp;#x2019;s symbolic execution engine, a &lt;strong&gt;path predicate&lt;/strong&gt; is constructed, mathematically modeling even conditional branches.&lt;/li&gt;
+&lt;li&gt;As a result, VMProtect&amp;#x2019;s noise is eliminated during the concretization phase (where irrelevant values are folded into constants). Then, through the &lt;strong&gt;simplification passes&lt;/strong&gt; and &lt;strong&gt;formula slicing&lt;/strong&gt; features, the final expressions are reduced to mathematical formulas that capture only the relationship between inputs and outputs.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;./attack_vmp.py \
+  --trace1 ./bitwise.vmp.trace0 \
+  --trace2 ./bitwise.vmp.trace1 \
+  --trace3 ./bitwise.vmp.trace2 \
+  --symsize &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt; \
+  --vbraddr &lt;span class=&#34;hljs-number&#34;&gt;0x4831a5&lt;/span&gt; \
+  --vbrflag af&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;With the script, you can provide three different trace files, each following a separate branch, and pass them along with the &lt;code&gt;--vbraddr&lt;/code&gt; and &lt;code&gt;--vbrflag&lt;/code&gt; options. By doing so, you explicitly indicate the virtual branch decision point and the condition flag that governs the divergence.&lt;/p&gt;
+&lt;p&gt;Originally, the &lt;code&gt;attack_vmp.py&lt;/code&gt; script supported only two traces at a time. I extended the functionality so that it can accept more traces, merge them, and reconstruct them into LLVM IR in a combined form.&lt;/p&gt;
+&lt;p&gt;The real question is: by supplying all three traces, can we successfully merge them and restore the function&amp;#x2019;s logic in a &lt;strong&gt;CFG (Control Flow Graph)&lt;/strong&gt; format? This experiment aims to determine whether multiple execution paths can be stitched together into a complete devirtualized representation.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/11/banda/LLVM_based_VMP/en/image11.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;When reviewing the generated LLVM IR, it becomes clear that it accurately reconstructs the original code&amp;#x2019;s &lt;code&gt;if-else&lt;/code&gt; structure along with the combinations of bitwise operations (XOR, AND, OR). (If you&amp;#x2019;re interested in the details, see the &lt;a href=&#34;https://llvm.org/docs/LangRef.html&#34;&gt;LLVM IR Language Reference&lt;/a&gt;.)&lt;/p&gt;
+&lt;p&gt;From the lifting results, we can see that for &lt;code&gt;%SymVar_0&lt;/code&gt; and &lt;code&gt;%SymVar_1&lt;/code&gt;, the operations first apply AND and OR, followed by an XOR, with each step undergoing conditional checks to determine the final outcome. Comparisons like &lt;code&gt;-88&lt;/code&gt; or &lt;code&gt;==16&lt;/code&gt; are simply noise introduced during VMProtect&amp;#x2019;s virtualization process and are not part of the core logic.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/09/11/banda/LLVM_based_VMP/en/image12.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;The graph above shows the result of devirtualizing a function that was virtualized with VMProtect, demonstrating a structure where the function&amp;#x2019;s return value is determined by a select operation. The first select node, depending on the condition &lt;code&gt;cond q&lt;/code&gt;, chooses either the result of &lt;code&gt;XOR&lt;/code&gt; between &lt;code&gt;SymVar_0&lt;/code&gt; and &lt;code&gt;SymVar_1&lt;/code&gt; on the left, or the result of another select node on the right. The select node on the right, depending on the condition &lt;code&gt;cond p&lt;/code&gt;, chooses the result of OR between &lt;code&gt;SymVar_0&lt;/code&gt; and &lt;code&gt;SymVar_1&lt;/code&gt; if true, or the result of &lt;code&gt;AND&lt;/code&gt; between &lt;code&gt;SymVar_0&lt;/code&gt; and &lt;code&gt;SymVar_1&lt;/code&gt; if false.&lt;/p&gt;
+&lt;h1 id=&#34;Conclusion&#34;&gt;&lt;a href=&#34;#Conclusion&#34; class=&#34;headerlink&#34; title=&#34;Conclusion&#34;&gt;&lt;/a&gt;Conclusion&lt;/h1&gt;&lt;p&gt;In fact, the LLVM-based devirtualization approach discussed in this article is effective for functions with a single path or only a few execution paths, but for programs with many paths, some code may be omitted. Therefore, applying this approach to real-world, large-scale code is still impractical. With that, I will conclude Part 1 of this research article here.&lt;/p&gt;
+&lt;p&gt;In the next part, we will explore the possibilities of devirtualization with a focus on static analysis based on related research papers, and we will also examine deobfuscation approaches not only for virtualization but for various other options as well.&lt;/p&gt;
+&lt;p&gt;Thank you for reading. XD&lt;/p&gt;
+&lt;h1 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h1&gt;&lt;p&gt;&lt;a href=&#34;https://koreascience.kr/article/JAKO202106153172639.pub?&amp;amp;lang=ko&#34;&gt;https://koreascience.kr/article/JAKO202106153172639.pub?&amp;amp;lang=ko&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/JonathanSalwan/VMProtect-devirtualization/tree/main&#34;&gt;https://github.com/JonathanSalwan/VMProtect-devirtualization/tree/main&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://scienceon.kisti.re.kr/commons/util/originalView.do?cn=JAKO202025356104834&amp;amp;oCn=JAKO202025356104834&amp;amp;dbt=JAKO&amp;amp;journal=NJOU00291865&#34;&gt;https://scienceon.kisti.re.kr/commons/util/originalView.do?cn=JAKO202025356104834&amp;amp;oCn=JAKO202025356104834&amp;amp;dbt=JAKO&amp;amp;journal=NJOU00291865&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.kc-ml2.com/posts/blog_LLVM&#34;&gt;https://www.kc-ml2.com/posts/blog_LLVM&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/09/11/banda/LLVM_based_VMP/en/main.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/09/11/banda/llvm_based_vmp/en/">
+
+  <title>[Research] LLVM based VMProtect Devirtualization: Part 1 (EN) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-09-11 17:00" pubdate>
+      2025년 9월 11일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      2.8k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      55
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] LLVM based VMProtect Devirtualization: Part 1 (EN)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <h1 id="Introduction"><a href="#Introduction" class="headerlink" title="Introduction"></a>Introduction</h1><p><img src="/2025/09/11/banda/LLVM_based_VMP/en/image1.jpg" srcset="/img/loading.gif" alt></p>
+<p>Hello, this is banda.</p>
+<p>Among the well-known programs used for code obfuscation are VMProtect and Themida. Of these, VMProtect is particularly recognized for performing virtualization and obfuscation based on a virtual machine (VM). VMProtect transforms the original code into its own bytecode through a non-standard virtual architecture, making both static and dynamic analysis extremely difficult. (If you&#x2019;re curious about a previously written research article on obfuscation, <a href="https://hackyboiz.github.io/2025/04/28/OUYA77/Anti_part3/kr/">(&#x1F449;check it out here)</a>)</p>
+<p>Over time, there have been numerous papers and studies attempting to deobfuscate VMProtect. In this article, I will focus specifically on methodologies that leverage LLVM to achieve deobfuscation, and examine how feasible such approaches really are. (Note that in this post, I will focus exclusively on the virtualization option among VMProtect&#x2019;s protection features.)</p>
+<h1 id="VMProtect"><a href="#VMProtect" class="headerlink" title="VMProtect"></a>VMProtect</h1><p><img src="/2025/09/10/banda/LLVM_based_VMP/en/image2.png" srcset="/img/loading.gif" alt></p>
+<p>VMProtect is a software protection program that applies Anti-Reversing techniques. According to the official documentation, it is used to protect application code and prevent cracking, and it provides a custom scripting language and a built-in disassembler to finely control the code regions to be protected and the build process. It primarily performs binary obfuscation on Windows-based native applications such as C/C++, Delphi, and Visual Basic.</p>
+<p>As of VMProtect 3.9.6, the available obfuscation options are:<br>&#x2460; Memory Protection, &#x2461; Import Protection, &#x2462; Resource Protection, &#x2463; Pack the Output File, &#x2464; Debugger Detection, &#x2465; Virtualization Tools Detection, and &#x2466; Virtualization.</p>
+<p>Among these, Virtualization is considered one of the strongest protection techniques. In this approach, the original x86/x64 code is transformed into custom bytecode defined by VMProtect, and during execution, an embedded virtual machine interprets and executes that bytecode. Furthermore, within a single binary, multiple types of VMs can be mixed together, and various parts of the code&#x2014;including the entry point&#x2014;can be selectively virtualized.</p>
+<h1 id="VMProtect-with-LLVM"><a href="#VMProtect-with-LLVM" class="headerlink" title="VMProtect with LLVM"></a>VMProtect with LLVM</h1><p>Research on analyzing VMProtect with LLVM has generally taken two directions: <strong>static lifting</strong>, which aims to understand the internal structure of the VM, and <strong>dynamic tracing</strong>, which focuses on the execution results rather than the internal details.</p>
+<ul>
+<li><p><strong>Static Lifting</strong></p>
+<p>  The first approach treats the VM internals as a White-Box and applies static lifting. In this method, each <code>VmHandler</code> (the virtual instruction handlers that make up the VMProtect VM) is reversed and its behavior analyzed, then reimplemented as <code>Helper Functions</code> in C++. The protected VM bytecode is then translated into a sequence of these helper function calls, ultimately reconstructing the entire program as LLVM-IR. However, this method requires deep understanding of the VM architecture. <a target="_blank" rel="external nofollow noopener noreferrer" href="https://secret.club/2021/09/08/vmprotect-llvm-lifting-1.html">(reference)</a></p>
+</li>
+<li><p><strong>Dynamic Tracing</strong></p>
+<p>  The second approach uses dynamic tracing to execute the VM and applies a Black-Box method that focuses on <strong>uncovering the relationship between inputs and outputs to deobfuscate functions</strong>. By supplying specific inputs and running the program, every executed instruction is recorded into a &#x201C;trace.&#x201D; This trace is then reconstructed through symbolic execution to derive the input-output relationship expressions. <a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/JonathanSalwan/VMProtect-devirtualization">(reference)</a></p>
+</li>
+</ul>
+<p><strong>LLVM IR&#xACFC; SSA (Single Static Assignment)</strong></p>
+<p><img src="/2025/09/11/banda/LLVM_based_VMP/en/image3.png" srcset="/img/loading.gif" alt></p>
+<p>LLVM IR uses an Intermediate Representation (IR) based on the SSA (Static Single Assignment) form. SSA follows the principle that each variable is assigned only once, and whenever a new value is computed, a new virtual register (SSA variable) is created.</p>
+<p>Let&#x2019;s compare the following assembly code with its LLVM IR equivalent.</p>
+<pre><code class="hljs python">add rax, rcx
+sub rdx, rbx
+sub rax, rdx</code></pre>
+<pre><code class="hljs llvm"><span class="hljs-symbol">%rax2</span> = <span class="hljs-keyword">add</span> <span class="hljs-keyword">i64</span> <span class="hljs-symbol">%rax</span>, <span class="hljs-symbol">%rcx</span>
+<span class="hljs-symbol">%rdx2</span> = <span class="hljs-keyword">sub</span> <span class="hljs-keyword">i64</span> <span class="hljs-symbol">%rdx</span>, <span class="hljs-symbol">%rbx</span>
+<span class="hljs-symbol">%rax3</span> = <span class="hljs-keyword">sub</span> <span class="hljs-keyword">i64</span> <span class="hljs-symbol">%rax2</span>, <span class="hljs-symbol">%rdx2</span></code></pre>
+<p>In the LLVM IR code, you&#x2019;ll notice variable names like <code>%rax1</code>, <code>%rax2</code>, and so on. This happens because of the SSA principle: once an SSA variable is defined, it cannot be overwritten. As a result, LLVM IR provides the advantage of making data flow and computation results easy to track.</p>
+<p><strong>So why is this SSA-based LLVM IR important for devirtualizing VMProtect?</strong></p>
+<p>VMProtect&#x2019;s virtualization handlers introduce thousands of operations&#x2014;bitwise logic, shifts, arithmetic&#x2014;intentionally mixed to generate <em>noise</em> and conceal the original logic. To achieve this, VMProtect often uses <strong>MBA (Mixed Boolean-Arithmetic)</strong> expressions, which are complex algebraic transformations of simple operations.</p>
+<p>Here&#x2019;s an example of an MBA expression produced in VMProtect virtualization:</p>
+<pre><code class="hljs llvm">(bvor
+    (bvnot (bvor (bvnot (bvnot <span class="hljs-keyword">x</span>)) (bvnot y)))
+    (bvnot (bvor (bvnot <span class="hljs-keyword">x</span>) (bvnot (bvand (bvnot y) (bvnot y)))))
+)</code></pre>
+<p>The expression above is equivalent to a simple <code>x ^ y</code> operation, but it isn&#x2019;t straightforward to recognize at first glance, is it?</p>
+<p>By converting such complex expressions into SSA-based LLVM IR, the data flow becomes much clearer. Leveraging LLVM optimizations such as <strong>Constant Propagation, Dead Code Elimination, and Pattern Recognition</strong>, unnecessary operations and noise can be stripped away.</p>
+<p>As a result, tens of thousands of VMP instructions can be reduced to just a few dozen SSA IR statements, allowing the recovery of a form that closely resembles the original operations!</p>
+<h1 id="Devirtualization"><a href="#Devirtualization" class="headerlink" title="Devirtualization"></a>Devirtualization</h1><p>In this research article, I built upon prior experience in understanding VM structures through static lifting, while also referring to a dynamic tracing&#x2013;based deobfuscation approach. For the practical work, I utilized Jonathan Salwan&#x2019;s <strong>VMProtect-devirtualization Project</strong> to carry out dynamic tracing&#x2013;based deobfuscation.</p>
+<ul>
+<li>pure function</li>
+</ul>
+<pre><code class="hljs c"><span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;stdint.h&gt;</span></span>
+<span class="hljs-function"><span class="hljs-keyword">uint32_t</span> <span class="hljs-title">f</span><span class="hljs-params">(<span class="hljs-keyword">uint32_t</span> x)</span> </span>{
+  x ^= <span class="hljs-number">0xA3C59AC3</span>u;
+  x = (x &lt;&lt; <span class="hljs-number">7</span>) | (x &gt;&gt; <span class="hljs-number">25</span>);
+  x += <span class="hljs-number">0x9E3779B9</span>u;
+  <span class="hljs-keyword">return</span> x;
+}</code></pre>
+<p>The practical target in this study is <strong>pure functions</strong>. A pure function is defined as one that always produces the same output given the same input, without relying on randomness, global variables, or I/O operations.</p>
+<p>Because of these characteristics, pure functions are particularly well-suited for devirtualization.</p>
+<h3 id="How-It-Works"><a href="#How-It-Works" class="headerlink" title="How It Works?"></a><strong>How It Works?</strong></h3><pre><code class="hljs llvm">Execution trace of virtualized code (T&#x2019;) =
+Execution trace of original code (T) + Execution trace of virtual machine (VM) instructions (VM(T))</code></pre>
+<p>A <strong>trace</strong> can be thought of as a chronological log of the instructions executed by the CPU while the program runs. The goal here is to strip away the VMProtect layer (VM(T)) from the recorded execution trace T&#x2019;, and recover the original pure trace T. The process can be broken down into the following five steps:</p>
+<ol>
+<li><p><strong>Identify the virtualized function and its arguments</strong></p>
+<p> Determine which part of the program is protected by VMProtect, and identify what inputs the protected function takes.</p>
+</li>
+<li><p><strong>Generate a VMProtect trace of the target</strong></p>
+<p> Execute the protected function found in Step 1 and record a trace of every CPU instruction executed, capturing both the order and content of operations.</p>
+</li>
+<li><p><strong>Construct symbolic expressions to obtain the relation between inputs and output</strong></p>
+<p> Analyze the trace from Step 2. Instead of concrete values, replace them with symbolic variables to express how the program computes its results in mathematical form.</p>
+</li>
+<li><p><strong>Apply optimizations on symbolic expressions to eliminate unnecessary VM instructions</strong></p>
+<p> Simplify the symbolic expressions created in Step 3. During this step, instructions that only serve the VM&#x2019;s execution (and not the function&#x2019;s core logic) are removed.</p>
+</li>
+<li><p><strong>Lift the symbolic representation to LLVM IR</strong></p>
+<p> Convert the simplified symbolic representation into LLVM IR, a hardware-independent intermediate representation. This LLVM IR can then be recompiled to produce a clean version of the original program, free from VMProtect obfuscation.</p>
+</li>
+</ol>
+<p>Through this process, we can ultimately obtain LLVM IR code with VMProtect&#x2019;s obfuscation effectively removed.</p>
+<h3 id="Example-Bitwise-Function"><a href="#Example-Bitwise-Function" class="headerlink" title="Example: Bitwise Function"></a>Example: Bitwise Function</h3><pre><code class="hljs c"><span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">bitwise_func</span><span class="hljs-params">(<span class="hljs-keyword">int</span> a, <span class="hljs-keyword">int</span> b, <span class="hljs-keyword">int</span> flag)</span> </span>{
+    VMProtectBegin(<span class="hljs-string">&quot;bitwise_func&quot;</span>);
+    <span class="hljs-keyword">int</span> r;
+    <span class="hljs-keyword">if</span> (flag == <span class="hljs-number">0</span>)
+        r = a &amp; b;
+    <span class="hljs-keyword">else</span> <span class="hljs-keyword">if</span> (flag == <span class="hljs-number">1</span>)
+        r = a | b;
+    <span class="hljs-keyword">else</span>
+        r = a ^ b;
+    VMProtectEnd();
+    <span class="hljs-keyword">return</span> r;
+}</code></pre>
+<p>In the provided example, a simple arithmetic operation was chosen, but I built code that also includes <strong>control flow</strong>. To analyze functions containing branching logic (as opposed to plain arithmetic), it is necessary to generate multiple traces in order to reconstruct the full logic.</p>
+<p>Since an LLVM IR module inherently contains a <strong>Control Flow Graph (CFG)</strong>, additional steps are required to merge the traces obtained from each branch into a unified CFG representation.</p>
+<p><img src="/2025/09/11/banda/LLVM_based_VMP/en/image4.png" srcset="/img/loading.gif" alt></p>
+<p>When comparing a binary before and after applying VMProtect&#x2019;s virtualization option, you&#x2019;ll notice a dramatic increase in file size. This is because the original code is transformed into VMProtect&#x2019;s custom bytecode, and an interpreter (the virtual machine responsible for decoding and executing that bytecode) is embedded into the binary.</p>
+<p>(As a side note, this increase in size can be significant enough that some developers choose not to enable the virtualization option. Still, when applied, the obfuscation effect is extremely powerful.)</p>
+<p><img src="/2025/09/11/banda/LLVM_based_VMP/en/image5.png" srcset="/img/loading.gif" alt></p>
+<p>When examining the <code>bitwise.vmp.bin</code> file with the virtualization option applied, several interesting points can be observed. In my case, applying the basic VMProtect virtualization option did not change the function&#x2019;s RVA, though depending on the chosen options, it may be altered.</p>
+<p>Another notable characteristic is that instead of returning with a <code>ret</code>, the execution flow jumps via <code>jmp</code> to <code>loc_407675</code>, redirecting control not to the original code but to the VMProtect entry point. This behavior is a representative feature of virtualization.</p>
+<p><img src="/2025/09/11/banda/LLVM_based_VMP/en/image6.png" srcset="/img/loading.gif" alt></p>
+<p>Let&#x2019;s step into <code>loc_407675</code>. At the beginning, instructions like <code>push 3987A4B2h</code>, <code>call sub_4A4BBB</code>, and <code>int 3</code> push the context value <code>3987A4B2h</code> onto the stack and then call the <code>sub_4A4BBB</code> function, which marks the entry into the interpreter.</p>
+<p>After this point, the execution proceeds into code blocks known as <strong>VmHandlers</strong>. Inside the loop entered via the <code>call</code> instruction, the interpreter repeatedly reads bytecode using the <strong>VIP</strong> (Virtual Instruction Pointer), locates the corresponding handler, and executes the defined operation. This loop forms the core of VMProtect&#x2019;s virtual instruction processing.</p>
+<h3 id="Trace-collection-Intel-Pin"><a href="#Trace-collection-Intel-Pin" class="headerlink" title="Trace collection (Intel Pin)"></a><strong>Trace collection (Intel Pin)</strong></h3><p>&#x1F4CC; What is Pin?</p>
+<p><img src="/2025/09/11/banda/LLVM_based_VMP/en/image7.png" srcset="/img/loading.gif" alt></p>
+<p>Pin is a <strong>Dynamic Binary Instrumentation (DBI) framework</strong> provided by Intel that supports both x86 and x64 binaries on Windows and Linux environments. Instead of modifying the target program directly, Pin intervenes in the execution flow through <strong>JIT (Just-In-Time) based code translation</strong>.</p>
+<p>With Pin, users can insert their own custom <strong>pintools</strong> to monitor and record runtime behaviors such as instruction execution, memory accesses, and function calls.</p>
+<p>By leveraging these characteristics, Pin allows you to intercept execution at the JIT stage, inject a user-defined pintool, and effectively collect traces of specific code regions you wish to analyze.</p>
+<pre><code class="hljs c">TRACE_AddInstrumentFunction(OnTrace, <span class="hljs-number">0</span>);
+
+<span class="hljs-function">VOID <span class="hljs-title">OnTrace</span><span class="hljs-params">(TRACE t, VOID*)</span> </span>{
+  <span class="hljs-keyword">for</span> (BBL b = TRACE_BblHead(t); BBL_Valid(b); b = BBL_Next(b)) {
+    <span class="hljs-keyword">for</span> (INS i = BBL_InsHead(b); INS_Valid(i); i = INS_Next(i)) {
+      <span class="hljs-comment">// actual hook insertion</span>
+    }
+  }
+}
+<span class="hljs-comment">// registration</span>
+TRACE_AddInstrumentFunction(OnTrace, <span class="hljs-number">0</span>);</code></pre>
+<p>Pin operates in the following sequence:</p>
+<ol>
+<li>When the program runs, Pin intercepts the execution of a <strong>code block (Trace)</strong>.</li>
+<li>Instead of executing that trace immediately, Pin first invokes the user-registered <strong>callback function (<code>OnTrace</code>)</strong>.</li>
+<li>Inside <code>OnTrace</code>, analysis code can be inserted or hooks can be added for specific instructions (essentially &#x201C;code injection&#x201D;).</li>
+<li>The original code and the injected analysis code are then JIT-compiled together, so the program ultimately executes with both its <strong>original behavior + logging/analysis functionality</strong>.</li>
+</ol>
+<p>Through this process, Pin can record every executed machine instruction <strong>without distortion</strong>.</p>
+<pre><code class="hljs c">./pin -t ./source/tools/VMP_Trace/obj-intel64/VMP_Trace.so \
+  -start <span class="hljs-number">0x401156</span> -end <span class="hljs-number">0x4011AA</span> \
+  -- ./bitwise.vmp.bin <span class="hljs-number">0</span> &amp;&gt; ./bitwise.vmp.trace</code></pre>
+<p>To collect a trace, you first need to confirm through prior static analysis the start address of the function to be analyzed (<code>0x401156</code>), the end address (<code>0x4011AA</code>), and approximately how many arguments it takes. Based on this address range, you can then use the Intel Pin tool to collect the trace.</p>
+<p><img src="/2025/09/11/banda/LLVM_based_VMP/en/image8.png" srcset="/img/loading.gif" alt></p>
+<p>When examining the generated trace file, you can see that running <code>bitwise.vmp.bin</code> with the argument <code>flag=0</code> under Pin produces a log of every machine instruction executed by the CPU within the specified range. The file follows a paired format of <code>r:</code> and <code>i:</code> entries.</p>
+<ul>
+<li><code>r:</code> (Registers): captures the state of all general-purpose CPU registers as hexadecimal values <strong>before</strong> the corresponding <code>i:</code> instruction executes.</li>
+<li><p><code>i:</code> (Instruction): contains information about the actual executed instruction, formatted as <code>i:&lt;instruction address&gt;:&lt;instruction size (bytes)&gt;:&lt;opcode&gt;</code>.</p>
+<p>  For example, <code>i:0x401156:1:55</code> specifies that the instruction at address <code>0x401156</code> was executed, with <code>0x55</code> representing the opcode for <code>push rbp</code>.</p>
+</li>
+</ul>
+<p>However, the trace file is far too large for a human to read in full. Instead, we can use tools such as <code>attack_vmp.py</code> to process it and generate LLVM IR that reflects the program&#x2019;s original logic.</p>
+<p><strong>Finding vbraddr (Virtual Branch Address)</strong></p>
+<p><img src="/2025/09/11/banda/LLVM_based_VMP/en/image9.png" srcset="/img/loading.gif" alt></p>
+<p>To fully reconstruct the logic of a function that contains <strong>branches</strong>, you need to analyze multiple trace files that represent different execution paths. However, VMProtect does not use straightforward branch instructions like <code>jmp</code>, <code>jz</code>, or <code>jnz</code>; instead, it relies on virtualized branching logic. As a result, the attack script cannot automatically determine exactly where the execution paths diverge.</p>
+<p>This is where the <strong>vbraddr</strong> value comes in &#x2014; it must be identified manually in IDA and provided as input. Specifically, you should look for the points in the trace where comparison instructions such as <code>cmp</code> or <code>test</code> occur that decide the virtual branch.</p>
+<p>In my case, the address <code>0x4831A5</code> corresponded to the virtual branch location. This vbraddr later serves as the reference point for where the CFG (Control Flow Graph) splits.</p>
+<p><img src="/2025/09/11/banda/LLVM_based_VMP/en/image10.png" srcset="/img/loading.gif" alt></p>
+<p>Let&#x2019;s take a look at how the <code>attack_vmp.py</code> script works. This script is built on top of the <a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/jonathansalwan/Triton">Triton framework</a>.</p>
+<ul>
+<li>Triton processes the executed instructions in the trace one by one, tracking registers and memory as <strong>symbolic variables</strong>.</li>
+<li>During this process, the states of registers and memory are represented in the form of an <strong>AST (Abstract Syntax Tree)</strong>.</li>
+<li>Using Triton&#x2019;s symbolic execution engine, a <strong>path predicate</strong> is constructed, mathematically modeling even conditional branches.</li>
+<li>As a result, VMProtect&#x2019;s noise is eliminated during the concretization phase (where irrelevant values are folded into constants). Then, through the <strong>simplification passes</strong> and <strong>formula slicing</strong> features, the final expressions are reduced to mathematical formulas that capture only the relationship between inputs and outputs.</li>
+</ul>
+<pre><code class="hljs c">./attack_vmp.py \
+  --trace1 ./bitwise.vmp.trace0 \
+  --trace2 ./bitwise.vmp.trace1 \
+  --trace3 ./bitwise.vmp.trace2 \
+  --symsize <span class="hljs-number">4</span> \
+  --vbraddr <span class="hljs-number">0x4831a5</span> \
+  --vbrflag af</code></pre>
+<p>With the script, you can provide three different trace files, each following a separate branch, and pass them along with the <code>--vbraddr</code> and <code>--vbrflag</code> options. By doing so, you explicitly indicate the virtual branch decision point and the condition flag that governs the divergence.</p>
+<p>Originally, the <code>attack_vmp.py</code> script supported only two traces at a time. I extended the functionality so that it can accept more traces, merge them, and reconstruct them into LLVM IR in a combined form.</p>
+<p>The real question is: by supplying all three traces, can we successfully merge them and restore the function&#x2019;s logic in a <strong>CFG (Control Flow Graph)</strong> format? This experiment aims to determine whether multiple execution paths can be stitched together into a complete devirtualized representation.</p>
+<p><img src="/2025/09/11/banda/LLVM_based_VMP/en/image11.png" srcset="/img/loading.gif" alt></p>
+<p>When reviewing the generated LLVM IR, it becomes clear that it accurately reconstructs the original code&#x2019;s <code>if-else</code> structure along with the combinations of bitwise operations (XOR, AND, OR). (If you&#x2019;re interested in the details, see the <a target="_blank" rel="external nofollow noopener noreferrer" href="https://llvm.org/docs/LangRef.html">LLVM IR Language Reference</a>.)</p>
+<p>From the lifting results, we can see that for <code>%SymVar_0</code> and <code>%SymVar_1</code>, the operations first apply AND and OR, followed by an XOR, with each step undergoing conditional checks to determine the final outcome. Comparisons like <code>-88</code> or <code>==16</code> are simply noise introduced during VMProtect&#x2019;s virtualization process and are not part of the core logic.</p>
+<p><img src="/2025/09/11/banda/LLVM_based_VMP/en/image12.png" srcset="/img/loading.gif" alt></p>
+<p>The graph above shows the result of devirtualizing a function that was virtualized with VMProtect, demonstrating a structure where the function&#x2019;s return value is determined by a select operation. The first select node, depending on the condition <code>cond q</code>, chooses either the result of <code>XOR</code> between <code>SymVar_0</code> and <code>SymVar_1</code> on the left, or the result of another select node on the right. The select node on the right, depending on the condition <code>cond p</code>, chooses the result of OR between <code>SymVar_0</code> and <code>SymVar_1</code> if true, or the result of <code>AND</code> between <code>SymVar_0</code> and <code>SymVar_1</code> if false.</p>
+<h1 id="Conclusion"><a href="#Conclusion" class="headerlink" title="Conclusion"></a>Conclusion</h1><p>In fact, the LLVM-based devirtualization approach discussed in this article is effective for functions with a single path or only a few execution paths, but for programs with many paths, some code may be omitted. Therefore, applying this approach to real-world, large-scale code is still impractical. With that, I will conclude Part 1 of this research article here.</p>
+<p>In the next part, we will explore the possibilities of devirtualization with a focus on static analysis based on related research papers, and we will also examine deobfuscation approaches not only for virtualization but for various other options as well.</p>
+<p>Thank you for reading. XD</p>
+<h1 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a>Reference</h1><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://koreascience.kr/article/JAKO202106153172639.pub?&amp;lang=ko">https://koreascience.kr/article/JAKO202106153172639.pub?&amp;lang=ko</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/JonathanSalwan/VMProtect-devirtualization/tree/main">https://github.com/JonathanSalwan/VMProtect-devirtualization/tree/main</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://scienceon.kisti.re.kr/commons/util/originalView.do?cn=JAKO202025356104834&amp;oCn=JAKO202025356104834&amp;dbt=JAKO&amp;journal=NJOU00291865">https://scienceon.kisti.re.kr/commons/util/originalView.do?cn=JAKO202025356104834&amp;oCn=JAKO202025356104834&amp;dbt=JAKO&amp;journal=NJOU00291865</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.kc-ml2.com/posts/blog_LLVM">https://www.kc-ml2.com/posts/blog_LLVM</a></p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/banda/">banda</a>
+                  
+                  <a class="hover-with-bg" href="/tags/VMProtect/">VMProtect</a>
+                  
+                  <a class="hover-with-bg" href="/tags/LLVM-IR/">LLVM-IR</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Pin/">Pin</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Triton/">Triton</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_banda.jpg" srcset="/img/loading.gif" alt="banda">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">banda</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/banda">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/09/13/ji9umi/%5BResearch%5DCVE-2024-54489/KR/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[Research] CVE-2024-54489 Analysis from Security Updates(KR)</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/09/11/banda/LLVM_based_VMP/ko/">
+                    <span class="hidden-mobile">[Research] LLVM based VMProtect Devirtualization: Part 1 (KR)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/09/11/banda/LLVM_based_VMP/en/';
+        this.page.identifier = '/2025/09/11/banda/LLVM_based_VMP/en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] LLVM based VMProtect Devirtualization: Part 1 (EN)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
