@@ -22,7 +22,7 @@ index_img: /2025/11/20/newp1ayer48/can/kr/image01.jpg
 
 CAN 통신은 차량 내의 ECU(전자 제어 장치) 같은 장치들 간의 통신을 위해 개발된 통신 프로토콜입니다. Non-host 버스 방식으로 메시지 기반의 저수준 네트워크 통신을 사용합니다. 1983년에 개발되었기 때문에 HTTP보다 먼저 만들어진 프로토콜입니다! CAN 메시지는 기본적으로 8 Byte로 구성되고, 이를 확장한 CAN-FD는 64 Byte까지 데이터를 표현할 수 있습니다.
 
-그리고 ISO 15765에 의해 CAN 통신에 대한 국제 표준이 지정되었습니다.
+ISO 15765에 의해 CAN 통신 위에서 동작하는 UDS 메시지 구조에 대한 국제 표준이 지정되었습니다.
 
 ![[image03.png](https://swisskyrepo.github.io/HardwareAllTheThings/protocols/can/)](image03.png)
 
@@ -555,11 +555,11 @@ with socket.socket(socket.AF_CAN, socket.SOCK_RAW, socket.CAN_RAW) as p:
 
 ## 4. UDS 명령어로 발생하는 CVE
 
-![[image30.gif](https://github.com/nitinronge91/KIA-SELTOS-Cluster-Vulnerabilities/blob/628b1550f0093f79380929074b6a5e6ca6f2d04b/CVE/Denial%20of%20Service%20via%20ECU%20Reset%20Service%20For%20KIA%20SELTOS%20CVE-2024-51072.md)](image30.gif)
+![image30.jpg](image30.jpg)
 
-BlockHarbor CTF로 배운 UDS 명령어로 보안 취약점이 발생할 수 있고, 실제로 CVE가 발급이 되는 사례가 존재합니다. 대표적으로 KIA SELTOS에서 발생한 [CVE-2024-51072](https://github.com/nitinronge91/KIA-SELTOS-Cluster-Vulnerabilities/blob/628b1550f0093f79380929074b6a5e6ca6f2d04b/CVE/Denial%20of%20Service%20via%20ECU%20Reset%20Service%20For%20KIA%20SELTOS%20CVE-2024-51072.md)입니다.
+BlockHarbor CTF로 배운 UDS 명령어로 보안 취약점이 발생할 수 있고, 실제로 CVE가 발급이 되는 사례가 존재합니다. 대표적으로 Nissan Altima에서 발생한 [CVE-2024-6347](https://nvd.nist.gov/vuln/detail/CVE-2024-6347)입니다.
 
-CVE-2024-51072는 UDS 명령어를 통한 DoS 취약점이 발생한 사례입니다. 바로 ECU 하드 리셋 서비스(SID:`11`)로 발생하였습니다! 차량 내부에서 UDS 명령어에 대한 검증이 부족했기 때문에, 명령어가 그대로 ECU에 전달되어 실행이 되었습니다. 이로 인해, 작동 불능 상태가 되어 버리는 DoS 취약점이 발생했습니다.
+CVE-2024-6347는 UDS 명령어를 통한 DoS 취약점이 발생한 사례입니다. 사각지대 감지 센서 ECU 펌웨어에 ECU 프로그래밍 세션으로 무단 액세스를 통해 DoS 취약점이 발생하였습니다.
 
 뿐만 아니라 CAN/UDS를 통한 취약점은 식별자 읽기 요청(`22`)과 다양한 진단 요청(`19` 등)을 통한 Information Leak, 보안 액세스(`27`) 우회를 통한 ECU 및 차량 내부 권한 탈취 등의 취약점이 발생할 수 있습니다. 특히, 주소 읽기 요청(`23`)에 대한 검증이 미흡하면, 내부 메모리 접근으로 펌웨어가 유출 될 수 있습니다.
 

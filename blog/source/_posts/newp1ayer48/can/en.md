@@ -28,7 +28,7 @@ Furthermore, the international standard for CAN communication is specified by IS
 
 UDS stands for Unified Diagnostic Services, and you'll frequently encounter this term when dealing with vehicle CTFs and CAN communication. It is a protocol used for diagnostic communication, primarily employed with ECUs. Since it is a higher-level protocol than the low-level CAN protocol, it allows for various functions such as data Read/Write (R/W).
 
-Furthermore, because it can operate on top of CAN, the explanations often involve a mix of terms like CAN message, UDS message, and the OBD2 message used for vehicle diagnostics. The standard for UDS is specified by ISO 14229.
+The international standard for the UDS message structure operating over CAN communication was designated by ISO 15765.
 
 Since knowing the UDS message structure is crucial for the BlockHarbor CTF challenge we are about to solve, let's briefly look at it. The UDS message is structured as shown in the picture above. A simple explanation of each part is as follows:
 
@@ -565,11 +565,11 @@ The code to unlock Security Access Level 1 can also be written.
 
 ## 4. CVEs occurring due to UDS commands
 
-![[image30.gif](https://github.com/nitinronge91/KIA-SELTOS-Cluster-Vulnerabilities/blob/628b1550f0093f79380929074b6a5e6ca6f2d04b/CVE/Denial%20of%20Service%20via%20ECU%20Reset%20Service%20For%20KIA%20SELTOS%20CVE-2024-51072.md)](image30.gif)
+![image30.jpg](image30.jpg)
 
-Security vulnerabilities can occur with UDS commands learned through the BlockHarbor CTF, and there are actual cases where CVEs are issued. A prime example is CVE-2024-51072, which occurred in the KIA SELTOS.
+Security vulnerabilities can occur with UDS commands learned through the BlockHarbor CTF, and there are actual cases where CVEs are issued. A prime example is [CVE-2024-6347](https://nvd.nist.gov/vuln/detail/CVE-2024-6347), which occurred in the Nissan Altima.
 
-CVE-2024-51072 is a case where a DoS vulnerability occurred through a UDS command. It was caused by the ECU Hard Reset service (SID: `11`)! Because validation of the UDS command was insufficient inside the vehicle, the command was passed directly to the ECU and executed. This resulted in a DoS vulnerability where the device became inoperable.
+CVE-2024-6347 is a case where a DoS vulnerability occurred via UDS commands. The DoS vulnerability was caused by unauthorized access to the ECU programming session in the blind spot detection sensor ECU firmware.
 
 Furthermore, vulnerabilities through CAN/UDS can include Information Leakage through Read Data By Identifier Request (`22`) and various Diagnostic Requests (`19`, etc.), and the acquisition of ECU and in-vehicle privileges through Security Access (`27`) bypass. In particular, if validation for Read Memory By Address Request (`23`) is inadequate, the firmware can be leaked through internal memory access.
 
