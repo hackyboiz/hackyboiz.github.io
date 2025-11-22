@@ -1,0 +1,964 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;h1 id=&#34;Introduction&#34;&gt;&lt;a href=&#34;#Introduction&#34; class=&#34;headerlink&#34; title=&#34;Introduction&#34;&gt;&lt;/a&gt;Introduction&lt;/h1&gt;&lt;p&gt;Hello, I&amp;#x2019;m L0ch! Recently, I&amp;#x2019;ve become interested in Code Property Graphs (CPG) and have been looking into them. In this post, I&amp;#x2019;ll be reviewing the USENIX Security &amp;#x2018;25 paper, &amp;#x201C;LLMxCPG: Context-Aware Vulnerability Detection Through Code Property Graph-Guided Large Language Models.&amp;#x201D;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Original Paper: &lt;a href=&#34;https://arxiv.org/pdf/2507.16585&#34;&gt;https://arxiv.org/pdf/2507.16585&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h1 id=&#34;Background&#34;&gt;&lt;a href=&#34;#Background&#34; class=&#34;headerlink&#34; title=&#34;Background&#34;&gt;&lt;/a&gt;Background&lt;/h1&gt;&lt;p&gt;As is the case in many fields, LLMs are being widely used in vulnerability detection these days. I also use LLMs frequently when analyzing 1-day vulnerabilities or searching for zero-days.&lt;/p&gt;
+&lt;p&gt;However, I&amp;#x2019;ve often experienced issues where analysis fails on large codebases, or the context size is exceeded, requiring manual intervention. Of course, modern large-scale models like Gemini and GPT have significantly larger context windows than before, but smaller embedding models for fine-tuning or training are still limited by their context window size because supporting hardware performance can be a challenge (~~underpowered GPUs~~).&lt;/p&gt;
+&lt;p&gt;A problem with existing LLM-based vulnerability detection approaches is that the code relevant to the actual vulnerability often makes up only a small portion of the entire code segment being analyzed by the LLM. In other words, irrelevant code constitutes the majority of the segment. This leads to several problems, such as increased token usage and the model relying on irrelevant code patterns.&lt;/p&gt;
+&lt;p&gt;The paper I&amp;#x2019;m reviewing today introduces a CPG-based code slicing technique to address these issues and overcome the limitations of LLMs in analyzing large codebases.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Code Property Graphs (CPG):&lt;/strong&gt; A method that combines various code representations, such as the Abstract Syntax Tree (AST), Control Flow Graph (CFG), and Program Dependence Graph (PDG), into a single graph.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h1 id=&#34;Methodology&#34;&gt;&lt;a href=&#34;#Methodology&#34; class=&#34;headerlink&#34; title=&#34;Methodology&#34;&gt;&lt;/a&gt;Methodology&lt;/h1&gt;&lt;h2 id=&#34;0-System-Overview&#34;&gt;&lt;a href=&#34;#0-System-Overview&#34; class=&#34;headerlink&#34; title=&#34;0. System Overview&#34;&gt;&lt;/a&gt;0. System Overview&lt;/h2&gt;&lt;p&gt;The figure below provides an overview of the system proposed in the paper, which uses the code representation provided by CPG to slice and reduce the code related to a vulnerability to determine its existence.&lt;br&gt;&lt;img src=&#34;image.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;It consists of three main stages: Query Generation, Slice Construction, and Code Classification.&lt;/p&gt;
+&lt;h2 id=&#34;1-Query-Generation&#34;&gt;&lt;a href=&#34;#1-Query-Generation&#34; class=&#34;headerlink&#34; title=&#34;1. Query Generation&#34;&gt;&lt;/a&gt;1. Query Generation&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;image%201.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;LLMxCPG-Q&lt;/code&gt; model is a fine-tuned version of &lt;code&gt;Qwen2.5-Coder-32B Instruct&lt;/code&gt;, as shown in the figure. It takes the code to be analyzed as input and generates the CPGQL queries that will be described later. This trained model is used to automate query generation for extracting key code segments related to vulnerabilities and for the overall code slicing process.&lt;/p&gt;
+&lt;h2 id=&#34;2-Slice-Construction&#34;&gt;&lt;a href=&#34;#2-Slice-Construction&#34; class=&#34;headerlink&#34; title=&#34;2. Slice Construction&#34;&gt;&lt;/a&gt;2. Slice Construction&lt;/h2&gt;&lt;p&gt;The CPGQL query generated in step 1 is processed by &lt;a href=&#34;https://github.com/joernio/joern&#34;&gt;Joern&lt;/a&gt;. Joern is an open-source SAST tool that generates CPGs and supports querying them with the Scala-based CPGQL.&lt;/p&gt;
+&lt;p&gt;Based on Joern and the CPGQL queries, a code slice is constructed through the following three steps:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Identify the potential root cause of the vulnerability in the code, focusing on the execution path.&lt;/li&gt;
+&lt;li&gt;Identify variables that interact with the execution path.&lt;/li&gt;
+&lt;li&gt;Find all code elements that affect steps 1 and 2 to construct the final slice.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3 id=&#34;2-1-Extracting-the-Taint-Path&#34;&gt;&lt;a href=&#34;#2-1-Extracting-the-Taint-Path&#34; class=&#34;headerlink&#34; title=&#34;2-1) Extracting the Taint Path&#34;&gt;&lt;/a&gt;2-1) Extracting the Taint Path&lt;/h3&gt;&lt;p&gt;The example vulnerability used is &lt;a href=&#34;https://github.com/torvalds/linux/commit/c85ce65ecac078ab1a1835c87c4a6319cf74660a&#34;&gt;CVE-2011-3359&lt;/a&gt;.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;A buffer overflow vulnerability caused by insufficient validation of the buffer length &lt;code&gt;len&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;The overflow is triggered during the copy process of length &lt;code&gt;len&lt;/code&gt; when the &lt;code&gt;skb_put&lt;/code&gt; function is called.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;!-- end list --&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs graphql&#34;&gt;val source = cpg.identifier.name(&amp;quot;len&amp;quot;)
+val sink = cpg.call.name(&amp;quot;skb_put&amp;quot;).where(_.argument.order(2).codeExact(&amp;quot;len + ring-&amp;gt;frameoffset&amp;quot;))
+val execution_paths = sink.reachableByFlows(source)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The CPGQL query above extracts the vulnerability&amp;#x2019;s Taint Path, including the &lt;strong&gt;source&lt;/strong&gt; (variable &lt;code&gt;len&lt;/code&gt;), &lt;strong&gt;sink&lt;/strong&gt; (&lt;code&gt;skb_put&lt;/code&gt; call), and &lt;strong&gt;execution paths&lt;/strong&gt;.&lt;/p&gt;
+&lt;h3 id=&#34;2-2-Extracting-Variables-Interacting-with-the-Execution-Path&#34;&gt;&lt;a href=&#34;#2-2-Extracting-Variables-Interacting-with-the-Execution-Path&#34; class=&#34;headerlink&#34; title=&#34;2-2) Extracting Variables Interacting with the Execution Path&#34;&gt;&lt;/a&gt;2-2) Extracting Variables Interacting with the Execution Path&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs graphql&#34;&gt;val execution_path_nodes = &amp;lt;Query to extract execution path (generated by LLMxCPG-Q)&amp;gt;
+cpg.identifier.filter(id =&amp;gt; execution_path_nodes.lineNumber.toSet.intersect(id.lineNumber.l.toSet).size.equals(1))&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;It searches for nodes that interact with &lt;code&gt;execution_path_nodes&lt;/code&gt; using a CPGQL query.&lt;/p&gt;
+&lt;h3 id=&#34;2-3-Backward-Slicing-and-Final-Code-Snippet-Construction&#34;&gt;&lt;a href=&#34;#2-3-Backward-Slicing-and-Final-Code-Snippet-Construction&#34; class=&#34;headerlink&#34; title=&#34;2-3) Backward Slicing and Final Code Snippet Construction&#34;&gt;&lt;/a&gt;2-3) Backward Slicing and Final Code Snippet Construction&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs graphql&#34;&gt;# Query to extract execution paths and interactions
+execution_path_and_interacters.reachableByFlows(cpg.all)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In this stage, a &lt;strong&gt;backward slice&lt;/strong&gt; is constructed using Joern&amp;#x2019;s &lt;code&gt;reachableByFlows&lt;/code&gt; API, which internally uses a Program Dependency Graph (PDG).&lt;/p&gt;
+&lt;p&gt;The backward slice retrieves all contexts related to the vulnerability&amp;#x2019;s interactions and execution path, such as loops, variable declarations, and initializations.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;static&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;dma_rx&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(struct b43_dmaring *ring, &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *slot)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+    u16 len;
+    len = le16_to_cpu(rxhdr-&amp;gt;frame_len);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (unlikely(len &amp;gt; ring-&amp;gt;rx_buffersize)) {
+        s32 tmp = len;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; (&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;) {
+            tmp -= ring-&amp;gt;rx_buffersize;
+            &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (tmp &amp;lt;= &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;)
+                &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;;
+        }
+        &lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; drop;
+    }
+
+    skb_put(skb, len + ring-&amp;gt;frameoffset);
+    drop:
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;As a result of slicing, the original 85-line &lt;code&gt;dma_rx()&lt;/code&gt; function was compressed into an 18-line code snippet that is semantically consistent with the execution path of the CVE-2011-3359 vulnerability.&lt;/p&gt;
+&lt;h2 id=&#34;3-Code-Classification-Vulnerability-Detection&#34;&gt;&lt;a href=&#34;#3-Code-Classification-Vulnerability-Detection&#34; class=&#34;headerlink&#34; title=&#34;3. Code Classification (Vulnerability Detection)&#34;&gt;&lt;/a&gt;3. Code Classification (Vulnerability Detection)&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;image%202.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The code, compressed through slicing, is then binary classified as either &lt;strong&gt;Vuln&lt;/strong&gt; or &lt;strong&gt;Safe&lt;/strong&gt; by the &lt;code&gt;LLMxCPG-D&lt;/code&gt; model, which is a fine-tuned version of the &lt;code&gt;QwQ-32B-Preview&lt;/code&gt; model. &lt;code&gt;LLMxCPG-D&lt;/code&gt; is fine-tuned on a dataset of sliced and labeled code snippets from both vulnerable and non-vulnerable code to improve classification accuracy.&lt;/p&gt;
+&lt;p&gt;This approach is not only useful for vulnerability detection but can also identify and highlight vulnerability patch code in patched versions. This can be utilized to automate the creation of datasets for future model training.&lt;/p&gt;
+&lt;h1 id=&#34;Performance-Analysis&#34;&gt;&lt;a href=&#34;#Performance-Analysis&#34; class=&#34;headerlink&#34; title=&#34;Performance Analysis&#34;&gt;&lt;/a&gt;Performance Analysis&lt;/h1&gt;&lt;p&gt;The implemented system was evaluated on six main points. The results for each are as follows (for detailed figures and comparison tables, please refer to the original paper).&lt;/p&gt;
+&lt;h3 id=&#34;Query-Generation&#34;&gt;&lt;a href=&#34;#Query-Generation&#34; class=&#34;headerlink&#34; title=&#34;Query Generation&#34;&gt;&lt;/a&gt;Query Generation&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;Successfully learned CPGQL by generating valid queries for all 1278 test samples.&lt;/li&gt;
+&lt;li&gt;A human audit of 50 samples showed that in 76% of them, the sliced code was semantically consistent with the intended vulnerability.&lt;/li&gt;
+&lt;li&gt;Analysis of 25 misclassified samples:&lt;ul&gt;
+&lt;li&gt;28% were semantically correct queries but were misclassified by LLMxCPG-D.&lt;/li&gt;
+&lt;li&gt;40% resulted from incorrect CWE derivation.&lt;/li&gt;
+&lt;li&gt;32% correctly identified the CWE but failed to retrieve key context elements.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;Code-Reduction&#34;&gt;&lt;a href=&#34;#Code-Reduction&#34; class=&#34;headerlink&#34; title=&#34;Code Reduction&#34;&gt;&lt;/a&gt;Code Reduction&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;Achieved code reduction rates ranging from a minimum of 67.87% to a maximum of 90.93% across various datasets.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;Function-level-Vulnerability-Detection&#34;&gt;&lt;a href=&#34;#Function-level-Vulnerability-Detection&#34; class=&#34;headerlink&#34; title=&#34;Function-level Vulnerability Detection&#34;&gt;&lt;/a&gt;Function-level Vulnerability Detection&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;Demonstrated high performance, especially in function-level vulnerability detection.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;Showed high detection rates for specific memory corruption bug types (&lt;a href=&#34;https://cwe.mitre.org/data/definitions/119.html&#34;&gt;CWE-119&lt;/a&gt;, &lt;a href=&#34;https://cwe.mitre.org/data/definitions/415.html&#34;&gt;CWE-415&lt;/a&gt;, &lt;a href=&#34;https://cwe.mitre.org/data/definitions/416.html&#34;&gt;CWE-416&lt;/a&gt;, &lt;a href=&#34;https://cwe.mitre.org/data/definitions/190.html&#34;&gt;CWE-190&lt;/a&gt;).&lt;/p&gt;
+&lt;p&gt;  &lt;img src=&#34;image%203.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;Generalizability&#34;&gt;&lt;a href=&#34;#Generalizability&#34; class=&#34;headerlink&#34; title=&#34;Generalizability&#34;&gt;&lt;/a&gt;Generalizability&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;At the function level, generalizability improved accuracy by 20% compared to existing models like VulSim, VulBERTA-CNN, VulBERTA-MLP, and ReGVD.&lt;/li&gt;
+&lt;li&gt;At the project level, it maintained consistent performance without degradation despite increased complexity.&lt;/li&gt;
+&lt;li&gt;The model also showed respectable generalization performance on new vulnerability patterns appearing after its knowledge cutoff, confirming that it learned the fundamental characteristics of vulnerabilities, not just known CVEs.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;Misclassification-Analysis&#34;&gt;&lt;a href=&#34;#Misclassification-Analysis&#34; class=&#34;headerlink&#34; title=&#34;Misclassification Analysis&#34;&gt;&lt;/a&gt;Misclassification Analysis&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;Performance degradation was observed for CWE-120 (Classic Buffer Overflow) and CWE-125 (Out-of-bounds Read).&lt;ul&gt;
+&lt;li&gt;This was attributed to a limited number of samples for these CWEs in the training dataset and can be resolved with a higher-quality dataset.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;Robustness-to-Code-Augmentation&#34;&gt;&lt;a href=&#34;#Robustness-to-Code-Augmentation&#34; class=&#34;headerlink&#34; title=&#34;Robustness to Code Augmentation&#34;&gt;&lt;/a&gt;Robustness to Code Augmentation&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;Showed high performance in preserving semantics against noise (comment impact, dataset dependency, code transformation noise).&lt;/li&gt;
+&lt;li&gt;However, the T3 transformation (function extraction) significantly impacted the model&amp;#x2019;s performance, particularly its recall, indicating the model is somewhat sensitive to T3 transformations.&lt;ul&gt;
+&lt;li&gt;Function extraction involves transformations like splitting a function&amp;#x2019;s code into a new function or merging the code of multiple functions into one.&lt;/li&gt;
+&lt;li&gt;When such transformations occur, the very structure of function calls, data flow, or relationships with other functions within the CPG is reorganized, which is why it impacts the model&amp;#x2019;s performance more significantly than other transformations.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h1 id=&#34;Conclusion&#34;&gt;&lt;a href=&#34;#Conclusion&#34; class=&#34;headerlink&#34; title=&#34;Conclusion&#34;&gt;&lt;/a&gt;Conclusion&lt;/h1&gt;&lt;p&gt;In summary, &lt;strong&gt;LLMxCPG&lt;/strong&gt; optimizes the code context by filtering out unnecessary code through CPG-based code slicing. This optimization enhances the learning efficiency of the LLM and helps overcome the limitations of existing models. Notably, it maintains semantic consistency even with code transformations and significantly improves generalization performance on complex codebases.&lt;/p&gt;
+&lt;h1 id=&#34;Closing-Thoughts&#34;&gt;&lt;a href=&#34;#Closing-Thoughts&#34; class=&#34;headerlink&#34; title=&#34;Closing Thoughts&#34;&gt;&lt;/a&gt;Closing Thoughts&lt;/h1&gt;&lt;p&gt;As the authors mention in the Limitations section, it is difficult to cleanly resolve the dependency on computing power when the query model (&lt;code&gt;LLMxCPG-Q&lt;/code&gt;) preprocesses large codebases. Furthermore, it inherits the inherent limitations of CPGs, such as the difficulty in detecting vulnerabilities like race conditions or business logic errors, which are tied to runtime properties. Thus, its limitations are clear.&lt;/p&gt;
+&lt;p&gt;Nevertheless, the idea and implementation of generating and compressing a semantically equivalent execution path directly related to the vulnerability from the original code for analysis using CPGs was fascinating. While the reasoning capabilities and context size of LLMs are constantly improving, rather than just waiting for model performance to get better, advancing optimization research like this could accelerate faster and more accurate automated vulnerability detection.&lt;/p&gt;
+&lt;p&gt;I didn&amp;#x2019;t cover the implementation details, but I might return with a Part 2 review after trying out the publicly available &lt;a href=&#34;https://www.google.com/search?q=https://github.com/qcri/llmxcpg&#34;&gt;source code&lt;/a&gt; and &lt;a href=&#34;https://huggingface.co/collections/QCRI/llmxcpg-6855f80e601774b43eba2d14&#34;&gt;models&lt;/a&gt;. Those who are interested might want to check them out first.&lt;/p&gt;
+&lt;p&gt;I&amp;#x2019;ll be back with more interesting paper reviews in the future!&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] “LLMxCPG: Context-Aware Vulnerability Detection Through Code Property Graph-Guided Large Language Models” Paper Review (EN) - hackyboiz">
+  <meta property="og:description" content="&lt;h1 id=&#34;Introduction&#34;&gt;&lt;a href=&#34;#Introduction&#34; class=&#34;headerlink&#34; title=&#34;Introduction&#34;&gt;&lt;/a&gt;Introduction&lt;/h1&gt;&lt;p&gt;Hello, I&amp;#x2019;m L0ch! Recently, I&amp;#x2019;ve become interested in Code Property Graphs (CPG) and have been looking into them. In this post, I&amp;#x2019;ll be reviewing the USENIX Security &amp;#x2018;25 paper, &amp;#x201C;LLMxCPG: Context-Aware Vulnerability Detection Through Code Property Graph-Guided Large Language Models.&amp;#x201D;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Original Paper: &lt;a href=&#34;https://arxiv.org/pdf/2507.16585&#34;&gt;https://arxiv.org/pdf/2507.16585&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h1 id=&#34;Background&#34;&gt;&lt;a href=&#34;#Background&#34; class=&#34;headerlink&#34; title=&#34;Background&#34;&gt;&lt;/a&gt;Background&lt;/h1&gt;&lt;p&gt;As is the case in many fields, LLMs are being widely used in vulnerability detection these days. I also use LLMs frequently when analyzing 1-day vulnerabilities or searching for zero-days.&lt;/p&gt;
+&lt;p&gt;However, I&amp;#x2019;ve often experienced issues where analysis fails on large codebases, or the context size is exceeded, requiring manual intervention. Of course, modern large-scale models like Gemini and GPT have significantly larger context windows than before, but smaller embedding models for fine-tuning or training are still limited by their context window size because supporting hardware performance can be a challenge (~~underpowered GPUs~~).&lt;/p&gt;
+&lt;p&gt;A problem with existing LLM-based vulnerability detection approaches is that the code relevant to the actual vulnerability often makes up only a small portion of the entire code segment being analyzed by the LLM. In other words, irrelevant code constitutes the majority of the segment. This leads to several problems, such as increased token usage and the model relying on irrelevant code patterns.&lt;/p&gt;
+&lt;p&gt;The paper I&amp;#x2019;m reviewing today introduces a CPG-based code slicing technique to address these issues and overcome the limitations of LLMs in analyzing large codebases.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Code Property Graphs (CPG):&lt;/strong&gt; A method that combines various code representations, such as the Abstract Syntax Tree (AST), Control Flow Graph (CFG), and Program Dependence Graph (PDG), into a single graph.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h1 id=&#34;Methodology&#34;&gt;&lt;a href=&#34;#Methodology&#34; class=&#34;headerlink&#34; title=&#34;Methodology&#34;&gt;&lt;/a&gt;Methodology&lt;/h1&gt;&lt;h2 id=&#34;0-System-Overview&#34;&gt;&lt;a href=&#34;#0-System-Overview&#34; class=&#34;headerlink&#34; title=&#34;0. System Overview&#34;&gt;&lt;/a&gt;0. System Overview&lt;/h2&gt;&lt;p&gt;The figure below provides an overview of the system proposed in the paper, which uses the code representation provided by CPG to slice and reduce the code related to a vulnerability to determine its existence.&lt;br&gt;&lt;img src=&#34;image.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;It consists of three main stages: Query Generation, Slice Construction, and Code Classification.&lt;/p&gt;
+&lt;h2 id=&#34;1-Query-Generation&#34;&gt;&lt;a href=&#34;#1-Query-Generation&#34; class=&#34;headerlink&#34; title=&#34;1. Query Generation&#34;&gt;&lt;/a&gt;1. Query Generation&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;image%201.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;LLMxCPG-Q&lt;/code&gt; model is a fine-tuned version of &lt;code&gt;Qwen2.5-Coder-32B Instruct&lt;/code&gt;, as shown in the figure. It takes the code to be analyzed as input and generates the CPGQL queries that will be described later. This trained model is used to automate query generation for extracting key code segments related to vulnerabilities and for the overall code slicing process.&lt;/p&gt;
+&lt;h2 id=&#34;2-Slice-Construction&#34;&gt;&lt;a href=&#34;#2-Slice-Construction&#34; class=&#34;headerlink&#34; title=&#34;2. Slice Construction&#34;&gt;&lt;/a&gt;2. Slice Construction&lt;/h2&gt;&lt;p&gt;The CPGQL query generated in step 1 is processed by &lt;a href=&#34;https://github.com/joernio/joern&#34;&gt;Joern&lt;/a&gt;. Joern is an open-source SAST tool that generates CPGs and supports querying them with the Scala-based CPGQL.&lt;/p&gt;
+&lt;p&gt;Based on Joern and the CPGQL queries, a code slice is constructed through the following three steps:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Identify the potential root cause of the vulnerability in the code, focusing on the execution path.&lt;/li&gt;
+&lt;li&gt;Identify variables that interact with the execution path.&lt;/li&gt;
+&lt;li&gt;Find all code elements that affect steps 1 and 2 to construct the final slice.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3 id=&#34;2-1-Extracting-the-Taint-Path&#34;&gt;&lt;a href=&#34;#2-1-Extracting-the-Taint-Path&#34; class=&#34;headerlink&#34; title=&#34;2-1) Extracting the Taint Path&#34;&gt;&lt;/a&gt;2-1) Extracting the Taint Path&lt;/h3&gt;&lt;p&gt;The example vulnerability used is &lt;a href=&#34;https://github.com/torvalds/linux/commit/c85ce65ecac078ab1a1835c87c4a6319cf74660a&#34;&gt;CVE-2011-3359&lt;/a&gt;.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;A buffer overflow vulnerability caused by insufficient validation of the buffer length &lt;code&gt;len&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;The overflow is triggered during the copy process of length &lt;code&gt;len&lt;/code&gt; when the &lt;code&gt;skb_put&lt;/code&gt; function is called.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;!-- end list --&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs graphql&#34;&gt;val source = cpg.identifier.name(&amp;quot;len&amp;quot;)
+val sink = cpg.call.name(&amp;quot;skb_put&amp;quot;).where(_.argument.order(2).codeExact(&amp;quot;len + ring-&amp;gt;frameoffset&amp;quot;))
+val execution_paths = sink.reachableByFlows(source)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The CPGQL query above extracts the vulnerability&amp;#x2019;s Taint Path, including the &lt;strong&gt;source&lt;/strong&gt; (variable &lt;code&gt;len&lt;/code&gt;), &lt;strong&gt;sink&lt;/strong&gt; (&lt;code&gt;skb_put&lt;/code&gt; call), and &lt;strong&gt;execution paths&lt;/strong&gt;.&lt;/p&gt;
+&lt;h3 id=&#34;2-2-Extracting-Variables-Interacting-with-the-Execution-Path&#34;&gt;&lt;a href=&#34;#2-2-Extracting-Variables-Interacting-with-the-Execution-Path&#34; class=&#34;headerlink&#34; title=&#34;2-2) Extracting Variables Interacting with the Execution Path&#34;&gt;&lt;/a&gt;2-2) Extracting Variables Interacting with the Execution Path&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs graphql&#34;&gt;val execution_path_nodes = &amp;lt;Query to extract execution path (generated by LLMxCPG-Q)&amp;gt;
+cpg.identifier.filter(id =&amp;gt; execution_path_nodes.lineNumber.toSet.intersect(id.lineNumber.l.toSet).size.equals(1))&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;It searches for nodes that interact with &lt;code&gt;execution_path_nodes&lt;/code&gt; using a CPGQL query.&lt;/p&gt;
+&lt;h3 id=&#34;2-3-Backward-Slicing-and-Final-Code-Snippet-Construction&#34;&gt;&lt;a href=&#34;#2-3-Backward-Slicing-and-Final-Code-Snippet-Construction&#34; class=&#34;headerlink&#34; title=&#34;2-3) Backward Slicing and Final Code Snippet Construction&#34;&gt;&lt;/a&gt;2-3) Backward Slicing and Final Code Snippet Construction&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs graphql&#34;&gt;# Query to extract execution paths and interactions
+execution_path_and_interacters.reachableByFlows(cpg.all)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In this stage, a &lt;strong&gt;backward slice&lt;/strong&gt; is constructed using Joern&amp;#x2019;s &lt;code&gt;reachableByFlows&lt;/code&gt; API, which internally uses a Program Dependency Graph (PDG).&lt;/p&gt;
+&lt;p&gt;The backward slice retrieves all contexts related to the vulnerability&amp;#x2019;s interactions and execution path, such as loops, variable declarations, and initializations.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;static&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;dma_rx&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(struct b43_dmaring *ring, &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *slot)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+    u16 len;
+    len = le16_to_cpu(rxhdr-&amp;gt;frame_len);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (unlikely(len &amp;gt; ring-&amp;gt;rx_buffersize)) {
+        s32 tmp = len;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; (&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;) {
+            tmp -= ring-&amp;gt;rx_buffersize;
+            &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (tmp &amp;lt;= &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;)
+                &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;;
+        }
+        &lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; drop;
+    }
+
+    skb_put(skb, len + ring-&amp;gt;frameoffset);
+    drop:
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;As a result of slicing, the original 85-line &lt;code&gt;dma_rx()&lt;/code&gt; function was compressed into an 18-line code snippet that is semantically consistent with the execution path of the CVE-2011-3359 vulnerability.&lt;/p&gt;
+&lt;h2 id=&#34;3-Code-Classification-Vulnerability-Detection&#34;&gt;&lt;a href=&#34;#3-Code-Classification-Vulnerability-Detection&#34; class=&#34;headerlink&#34; title=&#34;3. Code Classification (Vulnerability Detection)&#34;&gt;&lt;/a&gt;3. Code Classification (Vulnerability Detection)&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;image%202.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The code, compressed through slicing, is then binary classified as either &lt;strong&gt;Vuln&lt;/strong&gt; or &lt;strong&gt;Safe&lt;/strong&gt; by the &lt;code&gt;LLMxCPG-D&lt;/code&gt; model, which is a fine-tuned version of the &lt;code&gt;QwQ-32B-Preview&lt;/code&gt; model. &lt;code&gt;LLMxCPG-D&lt;/code&gt; is fine-tuned on a dataset of sliced and labeled code snippets from both vulnerable and non-vulnerable code to improve classification accuracy.&lt;/p&gt;
+&lt;p&gt;This approach is not only useful for vulnerability detection but can also identify and highlight vulnerability patch code in patched versions. This can be utilized to automate the creation of datasets for future model training.&lt;/p&gt;
+&lt;h1 id=&#34;Performance-Analysis&#34;&gt;&lt;a href=&#34;#Performance-Analysis&#34; class=&#34;headerlink&#34; title=&#34;Performance Analysis&#34;&gt;&lt;/a&gt;Performance Analysis&lt;/h1&gt;&lt;p&gt;The implemented system was evaluated on six main points. The results for each are as follows (for detailed figures and comparison tables, please refer to the original paper).&lt;/p&gt;
+&lt;h3 id=&#34;Query-Generation&#34;&gt;&lt;a href=&#34;#Query-Generation&#34; class=&#34;headerlink&#34; title=&#34;Query Generation&#34;&gt;&lt;/a&gt;Query Generation&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;Successfully learned CPGQL by generating valid queries for all 1278 test samples.&lt;/li&gt;
+&lt;li&gt;A human audit of 50 samples showed that in 76% of them, the sliced code was semantically consistent with the intended vulnerability.&lt;/li&gt;
+&lt;li&gt;Analysis of 25 misclassified samples:&lt;ul&gt;
+&lt;li&gt;28% were semantically correct queries but were misclassified by LLMxCPG-D.&lt;/li&gt;
+&lt;li&gt;40% resulted from incorrect CWE derivation.&lt;/li&gt;
+&lt;li&gt;32% correctly identified the CWE but failed to retrieve key context elements.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;Code-Reduction&#34;&gt;&lt;a href=&#34;#Code-Reduction&#34; class=&#34;headerlink&#34; title=&#34;Code Reduction&#34;&gt;&lt;/a&gt;Code Reduction&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;Achieved code reduction rates ranging from a minimum of 67.87% to a maximum of 90.93% across various datasets.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;Function-level-Vulnerability-Detection&#34;&gt;&lt;a href=&#34;#Function-level-Vulnerability-Detection&#34; class=&#34;headerlink&#34; title=&#34;Function-level Vulnerability Detection&#34;&gt;&lt;/a&gt;Function-level Vulnerability Detection&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;Demonstrated high performance, especially in function-level vulnerability detection.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;Showed high detection rates for specific memory corruption bug types (&lt;a href=&#34;https://cwe.mitre.org/data/definitions/119.html&#34;&gt;CWE-119&lt;/a&gt;, &lt;a href=&#34;https://cwe.mitre.org/data/definitions/415.html&#34;&gt;CWE-415&lt;/a&gt;, &lt;a href=&#34;https://cwe.mitre.org/data/definitions/416.html&#34;&gt;CWE-416&lt;/a&gt;, &lt;a href=&#34;https://cwe.mitre.org/data/definitions/190.html&#34;&gt;CWE-190&lt;/a&gt;).&lt;/p&gt;
+&lt;p&gt;  &lt;img src=&#34;image%203.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;Generalizability&#34;&gt;&lt;a href=&#34;#Generalizability&#34; class=&#34;headerlink&#34; title=&#34;Generalizability&#34;&gt;&lt;/a&gt;Generalizability&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;At the function level, generalizability improved accuracy by 20% compared to existing models like VulSim, VulBERTA-CNN, VulBERTA-MLP, and ReGVD.&lt;/li&gt;
+&lt;li&gt;At the project level, it maintained consistent performance without degradation despite increased complexity.&lt;/li&gt;
+&lt;li&gt;The model also showed respectable generalization performance on new vulnerability patterns appearing after its knowledge cutoff, confirming that it learned the fundamental characteristics of vulnerabilities, not just known CVEs.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;Misclassification-Analysis&#34;&gt;&lt;a href=&#34;#Misclassification-Analysis&#34; class=&#34;headerlink&#34; title=&#34;Misclassification Analysis&#34;&gt;&lt;/a&gt;Misclassification Analysis&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;Performance degradation was observed for CWE-120 (Classic Buffer Overflow) and CWE-125 (Out-of-bounds Read).&lt;ul&gt;
+&lt;li&gt;This was attributed to a limited number of samples for these CWEs in the training dataset and can be resolved with a higher-quality dataset.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;Robustness-to-Code-Augmentation&#34;&gt;&lt;a href=&#34;#Robustness-to-Code-Augmentation&#34; class=&#34;headerlink&#34; title=&#34;Robustness to Code Augmentation&#34;&gt;&lt;/a&gt;Robustness to Code Augmentation&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;Showed high performance in preserving semantics against noise (comment impact, dataset dependency, code transformation noise).&lt;/li&gt;
+&lt;li&gt;However, the T3 transformation (function extraction) significantly impacted the model&amp;#x2019;s performance, particularly its recall, indicating the model is somewhat sensitive to T3 transformations.&lt;ul&gt;
+&lt;li&gt;Function extraction involves transformations like splitting a function&amp;#x2019;s code into a new function or merging the code of multiple functions into one.&lt;/li&gt;
+&lt;li&gt;When such transformations occur, the very structure of function calls, data flow, or relationships with other functions within the CPG is reorganized, which is why it impacts the model&amp;#x2019;s performance more significantly than other transformations.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h1 id=&#34;Conclusion&#34;&gt;&lt;a href=&#34;#Conclusion&#34; class=&#34;headerlink&#34; title=&#34;Conclusion&#34;&gt;&lt;/a&gt;Conclusion&lt;/h1&gt;&lt;p&gt;In summary, &lt;strong&gt;LLMxCPG&lt;/strong&gt; optimizes the code context by filtering out unnecessary code through CPG-based code slicing. This optimization enhances the learning efficiency of the LLM and helps overcome the limitations of existing models. Notably, it maintains semantic consistency even with code transformations and significantly improves generalization performance on complex codebases.&lt;/p&gt;
+&lt;h1 id=&#34;Closing-Thoughts&#34;&gt;&lt;a href=&#34;#Closing-Thoughts&#34; class=&#34;headerlink&#34; title=&#34;Closing Thoughts&#34;&gt;&lt;/a&gt;Closing Thoughts&lt;/h1&gt;&lt;p&gt;As the authors mention in the Limitations section, it is difficult to cleanly resolve the dependency on computing power when the query model (&lt;code&gt;LLMxCPG-Q&lt;/code&gt;) preprocesses large codebases. Furthermore, it inherits the inherent limitations of CPGs, such as the difficulty in detecting vulnerabilities like race conditions or business logic errors, which are tied to runtime properties. Thus, its limitations are clear.&lt;/p&gt;
+&lt;p&gt;Nevertheless, the idea and implementation of generating and compressing a semantically equivalent execution path directly related to the vulnerability from the original code for analysis using CPGs was fascinating. While the reasoning capabilities and context size of LLMs are constantly improving, rather than just waiting for model performance to get better, advancing optimization research like this could accelerate faster and more accurate automated vulnerability detection.&lt;/p&gt;
+&lt;p&gt;I didn&amp;#x2019;t cover the implementation details, but I might return with a Part 2 review after trying out the publicly available &lt;a href=&#34;https://www.google.com/search?q=https://github.com/qcri/llmxcpg&#34;&gt;source code&lt;/a&gt; and &lt;a href=&#34;https://huggingface.co/collections/QCRI/llmxcpg-6855f80e601774b43eba2d14&#34;&gt;models&lt;/a&gt;. Those who are interested might want to check them out first.&lt;/p&gt;
+&lt;p&gt;I&amp;#x2019;ll be back with more interesting paper reviews in the future!&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io2025/09/22/l0ch/llmxcpg_paper_review/en/thumbnail.jpeg">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/09/22/l0ch/llmxcpg_paper_review/en/">
+
+  <title>[Research] “LLMxCPG: Context-Aware Vulnerability Detection Through Code Property Graph-Guided Large Language Models” Paper Review (EN) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-09-22 19:00" pubdate>
+      2025년 9월 22일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      1.5k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      29
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] “LLMxCPG: Context-Aware Vulnerability Detection Through Code Property Graph-Guided Large Language Models” Paper Review (EN)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <h1 id="Introduction"><a href="#Introduction" class="headerlink" title="Introduction"></a>Introduction</h1><p>Hello, I&#x2019;m L0ch! Recently, I&#x2019;ve become interested in Code Property Graphs (CPG) and have been looking into them. In this post, I&#x2019;ll be reviewing the USENIX Security &#x2018;25 paper, &#x201C;LLMxCPG: Context-Aware Vulnerability Detection Through Code Property Graph-Guided Large Language Models.&#x201D;</p>
+<blockquote>
+<p>Original Paper: <a target="_blank" rel="external nofollow noopener noreferrer" href="https://arxiv.org/pdf/2507.16585">https://arxiv.org/pdf/2507.16585</a></p>
+</blockquote>
+<h1 id="Background"><a href="#Background" class="headerlink" title="Background"></a>Background</h1><p>As is the case in many fields, LLMs are being widely used in vulnerability detection these days. I also use LLMs frequently when analyzing 1-day vulnerabilities or searching for zero-days.</p>
+<p>However, I&#x2019;ve often experienced issues where analysis fails on large codebases, or the context size is exceeded, requiring manual intervention. Of course, modern large-scale models like Gemini and GPT have significantly larger context windows than before, but smaller embedding models for fine-tuning or training are still limited by their context window size because supporting hardware performance can be a challenge (~~underpowered GPUs~~).</p>
+<p>A problem with existing LLM-based vulnerability detection approaches is that the code relevant to the actual vulnerability often makes up only a small portion of the entire code segment being analyzed by the LLM. In other words, irrelevant code constitutes the majority of the segment. This leads to several problems, such as increased token usage and the model relying on irrelevant code patterns.</p>
+<p>The paper I&#x2019;m reviewing today introduces a CPG-based code slicing technique to address these issues and overcome the limitations of LLMs in analyzing large codebases.</p>
+<blockquote>
+<p><strong>Code Property Graphs (CPG):</strong> A method that combines various code representations, such as the Abstract Syntax Tree (AST), Control Flow Graph (CFG), and Program Dependence Graph (PDG), into a single graph.</p>
+</blockquote>
+<h1 id="Methodology"><a href="#Methodology" class="headerlink" title="Methodology"></a>Methodology</h1><h2 id="0-System-Overview"><a href="#0-System-Overview" class="headerlink" title="0. System Overview"></a>0. System Overview</h2><p>The figure below provides an overview of the system proposed in the paper, which uses the code representation provided by CPG to slice and reduce the code related to a vulnerability to determine its existence.<br><img src="image.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>It consists of three main stages: Query Generation, Slice Construction, and Code Classification.</p>
+<h2 id="1-Query-Generation"><a href="#1-Query-Generation" class="headerlink" title="1. Query Generation"></a>1. Query Generation</h2><p><img src="image%201.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>The <code>LLMxCPG-Q</code> model is a fine-tuned version of <code>Qwen2.5-Coder-32B Instruct</code>, as shown in the figure. It takes the code to be analyzed as input and generates the CPGQL queries that will be described later. This trained model is used to automate query generation for extracting key code segments related to vulnerabilities and for the overall code slicing process.</p>
+<h2 id="2-Slice-Construction"><a href="#2-Slice-Construction" class="headerlink" title="2. Slice Construction"></a>2. Slice Construction</h2><p>The CPGQL query generated in step 1 is processed by <a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/joernio/joern">Joern</a>. Joern is an open-source SAST tool that generates CPGs and supports querying them with the Scala-based CPGQL.</p>
+<p>Based on Joern and the CPGQL queries, a code slice is constructed through the following three steps:</p>
+<ol>
+<li>Identify the potential root cause of the vulnerability in the code, focusing on the execution path.</li>
+<li>Identify variables that interact with the execution path.</li>
+<li>Find all code elements that affect steps 1 and 2 to construct the final slice.</li>
+</ol>
+<h3 id="2-1-Extracting-the-Taint-Path"><a href="#2-1-Extracting-the-Taint-Path" class="headerlink" title="2-1) Extracting the Taint Path"></a>2-1) Extracting the Taint Path</h3><p>The example vulnerability used is <a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/torvalds/linux/commit/c85ce65ecac078ab1a1835c87c4a6319cf74660a">CVE-2011-3359</a>.</p>
+<ul>
+<li>A buffer overflow vulnerability caused by insufficient validation of the buffer length <code>len</code>.</li>
+<li>The overflow is triggered during the copy process of length <code>len</code> when the <code>skb_put</code> function is called.</li>
+</ul>
+<!-- end list -->
+<pre><code class="hljs graphql">val source = cpg.identifier.name(&quot;len&quot;)
+val sink = cpg.call.name(&quot;skb_put&quot;).where(_.argument.order(2).codeExact(&quot;len + ring-&gt;frameoffset&quot;))
+val execution_paths = sink.reachableByFlows(source)</code></pre>
+<p>The CPGQL query above extracts the vulnerability&#x2019;s Taint Path, including the <strong>source</strong> (variable <code>len</code>), <strong>sink</strong> (<code>skb_put</code> call), and <strong>execution paths</strong>.</p>
+<h3 id="2-2-Extracting-Variables-Interacting-with-the-Execution-Path"><a href="#2-2-Extracting-Variables-Interacting-with-the-Execution-Path" class="headerlink" title="2-2) Extracting Variables Interacting with the Execution Path"></a>2-2) Extracting Variables Interacting with the Execution Path</h3><pre><code class="hljs graphql">val execution_path_nodes = &lt;Query to extract execution path (generated by LLMxCPG-Q)&gt;
+cpg.identifier.filter(id =&gt; execution_path_nodes.lineNumber.toSet.intersect(id.lineNumber.l.toSet).size.equals(1))</code></pre>
+<p>It searches for nodes that interact with <code>execution_path_nodes</code> using a CPGQL query.</p>
+<h3 id="2-3-Backward-Slicing-and-Final-Code-Snippet-Construction"><a href="#2-3-Backward-Slicing-and-Final-Code-Snippet-Construction" class="headerlink" title="2-3) Backward Slicing and Final Code Snippet Construction"></a>2-3) Backward Slicing and Final Code Snippet Construction</h3><pre><code class="hljs graphql"># Query to extract execution paths and interactions
+execution_path_and_interacters.reachableByFlows(cpg.all)</code></pre>
+<p>In this stage, a <strong>backward slice</strong> is constructed using Joern&#x2019;s <code>reachableByFlows</code> API, which internally uses a Program Dependency Graph (PDG).</p>
+<p>The backward slice retrieves all contexts related to the vulnerability&#x2019;s interactions and execution path, such as loops, variable declarations, and initializations.</p>
+<pre><code class="hljs c"><span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">void</span> <span class="hljs-title">dma_rx</span><span class="hljs-params">(struct b43_dmaring *ring, <span class="hljs-keyword">int</span> *slot)</span></span>
+<span class="hljs-function"></span>{
+    u16 len;
+    len = le16_to_cpu(rxhdr-&gt;frame_len);
+    <span class="hljs-keyword">if</span> (unlikely(len &gt; ring-&gt;rx_buffersize)) {
+        s32 tmp = len;
+        <span class="hljs-keyword">while</span> (<span class="hljs-number">1</span>) {
+            tmp -= ring-&gt;rx_buffersize;
+            <span class="hljs-keyword">if</span> (tmp &lt;= <span class="hljs-number">0</span>)
+                <span class="hljs-keyword">break</span>;
+        }
+        <span class="hljs-keyword">goto</span> drop;
+    }
+
+    skb_put(skb, len + ring-&gt;frameoffset);
+    drop:
+    <span class="hljs-keyword">return</span>;
+}</code></pre>
+<p>As a result of slicing, the original 85-line <code>dma_rx()</code> function was compressed into an 18-line code snippet that is semantically consistent with the execution path of the CVE-2011-3359 vulnerability.</p>
+<h2 id="3-Code-Classification-Vulnerability-Detection"><a href="#3-Code-Classification-Vulnerability-Detection" class="headerlink" title="3. Code Classification (Vulnerability Detection)"></a>3. Code Classification (Vulnerability Detection)</h2><p><img src="image%202.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>The code, compressed through slicing, is then binary classified as either <strong>Vuln</strong> or <strong>Safe</strong> by the <code>LLMxCPG-D</code> model, which is a fine-tuned version of the <code>QwQ-32B-Preview</code> model. <code>LLMxCPG-D</code> is fine-tuned on a dataset of sliced and labeled code snippets from both vulnerable and non-vulnerable code to improve classification accuracy.</p>
+<p>This approach is not only useful for vulnerability detection but can also identify and highlight vulnerability patch code in patched versions. This can be utilized to automate the creation of datasets for future model training.</p>
+<h1 id="Performance-Analysis"><a href="#Performance-Analysis" class="headerlink" title="Performance Analysis"></a>Performance Analysis</h1><p>The implemented system was evaluated on six main points. The results for each are as follows (for detailed figures and comparison tables, please refer to the original paper).</p>
+<h3 id="Query-Generation"><a href="#Query-Generation" class="headerlink" title="Query Generation"></a>Query Generation</h3><ul>
+<li>Successfully learned CPGQL by generating valid queries for all 1278 test samples.</li>
+<li>A human audit of 50 samples showed that in 76% of them, the sliced code was semantically consistent with the intended vulnerability.</li>
+<li>Analysis of 25 misclassified samples:<ul>
+<li>28% were semantically correct queries but were misclassified by LLMxCPG-D.</li>
+<li>40% resulted from incorrect CWE derivation.</li>
+<li>32% correctly identified the CWE but failed to retrieve key context elements.</li>
+</ul>
+</li>
+</ul>
+<h3 id="Code-Reduction"><a href="#Code-Reduction" class="headerlink" title="Code Reduction"></a>Code Reduction</h3><ul>
+<li>Achieved code reduction rates ranging from a minimum of 67.87% to a maximum of 90.93% across various datasets.</li>
+</ul>
+<h3 id="Function-level-Vulnerability-Detection"><a href="#Function-level-Vulnerability-Detection" class="headerlink" title="Function-level Vulnerability Detection"></a>Function-level Vulnerability Detection</h3><ul>
+<li><p>Demonstrated high performance, especially in function-level vulnerability detection.</p>
+</li>
+<li><p>Showed high detection rates for specific memory corruption bug types (<a target="_blank" rel="external nofollow noopener noreferrer" href="https://cwe.mitre.org/data/definitions/119.html">CWE-119</a>, <a target="_blank" rel="external nofollow noopener noreferrer" href="https://cwe.mitre.org/data/definitions/415.html">CWE-415</a>, <a target="_blank" rel="external nofollow noopener noreferrer" href="https://cwe.mitre.org/data/definitions/416.html">CWE-416</a>, <a target="_blank" rel="external nofollow noopener noreferrer" href="https://cwe.mitre.org/data/definitions/190.html">CWE-190</a>).</p>
+<p>  <img src="image%203.png" srcset="/img/loading.gif" alt="image.png"></p>
+</li>
+</ul>
+<h3 id="Generalizability"><a href="#Generalizability" class="headerlink" title="Generalizability"></a>Generalizability</h3><ul>
+<li>At the function level, generalizability improved accuracy by 20% compared to existing models like VulSim, VulBERTA-CNN, VulBERTA-MLP, and ReGVD.</li>
+<li>At the project level, it maintained consistent performance without degradation despite increased complexity.</li>
+<li>The model also showed respectable generalization performance on new vulnerability patterns appearing after its knowledge cutoff, confirming that it learned the fundamental characteristics of vulnerabilities, not just known CVEs.</li>
+</ul>
+<h3 id="Misclassification-Analysis"><a href="#Misclassification-Analysis" class="headerlink" title="Misclassification Analysis"></a>Misclassification Analysis</h3><ul>
+<li>Performance degradation was observed for CWE-120 (Classic Buffer Overflow) and CWE-125 (Out-of-bounds Read).<ul>
+<li>This was attributed to a limited number of samples for these CWEs in the training dataset and can be resolved with a higher-quality dataset.</li>
+</ul>
+</li>
+</ul>
+<h3 id="Robustness-to-Code-Augmentation"><a href="#Robustness-to-Code-Augmentation" class="headerlink" title="Robustness to Code Augmentation"></a>Robustness to Code Augmentation</h3><ul>
+<li>Showed high performance in preserving semantics against noise (comment impact, dataset dependency, code transformation noise).</li>
+<li>However, the T3 transformation (function extraction) significantly impacted the model&#x2019;s performance, particularly its recall, indicating the model is somewhat sensitive to T3 transformations.<ul>
+<li>Function extraction involves transformations like splitting a function&#x2019;s code into a new function or merging the code of multiple functions into one.</li>
+<li>When such transformations occur, the very structure of function calls, data flow, or relationships with other functions within the CPG is reorganized, which is why it impacts the model&#x2019;s performance more significantly than other transformations.</li>
+</ul>
+</li>
+</ul>
+<h1 id="Conclusion"><a href="#Conclusion" class="headerlink" title="Conclusion"></a>Conclusion</h1><p>In summary, <strong>LLMxCPG</strong> optimizes the code context by filtering out unnecessary code through CPG-based code slicing. This optimization enhances the learning efficiency of the LLM and helps overcome the limitations of existing models. Notably, it maintains semantic consistency even with code transformations and significantly improves generalization performance on complex codebases.</p>
+<h1 id="Closing-Thoughts"><a href="#Closing-Thoughts" class="headerlink" title="Closing Thoughts"></a>Closing Thoughts</h1><p>As the authors mention in the Limitations section, it is difficult to cleanly resolve the dependency on computing power when the query model (<code>LLMxCPG-Q</code>) preprocesses large codebases. Furthermore, it inherits the inherent limitations of CPGs, such as the difficulty in detecting vulnerabilities like race conditions or business logic errors, which are tied to runtime properties. Thus, its limitations are clear.</p>
+<p>Nevertheless, the idea and implementation of generating and compressing a semantically equivalent execution path directly related to the vulnerability from the original code for analysis using CPGs was fascinating. While the reasoning capabilities and context size of LLMs are constantly improving, rather than just waiting for model performance to get better, advancing optimization research like this could accelerate faster and more accurate automated vulnerability detection.</p>
+<p>I didn&#x2019;t cover the implementation details, but I might return with a Part 2 review after trying out the publicly available <a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.google.com/search?q=https://github.com/qcri/llmxcpg">source code</a> and <a target="_blank" rel="external nofollow noopener noreferrer" href="https://huggingface.co/collections/QCRI/llmxcpg-6855f80e601774b43eba2d14">models</a>. Those who are interested might want to check them out first.</p>
+<p>I&#x2019;ll be back with more interesting paper reviews in the future!</p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/L0ch/">L0ch</a>
+                  
+                  <a class="hover-with-bg" href="/tags/review/">review</a>
+                  
+                  <a class="hover-with-bg" href="/tags/llm/">llm</a>
+                  
+                  <a class="hover-with-bg" href="/tags/usenix/">usenix</a>
+                  
+                  <a class="hover-with-bg" href="/tags/cpg/">cpg</a>
+                  
+                  <a class="hover-with-bg" href="/tags/vulnerability-detection/">vulnerability detection</a>
+                  
+                  <a class="hover-with-bg" href="/tags/paper/">paper</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_L0ch.jpg" srcset="/img/loading.gif" alt="L0ch">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">L0ch</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/L0ch">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/09/24/poosic/cve-2025-9961/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2025-9961 : TP-Link AX10, AX1500의 CWMP 바이너리에서 발생한 stack buffer overflow로 인한 임의 코드 실행 취약점</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/09/22/l0ch/llmxcpg_paper_review/kr/">
+                    <span class="hidden-mobile">[Research] “LLMxCPG: Context-Aware Vulnerability Detection Through Code Property Graph-Guided Large Language Models” Paper Review (KR)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/09/22/l0ch/llmxcpg_paper_review/en/';
+        this.page.identifier = '/2025/09/22/l0ch/llmxcpg_paper_review/en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] “LLMxCPG: Context-Aware Vulnerability Detection Through Code Property Graph-Guided Large Language Models” Paper Review (EN)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
