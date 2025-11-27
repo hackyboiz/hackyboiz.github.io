@@ -2,8 +2,8 @@
 title: "[Research] Windows ALPC (KR)"
 author: gongjae
 tags: [Windows, ALPC, IPC, gongjae]
-date: 2025-11-27 19:00:00
 categories: [Research]
+date: 2025-11-27 19:00:00
 cc: true
 index_img: /2025/11/27/gongjae/alpc/kr/image01.jpg
 ---
