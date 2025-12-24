@@ -1,0 +1,2310 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Hello~ After finishing the macOS series, we&amp;#x2019;re back this time with &lt;strong&gt;ImageIO&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;On &lt;strong&gt;August 20th&lt;/strong&gt;, a vulnerability was discovered in the ImageIO framework used by iOS, macOS, and iPadOS.&lt;/p&gt;
+&lt;p&gt;It was reportedly exploited in the wild to target specific individuals &amp;#x2014; let&amp;#x2019;s analyze what kind of vulnerability it was!&lt;/p&gt;
+&lt;p&gt;Shall we begin? &amp;#x1F60E;&lt;/p&gt;
+&lt;hr&gt;
+&lt;h1 id=&#34;0-ImageIO&#34;&gt;&lt;a href=&#34;#0-ImageIO&#34; class=&#34;headerlink&#34; title=&#34;0. ImageIO&#34;&gt;&lt;/a&gt;0. &lt;a href=&#34;https://developer.apple.com/documentation/imageio&#34;&gt;ImageIO&lt;/a&gt;&lt;/h1&gt;&lt;p&gt;&lt;strong&gt;ImageIO&lt;/strong&gt; is Apple&amp;#x2019;s &lt;strong&gt;image processing framework&lt;/strong&gt; used across macOS, iOS, and iPadOS.&lt;/p&gt;
+&lt;p&gt;It provides APIs for &lt;strong&gt;reading, writing, accessing metadata, compression, and decoding&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;for a wide range of image formats. It serves as the image processing backend for many system apps and features &amp;#x2014; including &lt;strong&gt;Core Graphics&lt;/strong&gt;, &lt;strong&gt;Photos&lt;/strong&gt;, &lt;strong&gt;Preview&lt;/strong&gt;, &lt;strong&gt;Safari&lt;/strong&gt;, &lt;strong&gt;Messages&lt;/strong&gt;, &lt;strong&gt;AirDrop&lt;/strong&gt;, &lt;strong&gt;Mail&lt;/strong&gt;, and &lt;strong&gt;iCloud.&lt;/strong&gt;&lt;/p&gt;
+&lt;h1 id=&#34;1-CVE-2025-43300&#34;&gt;&lt;a href=&#34;#1-CVE-2025-43300&#34; class=&#34;headerlink&#34; title=&#34;1. CVE-2025-43300&#34;&gt;&lt;/a&gt;1. CVE-2025-43300&lt;/h1&gt;&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image1.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;This vulnerability is an &lt;strong&gt;Out-of-Bounds Write&lt;/strong&gt; in the JPEG Lossless (&lt;code&gt;SOF3&lt;/code&gt;) decoder&lt;/p&gt;
+&lt;p&gt;(&lt;code&gt;CDNGLosslessJpegUnpacker&lt;/code&gt;) of Apple&amp;#x2019;s ImageIO framework, specifically within &lt;strong&gt;RawCamera&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;It occurs when the DNG file&amp;#x2019;s TIFF tag (&lt;code&gt;SamplesPerPixel&lt;/code&gt;) does &lt;strong&gt;not match&lt;/strong&gt; the number of components declared in the internal JPEG stream &amp;#x2014; leading to incorrect loop boundaries and thus a buffer overwrite.&lt;/p&gt;
+&lt;p&gt;It was patched in &lt;strong&gt;iOS 18.6.2&lt;/strong&gt;, released on &lt;strong&gt;August 20, 2025&lt;/strong&gt;.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Vulnerable version: &lt;strong&gt;iOS 18.6.1&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;Patched version: &lt;strong&gt;iOS 18.6.2&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;We first wanted to identify &lt;strong&gt;where the patch was applied&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;Using the public project &lt;a href=&#34;https://github.com/blacktop/ipsw-diffs/tree/main&#34;&gt;&lt;strong&gt;ipsw-diffs&lt;/strong&gt;&lt;/a&gt;,&lt;/p&gt;
+&lt;p&gt;we compared the binaries between &lt;strong&gt;18.6.1&lt;/strong&gt; and &lt;strong&gt;18.6.2&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image2.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Everything else remained unchanged &amp;#x2014; only &lt;strong&gt;RawCamera&lt;/strong&gt; was modified.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;RawCamera&lt;/strong&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;/System/Library/CoreServices/RawCamera.bundle/RawCamera&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;-1738.140.3.0.0
+-  __TEXT.__text: 0x1e2d70
+-  __TEXT.__auth_stubs: 0x1850
++1738.140.3.0.11
++  __TEXT.__text: 0x1e3470
++  __TEXT.__auth_stubs: 0x1870
+   __TEXT.__objc_methlist: 0x16e4
+   __TEXT.__const: 0x15326
+-  __TEXT.__gcc_except_tab: 0x2d440
++  __TEXT.__gcc_except_tab: 0x2d588
+   __TEXT.__oslogstring: 0xec0
+   __TEXT.__cstring: 0xee23
+   __TEXT.__dof_RawCamera: 0x8f7
+-  __TEXT.__unwind_info: 0xb1d0
++  __TEXT.__unwind_info: 0xb1e8
+   __TEXT.__eh_frame: 0x278
+   __TEXT.__objc_classname: 0x4b9
+   __TEXT.__objc_methname: 0x3918
+   __TEXT.__objc_methtype: 0xdd3
+   __TEXT.__objc_stubs: 0x2da0
+-  __DATA_CONST.__got: 0x9b0
++  __DATA_CONST.__got: 0x9c8
+   __DATA_CONST.__const: 0x2a18
+   __DATA_CONST.__objc_classlist: 0x1e0
+   __DATA_CONST.__objc_catlist: 0x20
+   __DATA_CONST.__objc_imageinfo: 0x8
+   __DATA_CONST.__objc_selrefs: 0xcf8
+   __DATA_CONST.__objc_superrefs: 0xf0
+-  __DATA_CONST.__objc_arraydata: 0x3948
+-  __AUTH_CONST.__auth_got: 0xc40
++  __DATA_CONST.__objc_arraydata: 0x3950
++  __AUTH_CONST.__auth_got: 0xc50
+   __AUTH_CONST.__const: 0x35978
+   __AUTH_CONST.__cfstring: 0x18080
+   __AUTH_CONST.__objc_const: 0x48b0
+-  __AUTH_CONST.__objc_arrayobj: 0x570
+-  __AUTH_CONST.__objc_intobj: 0x39f0
++  __AUTH_CONST.__objc_arrayobj: 0x588
++  __AUTH_CONST.__objc_intobj: 0x3a20
+   __AUTH_CONST.__objc_doubleobj: 0x480
+   __AUTH_CONST.__objc_dictobj: 0x4d58
+   __AUTH_CONST.__objc_floatobj: 0xc0
+
+   - /System/Library/Frameworks/UniformTypeIdentifiers.framework/UniformTypeIdentifiers
+   - /System/Library/PrivateFrameworks/AppleJPEG.framework/AppleJPEG
+   - /System/Library/PrivateFrameworks/AppleJPEGXL.framework/AppleJPEGXL
++  - /System/Library/PrivateFrameworks/CMPhoto.framework/CMPhoto
+   - /System/Library/PrivateFrameworks/CoreAnalytics.framework/CoreAnalytics
+   - /System/Library/PrivateFrameworks/MobileAsset.framework/MobileAsset
+   - /usr/lib/libSystem.B.dylib
+
+   - /usr/lib/libobjc.A.dylib
+   - /usr/lib/libxml2.2.dylib
+   - /usr/lib/libz.1.dylib
+-  UUID: 1BE38EB6-51C0-3069-A50F-CA3B000E0847
+-  Functions: 6433
+-  Symbols:   781
++  UUID: AF5B7B35-3549-329B-B706-F877FA8DF849
++  Functions: 6435
++  Symbols:   786
+   CStrings:  7487
+ 
+Symbols:
++ _CMPhotoDecompressionContainerCreateImageForIndex
++ _CMPhotoDecompressionContainerGetImageCount
++ _CMPhotoDecompressionSessionCreate
++ _CMPhotoDecompressionSessionCreateContainer
++ _CVPixelBufferGetDataSize
++ _kCMPhotoContainerFormatString_JFIF
++ _kCMPhotoDecompressionContainerOption_AllowedFormatsAndCodecs
++ _kCMPhotoDecompressionOption_OutputPixelFormat
+- _CGImageGetBytesPerRow
+- _CGImageGetHeight
+- _CGImageGetWidth&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Since the diff does not show code-level changes, we moved to &lt;strong&gt;IDA Pro&lt;/strong&gt; for deeper inspection.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image3.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image4.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;We used &lt;strong&gt;ipsw&lt;/strong&gt; to download both 18.6.1 and 18.6.2 firmwares.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image5.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image6.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image7.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;dyld_shared_cache&lt;/code&gt; is a cache file that bundles frequently used system libraries and frameworks together for faster loading during iOS/macOS boot. It contains optimized versions of &lt;code&gt;.dylibs&lt;/code&gt; and frameworks, allowing faster app startup and reduced memory usage.&lt;br&gt;Since the actual system loads these cached binaries, we can extract RawCamera directly from the cache for comparison and analysis.&lt;/p&gt;
+&lt;p&gt;Although it can also be extracted using &lt;code&gt;ipsw dyld extract&lt;/code&gt;, in this research, we analyzed it&lt;/p&gt;
+&lt;p&gt;directly by loading &lt;code&gt;dyld_shared_cache&lt;/code&gt; in IDA.&lt;/p&gt;
+&lt;h2 id=&#34;1-1-bindiff&#34;&gt;&lt;a href=&#34;#1-1-bindiff&#34; class=&#34;headerlink&#34; title=&#34;1.1 bindiff&#34;&gt;&lt;/a&gt;1.1 bindiff&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image8.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The binary was exported in &lt;strong&gt;BinExport&lt;/strong&gt; format for diffing.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image9.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Due to limited space, we referred to public analysis from Quarkslab&lt;br&gt;: &lt;a href=&#34;https://blog.quarkslab.com/patch-analysis-of-Apple-iOS-CVE-2025-43300.html&#34;&gt;https://blog.quarkslab.com/patch-analysis-of-Apple-iOS-CVE-2025-43300.html&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Out of six modified functions, two &amp;#x2014; &lt;code&gt;sub_1DD8A7684&lt;/code&gt; and &lt;code&gt;sub_1DD95DC1C&lt;/code&gt; &amp;#x2014; were significantly changed. We focused our analysis on these two.&lt;/p&gt;
+&lt;h2 id=&#34;1-2-Analysis&#34;&gt;&lt;a href=&#34;#1-2-Analysis&#34; class=&#34;headerlink&#34; title=&#34;1.2 Analysis&#34;&gt;&lt;/a&gt;1.2 Analysis&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image10.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image11.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;We loaded &lt;code&gt;dyld_shared_cache&lt;/code&gt; extracted from ipsw for analysis:&lt;br&gt;&lt;em&gt;&amp;#x2192; Apple DYLD Cache for arm64e (select module(s)) &amp;#x2192; RawCamera&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image12.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image13.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;A new &lt;strong&gt;pixel buffer size verification step&lt;/strong&gt; was added.&lt;/p&gt;
+&lt;p&gt;See the following section for detailed code comparison.&lt;/p&gt;
+&lt;h3 id=&#34;Code-Analysis&#34;&gt;&lt;a href=&#34;#Code-Analysis&#34; class=&#34;headerlink&#34; title=&#34;Code Analysis&#34;&gt;&lt;/a&gt;&lt;strong&gt;Code Analysis&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;&lt;code&gt;sub_1DD8A7684&lt;/code&gt; &amp;#x2192; &lt;code&gt;sub_1DD8A76DC&lt;/code&gt; &lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;# iOS &lt;span class=&#34;hljs-number&#34;&gt;18.6&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;.1&lt;/span&gt; G90
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; __fastcall &lt;span class=&#34;hljs-title&#34;&gt;sub_1DD8A7684&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(...)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// shortened: legacy CGImage path&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+    v13 = CGImageSourceCreateWithData(...);
+    ImageAtIndex = CGImageSourceCreateImageAtIndex(v13, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+    BytesPerRow = CGImageGetBytesPerRow(ImageAtIndex);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (CFDataGetLength(data) != &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt; * width * height)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;throw&lt;/span&gt; RawCameraException;
+    ...
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;# iOS &lt;span class=&#34;hljs-number&#34;&gt;18.6&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;.2&lt;/span&gt; G100
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; __fastcall &lt;span class=&#34;hljs-title&#34;&gt;sub_1DD8A76DC&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(...)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// shortened: new CMPhoto + CVPixelBuffer path&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+    CMPhotoDecompressionSessionCreate(...);
+    CMPhotoDecompressionContainerCreateImageForIndex(...);
+    BytesPerRow = CVPixelBufferGetBytesPerRow(buf);
+    DataSize = CVPixelBufferGetDataSize(buf);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (DataSize != expected)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;throw&lt;/span&gt; RawCameraException;
+    ...
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;h3 id=&#34;Key-Differences&#34;&gt;&lt;a href=&#34;#Key-Differences&#34; class=&#34;headerlink&#34; title=&#34;Key Differences&#34;&gt;&lt;/a&gt;Key Differences&lt;/h3&gt;&lt;ol&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;CGImage &amp;#x2192; CMPhoto + CVPixelBuffer&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;G90 (18.6.1):&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;  Uses CoreGraphics pipeline (&lt;code&gt;CGImageSourceCreateImageAtIndex&lt;/code&gt; + &lt;code&gt;CGDataProviderCopyData&lt;/code&gt;)&lt;/p&gt;
+&lt;p&gt;  and directly iterates raw &lt;code&gt;CFData&lt;/code&gt; bytes.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;G100 (18.6.2):&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;  Introduces &lt;strong&gt;CMPhoto&lt;/strong&gt; decompression pipeline:&lt;/p&gt;
+&lt;p&gt;  &lt;code&gt;CMPhotoDecompressionSessionCreate &amp;#x2192; CMPhotoDecompressionContainerCreateImageForIndex&lt;/code&gt; &amp;#x2192; &lt;code&gt;CVPixelBuffer&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;  Accesses pixels through &lt;strong&gt;CVPixelBufferLockBaseAddress()&lt;/strong&gt;, ensuring safer memory handling.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Buffer Size Validation Added&lt;/strong&gt;&lt;/p&gt;
+ &lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (CFDataGetLength(data) != &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt; * width * height) &lt;span class=&#34;hljs-keyword&#34;&gt;throw&lt;/span&gt; RawCameraException;&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Before:&lt;/strong&gt; Only checked &lt;code&gt;CFDataGetLength() == 4 * width * height&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;  This ignored row padding (&lt;code&gt;bytesPerRow&lt;/code&gt;) and format variations.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;BytesPerRow = CVPixelBufferGetBytesPerRow(buf);
+DataSize    = CVPixelBufferGetDataSize(buf);
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// expected = f(width, height)  // sub_1DD8A8C14&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt;// bpp = 4                       // v68=4 &amp;#x2192; sub_1DD8A8C7C&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (DataSize != expected) &lt;span class=&#34;hljs-keyword&#34;&gt;throw&lt;/span&gt; RawCameraException;&lt;/code&gt;&lt;/pre&gt;
+
+- **After:** Validates using `CVPixelBufferGetDataSize()` against an internally computed expected value (considering stride).
+
+    &amp;#x2192; Prevents overrun caused by underestimated buffer size.
+&lt;/code&gt;&lt;/pre&gt;&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Pixel Channel Order&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Old:&lt;/strong&gt; Assumed RGB order, manual pointer increments.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;New:&lt;/strong&gt; Explicitly treats buffer as BGRA, reading channels in fixed offsets (B&amp;#x2192;G&amp;#x2192;R).&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;hr&gt;
+&lt;p&gt;&lt;strong&gt;Summary:&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;The patch migrated from &lt;strong&gt;CoreGraphics raw byte decoding&lt;/strong&gt; to a &lt;strong&gt;CoreMedia Photo pipeline&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;and added &lt;strong&gt;explicit data size/stride checks&lt;/strong&gt;, eliminating unbounded writes from mismatched DNG metadata.&lt;/p&gt;
+&lt;p&gt;Through the analysis of the modified code, we were able to understand the general behavior of the function.&lt;/p&gt;
+&lt;p&gt;In summary, &lt;strong&gt;G90 (iOS 18.6.1)&lt;/strong&gt; decodes the image through the &lt;strong&gt;CGImage&lt;/strong&gt; path and directly iterates over the &lt;strong&gt;CFData&lt;/strong&gt; buffer. The verification process only checks two things &amp;#x2014; the &lt;strong&gt;match of width and height&lt;/strong&gt;, and whether &lt;strong&gt;CFDataGetLength() == 4 &amp;#xD7; W &amp;#xD7; H&lt;/strong&gt; &amp;#x2014; while actual memory access is performed using a &lt;strong&gt;row-based offset (&lt;/strong&gt;&lt;code&gt;BytesPerRow&lt;/code&gt;&lt;strong&gt;)&lt;/strong&gt;. Because of this, for certain images (depending on color space, subsampling, or row padding), the validation may &lt;strong&gt;pass successfully, but the actual access can exceed the bounds of CFData&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;In contrast, &lt;strong&gt;G100 (iOS 18.6.2)&lt;/strong&gt; fixes this issue by switching the decoding pipeline from &lt;strong&gt;CGImage &amp;#x2192; CMPhoto (JFIF only) &amp;#x2192; CVPixelBuffer&lt;/strong&gt;, and comparing the &lt;strong&gt;actual total buffer size (&lt;/strong&gt;&lt;code&gt;CVPixelBufferGetDataSize&lt;/code&gt;&lt;strong&gt;)&lt;/strong&gt; against an &lt;strong&gt;expected value&lt;/strong&gt; computed internally based on width, height, and other parameters.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h3 id=&#34;Root-Cause&#34;&gt;&lt;a href=&#34;#Root-Cause&#34; class=&#34;headerlink&#34; title=&#34;Root Cause&#34;&gt;&lt;/a&gt;Root Cause&lt;/h3&gt;&lt;p&gt;(Analyzed based on the G90 version)&lt;/p&gt;
+&lt;p&gt;During analysis, we observed that &lt;code&gt;sub_1DD8A7684&lt;/code&gt; makes a function call through a &lt;strong&gt;vtable&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;In C++, every object typically begins with a &lt;strong&gt;vptr (virtual table pointer)&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;Virtual function calls are made at runtime through that pointer &amp;#x2014; something like &lt;code&gt;this-&amp;gt;vptr[slot]&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;However, since the RawCamera binary is &lt;strong&gt;fully stripped&lt;/strong&gt;, only addresses are visible,&lt;/p&gt;
+&lt;p&gt;making direct analysis difficult.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;[ex]
+(*(*&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;)+&lt;span class=&#34;hljs-number&#34;&gt;0xE0&lt;/span&gt;)(&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;, buf, w, h)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;which conceptually means:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;[ex]
+&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;-&amp;gt;vptr-&amp;gt;unpack_lossless(&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;, buf, w, h)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;To make it more readable and traceable, I defined the vtable as a structure (class) in IDA using an IDAPython script.&lt;/p&gt;
+&lt;p&gt;The script did the following:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Parse the vtable and create a corresponding struct.&lt;/li&gt;
+&lt;li&gt;Apply &lt;code&gt;struct CDNGLosslessJpegUnpacker *this&lt;/code&gt; as the first parameter for all virtual functions.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Once this is done, the call expression &lt;code&gt;(*(*this)+0xE0)(this)&lt;/code&gt; appears as &lt;code&gt;this-&amp;gt;vptr-&amp;gt;fn_028(this, &amp;#x2026;)&lt;/code&gt;, and fields like &lt;code&gt;this-&amp;gt;field_d8&lt;/code&gt; become explicit &amp;#x2014; making slot mapping and call tracing much easier.&lt;/p&gt;
+&lt;p&gt;Now, let&amp;#x2019;s identify where the vulnerable function is actually invoked in the call tree.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image14.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Filtering for &amp;#x201C;Lossless&amp;#x201D; quickly reveals the target class&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;CDNGLosslessJpegUnpacker&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Following the references leads to the function &lt;code&gt;sub_1DD95DE88&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Detailed Code (sub_1DD95DE88)&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; __fastcall &lt;span class=&#34;hljs-title&#34;&gt;sub_1DD95DE88&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;os_signpost_id_t&lt;/span&gt; a1, __int64 a2, __int64 a3, __int64 a4)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+  .
+  .
+  .
+  
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( *(_DWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;216&lt;/span&gt;)
+    || (*(&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; (__fastcall **)(&lt;span class=&#34;hljs-keyword&#34;&gt;os_signpost_id_t&lt;/span&gt;))(*(_QWORD *)a1 + &lt;span class=&#34;hljs-number&#34;&gt;224L&lt;/span&gt;L))(a1) == &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+    || (v12 = *(_QWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;240&lt;/span&gt;) - *(_QWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;232&lt;/span&gt;), v12 == &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;) )
+  {
+    sub_1DD9009D4(a1, a2, a3, a4);
+  }
+  &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+  {
+    v14 = *(_DWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;44&lt;/span&gt;);
+    v13 = *(_DWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;48&lt;/span&gt;);
+    v15 = *(_DWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;224&lt;/span&gt;);
+    v16 = *(_DWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;228&lt;/span&gt;);
+    *(_QWORD *)&amp;amp;v35 = v12 &amp;gt;&amp;gt; &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;;
+    sub_1DD8731E0(&amp;amp;v36, &amp;amp;v35);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( *(_QWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;240&lt;/span&gt;) - *(_QWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;232&lt;/span&gt;) != *(_QWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;264&lt;/span&gt;) - *(_QWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;256&lt;/span&gt;)
+      || (&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;)(v14 - &lt;span class=&#34;hljs-number&#34;&gt;100000&lt;/span&gt;) &amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;0xFFFE7961&lt;/span&gt;
+      || (&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;)(v13 - &lt;span class=&#34;hljs-number&#34;&gt;100000&lt;/span&gt;) &amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;0xFFFE7961&lt;/span&gt;
+      || v15 - &lt;span class=&#34;hljs-number&#34;&gt;100000&lt;/span&gt; &amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;0xFFFE7961&lt;/span&gt;
+      || v16 - &lt;span class=&#34;hljs-number&#34;&gt;100000&lt;/span&gt; &amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;0xFFFE7961&lt;/span&gt;
+      || (v28 = v11, v17 = (&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;)v36, v36 &amp;gt;= &lt;span class=&#34;hljs-number&#34;&gt;20000&lt;/span&gt;) )
+    {
+      exception_15 = (&lt;span class=&#34;hljs-built_in&#34;&gt;std&lt;/span&gt;::runtime_error *)__cxa_allocate_exception_15(&lt;span class=&#34;hljs-number&#34;&gt;0x10&lt;/span&gt;uLL);
+      &lt;span class=&#34;hljs-built_in&#34;&gt;std&lt;/span&gt;::runtime_error::runtime_error(exception_15, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;RawCameraException&amp;quot;&lt;/span&gt;);
+      __cxa_throw(exception_15, MEMORY[&lt;span class=&#34;hljs-number&#34;&gt;0x1E6FA15F0&lt;/span&gt;], MEMORY[&lt;span class=&#34;hljs-number&#34;&gt;0x1E6FA1480&lt;/span&gt;]);
+    }
+    v29 = a4;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( (((v13 + v16 - &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;) / v16) &amp;gt;&amp;gt; (*(_DWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;216&lt;/span&gt;) != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;)) * ((v14 + v15 - &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;) / v15) != v36 )
+    {
+      v27 = (&lt;span class=&#34;hljs-built_in&#34;&gt;std&lt;/span&gt;::runtime_error *)__cxa_allocate_exception_15(&lt;span class=&#34;hljs-number&#34;&gt;0x10&lt;/span&gt;uLL);
+      &lt;span class=&#34;hljs-built_in&#34;&gt;std&lt;/span&gt;::runtime_error::runtime_error(v27, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;RawCameraException&amp;quot;&lt;/span&gt;);
+      __cxa_throw(v27, MEMORY[&lt;span class=&#34;hljs-number&#34;&gt;0x1E6FA15F0&lt;/span&gt;], MEMORY[&lt;span class=&#34;hljs-number&#34;&gt;0x1E6FA1480&lt;/span&gt;]);
+    }
+    group = dispatch_group_create();
+    v30 = dispatch_queue_create(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Lossless DNG Tile Unpacker Queue&amp;quot;&lt;/span&gt;, MEMORY[&lt;span class=&#34;hljs-number&#34;&gt;0x1E6FA52F0&lt;/span&gt;]);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The function performs &lt;strong&gt;three checks&lt;/strong&gt;:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;code&gt;[this+0xD8] != 0&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;vtable[28](this) == 2&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;[this+0xF0] - [this+0xE8] == 4&lt;/code&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;If &lt;strong&gt;any&lt;/strong&gt; of these conditions is true, it calls &lt;code&gt;sub_1DD9009D4()&lt;/code&gt; and &lt;strong&gt;exits safely&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;Otherwise, it proceeds to the &lt;strong&gt;&amp;#x201C;Tile Queue&amp;#x201D;&lt;/strong&gt; path &amp;#x2014; which includes the vulnerable function chain.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;; Check &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+LDR   W8, [X23,#&lt;span class=&#34;hljs-number&#34;&gt;0xD8&lt;/span&gt;]
+CBNZ  W8, loc_1DD95DF78
+
+; Check &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+LDR   X16, [X23]
+AUTDA X16, X17
+LDR   X8, [X16,#&lt;span class=&#34;hljs-number&#34;&gt;0xE0&lt;/span&gt;]!  ; vtable[&lt;span class=&#34;hljs-number&#34;&gt;0xE0&lt;/span&gt;/&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;] -&amp;gt; slot &lt;span class=&#34;hljs-number&#34;&gt;28&lt;/span&gt;
+MOV   X0, X23
+BLRAA X8, X17
+CMP   W0, #&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+BEQ   loc_1DD95DF78
+
+; Check &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;
+LDP   X9, X8, [X23,#&lt;span class=&#34;hljs-number&#34;&gt;0xE8&lt;/span&gt;]
+SUB   X8, X8, X9
+CMP   X8, #&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;
+B.NE  loc_1DD95E008&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;If none of the above branches are taken, the function reaches a section where a dispatch queue named &lt;code&gt;&amp;quot;Lossless DNG Tile Unpacker Queue&amp;quot;&lt;/code&gt; is created &amp;#x2014; this is the path that eventually leads to the vulnerable unpacking logic.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs angelscript&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// sub_1DD95DE88 simplified&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ([&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;+&lt;span class=&#34;hljs-number&#34;&gt;0xD8&lt;/span&gt;] != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+ || vtable[&lt;span class=&#34;hljs-number&#34;&gt;28&lt;/span&gt;](&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;) == &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+ || ([&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;+&lt;span class=&#34;hljs-number&#34;&gt;0xF0&lt;/span&gt;]-[&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;+&lt;span class=&#34;hljs-number&#34;&gt;0xE8&lt;/span&gt;]) == &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;)
+{
+    sub_1DD9009D4(...); &lt;span class=&#34;hljs-comment&#34;&gt;// safe path&lt;/span&gt;
+} &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+    &lt;span class=&#34;hljs-comment&#34;&gt;// Vulnerable path&lt;/span&gt;
+    dispatch_group_create();
+    dispatch_queue_create(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Lossless DNG Tile Unpacker Queue&amp;quot;&lt;/span&gt;, ...);
+    sub_1DD95E410 &amp;#x2192; sub_1DD95DCD8 &amp;#x2192; sub_1DD95E4A4 &lt;span class=&#34;hljs-keyword&#34;&gt;or&lt;/span&gt; sub_1DD95B198
+    &amp;#x2192; sub_1DD95EA64 &amp;#x2192; sub_1DDA4EF58
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Thus, when all three conditions fail,&lt;br&gt;the code spawns a tile-based decompression queue that ultimately triggers the vulnerable unpack routine.&lt;/p&gt;
+&lt;h3 id=&#34;What-is-the-Tile-Queue&#34;&gt;&lt;a href=&#34;#What-is-the-Tile-Queue&#34; class=&#34;headerlink&#34; title=&#34;What is the Tile Queue?&#34;&gt;&lt;/a&gt;What is the Tile Queue?&lt;/h3&gt;&lt;p&gt;The &lt;strong&gt;tile queue&lt;/strong&gt; splits a large image into small rectangular &lt;strong&gt;tiles&lt;/strong&gt; (TileWidth &amp;#xD7; TileLength).&lt;/p&gt;
+&lt;p&gt;Each tile is decoded, color-corrected, and placed in the output buffer.&lt;/p&gt;
+&lt;p&gt;The vulnerable path processes each tile independently but assumes metadata consistency between &lt;strong&gt;SamplesPerPixel&lt;/strong&gt; and &lt;strong&gt;NumComponents&lt;/strong&gt; &amp;#x2014; which, when mismatched, causes a buffer overflow.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Simplified Call Tree&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;0x1DD95DE88&lt;/span&gt;
+    &lt;span class=&#34;hljs-number&#34;&gt;0x1DD95E410&lt;/span&gt;
+        &lt;span class=&#34;hljs-number&#34;&gt;0x1DD95DCD8&lt;/span&gt;
+            &lt;span class=&#34;hljs-number&#34;&gt;0x1DD95E4A4&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;or&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x1DD95B198&lt;/span&gt;
+                &lt;span class=&#34;hljs-number&#34;&gt;0x1DD95EF54&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;or&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x1DD95EA64&lt;/span&gt;
+                    &lt;span class=&#34;hljs-number&#34;&gt;0x1DDA4EF58&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;hr&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image15.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Boom &amp;#x1F4A5; &amp;#x2014; and with a clearer head, let&amp;#x2019;s continue &amp;gt;&amp;lt;&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;Before diving into the PoC,&lt;/p&gt;
+&lt;p&gt;let&amp;#x2019;s briefly recap the &lt;strong&gt;background concepts&lt;/strong&gt; necessary to understand this behavior.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;Background-Concepts&#34;&gt;&lt;a href=&#34;#Background-Concepts&#34; class=&#34;headerlink&#34; title=&#34;Background Concepts&#34;&gt;&lt;/a&gt;Background Concepts&lt;/h2&gt;&lt;h3 id=&#34;1-Pixels-Channels-Samples-and-Bit-Depth&#34;&gt;&lt;a href=&#34;#1-Pixels-Channels-Samples-and-Bit-Depth&#34; class=&#34;headerlink&#34; title=&#34;1. Pixels, Channels (Samples), and Bit Depth&#34;&gt;&lt;/a&gt;1. Pixels, Channels (Samples), and Bit Depth&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Pixel&lt;/strong&gt;: The smallest visual unit of an image.&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Channel (Sample)&lt;/strong&gt;: A single numeric component representing one aspect of a pixel (R, G, B, etc.).&lt;/p&gt;
+&lt;p&gt;  &amp;#x2192; &lt;code&gt;SamplesPerPixel&lt;/code&gt; = number of channels per pixel&lt;/p&gt;
+&lt;p&gt;  &amp;#x2192; &lt;code&gt;BitsPerSample&lt;/code&gt; = number of bits used to represent each channel&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Examples:&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Type&lt;/th&gt;
+&lt;th&gt;SamplesPerPixel&lt;/th&gt;
+&lt;th&gt;BitsPerSample&lt;/th&gt;
+&lt;th&gt;Bytes per Pixel&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;Grayscale&lt;/td&gt;
+&lt;td&gt;1&lt;/td&gt;
+&lt;td&gt;8&lt;/td&gt;
+&lt;td&gt;1&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;RGB 8bpc&lt;/td&gt;
+&lt;td&gt;3&lt;/td&gt;
+&lt;td&gt;8&lt;/td&gt;
+&lt;td&gt;3&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;RGBA 16bpc&lt;/td&gt;
+&lt;td&gt;4&lt;/td&gt;
+&lt;td&gt;16&lt;/td&gt;
+&lt;td&gt;8&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;These metadata values determine &lt;strong&gt;buffer size&lt;/strong&gt;, &lt;strong&gt;stride (bytes per row)&lt;/strong&gt;, and &lt;strong&gt;loop boundaries&lt;/strong&gt; in decompression.&lt;/p&gt;
+&lt;h3 id=&#34;2-DNG&#34;&gt;&lt;a href=&#34;#2-DNG&#34; class=&#34;headerlink&#34; title=&#34;2. DNG&#34;&gt;&lt;/a&gt;2. DNG&lt;/h3&gt;&lt;p&gt;DNG (Digital Negative) is &lt;strong&gt;Adobe&amp;#x2019;s RAW image container format&lt;/strong&gt;, built upon &lt;strong&gt;TIFF/EP&lt;/strong&gt; structure.&lt;/p&gt;
+&lt;p&gt;It stores raw sensor data (e.g., Bayer CFA), thumbnails, and color correction metadata.&lt;/p&gt;
+&lt;p&gt;Key tags:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;RowsPerStrip / TileWidth / TileLength&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;StripOffsets / TileOffsets&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;StripByteCounts / TileByteCounts&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;SamplesPerPixel / BitsPerSample&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The decoder uses these values to calculate&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;buffer offsets&lt;/strong&gt;, &lt;strong&gt;BytesPerRow&lt;/strong&gt;, and &lt;strong&gt;total data size&lt;/strong&gt; for writing.&lt;/p&gt;
+&lt;h3 id=&#34;3-RAW-and-Compression&#34;&gt;&lt;a href=&#34;#3-RAW-and-Compression&#34; class=&#34;headerlink&#34; title=&#34;3. RAW and Compression&#34;&gt;&lt;/a&gt;3. RAW and Compression&lt;/h3&gt;&lt;p&gt;RAW data is unprocessed, high bit-depth sensor output (e.g., 12/14/16 bits per pixel, typically 1 sample per pixel).&lt;/p&gt;
+&lt;p&gt;To save space, DNG supports &lt;strong&gt;lossless compression&lt;/strong&gt;, most notably &lt;strong&gt;JPEG Lossless (SOF3)&lt;/strong&gt;.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Compression = 1 &amp;#x2192; Uncompressed&lt;/li&gt;
+&lt;li&gt;Compression = 7 &amp;#x2192; JPEG (Baseline or Lossless)&lt;/li&gt;
+&lt;li&gt;Compression = 8 &amp;#x2192; Deflate (ZIP)&lt;/li&gt;
+&lt;li&gt;Compression = 34892 &amp;#x2192; JPEG Baseline (Lossy)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&amp;#x2705; The vulnerability resides in the &lt;strong&gt;Lossless JPEG (SOF3)&lt;/strong&gt; decoding path.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;1-3-PoC&#34;&gt;&lt;a href=&#34;#1-3-PoC&#34; class=&#34;headerlink&#34; title=&#34;1.3 PoC&#34;&gt;&lt;/a&gt;1.3 PoC&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image16.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Normal DNG files typically &lt;strong&gt;do not&lt;/strong&gt; reach the vulnerable path.&lt;/p&gt;
+&lt;p&gt;However, by tweaking metadata tags (for example, &lt;code&gt;SamplesPerPixel&lt;/code&gt;) so that the initial checks pass, we can force the code path to invoke the vulnerable function.&lt;/p&gt;
+&lt;p&gt;I ran this on my phone without updating it (because I had no space &amp;#x1F602;).&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image17.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;My device is on &lt;strong&gt;iOS 18.1.1&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image18.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Using the small DNG viewer app above, I loaded the PoC DNG and observed the following:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; SwiftUI
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; UniformTypeIdentifiers
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; Combine
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; UIKit
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; CoreImage
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; CoreImage.CIFilterBuiltins
+
+@main
+&lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;DNGViewerApp&lt;/span&gt;:&lt;/span&gt; App {
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+    }
+}
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;class&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;RawRenderer&lt;/span&gt;:&lt;/span&gt; ObservableObject {
+    &lt;span class=&#34;hljs-keyword&#34;&gt;private&lt;/span&gt; let context = CIContext(options: [
+        .cacheIntermediates: &lt;span class=&#34;hljs-literal&#34;&gt;false&lt;/span&gt;
+    ])
+
+    @Published var image: UIImage?
+    @Published var &lt;span class=&#34;hljs-built_in&#34;&gt;log&lt;/span&gt;: String = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt;
+
+    func render(from url: URL) {
+        &lt;span class=&#34;hljs-built_in&#34;&gt;log&lt;/span&gt; = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Loading: \(url.lastPathComponent)\n&amp;quot;&lt;/span&gt;
+        
+        guard let raw = CIRAWFilter(imageURL: url, options: [:]) &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+            &lt;span class=&#34;hljs-built_in&#34;&gt;log&lt;/span&gt; += &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;CIRAWFilter unavailable or failed to open URL\n&amp;quot;&lt;/span&gt;
+            &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;
+        }
+  
+        guard let ciImage = raw.value(forKey: kCIOutputImageKey) as? CIImage &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+            &lt;span class=&#34;hljs-built_in&#34;&gt;log&lt;/span&gt; += &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Failed to get CIImage\n&amp;quot;&lt;/span&gt;; &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;
+        }
+        let extent = ciImage.extent.integral
+        guard let cg = context.createCGImage(ciImage, from: extent) &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+            &lt;span class=&#34;hljs-built_in&#34;&gt;log&lt;/span&gt; += &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Failed to create CGImage\n&amp;quot;&lt;/span&gt;; &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;
+        }
+        image = UIImage(cgImage: cg)
+        &lt;span class=&#34;hljs-built_in&#34;&gt;log&lt;/span&gt; += &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Rendered: \(Int(extent.width))&amp;#xD7;\(Int(extent.height))\n&amp;quot;&lt;/span&gt;
+    }
+}
+
+struct ContentView: View {
+    @StateObject var renderer = RawRenderer()
+    @State &lt;span class=&#34;hljs-keyword&#34;&gt;private&lt;/span&gt; var showPicker = &lt;span class=&#34;hljs-literal&#34;&gt;false&lt;/span&gt;
+
+    var body: some View {
+        VStack(spacing: &lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt;) {
+            &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; let img = renderer.image {
+                Image(uiImage: img)
+                    .resizable()
+                    .scaledToFit()
+                    .background(Color.black.opacity(&lt;span class=&#34;hljs-number&#34;&gt;0.05&lt;/span&gt;))
+                    .cornerRadius(&lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt;)
+                    .padding(.horizontal)
+            } &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+                Text(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Open a DNG&amp;quot;&lt;/span&gt;).foregroundColor(.secondary)
+                    .padding(.top, &lt;span class=&#34;hljs-number&#34;&gt;40&lt;/span&gt;)
+            }
+
+            HStack {
+                Button(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Open DNG&amp;quot;&lt;/span&gt;) { showPicker = &lt;span class=&#34;hljs-literal&#34;&gt;true&lt;/span&gt; }
+                .buttonStyle(.borderedProminent)
+
+                Button(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Clear&amp;quot;&lt;/span&gt;) { renderer.image = nil; renderer.&lt;span class=&#34;hljs-built_in&#34;&gt;log&lt;/span&gt; = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt; }
+                .buttonStyle(.bordered)
+            }
+
+            ScrollView {
+                Text(renderer.&lt;span class=&#34;hljs-built_in&#34;&gt;log&lt;/span&gt;)
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+                    .background(Color.black.opacity(&lt;span class=&#34;hljs-number&#34;&gt;0.03&lt;/span&gt;))
+                    .cornerRadius(&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;)
+            }
+            .frame(maxHeight: &lt;span class=&#34;hljs-number&#34;&gt;160&lt;/span&gt;)
+            .padding(.horizontal)
+        }
+        .sheet(isPresented: $showPicker) {
+            DocumentPicker { url in
+                &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; let url { renderer.render(from: url) }
+            }
+        }
+    }
+}
+
+struct DocumentPicker: UIViewControllerRepresentable {
+    var onPick: (URL?) -&amp;gt; Void
+
+    func makeCoordinator() -&amp;gt; Coordinator { Coordinator(onPick: onPick) }
+    func makeUIViewController(context: Context) -&amp;gt; UIDocumentPickerViewController {
+        &lt;span class=&#34;hljs-comment&#34;&gt;// DNG UTI&amp;#xB294; &amp;#xC804;&amp;#xD1B5;&amp;#xC801;&amp;#xC73C;&amp;#xB85C; &amp;quot;com.adobe.raw-image&amp;quot;.&lt;/span&gt;
+        &lt;span class=&#34;hljs-comment&#34;&gt;// iOS 14+&amp;#xC5D0;&amp;#xC120; UTType.image(&amp;#xB610;&amp;#xB294; item)&amp;#xB85C; &amp;#xC5F4;&amp;#xC5B4;&amp;#xB3C4; &amp;#xBB34;&amp;#xBC29;.&lt;/span&gt;
+        let vc = UIDocumentPickerViewController(forOpeningContentTypes: [
+            UTType(importedAs: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;com.adobe.raw-image&amp;quot;&lt;/span&gt;), &lt;span class=&#34;hljs-comment&#34;&gt;// DNG&lt;/span&gt;
+            .image, .item
+        ])
+        vc.allowsMultipleSelection = &lt;span class=&#34;hljs-literal&#34;&gt;false&lt;/span&gt;
+        vc.delegate = context.coordinator
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; vc
+    }
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onPick: (URL?) -&amp;gt; Void
+        init(onPick: @escaping (URL?) -&amp;gt; Void) { self.onPick = onPick }
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            onPick(urls.first)
+        }
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { onPick(nil) }
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image19.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Here is the image that was used.&lt;/p&gt;
+&lt;p&gt;Using this viewer to load the PoC DNG file, I observed the following details:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;CLosslessJpegUnpacker&lt;/code&gt; at &lt;code&gt;0x1DD902E78&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;CDNGLosslessJpegUnpacker&lt;/code&gt; at &lt;code&gt;0x1DD95DE88&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;CDNGLosslessJpegUnpacker::unpackTile&lt;/code&gt; at &lt;code&gt;0x1DD95B198&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;CLosslessJpegRestartUnpacker&lt;/code&gt; at &lt;code&gt;0x1DD95F784&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;Trigger conditions:&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;JPEG marker: &lt;strong&gt;SOF3 (Lossless JPEG)&lt;/strong&gt; present&lt;/li&gt;
+&lt;li&gt;DHT (Define Huffman Table(s)) present&lt;/li&gt;
+&lt;li&gt;SOS (Start Of Scan) valid&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;BitsPerSample = 16&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;SamplesPerPixel = 2&lt;/strong&gt; (TIFF tag)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;NumComponents = 1&lt;/strong&gt; (SOF3/JPEG stream)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The root cause is a mismatch between how the loop termination condition is computed versus how the inner loop performs writes:&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image20.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The outer pixel loop is bounded by &lt;strong&gt;NumComponents&lt;/strong&gt; = 1 (so it expects one component per pixel),&lt;/li&gt;
+&lt;li&gt;but the inner write routine assumes &lt;strong&gt;SamplesPerPixel&lt;/strong&gt; = 2 and writes &lt;strong&gt;two 16-bit samples per pixel&lt;/strong&gt;, advancing the destination pointer as if there are two samples per pixel.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;As a result, each row ends up writing &lt;strong&gt;twice&lt;/strong&gt; the expected number of bytes &amp;#x2192; &lt;strong&gt;out-of-bounds writes&lt;/strong&gt; occur at the row boundary.&lt;/p&gt;
+&lt;p&gt;Following the flow, you can trace the chain like:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs apache&#34;&gt;&lt;span class=&#34;hljs-attribute&#34;&gt;0x1DD95B198&lt;/span&gt; &amp;#x2192; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;DD&lt;span class=&#34;hljs-number&#34;&gt;95&lt;/span&gt;B&lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;C&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt; &amp;#x2192; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;DD&lt;span class=&#34;hljs-number&#34;&gt;95&lt;/span&gt;B&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;DC &amp;#x2192; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;DD&lt;span class=&#34;hljs-number&#34;&gt;95&lt;/span&gt;B&lt;span class=&#34;hljs-number&#34;&gt;944&lt;/span&gt; &amp;#x2192; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;DD&lt;span class=&#34;hljs-number&#34;&gt;95&lt;/span&gt;BCCC&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;(Trace through these offsets to map how the pixel decoder iterates and performs the writes.)&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image21.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The sample image I used is from DPReview:&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.dpreview.com/sample-galleries/4949897610/pentax-k-3-mark-iii-sample-gallery/1638788346&#34;&gt;https://www.dpreview.com/sample-galleries/4949897610/pentax-k-3-mark-iii-sample-gallery/1638788346&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;(Used that image as a starting point to craft a DNG variant for the PoC.)&lt;/p&gt;
+&lt;h3 id=&#34;Summary&#34;&gt;&lt;a href=&#34;#Summary&#34; class=&#34;headerlink&#34; title=&#34;Summary&#34;&gt;&lt;/a&gt;Summary&lt;/h3&gt;&lt;p&gt;In short, &lt;strong&gt;CVE-2025-43300&lt;/strong&gt; is an OOB Write caused by a mismatch between TIFF metadata and the internal JPEG Lossless stream:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;SamplesPerPixel = 2&lt;/code&gt; (DNG tag) but &lt;code&gt;NumComponents = 1&lt;/code&gt; (SOF3 stream)&lt;/li&gt;
+&lt;li&gt;Loop termination is computed against &lt;strong&gt;components(=1)&lt;/strong&gt; but the inner write loop writes &lt;strong&gt;16-bit &amp;#xD7; 2 samples per pixel&lt;/strong&gt;, causing &lt;strong&gt;double writes per row&lt;/strong&gt; &amp;#x2192; &lt;strong&gt;OOB write&lt;/strong&gt;.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Using &lt;code&gt;dyld_shared_cache&lt;/code&gt; diffs and vtable typeing, I traced the vulnerable path to the &lt;strong&gt;CDNGLosslessJpegUnpacker &amp;#x2192; Tile Unpacker&lt;/strong&gt; and identified the exact trigger conditions and dataflow.&lt;/p&gt;
+&lt;p&gt;Apple patched the issue in &lt;strong&gt;iOS 18.6.2&lt;/strong&gt; by:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Switching from the fragile &lt;code&gt;CGImage&lt;/code&gt; + &lt;code&gt;CFData&lt;/code&gt; raw traversal pipeline to a &lt;strong&gt;CMPhoto &amp;#x2192; CVPixelBuffer&lt;/strong&gt; pipeline (more robust, standardized pixel buffer APIs).&lt;/li&gt;
+&lt;li&gt;Adding explicit &lt;strong&gt;data size / stride validation&lt;/strong&gt; (compare &lt;code&gt;CVPixelBufferGetDataSize()&lt;/code&gt; to an internally computed expected value that takes stride into account).&lt;/li&gt;
+&lt;li&gt;Changing pixel access order/assumptions to match the actual buffer layout.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;If you are on a real device, update to &lt;strong&gt;iOS 18.6.2 or later&lt;/strong&gt; &amp;#x2014; the patched code prevents attempts to reach this unsafe write path. (I should update mine too &amp;#x2014; I&amp;#x2019;ll do that soon &amp;#x1F602;)&lt;/p&gt;
+&lt;p&gt;That wraps up this short research note &amp;#x2014; the path was a fun exercise in dyld cache extraction, vtable reconstruction, and low-level JPEG/DNG decoding logic. I learned a lot following the call chain and seeing how a subtle metadata mismatch can cause memory corruption.&lt;/p&gt;
+&lt;h3 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h3&gt;&lt;p&gt;&lt;a href=&#34;https://github.com/b1n4r1b01/n-days/blob/main/CVE-2025-43300.md&#34;&gt;https://github.com/b1n4r1b01/n-days/blob/main/CVE-2025-43300.md&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://blog.quarkslab.com/patch-analysis-of-Apple-iOS-CVE-2025-43300.html&#34;&gt;https://blog.quarkslab.com/patch-analysis-of-Apple-iOS-CVE-2025-43300.html&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/DarkNavySecurity/PoC/tree/main/CVE-2025-43300&#34;&gt;https://github.com/DarkNavySecurity/PoC/tree/main/CVE-2025-43300&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/msuiche/elegant-bouncer&#34;&gt;https://github.com/msuiche/elegant-bouncer&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] ImageIO: iOS/macOS DNG Image Processing Memory Corruption (En) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Hello~ After finishing the macOS series, we&amp;#x2019;re back this time with &lt;strong&gt;ImageIO&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;On &lt;strong&gt;August 20th&lt;/strong&gt;, a vulnerability was discovered in the ImageIO framework used by iOS, macOS, and iPadOS.&lt;/p&gt;
+&lt;p&gt;It was reportedly exploited in the wild to target specific individuals &amp;#x2014; let&amp;#x2019;s analyze what kind of vulnerability it was!&lt;/p&gt;
+&lt;p&gt;Shall we begin? &amp;#x1F60E;&lt;/p&gt;
+&lt;hr&gt;
+&lt;h1 id=&#34;0-ImageIO&#34;&gt;&lt;a href=&#34;#0-ImageIO&#34; class=&#34;headerlink&#34; title=&#34;0. ImageIO&#34;&gt;&lt;/a&gt;0. &lt;a href=&#34;https://developer.apple.com/documentation/imageio&#34;&gt;ImageIO&lt;/a&gt;&lt;/h1&gt;&lt;p&gt;&lt;strong&gt;ImageIO&lt;/strong&gt; is Apple&amp;#x2019;s &lt;strong&gt;image processing framework&lt;/strong&gt; used across macOS, iOS, and iPadOS.&lt;/p&gt;
+&lt;p&gt;It provides APIs for &lt;strong&gt;reading, writing, accessing metadata, compression, and decoding&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;for a wide range of image formats. It serves as the image processing backend for many system apps and features &amp;#x2014; including &lt;strong&gt;Core Graphics&lt;/strong&gt;, &lt;strong&gt;Photos&lt;/strong&gt;, &lt;strong&gt;Preview&lt;/strong&gt;, &lt;strong&gt;Safari&lt;/strong&gt;, &lt;strong&gt;Messages&lt;/strong&gt;, &lt;strong&gt;AirDrop&lt;/strong&gt;, &lt;strong&gt;Mail&lt;/strong&gt;, and &lt;strong&gt;iCloud.&lt;/strong&gt;&lt;/p&gt;
+&lt;h1 id=&#34;1-CVE-2025-43300&#34;&gt;&lt;a href=&#34;#1-CVE-2025-43300&#34; class=&#34;headerlink&#34; title=&#34;1. CVE-2025-43300&#34;&gt;&lt;/a&gt;1. CVE-2025-43300&lt;/h1&gt;&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image1.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;This vulnerability is an &lt;strong&gt;Out-of-Bounds Write&lt;/strong&gt; in the JPEG Lossless (&lt;code&gt;SOF3&lt;/code&gt;) decoder&lt;/p&gt;
+&lt;p&gt;(&lt;code&gt;CDNGLosslessJpegUnpacker&lt;/code&gt;) of Apple&amp;#x2019;s ImageIO framework, specifically within &lt;strong&gt;RawCamera&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;It occurs when the DNG file&amp;#x2019;s TIFF tag (&lt;code&gt;SamplesPerPixel&lt;/code&gt;) does &lt;strong&gt;not match&lt;/strong&gt; the number of components declared in the internal JPEG stream &amp;#x2014; leading to incorrect loop boundaries and thus a buffer overwrite.&lt;/p&gt;
+&lt;p&gt;It was patched in &lt;strong&gt;iOS 18.6.2&lt;/strong&gt;, released on &lt;strong&gt;August 20, 2025&lt;/strong&gt;.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Vulnerable version: &lt;strong&gt;iOS 18.6.1&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;Patched version: &lt;strong&gt;iOS 18.6.2&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;We first wanted to identify &lt;strong&gt;where the patch was applied&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;Using the public project &lt;a href=&#34;https://github.com/blacktop/ipsw-diffs/tree/main&#34;&gt;&lt;strong&gt;ipsw-diffs&lt;/strong&gt;&lt;/a&gt;,&lt;/p&gt;
+&lt;p&gt;we compared the binaries between &lt;strong&gt;18.6.1&lt;/strong&gt; and &lt;strong&gt;18.6.2&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image2.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Everything else remained unchanged &amp;#x2014; only &lt;strong&gt;RawCamera&lt;/strong&gt; was modified.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;RawCamera&lt;/strong&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;/System/Library/CoreServices/RawCamera.bundle/RawCamera&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;-1738.140.3.0.0
+-  __TEXT.__text: 0x1e2d70
+-  __TEXT.__auth_stubs: 0x1850
++1738.140.3.0.11
++  __TEXT.__text: 0x1e3470
++  __TEXT.__auth_stubs: 0x1870
+   __TEXT.__objc_methlist: 0x16e4
+   __TEXT.__const: 0x15326
+-  __TEXT.__gcc_except_tab: 0x2d440
++  __TEXT.__gcc_except_tab: 0x2d588
+   __TEXT.__oslogstring: 0xec0
+   __TEXT.__cstring: 0xee23
+   __TEXT.__dof_RawCamera: 0x8f7
+-  __TEXT.__unwind_info: 0xb1d0
++  __TEXT.__unwind_info: 0xb1e8
+   __TEXT.__eh_frame: 0x278
+   __TEXT.__objc_classname: 0x4b9
+   __TEXT.__objc_methname: 0x3918
+   __TEXT.__objc_methtype: 0xdd3
+   __TEXT.__objc_stubs: 0x2da0
+-  __DATA_CONST.__got: 0x9b0
++  __DATA_CONST.__got: 0x9c8
+   __DATA_CONST.__const: 0x2a18
+   __DATA_CONST.__objc_classlist: 0x1e0
+   __DATA_CONST.__objc_catlist: 0x20
+   __DATA_CONST.__objc_imageinfo: 0x8
+   __DATA_CONST.__objc_selrefs: 0xcf8
+   __DATA_CONST.__objc_superrefs: 0xf0
+-  __DATA_CONST.__objc_arraydata: 0x3948
+-  __AUTH_CONST.__auth_got: 0xc40
++  __DATA_CONST.__objc_arraydata: 0x3950
++  __AUTH_CONST.__auth_got: 0xc50
+   __AUTH_CONST.__const: 0x35978
+   __AUTH_CONST.__cfstring: 0x18080
+   __AUTH_CONST.__objc_const: 0x48b0
+-  __AUTH_CONST.__objc_arrayobj: 0x570
+-  __AUTH_CONST.__objc_intobj: 0x39f0
++  __AUTH_CONST.__objc_arrayobj: 0x588
++  __AUTH_CONST.__objc_intobj: 0x3a20
+   __AUTH_CONST.__objc_doubleobj: 0x480
+   __AUTH_CONST.__objc_dictobj: 0x4d58
+   __AUTH_CONST.__objc_floatobj: 0xc0
+
+   - /System/Library/Frameworks/UniformTypeIdentifiers.framework/UniformTypeIdentifiers
+   - /System/Library/PrivateFrameworks/AppleJPEG.framework/AppleJPEG
+   - /System/Library/PrivateFrameworks/AppleJPEGXL.framework/AppleJPEGXL
++  - /System/Library/PrivateFrameworks/CMPhoto.framework/CMPhoto
+   - /System/Library/PrivateFrameworks/CoreAnalytics.framework/CoreAnalytics
+   - /System/Library/PrivateFrameworks/MobileAsset.framework/MobileAsset
+   - /usr/lib/libSystem.B.dylib
+
+   - /usr/lib/libobjc.A.dylib
+   - /usr/lib/libxml2.2.dylib
+   - /usr/lib/libz.1.dylib
+-  UUID: 1BE38EB6-51C0-3069-A50F-CA3B000E0847
+-  Functions: 6433
+-  Symbols:   781
++  UUID: AF5B7B35-3549-329B-B706-F877FA8DF849
++  Functions: 6435
++  Symbols:   786
+   CStrings:  7487
+ 
+Symbols:
++ _CMPhotoDecompressionContainerCreateImageForIndex
++ _CMPhotoDecompressionContainerGetImageCount
++ _CMPhotoDecompressionSessionCreate
++ _CMPhotoDecompressionSessionCreateContainer
++ _CVPixelBufferGetDataSize
++ _kCMPhotoContainerFormatString_JFIF
++ _kCMPhotoDecompressionContainerOption_AllowedFormatsAndCodecs
++ _kCMPhotoDecompressionOption_OutputPixelFormat
+- _CGImageGetBytesPerRow
+- _CGImageGetHeight
+- _CGImageGetWidth&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Since the diff does not show code-level changes, we moved to &lt;strong&gt;IDA Pro&lt;/strong&gt; for deeper inspection.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image3.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image4.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;We used &lt;strong&gt;ipsw&lt;/strong&gt; to download both 18.6.1 and 18.6.2 firmwares.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image5.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image6.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image7.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;dyld_shared_cache&lt;/code&gt; is a cache file that bundles frequently used system libraries and frameworks together for faster loading during iOS/macOS boot. It contains optimized versions of &lt;code&gt;.dylibs&lt;/code&gt; and frameworks, allowing faster app startup and reduced memory usage.&lt;br&gt;Since the actual system loads these cached binaries, we can extract RawCamera directly from the cache for comparison and analysis.&lt;/p&gt;
+&lt;p&gt;Although it can also be extracted using &lt;code&gt;ipsw dyld extract&lt;/code&gt;, in this research, we analyzed it&lt;/p&gt;
+&lt;p&gt;directly by loading &lt;code&gt;dyld_shared_cache&lt;/code&gt; in IDA.&lt;/p&gt;
+&lt;h2 id=&#34;1-1-bindiff&#34;&gt;&lt;a href=&#34;#1-1-bindiff&#34; class=&#34;headerlink&#34; title=&#34;1.1 bindiff&#34;&gt;&lt;/a&gt;1.1 bindiff&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image8.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The binary was exported in &lt;strong&gt;BinExport&lt;/strong&gt; format for diffing.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image9.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Due to limited space, we referred to public analysis from Quarkslab&lt;br&gt;: &lt;a href=&#34;https://blog.quarkslab.com/patch-analysis-of-Apple-iOS-CVE-2025-43300.html&#34;&gt;https://blog.quarkslab.com/patch-analysis-of-Apple-iOS-CVE-2025-43300.html&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Out of six modified functions, two &amp;#x2014; &lt;code&gt;sub_1DD8A7684&lt;/code&gt; and &lt;code&gt;sub_1DD95DC1C&lt;/code&gt; &amp;#x2014; were significantly changed. We focused our analysis on these two.&lt;/p&gt;
+&lt;h2 id=&#34;1-2-Analysis&#34;&gt;&lt;a href=&#34;#1-2-Analysis&#34; class=&#34;headerlink&#34; title=&#34;1.2 Analysis&#34;&gt;&lt;/a&gt;1.2 Analysis&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image10.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image11.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;We loaded &lt;code&gt;dyld_shared_cache&lt;/code&gt; extracted from ipsw for analysis:&lt;br&gt;&lt;em&gt;&amp;#x2192; Apple DYLD Cache for arm64e (select module(s)) &amp;#x2192; RawCamera&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image12.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image13.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;A new &lt;strong&gt;pixel buffer size verification step&lt;/strong&gt; was added.&lt;/p&gt;
+&lt;p&gt;See the following section for detailed code comparison.&lt;/p&gt;
+&lt;h3 id=&#34;Code-Analysis&#34;&gt;&lt;a href=&#34;#Code-Analysis&#34; class=&#34;headerlink&#34; title=&#34;Code Analysis&#34;&gt;&lt;/a&gt;&lt;strong&gt;Code Analysis&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;&lt;code&gt;sub_1DD8A7684&lt;/code&gt; &amp;#x2192; &lt;code&gt;sub_1DD8A76DC&lt;/code&gt; &lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;# iOS &lt;span class=&#34;hljs-number&#34;&gt;18.6&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;.1&lt;/span&gt; G90
+
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; __fastcall &lt;span class=&#34;hljs-title&#34;&gt;sub_1DD8A7684&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(...)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// shortened: legacy CGImage path&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+    v13 = CGImageSourceCreateWithData(...);
+    ImageAtIndex = CGImageSourceCreateImageAtIndex(v13, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+    BytesPerRow = CGImageGetBytesPerRow(ImageAtIndex);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (CFDataGetLength(data) != &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt; * width * height)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;throw&lt;/span&gt; RawCameraException;
+    ...
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;# iOS &lt;span class=&#34;hljs-number&#34;&gt;18.6&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;.2&lt;/span&gt; G100
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; __fastcall &lt;span class=&#34;hljs-title&#34;&gt;sub_1DD8A76DC&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(...)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// shortened: new CMPhoto + CVPixelBuffer path&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+    CMPhotoDecompressionSessionCreate(...);
+    CMPhotoDecompressionContainerCreateImageForIndex(...);
+    BytesPerRow = CVPixelBufferGetBytesPerRow(buf);
+    DataSize = CVPixelBufferGetDataSize(buf);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (DataSize != expected)
+        &lt;span class=&#34;hljs-keyword&#34;&gt;throw&lt;/span&gt; RawCameraException;
+    ...
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;h3 id=&#34;Key-Differences&#34;&gt;&lt;a href=&#34;#Key-Differences&#34; class=&#34;headerlink&#34; title=&#34;Key Differences&#34;&gt;&lt;/a&gt;Key Differences&lt;/h3&gt;&lt;ol&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;CGImage &amp;#x2192; CMPhoto + CVPixelBuffer&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;G90 (18.6.1):&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;  Uses CoreGraphics pipeline (&lt;code&gt;CGImageSourceCreateImageAtIndex&lt;/code&gt; + &lt;code&gt;CGDataProviderCopyData&lt;/code&gt;)&lt;/p&gt;
+&lt;p&gt;  and directly iterates raw &lt;code&gt;CFData&lt;/code&gt; bytes.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;G100 (18.6.2):&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;  Introduces &lt;strong&gt;CMPhoto&lt;/strong&gt; decompression pipeline:&lt;/p&gt;
+&lt;p&gt;  &lt;code&gt;CMPhotoDecompressionSessionCreate &amp;#x2192; CMPhotoDecompressionContainerCreateImageForIndex&lt;/code&gt; &amp;#x2192; &lt;code&gt;CVPixelBuffer&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;  Accesses pixels through &lt;strong&gt;CVPixelBufferLockBaseAddress()&lt;/strong&gt;, ensuring safer memory handling.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Buffer Size Validation Added&lt;/strong&gt;&lt;/p&gt;
+ &lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (CFDataGetLength(data) != &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt; * width * height) &lt;span class=&#34;hljs-keyword&#34;&gt;throw&lt;/span&gt; RawCameraException;&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Before:&lt;/strong&gt; Only checked &lt;code&gt;CFDataGetLength() == 4 * width * height&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;  This ignored row padding (&lt;code&gt;bytesPerRow&lt;/code&gt;) and format variations.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;BytesPerRow = CVPixelBufferGetBytesPerRow(buf);
+DataSize    = CVPixelBufferGetDataSize(buf);
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// expected = f(width, height)  // sub_1DD8A8C14&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt;// bpp = 4                       // v68=4 &amp;#x2192; sub_1DD8A8C7C&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (DataSize != expected) &lt;span class=&#34;hljs-keyword&#34;&gt;throw&lt;/span&gt; RawCameraException;&lt;/code&gt;&lt;/pre&gt;
+
+- **After:** Validates using `CVPixelBufferGetDataSize()` against an internally computed expected value (considering stride).
+
+    &amp;#x2192; Prevents overrun caused by underestimated buffer size.
+&lt;/code&gt;&lt;/pre&gt;&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Pixel Channel Order&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Old:&lt;/strong&gt; Assumed RGB order, manual pointer increments.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;New:&lt;/strong&gt; Explicitly treats buffer as BGRA, reading channels in fixed offsets (B&amp;#x2192;G&amp;#x2192;R).&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;hr&gt;
+&lt;p&gt;&lt;strong&gt;Summary:&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;The patch migrated from &lt;strong&gt;CoreGraphics raw byte decoding&lt;/strong&gt; to a &lt;strong&gt;CoreMedia Photo pipeline&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;and added &lt;strong&gt;explicit data size/stride checks&lt;/strong&gt;, eliminating unbounded writes from mismatched DNG metadata.&lt;/p&gt;
+&lt;p&gt;Through the analysis of the modified code, we were able to understand the general behavior of the function.&lt;/p&gt;
+&lt;p&gt;In summary, &lt;strong&gt;G90 (iOS 18.6.1)&lt;/strong&gt; decodes the image through the &lt;strong&gt;CGImage&lt;/strong&gt; path and directly iterates over the &lt;strong&gt;CFData&lt;/strong&gt; buffer. The verification process only checks two things &amp;#x2014; the &lt;strong&gt;match of width and height&lt;/strong&gt;, and whether &lt;strong&gt;CFDataGetLength() == 4 &amp;#xD7; W &amp;#xD7; H&lt;/strong&gt; &amp;#x2014; while actual memory access is performed using a &lt;strong&gt;row-based offset (&lt;/strong&gt;&lt;code&gt;BytesPerRow&lt;/code&gt;&lt;strong&gt;)&lt;/strong&gt;. Because of this, for certain images (depending on color space, subsampling, or row padding), the validation may &lt;strong&gt;pass successfully, but the actual access can exceed the bounds of CFData&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;In contrast, &lt;strong&gt;G100 (iOS 18.6.2)&lt;/strong&gt; fixes this issue by switching the decoding pipeline from &lt;strong&gt;CGImage &amp;#x2192; CMPhoto (JFIF only) &amp;#x2192; CVPixelBuffer&lt;/strong&gt;, and comparing the &lt;strong&gt;actual total buffer size (&lt;/strong&gt;&lt;code&gt;CVPixelBufferGetDataSize&lt;/code&gt;&lt;strong&gt;)&lt;/strong&gt; against an &lt;strong&gt;expected value&lt;/strong&gt; computed internally based on width, height, and other parameters.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h3 id=&#34;Root-Cause&#34;&gt;&lt;a href=&#34;#Root-Cause&#34; class=&#34;headerlink&#34; title=&#34;Root Cause&#34;&gt;&lt;/a&gt;Root Cause&lt;/h3&gt;&lt;p&gt;(Analyzed based on the G90 version)&lt;/p&gt;
+&lt;p&gt;During analysis, we observed that &lt;code&gt;sub_1DD8A7684&lt;/code&gt; makes a function call through a &lt;strong&gt;vtable&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;In C++, every object typically begins with a &lt;strong&gt;vptr (virtual table pointer)&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;Virtual function calls are made at runtime through that pointer &amp;#x2014; something like &lt;code&gt;this-&amp;gt;vptr[slot]&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;However, since the RawCamera binary is &lt;strong&gt;fully stripped&lt;/strong&gt;, only addresses are visible,&lt;/p&gt;
+&lt;p&gt;making direct analysis difficult.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;[ex]
+(*(*&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;)+&lt;span class=&#34;hljs-number&#34;&gt;0xE0&lt;/span&gt;)(&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;, buf, w, h)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;which conceptually means:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;[ex]
+&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;-&amp;gt;vptr-&amp;gt;unpack_lossless(&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;, buf, w, h)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;To make it more readable and traceable, I defined the vtable as a structure (class) in IDA using an IDAPython script.&lt;/p&gt;
+&lt;p&gt;The script did the following:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Parse the vtable and create a corresponding struct.&lt;/li&gt;
+&lt;li&gt;Apply &lt;code&gt;struct CDNGLosslessJpegUnpacker *this&lt;/code&gt; as the first parameter for all virtual functions.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Once this is done, the call expression &lt;code&gt;(*(*this)+0xE0)(this)&lt;/code&gt; appears as &lt;code&gt;this-&amp;gt;vptr-&amp;gt;fn_028(this, &amp;#x2026;)&lt;/code&gt;, and fields like &lt;code&gt;this-&amp;gt;field_d8&lt;/code&gt; become explicit &amp;#x2014; making slot mapping and call tracing much easier.&lt;/p&gt;
+&lt;p&gt;Now, let&amp;#x2019;s identify where the vulnerable function is actually invoked in the call tree.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image14.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Filtering for &amp;#x201C;Lossless&amp;#x201D; quickly reveals the target class&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;CDNGLosslessJpegUnpacker&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Following the references leads to the function &lt;code&gt;sub_1DD95DE88&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Detailed Code (sub_1DD95DE88)&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; __fastcall &lt;span class=&#34;hljs-title&#34;&gt;sub_1DD95DE88&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;os_signpost_id_t&lt;/span&gt; a1, __int64 a2, __int64 a3, __int64 a4)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+  .
+  .
+  .
+  
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( *(_DWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;216&lt;/span&gt;)
+    || (*(&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; (__fastcall **)(&lt;span class=&#34;hljs-keyword&#34;&gt;os_signpost_id_t&lt;/span&gt;))(*(_QWORD *)a1 + &lt;span class=&#34;hljs-number&#34;&gt;224L&lt;/span&gt;L))(a1) == &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+    || (v12 = *(_QWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;240&lt;/span&gt;) - *(_QWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;232&lt;/span&gt;), v12 == &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;) )
+  {
+    sub_1DD9009D4(a1, a2, a3, a4);
+  }
+  &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+  {
+    v14 = *(_DWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;44&lt;/span&gt;);
+    v13 = *(_DWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;48&lt;/span&gt;);
+    v15 = *(_DWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;224&lt;/span&gt;);
+    v16 = *(_DWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;228&lt;/span&gt;);
+    *(_QWORD *)&amp;amp;v35 = v12 &amp;gt;&amp;gt; &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;;
+    sub_1DD8731E0(&amp;amp;v36, &amp;amp;v35);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( *(_QWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;240&lt;/span&gt;) - *(_QWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;232&lt;/span&gt;) != *(_QWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;264&lt;/span&gt;) - *(_QWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;256&lt;/span&gt;)
+      || (&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;)(v14 - &lt;span class=&#34;hljs-number&#34;&gt;100000&lt;/span&gt;) &amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;0xFFFE7961&lt;/span&gt;
+      || (&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;)(v13 - &lt;span class=&#34;hljs-number&#34;&gt;100000&lt;/span&gt;) &amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;0xFFFE7961&lt;/span&gt;
+      || v15 - &lt;span class=&#34;hljs-number&#34;&gt;100000&lt;/span&gt; &amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;0xFFFE7961&lt;/span&gt;
+      || v16 - &lt;span class=&#34;hljs-number&#34;&gt;100000&lt;/span&gt; &amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;0xFFFE7961&lt;/span&gt;
+      || (v28 = v11, v17 = (&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;)v36, v36 &amp;gt;= &lt;span class=&#34;hljs-number&#34;&gt;20000&lt;/span&gt;) )
+    {
+      exception_15 = (&lt;span class=&#34;hljs-built_in&#34;&gt;std&lt;/span&gt;::runtime_error *)__cxa_allocate_exception_15(&lt;span class=&#34;hljs-number&#34;&gt;0x10&lt;/span&gt;uLL);
+      &lt;span class=&#34;hljs-built_in&#34;&gt;std&lt;/span&gt;::runtime_error::runtime_error(exception_15, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;RawCameraException&amp;quot;&lt;/span&gt;);
+      __cxa_throw(exception_15, MEMORY[&lt;span class=&#34;hljs-number&#34;&gt;0x1E6FA15F0&lt;/span&gt;], MEMORY[&lt;span class=&#34;hljs-number&#34;&gt;0x1E6FA1480&lt;/span&gt;]);
+    }
+    v29 = a4;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( (((v13 + v16 - &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;) / v16) &amp;gt;&amp;gt; (*(_DWORD *)(a1 + &lt;span class=&#34;hljs-number&#34;&gt;216&lt;/span&gt;) != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;)) * ((v14 + v15 - &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;) / v15) != v36 )
+    {
+      v27 = (&lt;span class=&#34;hljs-built_in&#34;&gt;std&lt;/span&gt;::runtime_error *)__cxa_allocate_exception_15(&lt;span class=&#34;hljs-number&#34;&gt;0x10&lt;/span&gt;uLL);
+      &lt;span class=&#34;hljs-built_in&#34;&gt;std&lt;/span&gt;::runtime_error::runtime_error(v27, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;RawCameraException&amp;quot;&lt;/span&gt;);
+      __cxa_throw(v27, MEMORY[&lt;span class=&#34;hljs-number&#34;&gt;0x1E6FA15F0&lt;/span&gt;], MEMORY[&lt;span class=&#34;hljs-number&#34;&gt;0x1E6FA1480&lt;/span&gt;]);
+    }
+    group = dispatch_group_create();
+    v30 = dispatch_queue_create(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Lossless DNG Tile Unpacker Queue&amp;quot;&lt;/span&gt;, MEMORY[&lt;span class=&#34;hljs-number&#34;&gt;0x1E6FA52F0&lt;/span&gt;]);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The function performs &lt;strong&gt;three checks&lt;/strong&gt;:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;code&gt;[this+0xD8] != 0&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;vtable[28](this) == 2&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;[this+0xF0] - [this+0xE8] == 4&lt;/code&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;If &lt;strong&gt;any&lt;/strong&gt; of these conditions is true, it calls &lt;code&gt;sub_1DD9009D4()&lt;/code&gt; and &lt;strong&gt;exits safely&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;Otherwise, it proceeds to the &lt;strong&gt;&amp;#x201C;Tile Queue&amp;#x201D;&lt;/strong&gt; path &amp;#x2014; which includes the vulnerable function chain.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;; Check &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+LDR   W8, [X23,#&lt;span class=&#34;hljs-number&#34;&gt;0xD8&lt;/span&gt;]
+CBNZ  W8, loc_1DD95DF78
+
+; Check &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+LDR   X16, [X23]
+AUTDA X16, X17
+LDR   X8, [X16,#&lt;span class=&#34;hljs-number&#34;&gt;0xE0&lt;/span&gt;]!  ; vtable[&lt;span class=&#34;hljs-number&#34;&gt;0xE0&lt;/span&gt;/&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;] -&amp;gt; slot &lt;span class=&#34;hljs-number&#34;&gt;28&lt;/span&gt;
+MOV   X0, X23
+BLRAA X8, X17
+CMP   W0, #&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+BEQ   loc_1DD95DF78
+
+; Check &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;
+LDP   X9, X8, [X23,#&lt;span class=&#34;hljs-number&#34;&gt;0xE8&lt;/span&gt;]
+SUB   X8, X8, X9
+CMP   X8, #&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;
+B.NE  loc_1DD95E008&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;If none of the above branches are taken, the function reaches a section where a dispatch queue named &lt;code&gt;&amp;quot;Lossless DNG Tile Unpacker Queue&amp;quot;&lt;/code&gt; is created &amp;#x2014; this is the path that eventually leads to the vulnerable unpacking logic.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs angelscript&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// sub_1DD95DE88 simplified&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ([&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;+&lt;span class=&#34;hljs-number&#34;&gt;0xD8&lt;/span&gt;] != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+ || vtable[&lt;span class=&#34;hljs-number&#34;&gt;28&lt;/span&gt;](&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;) == &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+ || ([&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;+&lt;span class=&#34;hljs-number&#34;&gt;0xF0&lt;/span&gt;]-[&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;+&lt;span class=&#34;hljs-number&#34;&gt;0xE8&lt;/span&gt;]) == &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;)
+{
+    sub_1DD9009D4(...); &lt;span class=&#34;hljs-comment&#34;&gt;// safe path&lt;/span&gt;
+} &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+    &lt;span class=&#34;hljs-comment&#34;&gt;// Vulnerable path&lt;/span&gt;
+    dispatch_group_create();
+    dispatch_queue_create(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Lossless DNG Tile Unpacker Queue&amp;quot;&lt;/span&gt;, ...);
+    sub_1DD95E410 &amp;#x2192; sub_1DD95DCD8 &amp;#x2192; sub_1DD95E4A4 &lt;span class=&#34;hljs-keyword&#34;&gt;or&lt;/span&gt; sub_1DD95B198
+    &amp;#x2192; sub_1DD95EA64 &amp;#x2192; sub_1DDA4EF58
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Thus, when all three conditions fail,&lt;br&gt;the code spawns a tile-based decompression queue that ultimately triggers the vulnerable unpack routine.&lt;/p&gt;
+&lt;h3 id=&#34;What-is-the-Tile-Queue&#34;&gt;&lt;a href=&#34;#What-is-the-Tile-Queue&#34; class=&#34;headerlink&#34; title=&#34;What is the Tile Queue?&#34;&gt;&lt;/a&gt;What is the Tile Queue?&lt;/h3&gt;&lt;p&gt;The &lt;strong&gt;tile queue&lt;/strong&gt; splits a large image into small rectangular &lt;strong&gt;tiles&lt;/strong&gt; (TileWidth &amp;#xD7; TileLength).&lt;/p&gt;
+&lt;p&gt;Each tile is decoded, color-corrected, and placed in the output buffer.&lt;/p&gt;
+&lt;p&gt;The vulnerable path processes each tile independently but assumes metadata consistency between &lt;strong&gt;SamplesPerPixel&lt;/strong&gt; and &lt;strong&gt;NumComponents&lt;/strong&gt; &amp;#x2014; which, when mismatched, causes a buffer overflow.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Simplified Call Tree&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;0x1DD95DE88&lt;/span&gt;
+    &lt;span class=&#34;hljs-number&#34;&gt;0x1DD95E410&lt;/span&gt;
+        &lt;span class=&#34;hljs-number&#34;&gt;0x1DD95DCD8&lt;/span&gt;
+            &lt;span class=&#34;hljs-number&#34;&gt;0x1DD95E4A4&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;or&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x1DD95B198&lt;/span&gt;
+                &lt;span class=&#34;hljs-number&#34;&gt;0x1DD95EF54&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;or&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x1DD95EA64&lt;/span&gt;
+                    &lt;span class=&#34;hljs-number&#34;&gt;0x1DDA4EF58&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;hr&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image15.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Boom &amp;#x1F4A5; &amp;#x2014; and with a clearer head, let&amp;#x2019;s continue &amp;gt;&amp;lt;&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;Before diving into the PoC,&lt;/p&gt;
+&lt;p&gt;let&amp;#x2019;s briefly recap the &lt;strong&gt;background concepts&lt;/strong&gt; necessary to understand this behavior.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;Background-Concepts&#34;&gt;&lt;a href=&#34;#Background-Concepts&#34; class=&#34;headerlink&#34; title=&#34;Background Concepts&#34;&gt;&lt;/a&gt;Background Concepts&lt;/h2&gt;&lt;h3 id=&#34;1-Pixels-Channels-Samples-and-Bit-Depth&#34;&gt;&lt;a href=&#34;#1-Pixels-Channels-Samples-and-Bit-Depth&#34; class=&#34;headerlink&#34; title=&#34;1. Pixels, Channels (Samples), and Bit Depth&#34;&gt;&lt;/a&gt;1. Pixels, Channels (Samples), and Bit Depth&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Pixel&lt;/strong&gt;: The smallest visual unit of an image.&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Channel (Sample)&lt;/strong&gt;: A single numeric component representing one aspect of a pixel (R, G, B, etc.).&lt;/p&gt;
+&lt;p&gt;  &amp;#x2192; &lt;code&gt;SamplesPerPixel&lt;/code&gt; = number of channels per pixel&lt;/p&gt;
+&lt;p&gt;  &amp;#x2192; &lt;code&gt;BitsPerSample&lt;/code&gt; = number of bits used to represent each channel&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Examples:&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Type&lt;/th&gt;
+&lt;th&gt;SamplesPerPixel&lt;/th&gt;
+&lt;th&gt;BitsPerSample&lt;/th&gt;
+&lt;th&gt;Bytes per Pixel&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;Grayscale&lt;/td&gt;
+&lt;td&gt;1&lt;/td&gt;
+&lt;td&gt;8&lt;/td&gt;
+&lt;td&gt;1&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;RGB 8bpc&lt;/td&gt;
+&lt;td&gt;3&lt;/td&gt;
+&lt;td&gt;8&lt;/td&gt;
+&lt;td&gt;3&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;RGBA 16bpc&lt;/td&gt;
+&lt;td&gt;4&lt;/td&gt;
+&lt;td&gt;16&lt;/td&gt;
+&lt;td&gt;8&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;These metadata values determine &lt;strong&gt;buffer size&lt;/strong&gt;, &lt;strong&gt;stride (bytes per row)&lt;/strong&gt;, and &lt;strong&gt;loop boundaries&lt;/strong&gt; in decompression.&lt;/p&gt;
+&lt;h3 id=&#34;2-DNG&#34;&gt;&lt;a href=&#34;#2-DNG&#34; class=&#34;headerlink&#34; title=&#34;2. DNG&#34;&gt;&lt;/a&gt;2. DNG&lt;/h3&gt;&lt;p&gt;DNG (Digital Negative) is &lt;strong&gt;Adobe&amp;#x2019;s RAW image container format&lt;/strong&gt;, built upon &lt;strong&gt;TIFF/EP&lt;/strong&gt; structure.&lt;/p&gt;
+&lt;p&gt;It stores raw sensor data (e.g., Bayer CFA), thumbnails, and color correction metadata.&lt;/p&gt;
+&lt;p&gt;Key tags:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;RowsPerStrip / TileWidth / TileLength&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;StripOffsets / TileOffsets&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;StripByteCounts / TileByteCounts&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;SamplesPerPixel / BitsPerSample&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The decoder uses these values to calculate&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;buffer offsets&lt;/strong&gt;, &lt;strong&gt;BytesPerRow&lt;/strong&gt;, and &lt;strong&gt;total data size&lt;/strong&gt; for writing.&lt;/p&gt;
+&lt;h3 id=&#34;3-RAW-and-Compression&#34;&gt;&lt;a href=&#34;#3-RAW-and-Compression&#34; class=&#34;headerlink&#34; title=&#34;3. RAW and Compression&#34;&gt;&lt;/a&gt;3. RAW and Compression&lt;/h3&gt;&lt;p&gt;RAW data is unprocessed, high bit-depth sensor output (e.g., 12/14/16 bits per pixel, typically 1 sample per pixel).&lt;/p&gt;
+&lt;p&gt;To save space, DNG supports &lt;strong&gt;lossless compression&lt;/strong&gt;, most notably &lt;strong&gt;JPEG Lossless (SOF3)&lt;/strong&gt;.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Compression = 1 &amp;#x2192; Uncompressed&lt;/li&gt;
+&lt;li&gt;Compression = 7 &amp;#x2192; JPEG (Baseline or Lossless)&lt;/li&gt;
+&lt;li&gt;Compression = 8 &amp;#x2192; Deflate (ZIP)&lt;/li&gt;
+&lt;li&gt;Compression = 34892 &amp;#x2192; JPEG Baseline (Lossy)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&amp;#x2705; The vulnerability resides in the &lt;strong&gt;Lossless JPEG (SOF3)&lt;/strong&gt; decoding path.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;1-3-PoC&#34;&gt;&lt;a href=&#34;#1-3-PoC&#34; class=&#34;headerlink&#34; title=&#34;1.3 PoC&#34;&gt;&lt;/a&gt;1.3 PoC&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image16.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Normal DNG files typically &lt;strong&gt;do not&lt;/strong&gt; reach the vulnerable path.&lt;/p&gt;
+&lt;p&gt;However, by tweaking metadata tags (for example, &lt;code&gt;SamplesPerPixel&lt;/code&gt;) so that the initial checks pass, we can force the code path to invoke the vulnerable function.&lt;/p&gt;
+&lt;p&gt;I ran this on my phone without updating it (because I had no space &amp;#x1F602;).&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image17.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;My device is on &lt;strong&gt;iOS 18.1.1&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image18.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Using the small DNG viewer app above, I loaded the PoC DNG and observed the following:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; SwiftUI
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; UniformTypeIdentifiers
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; Combine
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; UIKit
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; CoreImage
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; CoreImage.CIFilterBuiltins
+
+@main
+&lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;DNGViewerApp&lt;/span&gt;:&lt;/span&gt; App {
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+    }
+}
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;class&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;RawRenderer&lt;/span&gt;:&lt;/span&gt; ObservableObject {
+    &lt;span class=&#34;hljs-keyword&#34;&gt;private&lt;/span&gt; let context = CIContext(options: [
+        .cacheIntermediates: &lt;span class=&#34;hljs-literal&#34;&gt;false&lt;/span&gt;
+    ])
+
+    @Published var image: UIImage?
+    @Published var &lt;span class=&#34;hljs-built_in&#34;&gt;log&lt;/span&gt;: String = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt;
+
+    func render(from url: URL) {
+        &lt;span class=&#34;hljs-built_in&#34;&gt;log&lt;/span&gt; = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Loading: \(url.lastPathComponent)\n&amp;quot;&lt;/span&gt;
+        
+        guard let raw = CIRAWFilter(imageURL: url, options: [:]) &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+            &lt;span class=&#34;hljs-built_in&#34;&gt;log&lt;/span&gt; += &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;CIRAWFilter unavailable or failed to open URL\n&amp;quot;&lt;/span&gt;
+            &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;
+        }
+  
+        guard let ciImage = raw.value(forKey: kCIOutputImageKey) as? CIImage &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+            &lt;span class=&#34;hljs-built_in&#34;&gt;log&lt;/span&gt; += &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Failed to get CIImage\n&amp;quot;&lt;/span&gt;; &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;
+        }
+        let extent = ciImage.extent.integral
+        guard let cg = context.createCGImage(ciImage, from: extent) &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+            &lt;span class=&#34;hljs-built_in&#34;&gt;log&lt;/span&gt; += &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Failed to create CGImage\n&amp;quot;&lt;/span&gt;; &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;
+        }
+        image = UIImage(cgImage: cg)
+        &lt;span class=&#34;hljs-built_in&#34;&gt;log&lt;/span&gt; += &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Rendered: \(Int(extent.width))&amp;#xD7;\(Int(extent.height))\n&amp;quot;&lt;/span&gt;
+    }
+}
+
+struct ContentView: View {
+    @StateObject var renderer = RawRenderer()
+    @State &lt;span class=&#34;hljs-keyword&#34;&gt;private&lt;/span&gt; var showPicker = &lt;span class=&#34;hljs-literal&#34;&gt;false&lt;/span&gt;
+
+    var body: some View {
+        VStack(spacing: &lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt;) {
+            &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; let img = renderer.image {
+                Image(uiImage: img)
+                    .resizable()
+                    .scaledToFit()
+                    .background(Color.black.opacity(&lt;span class=&#34;hljs-number&#34;&gt;0.05&lt;/span&gt;))
+                    .cornerRadius(&lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt;)
+                    .padding(.horizontal)
+            } &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+                Text(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Open a DNG&amp;quot;&lt;/span&gt;).foregroundColor(.secondary)
+                    .padding(.top, &lt;span class=&#34;hljs-number&#34;&gt;40&lt;/span&gt;)
+            }
+
+            HStack {
+                Button(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Open DNG&amp;quot;&lt;/span&gt;) { showPicker = &lt;span class=&#34;hljs-literal&#34;&gt;true&lt;/span&gt; }
+                .buttonStyle(.borderedProminent)
+
+                Button(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Clear&amp;quot;&lt;/span&gt;) { renderer.image = nil; renderer.&lt;span class=&#34;hljs-built_in&#34;&gt;log&lt;/span&gt; = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt; }
+                .buttonStyle(.bordered)
+            }
+
+            ScrollView {
+                Text(renderer.&lt;span class=&#34;hljs-built_in&#34;&gt;log&lt;/span&gt;)
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+                    .background(Color.black.opacity(&lt;span class=&#34;hljs-number&#34;&gt;0.03&lt;/span&gt;))
+                    .cornerRadius(&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;)
+            }
+            .frame(maxHeight: &lt;span class=&#34;hljs-number&#34;&gt;160&lt;/span&gt;)
+            .padding(.horizontal)
+        }
+        .sheet(isPresented: $showPicker) {
+            DocumentPicker { url in
+                &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; let url { renderer.render(from: url) }
+            }
+        }
+    }
+}
+
+struct DocumentPicker: UIViewControllerRepresentable {
+    var onPick: (URL?) -&amp;gt; Void
+
+    func makeCoordinator() -&amp;gt; Coordinator { Coordinator(onPick: onPick) }
+    func makeUIViewController(context: Context) -&amp;gt; UIDocumentPickerViewController {
+        &lt;span class=&#34;hljs-comment&#34;&gt;// DNG UTI&amp;#xB294; &amp;#xC804;&amp;#xD1B5;&amp;#xC801;&amp;#xC73C;&amp;#xB85C; &amp;quot;com.adobe.raw-image&amp;quot;.&lt;/span&gt;
+        &lt;span class=&#34;hljs-comment&#34;&gt;// iOS 14+&amp;#xC5D0;&amp;#xC120; UTType.image(&amp;#xB610;&amp;#xB294; item)&amp;#xB85C; &amp;#xC5F4;&amp;#xC5B4;&amp;#xB3C4; &amp;#xBB34;&amp;#xBC29;.&lt;/span&gt;
+        let vc = UIDocumentPickerViewController(forOpeningContentTypes: [
+            UTType(importedAs: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;com.adobe.raw-image&amp;quot;&lt;/span&gt;), &lt;span class=&#34;hljs-comment&#34;&gt;// DNG&lt;/span&gt;
+            .image, .item
+        ])
+        vc.allowsMultipleSelection = &lt;span class=&#34;hljs-literal&#34;&gt;false&lt;/span&gt;
+        vc.delegate = context.coordinator
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; vc
+    }
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onPick: (URL?) -&amp;gt; Void
+        init(onPick: @escaping (URL?) -&amp;gt; Void) { self.onPick = onPick }
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            onPick(urls.first)
+        }
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { onPick(nil) }
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image19.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Here is the image that was used.&lt;/p&gt;
+&lt;p&gt;Using this viewer to load the PoC DNG file, I observed the following details:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;CLosslessJpegUnpacker&lt;/code&gt; at &lt;code&gt;0x1DD902E78&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;CDNGLosslessJpegUnpacker&lt;/code&gt; at &lt;code&gt;0x1DD95DE88&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;CDNGLosslessJpegUnpacker::unpackTile&lt;/code&gt; at &lt;code&gt;0x1DD95B198&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;CLosslessJpegRestartUnpacker&lt;/code&gt; at &lt;code&gt;0x1DD95F784&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;Trigger conditions:&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;JPEG marker: &lt;strong&gt;SOF3 (Lossless JPEG)&lt;/strong&gt; present&lt;/li&gt;
+&lt;li&gt;DHT (Define Huffman Table(s)) present&lt;/li&gt;
+&lt;li&gt;SOS (Start Of Scan) valid&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;BitsPerSample = 16&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;SamplesPerPixel = 2&lt;/strong&gt; (TIFF tag)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;NumComponents = 1&lt;/strong&gt; (SOF3/JPEG stream)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The root cause is a mismatch between how the loop termination condition is computed versus how the inner loop performs writes:&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image20.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The outer pixel loop is bounded by &lt;strong&gt;NumComponents&lt;/strong&gt; = 1 (so it expects one component per pixel),&lt;/li&gt;
+&lt;li&gt;but the inner write routine assumes &lt;strong&gt;SamplesPerPixel&lt;/strong&gt; = 2 and writes &lt;strong&gt;two 16-bit samples per pixel&lt;/strong&gt;, advancing the destination pointer as if there are two samples per pixel.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;As a result, each row ends up writing &lt;strong&gt;twice&lt;/strong&gt; the expected number of bytes &amp;#x2192; &lt;strong&gt;out-of-bounds writes&lt;/strong&gt; occur at the row boundary.&lt;/p&gt;
+&lt;p&gt;Following the flow, you can trace the chain like:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs apache&#34;&gt;&lt;span class=&#34;hljs-attribute&#34;&gt;0x1DD95B198&lt;/span&gt; &amp;#x2192; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;DD&lt;span class=&#34;hljs-number&#34;&gt;95&lt;/span&gt;B&lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;C&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt; &amp;#x2192; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;DD&lt;span class=&#34;hljs-number&#34;&gt;95&lt;/span&gt;B&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;DC &amp;#x2192; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;DD&lt;span class=&#34;hljs-number&#34;&gt;95&lt;/span&gt;B&lt;span class=&#34;hljs-number&#34;&gt;944&lt;/span&gt; &amp;#x2192; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;DD&lt;span class=&#34;hljs-number&#34;&gt;95&lt;/span&gt;BCCC&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;(Trace through these offsets to map how the pixel decoder iterates and performs the writes.)&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/10/23/clalxk/imageIO_en/image21.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The sample image I used is from DPReview:&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.dpreview.com/sample-galleries/4949897610/pentax-k-3-mark-iii-sample-gallery/1638788346&#34;&gt;https://www.dpreview.com/sample-galleries/4949897610/pentax-k-3-mark-iii-sample-gallery/1638788346&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;(Used that image as a starting point to craft a DNG variant for the PoC.)&lt;/p&gt;
+&lt;h3 id=&#34;Summary&#34;&gt;&lt;a href=&#34;#Summary&#34; class=&#34;headerlink&#34; title=&#34;Summary&#34;&gt;&lt;/a&gt;Summary&lt;/h3&gt;&lt;p&gt;In short, &lt;strong&gt;CVE-2025-43300&lt;/strong&gt; is an OOB Write caused by a mismatch between TIFF metadata and the internal JPEG Lossless stream:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;SamplesPerPixel = 2&lt;/code&gt; (DNG tag) but &lt;code&gt;NumComponents = 1&lt;/code&gt; (SOF3 stream)&lt;/li&gt;
+&lt;li&gt;Loop termination is computed against &lt;strong&gt;components(=1)&lt;/strong&gt; but the inner write loop writes &lt;strong&gt;16-bit &amp;#xD7; 2 samples per pixel&lt;/strong&gt;, causing &lt;strong&gt;double writes per row&lt;/strong&gt; &amp;#x2192; &lt;strong&gt;OOB write&lt;/strong&gt;.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Using &lt;code&gt;dyld_shared_cache&lt;/code&gt; diffs and vtable typeing, I traced the vulnerable path to the &lt;strong&gt;CDNGLosslessJpegUnpacker &amp;#x2192; Tile Unpacker&lt;/strong&gt; and identified the exact trigger conditions and dataflow.&lt;/p&gt;
+&lt;p&gt;Apple patched the issue in &lt;strong&gt;iOS 18.6.2&lt;/strong&gt; by:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Switching from the fragile &lt;code&gt;CGImage&lt;/code&gt; + &lt;code&gt;CFData&lt;/code&gt; raw traversal pipeline to a &lt;strong&gt;CMPhoto &amp;#x2192; CVPixelBuffer&lt;/strong&gt; pipeline (more robust, standardized pixel buffer APIs).&lt;/li&gt;
+&lt;li&gt;Adding explicit &lt;strong&gt;data size / stride validation&lt;/strong&gt; (compare &lt;code&gt;CVPixelBufferGetDataSize()&lt;/code&gt; to an internally computed expected value that takes stride into account).&lt;/li&gt;
+&lt;li&gt;Changing pixel access order/assumptions to match the actual buffer layout.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;If you are on a real device, update to &lt;strong&gt;iOS 18.6.2 or later&lt;/strong&gt; &amp;#x2014; the patched code prevents attempts to reach this unsafe write path. (I should update mine too &amp;#x2014; I&amp;#x2019;ll do that soon &amp;#x1F602;)&lt;/p&gt;
+&lt;p&gt;That wraps up this short research note &amp;#x2014; the path was a fun exercise in dyld cache extraction, vtable reconstruction, and low-level JPEG/DNG decoding logic. I learned a lot following the call chain and seeing how a subtle metadata mismatch can cause memory corruption.&lt;/p&gt;
+&lt;h3 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h3&gt;&lt;p&gt;&lt;a href=&#34;https://github.com/b1n4r1b01/n-days/blob/main/CVE-2025-43300.md&#34;&gt;https://github.com/b1n4r1b01/n-days/blob/main/CVE-2025-43300.md&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://blog.quarkslab.com/patch-analysis-of-Apple-iOS-CVE-2025-43300.html&#34;&gt;https://blog.quarkslab.com/patch-analysis-of-Apple-iOS-CVE-2025-43300.html&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/DarkNavySecurity/PoC/tree/main/CVE-2025-43300&#34;&gt;https://github.com/DarkNavySecurity/PoC/tree/main/CVE-2025-43300&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/msuiche/elegant-bouncer&#34;&gt;https://github.com/msuiche/elegant-bouncer&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/10/23/clalxk/imageIO_en/image.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/10/23/clalxk/imageio_en/">
+
+  <title>[Research] ImageIO: iOS/macOS DNG Image Processing Memory Corruption (En) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-10-23 19:00" pubdate>
+      2025년 10월 23일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      2.9k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      57
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] ImageIO: iOS/macOS DNG Image Processing Memory Corruption (En)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p><img src="/2025/10/23/clalxk/imageIO_en/image.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Hello~ After finishing the macOS series, we&#x2019;re back this time with <strong>ImageIO</strong>.</p>
+<p>On <strong>August 20th</strong>, a vulnerability was discovered in the ImageIO framework used by iOS, macOS, and iPadOS.</p>
+<p>It was reportedly exploited in the wild to target specific individuals &#x2014; let&#x2019;s analyze what kind of vulnerability it was!</p>
+<p>Shall we begin? &#x1F60E;</p>
+<hr>
+<h1 id="0-ImageIO"><a href="#0-ImageIO" class="headerlink" title="0. ImageIO"></a>0. <a target="_blank" rel="external nofollow noopener noreferrer" href="https://developer.apple.com/documentation/imageio">ImageIO</a></h1><p><strong>ImageIO</strong> is Apple&#x2019;s <strong>image processing framework</strong> used across macOS, iOS, and iPadOS.</p>
+<p>It provides APIs for <strong>reading, writing, accessing metadata, compression, and decoding</strong></p>
+<p>for a wide range of image formats. It serves as the image processing backend for many system apps and features &#x2014; including <strong>Core Graphics</strong>, <strong>Photos</strong>, <strong>Preview</strong>, <strong>Safari</strong>, <strong>Messages</strong>, <strong>AirDrop</strong>, <strong>Mail</strong>, and <strong>iCloud.</strong></p>
+<h1 id="1-CVE-2025-43300"><a href="#1-CVE-2025-43300" class="headerlink" title="1. CVE-2025-43300"></a>1. CVE-2025-43300</h1><p><img src="/2025/10/23/clalxk/imageIO_en/image1.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>This vulnerability is an <strong>Out-of-Bounds Write</strong> in the JPEG Lossless (<code>SOF3</code>) decoder</p>
+<p>(<code>CDNGLosslessJpegUnpacker</code>) of Apple&#x2019;s ImageIO framework, specifically within <strong>RawCamera</strong>.</p>
+<p>It occurs when the DNG file&#x2019;s TIFF tag (<code>SamplesPerPixel</code>) does <strong>not match</strong> the number of components declared in the internal JPEG stream &#x2014; leading to incorrect loop boundaries and thus a buffer overwrite.</p>
+<p>It was patched in <strong>iOS 18.6.2</strong>, released on <strong>August 20, 2025</strong>.</p>
+<ul>
+<li>Vulnerable version: <strong>iOS 18.6.1</strong></li>
+<li>Patched version: <strong>iOS 18.6.2</strong></li>
+</ul>
+<p>We first wanted to identify <strong>where the patch was applied</strong>.</p>
+<p>Using the public project <a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/blacktop/ipsw-diffs/tree/main"><strong>ipsw-diffs</strong></a>,</p>
+<p>we compared the binaries between <strong>18.6.1</strong> and <strong>18.6.2</strong>.</p>
+<p><img src="/2025/10/23/clalxk/imageIO_en/image2.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Everything else remained unchanged &#x2014; only <strong>RawCamera</strong> was modified.</p>
+<p><strong>RawCamera</strong></p>
+<blockquote>
+<p>/System/Library/CoreServices/RawCamera.bundle/RawCamera</p>
+</blockquote>
+<pre><code class="hljs bash">-1738.140.3.0.0
+-  __TEXT.__text: 0x1e2d70
+-  __TEXT.__auth_stubs: 0x1850
++1738.140.3.0.11
++  __TEXT.__text: 0x1e3470
++  __TEXT.__auth_stubs: 0x1870
+   __TEXT.__objc_methlist: 0x16e4
+   __TEXT.__const: 0x15326
+-  __TEXT.__gcc_except_tab: 0x2d440
++  __TEXT.__gcc_except_tab: 0x2d588
+   __TEXT.__oslogstring: 0xec0
+   __TEXT.__cstring: 0xee23
+   __TEXT.__dof_RawCamera: 0x8f7
+-  __TEXT.__unwind_info: 0xb1d0
++  __TEXT.__unwind_info: 0xb1e8
+   __TEXT.__eh_frame: 0x278
+   __TEXT.__objc_classname: 0x4b9
+   __TEXT.__objc_methname: 0x3918
+   __TEXT.__objc_methtype: 0xdd3
+   __TEXT.__objc_stubs: 0x2da0
+-  __DATA_CONST.__got: 0x9b0
++  __DATA_CONST.__got: 0x9c8
+   __DATA_CONST.__const: 0x2a18
+   __DATA_CONST.__objc_classlist: 0x1e0
+   __DATA_CONST.__objc_catlist: 0x20
+   __DATA_CONST.__objc_imageinfo: 0x8
+   __DATA_CONST.__objc_selrefs: 0xcf8
+   __DATA_CONST.__objc_superrefs: 0xf0
+-  __DATA_CONST.__objc_arraydata: 0x3948
+-  __AUTH_CONST.__auth_got: 0xc40
++  __DATA_CONST.__objc_arraydata: 0x3950
++  __AUTH_CONST.__auth_got: 0xc50
+   __AUTH_CONST.__const: 0x35978
+   __AUTH_CONST.__cfstring: 0x18080
+   __AUTH_CONST.__objc_const: 0x48b0
+-  __AUTH_CONST.__objc_arrayobj: 0x570
+-  __AUTH_CONST.__objc_intobj: 0x39f0
++  __AUTH_CONST.__objc_arrayobj: 0x588
++  __AUTH_CONST.__objc_intobj: 0x3a20
+   __AUTH_CONST.__objc_doubleobj: 0x480
+   __AUTH_CONST.__objc_dictobj: 0x4d58
+   __AUTH_CONST.__objc_floatobj: 0xc0
+
+   - /System/Library/Frameworks/UniformTypeIdentifiers.framework/UniformTypeIdentifiers
+   - /System/Library/PrivateFrameworks/AppleJPEG.framework/AppleJPEG
+   - /System/Library/PrivateFrameworks/AppleJPEGXL.framework/AppleJPEGXL
++  - /System/Library/PrivateFrameworks/CMPhoto.framework/CMPhoto
+   - /System/Library/PrivateFrameworks/CoreAnalytics.framework/CoreAnalytics
+   - /System/Library/PrivateFrameworks/MobileAsset.framework/MobileAsset
+   - /usr/lib/libSystem.B.dylib
+
+   - /usr/lib/libobjc.A.dylib
+   - /usr/lib/libxml2.2.dylib
+   - /usr/lib/libz.1.dylib
+-  UUID: 1BE38EB6-51C0-3069-A50F-CA3B000E0847
+-  Functions: 6433
+-  Symbols:   781
++  UUID: AF5B7B35-3549-329B-B706-F877FA8DF849
++  Functions: 6435
++  Symbols:   786
+   CStrings:  7487
+ 
+Symbols:
++ _CMPhotoDecompressionContainerCreateImageForIndex
++ _CMPhotoDecompressionContainerGetImageCount
++ _CMPhotoDecompressionSessionCreate
++ _CMPhotoDecompressionSessionCreateContainer
++ _CVPixelBufferGetDataSize
++ _kCMPhotoContainerFormatString_JFIF
++ _kCMPhotoDecompressionContainerOption_AllowedFormatsAndCodecs
++ _kCMPhotoDecompressionOption_OutputPixelFormat
+- _CGImageGetBytesPerRow
+- _CGImageGetHeight
+- _CGImageGetWidth</code></pre>
+<p>Since the diff does not show code-level changes, we moved to <strong>IDA Pro</strong> for deeper inspection.</p>
+<p><img src="/2025/10/23/clalxk/imageIO_en/image3.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p><img src="/2025/10/23/clalxk/imageIO_en/image4.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>We used <strong>ipsw</strong> to download both 18.6.1 and 18.6.2 firmwares.</p>
+<p><img src="/2025/10/23/clalxk/imageIO_en/image5.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p><img src="/2025/10/23/clalxk/imageIO_en/image6.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p><img src="/2025/10/23/clalxk/imageIO_en/image7.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>The <code>dyld_shared_cache</code> is a cache file that bundles frequently used system libraries and frameworks together for faster loading during iOS/macOS boot. It contains optimized versions of <code>.dylibs</code> and frameworks, allowing faster app startup and reduced memory usage.<br>Since the actual system loads these cached binaries, we can extract RawCamera directly from the cache for comparison and analysis.</p>
+<p>Although it can also be extracted using <code>ipsw dyld extract</code>, in this research, we analyzed it</p>
+<p>directly by loading <code>dyld_shared_cache</code> in IDA.</p>
+<h2 id="1-1-bindiff"><a href="#1-1-bindiff" class="headerlink" title="1.1 bindiff"></a>1.1 bindiff</h2><p><img src="/2025/10/23/clalxk/imageIO_en/image8.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>The binary was exported in <strong>BinExport</strong> format for diffing.</p>
+<p><img src="/2025/10/23/clalxk/imageIO_en/image9.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Due to limited space, we referred to public analysis from Quarkslab<br>: <a target="_blank" rel="external nofollow noopener noreferrer" href="https://blog.quarkslab.com/patch-analysis-of-Apple-iOS-CVE-2025-43300.html">https://blog.quarkslab.com/patch-analysis-of-Apple-iOS-CVE-2025-43300.html</a></p>
+<p>Out of six modified functions, two &#x2014; <code>sub_1DD8A7684</code> and <code>sub_1DD95DC1C</code> &#x2014; were significantly changed. We focused our analysis on these two.</p>
+<h2 id="1-2-Analysis"><a href="#1-2-Analysis" class="headerlink" title="1.2 Analysis"></a>1.2 Analysis</h2><p><img src="/2025/10/23/clalxk/imageIO_en/image10.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p><img src="/2025/10/23/clalxk/imageIO_en/image11.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>We loaded <code>dyld_shared_cache</code> extracted from ipsw for analysis:<br><em>&#x2192; Apple DYLD Cache for arm64e (select module(s)) &#x2192; RawCamera</em></p>
+<p><img src="/2025/10/23/clalxk/imageIO_en/image12.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p><img src="/2025/10/23/clalxk/imageIO_en/image13.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>A new <strong>pixel buffer size verification step</strong> was added.</p>
+<p>See the following section for detailed code comparison.</p>
+<h3 id="Code-Analysis"><a href="#Code-Analysis" class="headerlink" title="Code Analysis"></a><strong>Code Analysis</strong></h3><p><code>sub_1DD8A7684</code> &#x2192; <code>sub_1DD8A76DC</code> </p>
+<pre><code class="hljs cpp"># iOS <span class="hljs-number">18.6</span><span class="hljs-number">.1</span> G90
+
+<span class="hljs-function"><span class="hljs-keyword">void</span> __fastcall <span class="hljs-title">sub_1DD8A7684</span><span class="hljs-params">(...)</span></span>
+<span class="hljs-function"><span class="hljs-comment">// shortened: legacy CGImage path</span></span>
+<span class="hljs-function"></span>{
+    v13 = CGImageSourceCreateWithData(...);
+    ImageAtIndex = CGImageSourceCreateImageAtIndex(v13, <span class="hljs-number">0</span>, <span class="hljs-number">0</span>);
+    BytesPerRow = CGImageGetBytesPerRow(ImageAtIndex);
+    <span class="hljs-keyword">if</span> (CFDataGetLength(data) != <span class="hljs-number">4</span> * width * height)
+        <span class="hljs-keyword">throw</span> RawCameraException;
+    ...
+}</code></pre>
+<pre><code class="hljs c"># iOS <span class="hljs-number">18.6</span><span class="hljs-number">.2</span> G100
+<span class="hljs-function"><span class="hljs-keyword">void</span> __fastcall <span class="hljs-title">sub_1DD8A76DC</span><span class="hljs-params">(...)</span></span>
+<span class="hljs-function"><span class="hljs-comment">// shortened: new CMPhoto + CVPixelBuffer path</span></span>
+<span class="hljs-function"></span>{
+    CMPhotoDecompressionSessionCreate(...);
+    CMPhotoDecompressionContainerCreateImageForIndex(...);
+    BytesPerRow = CVPixelBufferGetBytesPerRow(buf);
+    DataSize = CVPixelBufferGetDataSize(buf);
+    <span class="hljs-keyword">if</span> (DataSize != expected)
+        <span class="hljs-keyword">throw</span> RawCameraException;
+    ...
+}</code></pre>
+<h3 id="Key-Differences"><a href="#Key-Differences" class="headerlink" title="Key Differences"></a>Key Differences</h3><ol>
+<li><p><strong>CGImage &#x2192; CMPhoto + CVPixelBuffer</strong></p>
+<ul>
+<li><p><strong>G90 (18.6.1):</strong></p>
+<p>  Uses CoreGraphics pipeline (<code>CGImageSourceCreateImageAtIndex</code> + <code>CGDataProviderCopyData</code>)</p>
+<p>  and directly iterates raw <code>CFData</code> bytes.</p>
+</li>
+<li><p><strong>G100 (18.6.2):</strong></p>
+<p>  Introduces <strong>CMPhoto</strong> decompression pipeline:</p>
+<p>  <code>CMPhotoDecompressionSessionCreate &#x2192; CMPhotoDecompressionContainerCreateImageForIndex</code> &#x2192; <code>CVPixelBuffer</code>.</p>
+<p>  Accesses pixels through <strong>CVPixelBufferLockBaseAddress()</strong>, ensuring safer memory handling.</p>
+</li>
+</ul>
+</li>
+<li><p><strong>Buffer Size Validation Added</strong></p>
+ <pre><code class="hljs cpp"><span class="hljs-keyword">if</span> (CFDataGetLength(data) != <span class="hljs-number">4</span> * width * height) <span class="hljs-keyword">throw</span> RawCameraException;</code></pre>
+<ul>
+<li><p><strong>Before:</strong> Only checked <code>CFDataGetLength() == 4 * width * height</code>.</p>
+<p>  This ignored row padding (<code>bytesPerRow</code>) and format variations.</p>
+</li>
+</ul>
+</li>
+</ol>
+<pre><code><pre><code class="hljs cpp">BytesPerRow = CVPixelBufferGetBytesPerRow(buf);
+DataSize    = CVPixelBufferGetDataSize(buf);
+
+<span class="hljs-comment">// expected = f(width, height)  // sub_1DD8A8C14</span>
+<span class="hljs-comment">// bpp = 4                       // v68=4 &#x2192; sub_1DD8A8C7C</span>
+<span class="hljs-keyword">if</span> (DataSize != expected) <span class="hljs-keyword">throw</span> RawCameraException;</code></pre>
+
+- **After:** Validates using `CVPixelBufferGetDataSize()` against an internally computed expected value (considering stride).
+
+    &#x2192; Prevents overrun caused by underestimated buffer size.
+</code></pre><ol>
+<li><strong>Pixel Channel Order</strong><ul>
+<li><strong>Old:</strong> Assumed RGB order, manual pointer increments.</li>
+<li><strong>New:</strong> Explicitly treats buffer as BGRA, reading channels in fixed offsets (B&#x2192;G&#x2192;R).</li>
+</ul>
+</li>
+</ol>
+<hr>
+<p><strong>Summary:</strong></p>
+<p>The patch migrated from <strong>CoreGraphics raw byte decoding</strong> to a <strong>CoreMedia Photo pipeline</strong></p>
+<p>and added <strong>explicit data size/stride checks</strong>, eliminating unbounded writes from mismatched DNG metadata.</p>
+<p>Through the analysis of the modified code, we were able to understand the general behavior of the function.</p>
+<p>In summary, <strong>G90 (iOS 18.6.1)</strong> decodes the image through the <strong>CGImage</strong> path and directly iterates over the <strong>CFData</strong> buffer. The verification process only checks two things &#x2014; the <strong>match of width and height</strong>, and whether <strong>CFDataGetLength() == 4 &#xD7; W &#xD7; H</strong> &#x2014; while actual memory access is performed using a <strong>row-based offset (</strong><code>BytesPerRow</code><strong>)</strong>. Because of this, for certain images (depending on color space, subsampling, or row padding), the validation may <strong>pass successfully, but the actual access can exceed the bounds of CFData</strong>.</p>
+<p>In contrast, <strong>G100 (iOS 18.6.2)</strong> fixes this issue by switching the decoding pipeline from <strong>CGImage &#x2192; CMPhoto (JFIF only) &#x2192; CVPixelBuffer</strong>, and comparing the <strong>actual total buffer size (</strong><code>CVPixelBufferGetDataSize</code><strong>)</strong> against an <strong>expected value</strong> computed internally based on width, height, and other parameters.</p>
+<hr>
+<h3 id="Root-Cause"><a href="#Root-Cause" class="headerlink" title="Root Cause"></a>Root Cause</h3><p>(Analyzed based on the G90 version)</p>
+<p>During analysis, we observed that <code>sub_1DD8A7684</code> makes a function call through a <strong>vtable</strong>.</p>
+<p>In C++, every object typically begins with a <strong>vptr (virtual table pointer)</strong>.</p>
+<p>Virtual function calls are made at runtime through that pointer &#x2014; something like <code>this-&gt;vptr[slot]</code>.</p>
+<p>However, since the RawCamera binary is <strong>fully stripped</strong>, only addresses are visible,</p>
+<p>making direct analysis difficult.</p>
+<pre><code class="hljs cpp">[ex]
+(*(*<span class="hljs-keyword">this</span>)+<span class="hljs-number">0xE0</span>)(<span class="hljs-keyword">this</span>, buf, w, h)</code></pre>
+<p>which conceptually means:</p>
+<pre><code class="hljs cpp">[ex]
+<span class="hljs-keyword">this</span>-&gt;vptr-&gt;unpack_lossless(<span class="hljs-keyword">this</span>, buf, w, h)</code></pre>
+<p>To make it more readable and traceable, I defined the vtable as a structure (class) in IDA using an IDAPython script.</p>
+<p>The script did the following:</p>
+<ol>
+<li>Parse the vtable and create a corresponding struct.</li>
+<li>Apply <code>struct CDNGLosslessJpegUnpacker *this</code> as the first parameter for all virtual functions.</li>
+</ol>
+<p>Once this is done, the call expression <code>(*(*this)+0xE0)(this)</code> appears as <code>this-&gt;vptr-&gt;fn_028(this, &#x2026;)</code>, and fields like <code>this-&gt;field_d8</code> become explicit &#x2014; making slot mapping and call tracing much easier.</p>
+<p>Now, let&#x2019;s identify where the vulnerable function is actually invoked in the call tree.</p>
+<p><img src="/2025/10/23/clalxk/imageIO_en/image14.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Filtering for &#x201C;Lossless&#x201D; quickly reveals the target class</p>
+<p><code>CDNGLosslessJpegUnpacker</code>.</p>
+<p>Following the references leads to the function <code>sub_1DD95DE88</code>.</p>
+<p><strong>Detailed Code (sub_1DD95DE88)</strong></p>
+<pre><code class="hljs cpp"><span class="hljs-function"><span class="hljs-keyword">void</span> __fastcall <span class="hljs-title">sub_1DD95DE88</span><span class="hljs-params">(<span class="hljs-keyword">os_signpost_id_t</span> a1, __int64 a2, __int64 a3, __int64 a4)</span></span>
+<span class="hljs-function"></span>{
+  .
+  .
+  .
+  
+  <span class="hljs-keyword">if</span> ( *(_DWORD *)(a1 + <span class="hljs-number">216</span>)
+    || (*(<span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span> (__fastcall **)(<span class="hljs-keyword">os_signpost_id_t</span>))(*(_QWORD *)a1 + <span class="hljs-number">224L</span>L))(a1) == <span class="hljs-number">2</span>
+    || (v12 = *(_QWORD *)(a1 + <span class="hljs-number">240</span>) - *(_QWORD *)(a1 + <span class="hljs-number">232</span>), v12 == <span class="hljs-number">4</span>) )
+  {
+    sub_1DD9009D4(a1, a2, a3, a4);
+  }
+  <span class="hljs-keyword">else</span>
+  {
+    v14 = *(_DWORD *)(a1 + <span class="hljs-number">44</span>);
+    v13 = *(_DWORD *)(a1 + <span class="hljs-number">48</span>);
+    v15 = *(_DWORD *)(a1 + <span class="hljs-number">224</span>);
+    v16 = *(_DWORD *)(a1 + <span class="hljs-number">228</span>);
+    *(_QWORD *)&amp;v35 = v12 &gt;&gt; <span class="hljs-number">2</span>;
+    sub_1DD8731E0(&amp;v36, &amp;v35);
+    <span class="hljs-keyword">if</span> ( *(_QWORD *)(a1 + <span class="hljs-number">240</span>) - *(_QWORD *)(a1 + <span class="hljs-number">232</span>) != *(_QWORD *)(a1 + <span class="hljs-number">264</span>) - *(_QWORD *)(a1 + <span class="hljs-number">256</span>)
+      || (<span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span>)(v14 - <span class="hljs-number">100000</span>) &lt; <span class="hljs-number">0xFFFE7961</span>
+      || (<span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span>)(v13 - <span class="hljs-number">100000</span>) &lt; <span class="hljs-number">0xFFFE7961</span>
+      || v15 - <span class="hljs-number">100000</span> &lt; <span class="hljs-number">0xFFFE7961</span>
+      || v16 - <span class="hljs-number">100000</span> &lt; <span class="hljs-number">0xFFFE7961</span>
+      || (v28 = v11, v17 = (<span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span>)v36, v36 &gt;= <span class="hljs-number">20000</span>) )
+    {
+      exception_15 = (<span class="hljs-built_in">std</span>::runtime_error *)__cxa_allocate_exception_15(<span class="hljs-number">0x10</span>uLL);
+      <span class="hljs-built_in">std</span>::runtime_error::runtime_error(exception_15, <span class="hljs-string">&quot;RawCameraException&quot;</span>);
+      __cxa_throw(exception_15, MEMORY[<span class="hljs-number">0x1E6FA15F0</span>], MEMORY[<span class="hljs-number">0x1E6FA1480</span>]);
+    }
+    v29 = a4;
+    <span class="hljs-keyword">if</span> ( (((v13 + v16 - <span class="hljs-number">1</span>) / v16) &gt;&gt; (*(_DWORD *)(a1 + <span class="hljs-number">216</span>) != <span class="hljs-number">0</span>)) * ((v14 + v15 - <span class="hljs-number">1</span>) / v15) != v36 )
+    {
+      v27 = (<span class="hljs-built_in">std</span>::runtime_error *)__cxa_allocate_exception_15(<span class="hljs-number">0x10</span>uLL);
+      <span class="hljs-built_in">std</span>::runtime_error::runtime_error(v27, <span class="hljs-string">&quot;RawCameraException&quot;</span>);
+      __cxa_throw(v27, MEMORY[<span class="hljs-number">0x1E6FA15F0</span>], MEMORY[<span class="hljs-number">0x1E6FA1480</span>]);
+    }
+    group = dispatch_group_create();
+    v30 = dispatch_queue_create(<span class="hljs-string">&quot;Lossless DNG Tile Unpacker Queue&quot;</span>, MEMORY[<span class="hljs-number">0x1E6FA52F0</span>]);</code></pre>
+<p>The function performs <strong>three checks</strong>:</p>
+<ol>
+<li><code>[this+0xD8] != 0</code></li>
+<li><code>vtable[28](this) == 2</code></li>
+<li><code>[this+0xF0] - [this+0xE8] == 4</code></li>
+</ol>
+<p>If <strong>any</strong> of these conditions is true, it calls <code>sub_1DD9009D4()</code> and <strong>exits safely</strong>.</p>
+<p>Otherwise, it proceeds to the <strong>&#x201C;Tile Queue&#x201D;</strong> path &#x2014; which includes the vulnerable function chain.</p>
+<pre><code class="hljs c">; Check <span class="hljs-number">1</span>
+LDR   W8, [X23,#<span class="hljs-number">0xD8</span>]
+CBNZ  W8, loc_1DD95DF78
+
+; Check <span class="hljs-number">2</span>
+LDR   X16, [X23]
+AUTDA X16, X17
+LDR   X8, [X16,#<span class="hljs-number">0xE0</span>]!  ; vtable[<span class="hljs-number">0xE0</span>/<span class="hljs-number">8</span>] -&gt; slot <span class="hljs-number">28</span>
+MOV   X0, X23
+BLRAA X8, X17
+CMP   W0, #<span class="hljs-number">2</span>
+BEQ   loc_1DD95DF78
+
+; Check <span class="hljs-number">3</span>
+LDP   X9, X8, [X23,#<span class="hljs-number">0xE8</span>]
+SUB   X8, X8, X9
+CMP   X8, #<span class="hljs-number">4</span>
+B.NE  loc_1DD95E008</code></pre>
+<p>If none of the above branches are taken, the function reaches a section where a dispatch queue named <code>&quot;Lossless DNG Tile Unpacker Queue&quot;</code> is created &#x2014; this is the path that eventually leads to the vulnerable unpacking logic.</p>
+<pre><code class="hljs angelscript"><span class="hljs-comment">// sub_1DD95DE88 simplified</span>
+<span class="hljs-keyword">if</span> ([<span class="hljs-keyword">this</span>+<span class="hljs-number">0xD8</span>] != <span class="hljs-number">0</span>
+ || vtable[<span class="hljs-number">28</span>](<span class="hljs-keyword">this</span>) == <span class="hljs-number">2</span>
+ || ([<span class="hljs-keyword">this</span>+<span class="hljs-number">0xF0</span>]-[<span class="hljs-keyword">this</span>+<span class="hljs-number">0xE8</span>]) == <span class="hljs-number">4</span>)
+{
+    sub_1DD9009D4(...); <span class="hljs-comment">// safe path</span>
+} <span class="hljs-keyword">else</span> {
+    <span class="hljs-comment">// Vulnerable path</span>
+    dispatch_group_create();
+    dispatch_queue_create(<span class="hljs-string">&quot;Lossless DNG Tile Unpacker Queue&quot;</span>, ...);
+    sub_1DD95E410 &#x2192; sub_1DD95DCD8 &#x2192; sub_1DD95E4A4 <span class="hljs-keyword">or</span> sub_1DD95B198
+    &#x2192; sub_1DD95EA64 &#x2192; sub_1DDA4EF58
+}</code></pre>
+<p>Thus, when all three conditions fail,<br>the code spawns a tile-based decompression queue that ultimately triggers the vulnerable unpack routine.</p>
+<h3 id="What-is-the-Tile-Queue"><a href="#What-is-the-Tile-Queue" class="headerlink" title="What is the Tile Queue?"></a>What is the Tile Queue?</h3><p>The <strong>tile queue</strong> splits a large image into small rectangular <strong>tiles</strong> (TileWidth &#xD7; TileLength).</p>
+<p>Each tile is decoded, color-corrected, and placed in the output buffer.</p>
+<p>The vulnerable path processes each tile independently but assumes metadata consistency between <strong>SamplesPerPixel</strong> and <strong>NumComponents</strong> &#x2014; which, when mismatched, causes a buffer overflow.</p>
+<p><strong>Simplified Call Tree</strong></p>
+<pre><code class="hljs c"><span class="hljs-number">0x1DD95DE88</span>
+    <span class="hljs-number">0x1DD95E410</span>
+        <span class="hljs-number">0x1DD95DCD8</span>
+            <span class="hljs-number">0x1DD95E4A4</span> <span class="hljs-keyword">or</span> <span class="hljs-number">0x1DD95B198</span>
+                <span class="hljs-number">0x1DD95EF54</span> <span class="hljs-keyword">or</span> <span class="hljs-number">0x1DD95EA64</span>
+                    <span class="hljs-number">0x1DDA4EF58</span></code></pre>
+<hr>
+<p><img src="/2025/10/23/clalxk/imageIO_en/image15.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Boom &#x1F4A5; &#x2014; and with a clearer head, let&#x2019;s continue &gt;&lt;</p>
+<hr>
+<p>Before diving into the PoC,</p>
+<p>let&#x2019;s briefly recap the <strong>background concepts</strong> necessary to understand this behavior.</p>
+<hr>
+<h2 id="Background-Concepts"><a href="#Background-Concepts" class="headerlink" title="Background Concepts"></a>Background Concepts</h2><h3 id="1-Pixels-Channels-Samples-and-Bit-Depth"><a href="#1-Pixels-Channels-Samples-and-Bit-Depth" class="headerlink" title="1. Pixels, Channels (Samples), and Bit Depth"></a>1. Pixels, Channels (Samples), and Bit Depth</h3><ul>
+<li><strong>Pixel</strong>: The smallest visual unit of an image.</li>
+<li><p><strong>Channel (Sample)</strong>: A single numeric component representing one aspect of a pixel (R, G, B, etc.).</p>
+<p>  &#x2192; <code>SamplesPerPixel</code> = number of channels per pixel</p>
+<p>  &#x2192; <code>BitsPerSample</code> = number of bits used to represent each channel</p>
+</li>
+</ul>
+<p>Examples:</p>
+<div class="table-container">
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>SamplesPerPixel</th>
+<th>BitsPerSample</th>
+<th>Bytes per Pixel</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Grayscale</td>
+<td>1</td>
+<td>8</td>
+<td>1</td>
+</tr>
+<tr>
+<td>RGB 8bpc</td>
+<td>3</td>
+<td>8</td>
+<td>3</td>
+</tr>
+<tr>
+<td>RGBA 16bpc</td>
+<td>4</td>
+<td>16</td>
+<td>8</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>These metadata values determine <strong>buffer size</strong>, <strong>stride (bytes per row)</strong>, and <strong>loop boundaries</strong> in decompression.</p>
+<h3 id="2-DNG"><a href="#2-DNG" class="headerlink" title="2. DNG"></a>2. DNG</h3><p>DNG (Digital Negative) is <strong>Adobe&#x2019;s RAW image container format</strong>, built upon <strong>TIFF/EP</strong> structure.</p>
+<p>It stores raw sensor data (e.g., Bayer CFA), thumbnails, and color correction metadata.</p>
+<p>Key tags:</p>
+<ul>
+<li><strong>RowsPerStrip / TileWidth / TileLength</strong></li>
+<li><strong>StripOffsets / TileOffsets</strong></li>
+<li><strong>StripByteCounts / TileByteCounts</strong></li>
+<li><strong>SamplesPerPixel / BitsPerSample</strong></li>
+</ul>
+<p>The decoder uses these values to calculate</p>
+<p><strong>buffer offsets</strong>, <strong>BytesPerRow</strong>, and <strong>total data size</strong> for writing.</p>
+<h3 id="3-RAW-and-Compression"><a href="#3-RAW-and-Compression" class="headerlink" title="3. RAW and Compression"></a>3. RAW and Compression</h3><p>RAW data is unprocessed, high bit-depth sensor output (e.g., 12/14/16 bits per pixel, typically 1 sample per pixel).</p>
+<p>To save space, DNG supports <strong>lossless compression</strong>, most notably <strong>JPEG Lossless (SOF3)</strong>.</p>
+<ul>
+<li>Compression = 1 &#x2192; Uncompressed</li>
+<li>Compression = 7 &#x2192; JPEG (Baseline or Lossless)</li>
+<li>Compression = 8 &#x2192; Deflate (ZIP)</li>
+<li>Compression = 34892 &#x2192; JPEG Baseline (Lossy)</li>
+</ul>
+<p>&#x2705; The vulnerability resides in the <strong>Lossless JPEG (SOF3)</strong> decoding path.</p>
+<hr>
+<h2 id="1-3-PoC"><a href="#1-3-PoC" class="headerlink" title="1.3 PoC"></a>1.3 PoC</h2><p><img src="/2025/10/23/clalxk/imageIO_en/image16.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Normal DNG files typically <strong>do not</strong> reach the vulnerable path.</p>
+<p>However, by tweaking metadata tags (for example, <code>SamplesPerPixel</code>) so that the initial checks pass, we can force the code path to invoke the vulnerable function.</p>
+<p>I ran this on my phone without updating it (because I had no space &#x1F602;).</p>
+<p><img src="/2025/10/23/clalxk/imageIO_en/image17.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>My device is on <strong>iOS 18.1.1</strong>.</p>
+<p><img src="/2025/10/23/clalxk/imageIO_en/image18.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Using the small DNG viewer app above, I loaded the PoC DNG and observed the following:</p>
+<pre><code class="hljs c"><span class="hljs-keyword">import</span> SwiftUI
+<span class="hljs-keyword">import</span> UniformTypeIdentifiers
+<span class="hljs-keyword">import</span> Combine
+<span class="hljs-keyword">import</span> UIKit
+<span class="hljs-keyword">import</span> CoreImage
+<span class="hljs-keyword">import</span> CoreImage.CIFilterBuiltins
+
+@main
+<span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">DNGViewerApp</span>:</span> App {
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+    }
+}
+
+<span class="hljs-keyword">final</span> <span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">RawRenderer</span>:</span> ObservableObject {
+    <span class="hljs-keyword">private</span> let context = CIContext(options: [
+        .cacheIntermediates: <span class="hljs-literal">false</span>
+    ])
+
+    @Published var image: UIImage?
+    @Published var <span class="hljs-built_in">log</span>: String = <span class="hljs-string">&quot;&quot;</span>
+
+    func render(from url: URL) {
+        <span class="hljs-built_in">log</span> = <span class="hljs-string">&quot;Loading: \(url.lastPathComponent)\n&quot;</span>
+        
+        guard let raw = CIRAWFilter(imageURL: url, options: [:]) <span class="hljs-keyword">else</span> {
+            <span class="hljs-built_in">log</span> += <span class="hljs-string">&quot;CIRAWFilter unavailable or failed to open URL\n&quot;</span>
+            <span class="hljs-keyword">return</span>
+        }
+  
+        guard let ciImage = raw.value(forKey: kCIOutputImageKey) as? CIImage <span class="hljs-keyword">else</span> {
+            <span class="hljs-built_in">log</span> += <span class="hljs-string">&quot;Failed to get CIImage\n&quot;</span>; <span class="hljs-keyword">return</span>
+        }
+        let extent = ciImage.extent.integral
+        guard let cg = context.createCGImage(ciImage, from: extent) <span class="hljs-keyword">else</span> {
+            <span class="hljs-built_in">log</span> += <span class="hljs-string">&quot;Failed to create CGImage\n&quot;</span>; <span class="hljs-keyword">return</span>
+        }
+        image = UIImage(cgImage: cg)
+        <span class="hljs-built_in">log</span> += <span class="hljs-string">&quot;Rendered: \(Int(extent.width))&#xD7;\(Int(extent.height))\n&quot;</span>
+    }
+}
+
+struct ContentView: View {
+    @StateObject var renderer = RawRenderer()
+    @State <span class="hljs-keyword">private</span> var showPicker = <span class="hljs-literal">false</span>
+
+    var body: some View {
+        VStack(spacing: <span class="hljs-number">12</span>) {
+            <span class="hljs-keyword">if</span> let img = renderer.image {
+                Image(uiImage: img)
+                    .resizable()
+                    .scaledToFit()
+                    .background(Color.black.opacity(<span class="hljs-number">0.05</span>))
+                    .cornerRadius(<span class="hljs-number">12</span>)
+                    .padding(.horizontal)
+            } <span class="hljs-keyword">else</span> {
+                Text(<span class="hljs-string">&quot;Open a DNG&quot;</span>).foregroundColor(.secondary)
+                    .padding(.top, <span class="hljs-number">40</span>)
+            }
+
+            HStack {
+                Button(<span class="hljs-string">&quot;Open DNG&quot;</span>) { showPicker = <span class="hljs-literal">true</span> }
+                .buttonStyle(.borderedProminent)
+
+                Button(<span class="hljs-string">&quot;Clear&quot;</span>) { renderer.image = nil; renderer.<span class="hljs-built_in">log</span> = <span class="hljs-string">&quot;&quot;</span> }
+                .buttonStyle(.bordered)
+            }
+
+            ScrollView {
+                Text(renderer.<span class="hljs-built_in">log</span>)
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+                    .background(Color.black.opacity(<span class="hljs-number">0.03</span>))
+                    .cornerRadius(<span class="hljs-number">8</span>)
+            }
+            .frame(maxHeight: <span class="hljs-number">160</span>)
+            .padding(.horizontal)
+        }
+        .sheet(isPresented: $showPicker) {
+            DocumentPicker { url in
+                <span class="hljs-keyword">if</span> let url { renderer.render(from: url) }
+            }
+        }
+    }
+}
+
+struct DocumentPicker: UIViewControllerRepresentable {
+    var onPick: (URL?) -&gt; Void
+
+    func makeCoordinator() -&gt; Coordinator { Coordinator(onPick: onPick) }
+    func makeUIViewController(context: Context) -&gt; UIDocumentPickerViewController {
+        <span class="hljs-comment">// DNG UTI&#xB294; &#xC804;&#xD1B5;&#xC801;&#xC73C;&#xB85C; &quot;com.adobe.raw-image&quot;.</span>
+        <span class="hljs-comment">// iOS 14+&#xC5D0;&#xC120; UTType.image(&#xB610;&#xB294; item)&#xB85C; &#xC5F4;&#xC5B4;&#xB3C4; &#xBB34;&#xBC29;.</span>
+        let vc = UIDocumentPickerViewController(forOpeningContentTypes: [
+            UTType(importedAs: <span class="hljs-string">&quot;com.adobe.raw-image&quot;</span>), <span class="hljs-comment">// DNG</span>
+            .image, .item
+        ])
+        vc.allowsMultipleSelection = <span class="hljs-literal">false</span>
+        vc.delegate = context.coordinator
+        <span class="hljs-keyword">return</span> vc
+    }
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+    <span class="hljs-keyword">final</span> class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onPick: (URL?) -&gt; Void
+        init(onPick: @escaping (URL?) -&gt; Void) { self.onPick = onPick }
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            onPick(urls.first)
+        }
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { onPick(nil) }
+    }
+}
+</code></pre>
+<p><img src="/2025/10/23/clalxk/imageIO_en/image19.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Here is the image that was used.</p>
+<p>Using this viewer to load the PoC DNG file, I observed the following details:</p>
+<ul>
+<li><code>CLosslessJpegUnpacker</code> at <code>0x1DD902E78</code></li>
+<li><code>CDNGLosslessJpegUnpacker</code> at <code>0x1DD95DE88</code></li>
+<li><code>CDNGLosslessJpegUnpacker::unpackTile</code> at <code>0x1DD95B198</code></li>
+<li><code>CLosslessJpegRestartUnpacker</code> at <code>0x1DD95F784</code></li>
+</ul>
+<p><strong>Trigger conditions:</strong></p>
+<ul>
+<li>JPEG marker: <strong>SOF3 (Lossless JPEG)</strong> present</li>
+<li>DHT (Define Huffman Table(s)) present</li>
+<li>SOS (Start Of Scan) valid</li>
+<li><strong>BitsPerSample = 16</strong></li>
+<li><strong>SamplesPerPixel = 2</strong> (TIFF tag)</li>
+<li><strong>NumComponents = 1</strong> (SOF3/JPEG stream)</li>
+</ul>
+<p>The root cause is a mismatch between how the loop termination condition is computed versus how the inner loop performs writes:</p>
+<p><img src="/2025/10/23/clalxk/imageIO_en/image20.png" srcset="/img/loading.gif" alt="image.png"></p>
+<ul>
+<li>The outer pixel loop is bounded by <strong>NumComponents</strong> = 1 (so it expects one component per pixel),</li>
+<li>but the inner write routine assumes <strong>SamplesPerPixel</strong> = 2 and writes <strong>two 16-bit samples per pixel</strong>, advancing the destination pointer as if there are two samples per pixel.</li>
+</ul>
+<p>As a result, each row ends up writing <strong>twice</strong> the expected number of bytes &#x2192; <strong>out-of-bounds writes</strong> occur at the row boundary.</p>
+<p>Following the flow, you can trace the chain like:</p>
+<pre><code class="hljs apache"><span class="hljs-attribute">0x1DD95B198</span> &#x2192; <span class="hljs-number">0</span>x<span class="hljs-number">1</span>DD<span class="hljs-number">95</span>B<span class="hljs-number">6</span>C<span class="hljs-number">4</span> &#x2192; <span class="hljs-number">0</span>x<span class="hljs-number">1</span>DD<span class="hljs-number">95</span>B<span class="hljs-number">8</span>DC &#x2192; <span class="hljs-number">0</span>x<span class="hljs-number">1</span>DD<span class="hljs-number">95</span>B<span class="hljs-number">944</span> &#x2192; <span class="hljs-number">0</span>x<span class="hljs-number">1</span>DD<span class="hljs-number">95</span>BCCC</code></pre>
+<p>(Trace through these offsets to map how the pixel decoder iterates and performs the writes.)</p>
+<p><img src="/2025/10/23/clalxk/imageIO_en/image21.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>The sample image I used is from DPReview:</p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.dpreview.com/sample-galleries/4949897610/pentax-k-3-mark-iii-sample-gallery/1638788346">https://www.dpreview.com/sample-galleries/4949897610/pentax-k-3-mark-iii-sample-gallery/1638788346</a></p>
+<p>(Used that image as a starting point to craft a DNG variant for the PoC.)</p>
+<h3 id="Summary"><a href="#Summary" class="headerlink" title="Summary"></a>Summary</h3><p>In short, <strong>CVE-2025-43300</strong> is an OOB Write caused by a mismatch between TIFF metadata and the internal JPEG Lossless stream:</p>
+<ul>
+<li><code>SamplesPerPixel = 2</code> (DNG tag) but <code>NumComponents = 1</code> (SOF3 stream)</li>
+<li>Loop termination is computed against <strong>components(=1)</strong> but the inner write loop writes <strong>16-bit &#xD7; 2 samples per pixel</strong>, causing <strong>double writes per row</strong> &#x2192; <strong>OOB write</strong>.</li>
+</ul>
+<p>Using <code>dyld_shared_cache</code> diffs and vtable typeing, I traced the vulnerable path to the <strong>CDNGLosslessJpegUnpacker &#x2192; Tile Unpacker</strong> and identified the exact trigger conditions and dataflow.</p>
+<p>Apple patched the issue in <strong>iOS 18.6.2</strong> by:</p>
+<ol>
+<li>Switching from the fragile <code>CGImage</code> + <code>CFData</code> raw traversal pipeline to a <strong>CMPhoto &#x2192; CVPixelBuffer</strong> pipeline (more robust, standardized pixel buffer APIs).</li>
+<li>Adding explicit <strong>data size / stride validation</strong> (compare <code>CVPixelBufferGetDataSize()</code> to an internally computed expected value that takes stride into account).</li>
+<li>Changing pixel access order/assumptions to match the actual buffer layout.</li>
+</ol>
+<p>If you are on a real device, update to <strong>iOS 18.6.2 or later</strong> &#x2014; the patched code prevents attempts to reach this unsafe write path. (I should update mine too &#x2014; I&#x2019;ll do that soon &#x1F602;)</p>
+<p>That wraps up this short research note &#x2014; the path was a fun exercise in dyld cache extraction, vtable reconstruction, and low-level JPEG/DNG decoding logic. I learned a lot following the call chain and seeing how a subtle metadata mismatch can cause memory corruption.</p>
+<h3 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a>Reference</h3><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/b1n4r1b01/n-days/blob/main/CVE-2025-43300.md">https://github.com/b1n4r1b01/n-days/blob/main/CVE-2025-43300.md</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://blog.quarkslab.com/patch-analysis-of-Apple-iOS-CVE-2025-43300.html">https://blog.quarkslab.com/patch-analysis-of-Apple-iOS-CVE-2025-43300.html</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/DarkNavySecurity/PoC/tree/main/CVE-2025-43300">https://github.com/DarkNavySecurity/PoC/tree/main/CVE-2025-43300</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/msuiche/elegant-bouncer">https://github.com/msuiche/elegant-bouncer</a></p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/clalxk/">clalxk</a>
+                  
+                  <a class="hover-with-bg" href="/tags/MacOS/">MacOS</a>
+                  
+                  <a class="hover-with-bg" href="/tags/CVE-2025-43300/">CVE-2025-43300</a>
+                  
+                  <a class="hover-with-bg" href="/tags/ImageIO/">ImageIO</a>
+                  
+                  <a class="hover-with-bg" href="/tags/MemoryCorruption/">MemoryCorruption</a>
+                  
+                  <a class="hover-with-bg" href="/tags/iOS/">iOS</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_clalxk.jpg" srcset="/img/loading.gif" alt="clalxk">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">clalxk</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/clalxk">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/10/26/l0ch/2025-10-26/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2025-39965: Linux Kernel XFRM subsystem의 UAF 취약점</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/10/23/clalxk/imageIO_ko/">
+                    <span class="hidden-mobile">[Research] ImageIO: iOS/macOS DNG Image Processing Memory Corruption (Ko)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/10/23/clalxk/imageIO_en/';
+        this.page.identifier = '/2025/10/23/clalxk/imageIO_en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] ImageIO: iOS/macOS DNG Image Processing Memory Corruption (En)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
