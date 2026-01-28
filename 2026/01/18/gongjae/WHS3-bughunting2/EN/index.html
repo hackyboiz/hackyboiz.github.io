@@ -1,0 +1,1747 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/logo_window.png&#34; alt&gt;&lt;/p&gt;
+&lt;h2 id=&#34;Introduction&#34;&gt;&lt;a href=&#34;#Introduction&#34; class=&#34;headerlink&#34; title=&#34;Introduction&#34;&gt;&lt;/a&gt;Introduction&lt;/h2&gt;&lt;hr&gt;
+&lt;p&gt;Happy New Year, everyone! This is my second research write-up, and I&amp;#x2019;m gongjae, taking charge of Part 2 for the &amp;#x201C;maknaes&amp;#x201D; &amp;#x1F600;&lt;/p&gt;
+&lt;p&gt;banda already did an awesome job on &lt;a href=&#34;https://hackyboiz.github.io/2025/12/28/banda/WHS3-bughunting/en/&#34;&gt;Part 1&lt;/a&gt;, so I wondered if there would be anything left for me to explain&amp;#x2026; but I still wanted to share the vulnerabilities I personally discovered and hopefully provide a little help to those who are interested in bug hunting. &amp;#x1F604;&lt;/p&gt;
+&lt;p&gt;In this post, we&amp;#x2019;ll look at several LPE vectors that can arise from Named Pipes, and show that &amp;#x201C;wow, vulnerabilities can happen in &lt;em&gt;this&lt;/em&gt; way too!&amp;#x201D;&lt;/p&gt;
+&lt;h2 id=&#34;Target&#34;&gt;&lt;a href=&#34;#Target&#34; class=&#34;headerlink&#34; title=&#34;Target&#34;&gt;&lt;/a&gt;Target&lt;/h2&gt;&lt;hr&gt;
+&lt;p&gt;The vulnerability I found is a Named Pipe issue in an antivirus product. It has already been patched, and I reported it to ZDI&amp;#x2014;so a CVE has been assigned as well.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image1.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;The cases I&amp;#x2019;ll show today can be categorized into &lt;strong&gt;File-related&lt;/strong&gt;, &lt;strong&gt;Registry-related&lt;/strong&gt;, and &lt;strong&gt;Service-related&lt;/strong&gt; behaviors. Let&amp;#x2019;s see what happens when an IPC interface is exposed through an overly permissive Named Pipe&amp;#x2014;case by case.&lt;/p&gt;
+&lt;h2 id=&#34;0-Attack-Surface&#34;&gt;&lt;a href=&#34;#0-Attack-Surface&#34; class=&#34;headerlink&#34; title=&#34;0. Attack Surface&#34;&gt;&lt;/a&gt;0. Attack Surface&lt;/h2&gt;&lt;hr&gt;
+&lt;p&gt;Before we get into the individual vulnerabilities, this is the first thing we must check. If &lt;strong&gt;Everyone&lt;/strong&gt; has access, that&amp;#x2019;s often the very first step toward reaching &lt;strong&gt;SYSTEM&lt;/strong&gt;. It&amp;#x2019;s very similar to Part 1&amp;#x2014;but &lt;del&gt;it would be a shame not to show it&lt;/del&gt; let&amp;#x2019;s go through it together anyway.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image2.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;When you install the target program and check Process Explorer, you can see that there is a process called SASCore64.exe running with SYSTEM privileges! And you can also confirm that there is a Named Pipe in the Handles section.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image3.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;And then, the biggest gatekeeper is the ACL part..!! I checked the permissions using SysinternalsSuite&amp;#x2019;s accesschk and confirmed that Everyone has RW permission~ Therefore, it means that a medium user can access a process running with SYSTEM privileges without any special permissions, right!&lt;/p&gt;
+&lt;p&gt;So now, let&amp;#x2019;s extract the SASCore64.exe binary, open it with IDA, and then check if there are Named Pipe-related APIs in Imports.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image4.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s go to the sub_140013F60 function that has the CreateNamedPipe API.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image5.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;If you look at the code, you can see that it creates a named pipe through CreateNamedPipeA and connects. The key here is that it configures SECURITY_ATTRIBUTES for the Named Pipe, and all local users can have full access! Let&amp;#x2019;s go to the StartAddress function.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image6.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;If you look at the code, you can see that it creates a named pipe through CreateNamedPipeA and connects. The key here is that it configures SECURITY_ATTRIBUTES for the Named Pipe, and all local users can have full access! Let&amp;#x2019;s go to the StartAddress function.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image7.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;We can put our input value into v6, and it is divided into cases so we can use various functions! However, in order to use the functions, you must first obtain a Token through the 0x103A branch below.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x103A&lt;/span&gt;:
+{
+  &lt;span class=&#34;hljs-comment&#34;&gt;// ... (input/time validation and other auxiliary logic)&lt;/span&gt;
+
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (ImpersonateNamedPipeClient(a3))
+  {
+    &lt;span class=&#34;hljs-comment&#34;&gt;// ... (store registry context in TLS, etc.)&lt;/span&gt;
+
+    HANDLE hProc = OpenProcess(PROCESS_ALL_ACCESS, FALSE, *(DWORD *)(input + &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;));
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (hProc)
+    {
+      HANDLE hToken = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+      &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (OpenProcessToken(hProc, TOKEN_ALL_ACCESS, &amp;amp;hToken) &amp;amp;&amp;amp; hToken)
+      {
+        &lt;span class=&#34;hljs-comment&#34;&gt;// ... (store the token into the internal session/table)&lt;/span&gt;
+        CloseHandle(hToken);
+      }
+      CloseHandle(hProc);
+    }
+
+    RevertToSelf();
+    FileSize = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;; &lt;span class=&#34;hljs-comment&#34;&gt;// session established&lt;/span&gt;
+  }
+
+  &lt;span class=&#34;hljs-comment&#34;&gt;// ... (build response)&lt;/span&gt;
+  WriteFile(a3, Buffer, &lt;span class=&#34;hljs-number&#34;&gt;0x10018&lt;/span&gt;u, &amp;amp;written, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;If ImpersonateNamedPipeClient and OpenProcessToken(&amp;#x2026;Pid&amp;#x2026;) succeed, a new &lt;strong&gt;node + token&lt;/strong&gt; is stored in the internal list (a1 + 0x68).&lt;/li&gt;
+&lt;li&gt;Since the token value is returned at offset 0x04 among the 0x10018-byte response, you can store this Token and use it.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;After obtaining a token in this way, you can use other functions, and these functions are the vulnerability vectors I will talk about.&lt;/p&gt;
+&lt;h2 id=&#34;1-LPE-using-File-related-APIs&#34;&gt;&lt;a href=&#34;#1-LPE-using-File-related-APIs&#34; class=&#34;headerlink&#34; title=&#34;1. LPE using File-related APIs&#34;&gt;&lt;/a&gt;1. LPE using File-related APIs&lt;/h2&gt;&lt;hr&gt;
+&lt;p&gt;First, shall we look at File-related APIs? Windows has various APIs, and most of them verify them so that they can be used safely. The important part is that the user should not be able to touch them.. But what if the user can manipulate important arguments?&lt;/p&gt;
+&lt;h3 id=&#34;1-1-CopyFileW&#34;&gt;&lt;a href=&#34;#1-1-CopyFileW&#34; class=&#34;headerlink&#34; title=&#34;1-1. CopyFileW()&#34;&gt;&lt;/a&gt;1-1. CopyFileW()&lt;/h3&gt;&lt;p&gt;If you look at MS&amp;#x2019;s &lt;code&gt;CopyFileW()&lt;/code&gt; function, you can see that it copies an existing file to a new file.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;BOOL &lt;span class=&#34;hljs-title&#34;&gt;CopyFileW&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in] LPCWSTR lpExistingFileName,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in] LPCWSTR lpNewFileName,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in] BOOL    bFailIfExists&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;)&lt;/span&gt;&lt;/span&gt;;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Then, if you can change the file at the desired path into a malicious file with SYSTEM privileges, privilege escalation would happen, right?&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x100D&lt;/span&gt;:
+{
+  &lt;span class=&#34;hljs-comment&#34;&gt;// ...&lt;/span&gt;
+  BOOL ok = CopyFileW(
+      (LPCWSTR)(input + &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;),       &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled: src&lt;/span&gt;
+      (LPCWSTR)(input + &lt;span class=&#34;hljs-number&#34;&gt;0x1048&lt;/span&gt;),  &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled: dst&lt;/span&gt;
+      *(DWORD *)(input + &lt;span class=&#34;hljs-number&#34;&gt;0x2088&lt;/span&gt;)  &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled: bFailIfExists&lt;/span&gt;
+  );
+
+  DWORD err = GetLastError();
+  &lt;span class=&#34;hljs-comment&#34;&gt;// ... (put ok/err into the response Buffer and return)&lt;/span&gt;
+  WriteFile(a3, Buffer, &lt;span class=&#34;hljs-number&#34;&gt;0x10018&lt;/span&gt;u, &amp;amp;written, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;After obtaining the Token, if you branch to case 0x100D, you can put the file path to copy into input+8, and the file path to overwrite into input+0x1048, and call the API!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image8.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Why is this LPE..? There are files that we cannot change or delete with normal privileges, right. And if there is a file that runs every few seconds? If you change this file into a malicious file that can run cmd with SYSTEM privileges, then literally a SYSTEM-privileged cmd will open every few seconds!! That&amp;#x2019;s the principle.&amp;#x1F47D;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image9.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Shall we verify this directly with Process Monitor? This is the Chrome updater process, it runs every few seconds, and its privilege is high so it&amp;#x2019;s impossible to access with normal privileges. But if you change it into a malicious file using the vulnerability above!?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image10.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;You can confirm that a SYSTEM cmd opens like this! &amp;#x1F44F;&lt;/p&gt;
+&lt;p&gt;Shall we confirm a bit more clearly through dynamic analysis?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/imag11.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;After attaching to the process with WinDbg, get the base address with the lm command, and then set the base in IDA and set a bp near the CopyFileW() function to check.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image12.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image13.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;As follows, Dst contains the updater path mentioned earlier.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image14.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;And you can see that the source contains the file path to be copied as-is. This fake &lt;code&gt;updater.exe&lt;/code&gt; is a malicious file that launches &lt;code&gt;cmd&lt;/code&gt; with a SYSTEM token, and once it is copied, the LPE is successfully achieved.&lt;/p&gt;
+&lt;h2 id=&#34;2-LPE-using-Registry-related-APIs&#34;&gt;&lt;a href=&#34;#2-LPE-using-Registry-related-APIs&#34; class=&#34;headerlink&#34; title=&#34;2. LPE using Registry-related APIs&#34;&gt;&lt;/a&gt;2. LPE using Registry-related APIs&lt;/h2&gt;&lt;hr&gt;
+&lt;p&gt;Now, shall we look at Registry-related APIs!&lt;/p&gt;
+&lt;h3 id=&#34;2-1-SHSetValueW&#34;&gt;&lt;a href=&#34;#2-1-SHSetValueW&#34; class=&#34;headerlink&#34; title=&#34;2-1. SHSetValueW()&#34;&gt;&lt;/a&gt;2-1. SHSetValueW()&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;LSTATUS &lt;span class=&#34;hljs-title&#34;&gt;SHSetValueW&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]           HKEY    hkey,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional] LPCWSTR pszSubKey,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional] LPCWSTR pszValue,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]           DWORD   dwType,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional] LPCVOID pvData,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]           DWORD   cbData&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;)&lt;/span&gt;&lt;/span&gt;;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The &lt;code&gt;SHSetValueW()&lt;/code&gt; function sets the value of a registry key. If you look at the argument setup, you can set SubKey and ValueName. What this means is, if you can manipulate these arguments, you can arbitrarily change the Value of the registry at the desired path!! Let&amp;#x2019;s confirm through the code directly.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x102C&lt;/span&gt;:
+{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *SubKey    = (&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *)(input + &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;);    &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *ValueName = (&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *)(input + &lt;span class=&#34;hljs-number&#34;&gt;4176&lt;/span&gt;);  &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+  HKEY RootKey           = *(HKEY *)(input + &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;);           &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+  DWORD Type             = *(DWORD *)(input + &lt;span class=&#34;hljs-number&#34;&gt;0xA094&lt;/span&gt;);     &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+  LPCVOID Data           = (LPCVOID)(input + &lt;span class=&#34;hljs-number&#34;&gt;0x2090&lt;/span&gt;);      &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+  DWORD DataSize         = *(DWORD *)(input + &lt;span class=&#34;hljs-number&#34;&gt;0xA090&lt;/span&gt;);     &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+
+  &lt;span class=&#34;hljs-comment&#34;&gt;// ... (HKCR wrapping / HKCU TLS substitution / table handle logic, etc.)&lt;/span&gt;
+
+  LSTATUS st = SHSetValueW(
+      RootKey,
+      SubKey,
+      ValueName,
+      Type,
+      Data,
+      DataSize
+  );
+
+  DWORD err = GetLastError();
+  &lt;span class=&#34;hljs-comment&#34;&gt;// ... (put st/err into the response Buffer and return)&lt;/span&gt;
+  WriteFile(a3, Buffer, &lt;span class=&#34;hljs-number&#34;&gt;0x10018&lt;/span&gt;u, &amp;amp;written, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;If you go to case 0x102C, in the end, you can set the desired registry value through the SHSetValueW function.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;offset +&lt;span class=&#34;hljs-number&#34;&gt;0x0008&lt;/span&gt; &amp;#x2192; &lt;span class=&#34;hljs-function&#34;&gt;HKEY &lt;span class=&#34;hljs-title&#34;&gt;Root&lt;/span&gt; &lt;span class=&#34;hljs-params&#34;&gt;(e.g., HKEY_LOCAL_MACHINE)&lt;/span&gt;&lt;/span&gt;
+offset +0x0010 &amp;#x2192; SubKey
+offset +&lt;span class=&#34;hljs-number&#34;&gt;0x1050&lt;/span&gt; &amp;#x2192; ValueName
+offset +&lt;span class=&#34;hljs-number&#34;&gt;0xA068&lt;/span&gt; &amp;#x2192; Type (e.g., REG_SZ)
+offset +&lt;span class=&#34;hljs-number&#34;&gt;0x2090&lt;/span&gt; &amp;#x2192; Buffer (value to &lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt;)
+offset +&lt;span class=&#34;hljs-number&#34;&gt;0xA064&lt;/span&gt; &amp;#x2192; Buffer size&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The input structure is as follows.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (RootKey == HKEY_CLASSES_ROOT)
+{
+  &lt;span class=&#34;hljs-comment&#34;&gt;// wrap into an internal class&lt;/span&gt;
+  CClassesRoot ctx;
+  ctx.h1 = TlsGetValue(...);
+  ctx.h2 = TlsGetValue(...);
+  SHSetValueW(ctx.h1 &lt;span class=&#34;hljs-keyword&#34;&gt;or&lt;/span&gt; h2, SubKey, ValueName, Type, Data, Size);
+}
+&lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (RootKey &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x80000000&lt;/span&gt;)  &lt;span class=&#34;hljs-comment&#34;&gt;// e.g., HKEY_LOCAL_MACHINE, HKEY_USERS, etc.&lt;/span&gt;
+{
+  keyctx = get_handle_from_table(RootKey);
+  SHSetValueW(keyctx, SubKey, ValueName, Type, Data, Size);
+}
+&lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+{
+  &lt;span class=&#34;hljs-comment&#34;&gt;// if it&amp;apos;s a normal HKEY_CURRENT_USER, substitute it with a TLS-based key&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (RootKey == HKEY_CURRENT_USER)
+    RootKey = TlsGetValue(...);
+
+  SHSetValueW(RootKey, SubKey, ValueName, Type, Data, Size);
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The core vulnerable logic is like above; in the end, the arbitrary HKEY + SubKey + Value + Data provided by the user goes into SHSetValueW&amp;#x2019;s arguments &amp;#xADF8;&amp;#xB300;&amp;#xB85C; under SYSTEM privileges.&lt;/p&gt;
+&lt;p&gt;Then this time too, shall we find a process that runs with SYSTEM privileges and has ImagePath in the Registry in the same way?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image15.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;I selected the MicrosoftEdgeElevationService service as the target and proceeded. If you check through Process Monitor, you can confirm that when you turn on Edge, the service is automatically loaded with SYSTEM privileges.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image16.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;After that, let&amp;#x2019;s check in Services and Registry Editor where this service is executed from.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image17.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image18.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;As in the pictures above, you can confirm that it is MicroSoftEdgeElevationService, and you can confirm that ImagePath is &lt;code&gt;&amp;quot;C:\Program Files (x86)\Microsoft\Edge\Application\xxx.xxx.xxx\elevation_service.exe&amp;#x201D;&lt;/code&gt;. Now, after triggering the vulnerability, let&amp;#x2019;s check again.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image19.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image20.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;You can confirm that the service&amp;#x2019;s Path and the registry&amp;#x2019;s ImagePath have changed like this!! Now, if you run MicrosoftEdge, a cmd with SYSTEM privileges will open!&lt;/p&gt;
+&lt;p&gt;We can&amp;#x2019;t skip dynamic analysis this time either, right?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image21.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image22.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;If you look at the Value part, you can confirm that ImagePath is included.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image23.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;If you look at the SubKey part, you can confirm that the registry path mentioned earlier is included.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image24.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Finally, you can see that the key contains 0x80000002 meaning HKEY_LOCAL_MACHINE. If you use this function, you can change the high-path registry ImagePath that I want into the value I want!&lt;/p&gt;
+&lt;h2 id=&#34;3-LPE-using-Service-related-APIs&#34;&gt;&lt;a href=&#34;#3-LPE-using-Service-related-APIs&#34; class=&#34;headerlink&#34; title=&#34;3. LPE using Service-related APIs&#34;&gt;&lt;/a&gt;3. LPE using Service-related APIs&lt;/h2&gt;&lt;hr&gt;
+&lt;p&gt;Then lastly, shall we look at Service-related APIs! This time, you can achieve LPE using three APIs, so let&amp;#x2019;s look at them one by one.&lt;/p&gt;
+&lt;h3 id=&#34;3-1-OpenSCManagerW&#34;&gt;&lt;a href=&#34;#3-1-OpenSCManagerW&#34; class=&#34;headerlink&#34; title=&#34;3.1 OpenSCManagerW()&#34;&gt;&lt;/a&gt;3.1 OpenSCManagerW()&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;SC_HANDLE &lt;span class=&#34;hljs-title&#34;&gt;OpenSCManagerW&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional] LPCWSTR lpMachineName,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional] LPCWSTR lpDatabaseName,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]           DWORD   dwDesiredAccess&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;)&lt;/span&gt;&lt;/span&gt;;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;First is the &lt;code&gt;OpenSCManagerW()&lt;/code&gt; function. The CreateService or StartService that will come later are pretty intuitive about what they do, but this &lt;code&gt;OpenSCManagerW()&lt;/code&gt; API must be executed first!&lt;/p&gt;
+&lt;p&gt;Because services are objects registered in the &amp;#x201C;SCM database,&amp;#x201D; you need to have a handle (context) to that DB first for subsequent tasks (create/modify/start). You can say this API is the one that opens and returns that handle.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x103B&lt;/span&gt;:
+{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *Machine  = (&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *)(input + &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;);      &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled (optional)&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *Database = (&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *)(input + &lt;span class=&#34;hljs-number&#34;&gt;0x1048&lt;/span&gt;); &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled (optional)&lt;/span&gt;
+  DWORD Access          = *(DWORD *)(input + &lt;span class=&#34;hljs-number&#34;&gt;0x2088&lt;/span&gt;);      &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+
+  &lt;span class=&#34;hljs-comment&#34;&gt;// ... (convert empty string to NULL, etc.)&lt;/span&gt;
+
+  SC_HANDLE hScm = OpenSCManagerW(Machine, Database, Access);
+
+  DWORD err = GetLastError();
+  &lt;span class=&#34;hljs-comment&#34;&gt;// ... (return hScm/err in the response)&lt;/span&gt;
+  WriteFile(a3, Buffer, &lt;span class=&#34;hljs-number&#34;&gt;0x10018&lt;/span&gt;u, &amp;amp;written, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Through case 0x103B branch, you can call the API and obtain the handle:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;input + 8 &amp;#x2192; lpMachineName&lt;/li&gt;
+&lt;li&gt;input + 0x1048 &amp;#x2192; lpDatabaseName&lt;/li&gt;
+&lt;li&gt;input + 0x2088 &amp;#x2192; dwDesiredAccess&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The important thing here is dwDesiredAccess, it must be set to SC_MANAGER_ALL_ACCESS(0xF003F)!&lt;/p&gt;
+&lt;h3 id=&#34;3-2-CreateServiceW&#34;&gt;&lt;a href=&#34;#3-2-CreateServiceW&#34; class=&#34;headerlink&#34; title=&#34;3.2 CreateServiceW()&#34;&gt;&lt;/a&gt;3.2 &lt;strong&gt;CreateServiceW()&lt;/strong&gt;&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;SC_HANDLE &lt;span class=&#34;hljs-title&#34;&gt;CreateServiceW&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]            SC_HANDLE hSCManager,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]            LPCWSTR   lpServiceName,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional]  LPCWSTR   lpDisplayName,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]            DWORD     dwDesiredAccess,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]            DWORD     dwServiceType,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]            DWORD     dwStartType,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]            DWORD     dwErrorControl,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional]  LPCWSTR   lpBinaryPathName,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional]  LPCWSTR   lpLoadOrderGroup,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [out, optional] LPDWORD   lpdwTagId,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional]  LPCWSTR   lpDependencies,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional]  LPCWSTR   lpServiceStartName,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional]  LPCWSTR   lpPassword&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;)&lt;/span&gt;&lt;/span&gt;;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Then now that we got the handle, shall we create a Service?&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x103F&lt;/span&gt;:
+{
+  SC_HANDLE hScm = *(SC_HANDLE *)(input + &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;);
+
+  &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *SvcName    = (&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *)(input + &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;);     &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *DispName   = (&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *)(input + &lt;span class=&#34;hljs-number&#34;&gt;4176&lt;/span&gt;);   &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *BinPath    = (&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *)(input + &lt;span class=&#34;hljs-number&#34;&gt;8352&lt;/span&gt;);   &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+
+  DWORD DesiredAccess     = *(DWORD *)(input + &lt;span class=&#34;hljs-number&#34;&gt;0x2090&lt;/span&gt;);      &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+  DWORD ServiceType       = *(DWORD *)(input + &lt;span class=&#34;hljs-number&#34;&gt;0x2094&lt;/span&gt;);      &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+  DWORD StartType         = *(DWORD *)(input + &lt;span class=&#34;hljs-number&#34;&gt;0x2098&lt;/span&gt;);      &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+  DWORD ErrorControl      = *(DWORD *)(input + &lt;span class=&#34;hljs-number&#34;&gt;0x209C&lt;/span&gt;);      &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+
+  &lt;span class=&#34;hljs-comment&#34;&gt;// ... (normalize Group/Deps/StartName/Password pointers and handle NULL)&lt;/span&gt;
+
+  SC_HANDLE hSvc = CreateServiceW(
+      hScm,
+      SvcName,
+      DispName,
+      DesiredAccess,
+      ServiceType,
+      StartType,
+      ErrorControl,
+      BinPath,
+      &lt;span class=&#34;hljs-comment&#34;&gt;/* ... */&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+  );
+
+  DWORD err = GetLastError();
+  &lt;span class=&#34;hljs-comment&#34;&gt;// ... (return hSvc/err in the response)&lt;/span&gt;
+  WriteFile(a3, Buffer, &lt;span class=&#34;hljs-number&#34;&gt;0x10018&lt;/span&gt;u, &amp;amp;written, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In case 0x103F branch, you can directly register an arbitrary file as a service via CreateServiceW()!&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;input + 0x08 &amp;#x2192; &lt;code&gt;hSCManager&lt;/code&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;SC_HANDLE&lt;/code&gt; (SCM handle obtained from the previous &lt;code&gt;0x103B&lt;/code&gt; call)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;input + 0x10 &amp;#x2192; &lt;code&gt;lpServiceName&lt;/code&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;LPCWSTR&lt;/code&gt; internal service name (e.g., L&amp;#x201D;LPE&amp;#x201D;)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;input + 0x1050 &amp;#x2192; &lt;code&gt;lpDisplayName&lt;/code&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;LPCWSTR&lt;/code&gt; service name shown to the user (e.g., L&amp;#x201D;My Payload Service&amp;#x201D;)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;input + 0x2090 &amp;#x2192; &lt;code&gt;dwDesiredAccess&lt;/code&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;DWORD&lt;/code&gt; access right flags (e.g., &lt;code&gt;SERVICE_ALL_ACCESS&lt;/code&gt; = 0xF01FF)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;input + 0x2094 &amp;#x2192; &lt;code&gt;dwServiceType&lt;/code&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;DWORD&lt;/code&gt; service type (e.g., &lt;code&gt;SERVICE_WIN32_OWN_PROCESS&lt;/code&gt; = 0x10)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;input + 0x2098 &amp;#x2192; &lt;code&gt;dwStartType&lt;/code&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;DWORD&lt;/code&gt; start type (e.g., &lt;code&gt;SERVICE_DEMAND_START&lt;/code&gt; = 0x3)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;input + 0x209C &amp;#x2192; &lt;code&gt;dwErrorControl&lt;/code&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;DWORD&lt;/code&gt; error control (e.g., &lt;code&gt;SERVICE_ERROR_NORMAL&lt;/code&gt; = 0x1)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;input + 0x20A0 &amp;#x2192; &lt;code&gt;lpBinaryPathName&lt;/code&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;LPCWSTR&lt;/code&gt; executable file path (e.g., L&amp;#x201D;C:\Temp\poc.exe&amp;#x201D;)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;input + 0x30E0 &amp;#x2192; &lt;code&gt;lpLoadOrderGroup&lt;/code&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;LPCWSTR&lt;/code&gt; load order group (e.g., L&amp;#x201D;Base&amp;#x201D;)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;input + 0x4120 &amp;#x2192; &lt;code&gt;lpDependencies&lt;/code&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;LPCWSTR&lt;/code&gt; dependency service list&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;input + 0x5160 &amp;#x2192; &lt;code&gt;lpServiceStartName&lt;/code&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;LPCWSTR&lt;/code&gt; logon account (e.g., L&amp;#x201D;NT AUTHORITY\System&amp;#x201D;)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;input + 0x61A0 &amp;#x2192; &lt;code&gt;lpPassword&lt;/code&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;LPCWSTR&lt;/code&gt; password for that account (NULL if none)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;But you can&amp;#x2019;t say it&amp;#x2019;s perfect LPE just by creating it, right? There is also an API that runs it.&lt;/p&gt;
+&lt;h3 id=&#34;3-3-StartServiceW&#34;&gt;&lt;a href=&#34;#3-3-StartServiceW&#34; class=&#34;headerlink&#34; title=&#34;3.3 StartServiceW()&#34;&gt;&lt;/a&gt;3.3 &lt;strong&gt;StartServiceW()&lt;/strong&gt;&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;BOOL &lt;span class=&#34;hljs-title&#34;&gt;StartServiceW&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]           SC_HANDLE hService,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]           DWORD     dwNumServiceArgs,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional] LPCWSTR   *lpServiceArgVectors&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;)&lt;/span&gt;&lt;/span&gt;;&lt;/code&gt;&lt;/pre&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x1040&lt;/span&gt;:
+{
+  SC_HANDLE hSvc = *(SC_HANDLE *)(input + &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;);  &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled (handle from prior call)&lt;/span&gt;
+
+  BOOL ok = StartServiceW(hSvc, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;);
+
+  DWORD err = GetLastError();
+  &lt;span class=&#34;hljs-comment&#34;&gt;// ... (put ok/err into the response Buffer and return)&lt;/span&gt;
+  WriteFile(a3, Buffer, &lt;span class=&#34;hljs-number&#34;&gt;0x10018&lt;/span&gt;u, &amp;amp;written, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Now it executes StartServiceW() in the case 0x1040 branch that starts the created service.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;input + 8 &amp;#x2192; &lt;code&gt;hService&lt;/code&gt; (&lt;code&gt;SC_HANDLE&lt;/code&gt;)&lt;/li&gt;
+&lt;li&gt;dwNumServiceArgs &amp;#x2192; &lt;code&gt;0&lt;/code&gt; (fixed)&lt;/li&gt;
+&lt;li&gt;lpServiceArgVectors &amp;#x2192; &lt;code&gt;NULL&lt;/code&gt; (fixed)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;You just need to put the handle received as the return value of CreateServiceW() into input + 8 and execute it!&lt;/p&gt;
+&lt;p&gt;This time too, shall we verify step by step first with dynamic analysis?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image25.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;First, let&amp;#x2019;s set a bp near the OpenSCManagerW() function and check.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image26.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;You can confirm that the SC_MANAGER_ALL_ACCESS(0xf003f) that we inserted is in the dwDesiredAccess part!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image27.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;After that, if you look at the output screen, you can confirm that it properly receives the hSCM handle.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image28.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Now, let&amp;#x2019;s set a bp near CreateServiceW() and check.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image29.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;I wrote System in lpServiceStartName.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image30.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;And lpBinaryPathName has the malicious file path that we will register as a service.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image31.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;If you look at the output routine after that, you can see that the service is created and you can also get the service handle value.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image32.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image33.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;If you check the service, you can see that the LPE service was created and the path is also set to the malicious file path.&lt;/p&gt;
+&lt;p&gt;Now, if you only execute it via StartServiceW()? The malicious service will run with SYSTEM privileges!!&lt;/p&gt;
+&lt;h2 id=&#34;Conclusion&#34;&gt;&lt;a href=&#34;#Conclusion&#34; class=&#34;headerlink&#34; title=&#34;Conclusion&#34;&gt;&lt;/a&gt;Conclusion&lt;/h2&gt;&lt;hr&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image34.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;I hope the explanation of multiple LPE vectors of the Named Pipe vulnerability in this Part 2 helped you!! That due to the permission setting of Named Pipe, there can be a situation where a medium user can act with SYSTEM privileges! As I wrote, I think I wrote it like a very heavy &amp;#x201C;gobongbap&amp;#x201D; and failed at controlling the length&amp;#x2026; but!! I&amp;#x2019;d appreciate it if you read it thinking &amp;#x201C;Wow, LPE is possible in this way too!!&amp;#x201D; &amp;#x1F609; Next time, I will come back with a vulnerability in a Kernel Driver, which is the flower of Windows LPE~ Thank you!&lt;/p&gt;
+&lt;h2 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://learn.microsoft.com/ko-kr/windows/win32/api/winsvc/nf-winsvc-openscmanagerw&#34;&gt;https://learn.microsoft.com/ko-kr/windows/win32/api/winsvc/nf-winsvc-openscmanagerw&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://learn.microsoft.com/ko-kr/windows/win32/services/service-security-and-access-rights&#34;&gt;https://learn.microsoft.com/ko-kr/windows/win32/services/service-security-and-access-rights&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://learn.microsoft.com/ko-kr/windows/win32/api/winsvc/nf-winsvc-createservicew&#34;&gt;https://learn.microsoft.com/ko-kr/windows/win32/api/winsvc/nf-winsvc-createservicew&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://learn.microsoft.com/ko-kr/windows/win32/api/winsvc/nf-winsvc-startservicew&#34;&gt;https://learn.microsoft.com/ko-kr/windows/win32/api/winsvc/nf-winsvc-startservicew&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://learn.microsoft.com/ko-kr/windows/win32/api/shlwapi/nf-shlwapi-shsetvaluew&#34;&gt;https://learn.microsoft.com/ko-kr/windows/win32/api/shlwapi/nf-shlwapi-shsetvaluew&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://learn.microsoft.com/ko-kr/windows/win32/api/winbase/nf-winbase-copyfilew&#34;&gt;https://learn.microsoft.com/ko-kr/windows/win32/api/winbase/nf-winbase-copyfilew&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] Windows LPE Bug Hunting, Served by the Team’s Youngest: Part 2 (EN) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/logo_window.png&#34; alt&gt;&lt;/p&gt;
+&lt;h2 id=&#34;Introduction&#34;&gt;&lt;a href=&#34;#Introduction&#34; class=&#34;headerlink&#34; title=&#34;Introduction&#34;&gt;&lt;/a&gt;Introduction&lt;/h2&gt;&lt;hr&gt;
+&lt;p&gt;Happy New Year, everyone! This is my second research write-up, and I&amp;#x2019;m gongjae, taking charge of Part 2 for the &amp;#x201C;maknaes&amp;#x201D; &amp;#x1F600;&lt;/p&gt;
+&lt;p&gt;banda already did an awesome job on &lt;a href=&#34;https://hackyboiz.github.io/2025/12/28/banda/WHS3-bughunting/en/&#34;&gt;Part 1&lt;/a&gt;, so I wondered if there would be anything left for me to explain&amp;#x2026; but I still wanted to share the vulnerabilities I personally discovered and hopefully provide a little help to those who are interested in bug hunting. &amp;#x1F604;&lt;/p&gt;
+&lt;p&gt;In this post, we&amp;#x2019;ll look at several LPE vectors that can arise from Named Pipes, and show that &amp;#x201C;wow, vulnerabilities can happen in &lt;em&gt;this&lt;/em&gt; way too!&amp;#x201D;&lt;/p&gt;
+&lt;h2 id=&#34;Target&#34;&gt;&lt;a href=&#34;#Target&#34; class=&#34;headerlink&#34; title=&#34;Target&#34;&gt;&lt;/a&gt;Target&lt;/h2&gt;&lt;hr&gt;
+&lt;p&gt;The vulnerability I found is a Named Pipe issue in an antivirus product. It has already been patched, and I reported it to ZDI&amp;#x2014;so a CVE has been assigned as well.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image1.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;The cases I&amp;#x2019;ll show today can be categorized into &lt;strong&gt;File-related&lt;/strong&gt;, &lt;strong&gt;Registry-related&lt;/strong&gt;, and &lt;strong&gt;Service-related&lt;/strong&gt; behaviors. Let&amp;#x2019;s see what happens when an IPC interface is exposed through an overly permissive Named Pipe&amp;#x2014;case by case.&lt;/p&gt;
+&lt;h2 id=&#34;0-Attack-Surface&#34;&gt;&lt;a href=&#34;#0-Attack-Surface&#34; class=&#34;headerlink&#34; title=&#34;0. Attack Surface&#34;&gt;&lt;/a&gt;0. Attack Surface&lt;/h2&gt;&lt;hr&gt;
+&lt;p&gt;Before we get into the individual vulnerabilities, this is the first thing we must check. If &lt;strong&gt;Everyone&lt;/strong&gt; has access, that&amp;#x2019;s often the very first step toward reaching &lt;strong&gt;SYSTEM&lt;/strong&gt;. It&amp;#x2019;s very similar to Part 1&amp;#x2014;but &lt;del&gt;it would be a shame not to show it&lt;/del&gt; let&amp;#x2019;s go through it together anyway.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image2.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;When you install the target program and check Process Explorer, you can see that there is a process called SASCore64.exe running with SYSTEM privileges! And you can also confirm that there is a Named Pipe in the Handles section.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image3.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;And then, the biggest gatekeeper is the ACL part..!! I checked the permissions using SysinternalsSuite&amp;#x2019;s accesschk and confirmed that Everyone has RW permission~ Therefore, it means that a medium user can access a process running with SYSTEM privileges without any special permissions, right!&lt;/p&gt;
+&lt;p&gt;So now, let&amp;#x2019;s extract the SASCore64.exe binary, open it with IDA, and then check if there are Named Pipe-related APIs in Imports.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image4.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s go to the sub_140013F60 function that has the CreateNamedPipe API.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image5.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;If you look at the code, you can see that it creates a named pipe through CreateNamedPipeA and connects. The key here is that it configures SECURITY_ATTRIBUTES for the Named Pipe, and all local users can have full access! Let&amp;#x2019;s go to the StartAddress function.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image6.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;If you look at the code, you can see that it creates a named pipe through CreateNamedPipeA and connects. The key here is that it configures SECURITY_ATTRIBUTES for the Named Pipe, and all local users can have full access! Let&amp;#x2019;s go to the StartAddress function.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image7.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;We can put our input value into v6, and it is divided into cases so we can use various functions! However, in order to use the functions, you must first obtain a Token through the 0x103A branch below.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x103A&lt;/span&gt;:
+{
+  &lt;span class=&#34;hljs-comment&#34;&gt;// ... (input/time validation and other auxiliary logic)&lt;/span&gt;
+
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (ImpersonateNamedPipeClient(a3))
+  {
+    &lt;span class=&#34;hljs-comment&#34;&gt;// ... (store registry context in TLS, etc.)&lt;/span&gt;
+
+    HANDLE hProc = OpenProcess(PROCESS_ALL_ACCESS, FALSE, *(DWORD *)(input + &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;));
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (hProc)
+    {
+      HANDLE hToken = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;;
+      &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (OpenProcessToken(hProc, TOKEN_ALL_ACCESS, &amp;amp;hToken) &amp;amp;&amp;amp; hToken)
+      {
+        &lt;span class=&#34;hljs-comment&#34;&gt;// ... (store the token into the internal session/table)&lt;/span&gt;
+        CloseHandle(hToken);
+      }
+      CloseHandle(hProc);
+    }
+
+    RevertToSelf();
+    FileSize = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;; &lt;span class=&#34;hljs-comment&#34;&gt;// session established&lt;/span&gt;
+  }
+
+  &lt;span class=&#34;hljs-comment&#34;&gt;// ... (build response)&lt;/span&gt;
+  WriteFile(a3, Buffer, &lt;span class=&#34;hljs-number&#34;&gt;0x10018&lt;/span&gt;u, &amp;amp;written, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;If ImpersonateNamedPipeClient and OpenProcessToken(&amp;#x2026;Pid&amp;#x2026;) succeed, a new &lt;strong&gt;node + token&lt;/strong&gt; is stored in the internal list (a1 + 0x68).&lt;/li&gt;
+&lt;li&gt;Since the token value is returned at offset 0x04 among the 0x10018-byte response, you can store this Token and use it.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;After obtaining a token in this way, you can use other functions, and these functions are the vulnerability vectors I will talk about.&lt;/p&gt;
+&lt;h2 id=&#34;1-LPE-using-File-related-APIs&#34;&gt;&lt;a href=&#34;#1-LPE-using-File-related-APIs&#34; class=&#34;headerlink&#34; title=&#34;1. LPE using File-related APIs&#34;&gt;&lt;/a&gt;1. LPE using File-related APIs&lt;/h2&gt;&lt;hr&gt;
+&lt;p&gt;First, shall we look at File-related APIs? Windows has various APIs, and most of them verify them so that they can be used safely. The important part is that the user should not be able to touch them.. But what if the user can manipulate important arguments?&lt;/p&gt;
+&lt;h3 id=&#34;1-1-CopyFileW&#34;&gt;&lt;a href=&#34;#1-1-CopyFileW&#34; class=&#34;headerlink&#34; title=&#34;1-1. CopyFileW()&#34;&gt;&lt;/a&gt;1-1. CopyFileW()&lt;/h3&gt;&lt;p&gt;If you look at MS&amp;#x2019;s &lt;code&gt;CopyFileW()&lt;/code&gt; function, you can see that it copies an existing file to a new file.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;BOOL &lt;span class=&#34;hljs-title&#34;&gt;CopyFileW&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in] LPCWSTR lpExistingFileName,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in] LPCWSTR lpNewFileName,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in] BOOL    bFailIfExists&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;)&lt;/span&gt;&lt;/span&gt;;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Then, if you can change the file at the desired path into a malicious file with SYSTEM privileges, privilege escalation would happen, right?&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x100D&lt;/span&gt;:
+{
+  &lt;span class=&#34;hljs-comment&#34;&gt;// ...&lt;/span&gt;
+  BOOL ok = CopyFileW(
+      (LPCWSTR)(input + &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;),       &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled: src&lt;/span&gt;
+      (LPCWSTR)(input + &lt;span class=&#34;hljs-number&#34;&gt;0x1048&lt;/span&gt;),  &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled: dst&lt;/span&gt;
+      *(DWORD *)(input + &lt;span class=&#34;hljs-number&#34;&gt;0x2088&lt;/span&gt;)  &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled: bFailIfExists&lt;/span&gt;
+  );
+
+  DWORD err = GetLastError();
+  &lt;span class=&#34;hljs-comment&#34;&gt;// ... (put ok/err into the response Buffer and return)&lt;/span&gt;
+  WriteFile(a3, Buffer, &lt;span class=&#34;hljs-number&#34;&gt;0x10018&lt;/span&gt;u, &amp;amp;written, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;After obtaining the Token, if you branch to case 0x100D, you can put the file path to copy into input+8, and the file path to overwrite into input+0x1048, and call the API!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image8.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Why is this LPE..? There are files that we cannot change or delete with normal privileges, right. And if there is a file that runs every few seconds? If you change this file into a malicious file that can run cmd with SYSTEM privileges, then literally a SYSTEM-privileged cmd will open every few seconds!! That&amp;#x2019;s the principle.&amp;#x1F47D;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image9.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Shall we verify this directly with Process Monitor? This is the Chrome updater process, it runs every few seconds, and its privilege is high so it&amp;#x2019;s impossible to access with normal privileges. But if you change it into a malicious file using the vulnerability above!?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image10.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;You can confirm that a SYSTEM cmd opens like this! &amp;#x1F44F;&lt;/p&gt;
+&lt;p&gt;Shall we confirm a bit more clearly through dynamic analysis?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/imag11.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;After attaching to the process with WinDbg, get the base address with the lm command, and then set the base in IDA and set a bp near the CopyFileW() function to check.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image12.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image13.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;As follows, Dst contains the updater path mentioned earlier.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image14.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;And you can see that the source contains the file path to be copied as-is. This fake &lt;code&gt;updater.exe&lt;/code&gt; is a malicious file that launches &lt;code&gt;cmd&lt;/code&gt; with a SYSTEM token, and once it is copied, the LPE is successfully achieved.&lt;/p&gt;
+&lt;h2 id=&#34;2-LPE-using-Registry-related-APIs&#34;&gt;&lt;a href=&#34;#2-LPE-using-Registry-related-APIs&#34; class=&#34;headerlink&#34; title=&#34;2. LPE using Registry-related APIs&#34;&gt;&lt;/a&gt;2. LPE using Registry-related APIs&lt;/h2&gt;&lt;hr&gt;
+&lt;p&gt;Now, shall we look at Registry-related APIs!&lt;/p&gt;
+&lt;h3 id=&#34;2-1-SHSetValueW&#34;&gt;&lt;a href=&#34;#2-1-SHSetValueW&#34; class=&#34;headerlink&#34; title=&#34;2-1. SHSetValueW()&#34;&gt;&lt;/a&gt;2-1. SHSetValueW()&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;LSTATUS &lt;span class=&#34;hljs-title&#34;&gt;SHSetValueW&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]           HKEY    hkey,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional] LPCWSTR pszSubKey,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional] LPCWSTR pszValue,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]           DWORD   dwType,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional] LPCVOID pvData,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]           DWORD   cbData&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;)&lt;/span&gt;&lt;/span&gt;;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The &lt;code&gt;SHSetValueW()&lt;/code&gt; function sets the value of a registry key. If you look at the argument setup, you can set SubKey and ValueName. What this means is, if you can manipulate these arguments, you can arbitrarily change the Value of the registry at the desired path!! Let&amp;#x2019;s confirm through the code directly.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x102C&lt;/span&gt;:
+{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *SubKey    = (&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *)(input + &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;);    &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *ValueName = (&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *)(input + &lt;span class=&#34;hljs-number&#34;&gt;4176&lt;/span&gt;);  &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+  HKEY RootKey           = *(HKEY *)(input + &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;);           &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+  DWORD Type             = *(DWORD *)(input + &lt;span class=&#34;hljs-number&#34;&gt;0xA094&lt;/span&gt;);     &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+  LPCVOID Data           = (LPCVOID)(input + &lt;span class=&#34;hljs-number&#34;&gt;0x2090&lt;/span&gt;);      &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+  DWORD DataSize         = *(DWORD *)(input + &lt;span class=&#34;hljs-number&#34;&gt;0xA090&lt;/span&gt;);     &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+
+  &lt;span class=&#34;hljs-comment&#34;&gt;// ... (HKCR wrapping / HKCU TLS substitution / table handle logic, etc.)&lt;/span&gt;
+
+  LSTATUS st = SHSetValueW(
+      RootKey,
+      SubKey,
+      ValueName,
+      Type,
+      Data,
+      DataSize
+  );
+
+  DWORD err = GetLastError();
+  &lt;span class=&#34;hljs-comment&#34;&gt;// ... (put st/err into the response Buffer and return)&lt;/span&gt;
+  WriteFile(a3, Buffer, &lt;span class=&#34;hljs-number&#34;&gt;0x10018&lt;/span&gt;u, &amp;amp;written, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;If you go to case 0x102C, in the end, you can set the desired registry value through the SHSetValueW function.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;offset +&lt;span class=&#34;hljs-number&#34;&gt;0x0008&lt;/span&gt; &amp;#x2192; &lt;span class=&#34;hljs-function&#34;&gt;HKEY &lt;span class=&#34;hljs-title&#34;&gt;Root&lt;/span&gt; &lt;span class=&#34;hljs-params&#34;&gt;(e.g., HKEY_LOCAL_MACHINE)&lt;/span&gt;&lt;/span&gt;
+offset +0x0010 &amp;#x2192; SubKey
+offset +&lt;span class=&#34;hljs-number&#34;&gt;0x1050&lt;/span&gt; &amp;#x2192; ValueName
+offset +&lt;span class=&#34;hljs-number&#34;&gt;0xA068&lt;/span&gt; &amp;#x2192; Type (e.g., REG_SZ)
+offset +&lt;span class=&#34;hljs-number&#34;&gt;0x2090&lt;/span&gt; &amp;#x2192; Buffer (value to &lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt;)
+offset +&lt;span class=&#34;hljs-number&#34;&gt;0xA064&lt;/span&gt; &amp;#x2192; Buffer size&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The input structure is as follows.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (RootKey == HKEY_CLASSES_ROOT)
+{
+  &lt;span class=&#34;hljs-comment&#34;&gt;// wrap into an internal class&lt;/span&gt;
+  CClassesRoot ctx;
+  ctx.h1 = TlsGetValue(...);
+  ctx.h2 = TlsGetValue(...);
+  SHSetValueW(ctx.h1 &lt;span class=&#34;hljs-keyword&#34;&gt;or&lt;/span&gt; h2, SubKey, ValueName, Type, Data, Size);
+}
+&lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (RootKey &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x80000000&lt;/span&gt;)  &lt;span class=&#34;hljs-comment&#34;&gt;// e.g., HKEY_LOCAL_MACHINE, HKEY_USERS, etc.&lt;/span&gt;
+{
+  keyctx = get_handle_from_table(RootKey);
+  SHSetValueW(keyctx, SubKey, ValueName, Type, Data, Size);
+}
+&lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+{
+  &lt;span class=&#34;hljs-comment&#34;&gt;// if it&amp;apos;s a normal HKEY_CURRENT_USER, substitute it with a TLS-based key&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (RootKey == HKEY_CURRENT_USER)
+    RootKey = TlsGetValue(...);
+
+  SHSetValueW(RootKey, SubKey, ValueName, Type, Data, Size);
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The core vulnerable logic is like above; in the end, the arbitrary HKEY + SubKey + Value + Data provided by the user goes into SHSetValueW&amp;#x2019;s arguments &amp;#xADF8;&amp;#xB300;&amp;#xB85C; under SYSTEM privileges.&lt;/p&gt;
+&lt;p&gt;Then this time too, shall we find a process that runs with SYSTEM privileges and has ImagePath in the Registry in the same way?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image15.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;I selected the MicrosoftEdgeElevationService service as the target and proceeded. If you check through Process Monitor, you can confirm that when you turn on Edge, the service is automatically loaded with SYSTEM privileges.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image16.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;After that, let&amp;#x2019;s check in Services and Registry Editor where this service is executed from.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image17.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image18.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;As in the pictures above, you can confirm that it is MicroSoftEdgeElevationService, and you can confirm that ImagePath is &lt;code&gt;&amp;quot;C:\Program Files (x86)\Microsoft\Edge\Application\xxx.xxx.xxx\elevation_service.exe&amp;#x201D;&lt;/code&gt;. Now, after triggering the vulnerability, let&amp;#x2019;s check again.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image19.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image20.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;You can confirm that the service&amp;#x2019;s Path and the registry&amp;#x2019;s ImagePath have changed like this!! Now, if you run MicrosoftEdge, a cmd with SYSTEM privileges will open!&lt;/p&gt;
+&lt;p&gt;We can&amp;#x2019;t skip dynamic analysis this time either, right?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image21.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image22.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;If you look at the Value part, you can confirm that ImagePath is included.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image23.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;If you look at the SubKey part, you can confirm that the registry path mentioned earlier is included.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image24.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Finally, you can see that the key contains 0x80000002 meaning HKEY_LOCAL_MACHINE. If you use this function, you can change the high-path registry ImagePath that I want into the value I want!&lt;/p&gt;
+&lt;h2 id=&#34;3-LPE-using-Service-related-APIs&#34;&gt;&lt;a href=&#34;#3-LPE-using-Service-related-APIs&#34; class=&#34;headerlink&#34; title=&#34;3. LPE using Service-related APIs&#34;&gt;&lt;/a&gt;3. LPE using Service-related APIs&lt;/h2&gt;&lt;hr&gt;
+&lt;p&gt;Then lastly, shall we look at Service-related APIs! This time, you can achieve LPE using three APIs, so let&amp;#x2019;s look at them one by one.&lt;/p&gt;
+&lt;h3 id=&#34;3-1-OpenSCManagerW&#34;&gt;&lt;a href=&#34;#3-1-OpenSCManagerW&#34; class=&#34;headerlink&#34; title=&#34;3.1 OpenSCManagerW()&#34;&gt;&lt;/a&gt;3.1 OpenSCManagerW()&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;SC_HANDLE &lt;span class=&#34;hljs-title&#34;&gt;OpenSCManagerW&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional] LPCWSTR lpMachineName,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional] LPCWSTR lpDatabaseName,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]           DWORD   dwDesiredAccess&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;)&lt;/span&gt;&lt;/span&gt;;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;First is the &lt;code&gt;OpenSCManagerW()&lt;/code&gt; function. The CreateService or StartService that will come later are pretty intuitive about what they do, but this &lt;code&gt;OpenSCManagerW()&lt;/code&gt; API must be executed first!&lt;/p&gt;
+&lt;p&gt;Because services are objects registered in the &amp;#x201C;SCM database,&amp;#x201D; you need to have a handle (context) to that DB first for subsequent tasks (create/modify/start). You can say this API is the one that opens and returns that handle.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x103B&lt;/span&gt;:
+{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *Machine  = (&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *)(input + &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;);      &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled (optional)&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *Database = (&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *)(input + &lt;span class=&#34;hljs-number&#34;&gt;0x1048&lt;/span&gt;); &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled (optional)&lt;/span&gt;
+  DWORD Access          = *(DWORD *)(input + &lt;span class=&#34;hljs-number&#34;&gt;0x2088&lt;/span&gt;);      &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+
+  &lt;span class=&#34;hljs-comment&#34;&gt;// ... (convert empty string to NULL, etc.)&lt;/span&gt;
+
+  SC_HANDLE hScm = OpenSCManagerW(Machine, Database, Access);
+
+  DWORD err = GetLastError();
+  &lt;span class=&#34;hljs-comment&#34;&gt;// ... (return hScm/err in the response)&lt;/span&gt;
+  WriteFile(a3, Buffer, &lt;span class=&#34;hljs-number&#34;&gt;0x10018&lt;/span&gt;u, &amp;amp;written, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Through case 0x103B branch, you can call the API and obtain the handle:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;input + 8 &amp;#x2192; lpMachineName&lt;/li&gt;
+&lt;li&gt;input + 0x1048 &amp;#x2192; lpDatabaseName&lt;/li&gt;
+&lt;li&gt;input + 0x2088 &amp;#x2192; dwDesiredAccess&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The important thing here is dwDesiredAccess, it must be set to SC_MANAGER_ALL_ACCESS(0xF003F)!&lt;/p&gt;
+&lt;h3 id=&#34;3-2-CreateServiceW&#34;&gt;&lt;a href=&#34;#3-2-CreateServiceW&#34; class=&#34;headerlink&#34; title=&#34;3.2 CreateServiceW()&#34;&gt;&lt;/a&gt;3.2 &lt;strong&gt;CreateServiceW()&lt;/strong&gt;&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;SC_HANDLE &lt;span class=&#34;hljs-title&#34;&gt;CreateServiceW&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]            SC_HANDLE hSCManager,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]            LPCWSTR   lpServiceName,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional]  LPCWSTR   lpDisplayName,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]            DWORD     dwDesiredAccess,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]            DWORD     dwServiceType,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]            DWORD     dwStartType,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]            DWORD     dwErrorControl,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional]  LPCWSTR   lpBinaryPathName,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional]  LPCWSTR   lpLoadOrderGroup,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [out, optional] LPDWORD   lpdwTagId,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional]  LPCWSTR   lpDependencies,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional]  LPCWSTR   lpServiceStartName,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional]  LPCWSTR   lpPassword&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;)&lt;/span&gt;&lt;/span&gt;;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Then now that we got the handle, shall we create a Service?&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x103F&lt;/span&gt;:
+{
+  SC_HANDLE hScm = *(SC_HANDLE *)(input + &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;);
+
+  &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *SvcName    = (&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *)(input + &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;);     &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *DispName   = (&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *)(input + &lt;span class=&#34;hljs-number&#34;&gt;4176&lt;/span&gt;);   &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *BinPath    = (&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; WCHAR *)(input + &lt;span class=&#34;hljs-number&#34;&gt;8352&lt;/span&gt;);   &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+
+  DWORD DesiredAccess     = *(DWORD *)(input + &lt;span class=&#34;hljs-number&#34;&gt;0x2090&lt;/span&gt;);      &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+  DWORD ServiceType       = *(DWORD *)(input + &lt;span class=&#34;hljs-number&#34;&gt;0x2094&lt;/span&gt;);      &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+  DWORD StartType         = *(DWORD *)(input + &lt;span class=&#34;hljs-number&#34;&gt;0x2098&lt;/span&gt;);      &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+  DWORD ErrorControl      = *(DWORD *)(input + &lt;span class=&#34;hljs-number&#34;&gt;0x209C&lt;/span&gt;);      &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled&lt;/span&gt;
+
+  &lt;span class=&#34;hljs-comment&#34;&gt;// ... (normalize Group/Deps/StartName/Password pointers and handle NULL)&lt;/span&gt;
+
+  SC_HANDLE hSvc = CreateServiceW(
+      hScm,
+      SvcName,
+      DispName,
+      DesiredAccess,
+      ServiceType,
+      StartType,
+      ErrorControl,
+      BinPath,
+      &lt;span class=&#34;hljs-comment&#34;&gt;/* ... */&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+  );
+
+  DWORD err = GetLastError();
+  &lt;span class=&#34;hljs-comment&#34;&gt;// ... (return hSvc/err in the response)&lt;/span&gt;
+  WriteFile(a3, Buffer, &lt;span class=&#34;hljs-number&#34;&gt;0x10018&lt;/span&gt;u, &amp;amp;written, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In case 0x103F branch, you can directly register an arbitrary file as a service via CreateServiceW()!&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;input + 0x08 &amp;#x2192; &lt;code&gt;hSCManager&lt;/code&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;SC_HANDLE&lt;/code&gt; (SCM handle obtained from the previous &lt;code&gt;0x103B&lt;/code&gt; call)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;input + 0x10 &amp;#x2192; &lt;code&gt;lpServiceName&lt;/code&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;LPCWSTR&lt;/code&gt; internal service name (e.g., L&amp;#x201D;LPE&amp;#x201D;)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;input + 0x1050 &amp;#x2192; &lt;code&gt;lpDisplayName&lt;/code&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;LPCWSTR&lt;/code&gt; service name shown to the user (e.g., L&amp;#x201D;My Payload Service&amp;#x201D;)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;input + 0x2090 &amp;#x2192; &lt;code&gt;dwDesiredAccess&lt;/code&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;DWORD&lt;/code&gt; access right flags (e.g., &lt;code&gt;SERVICE_ALL_ACCESS&lt;/code&gt; = 0xF01FF)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;input + 0x2094 &amp;#x2192; &lt;code&gt;dwServiceType&lt;/code&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;DWORD&lt;/code&gt; service type (e.g., &lt;code&gt;SERVICE_WIN32_OWN_PROCESS&lt;/code&gt; = 0x10)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;input + 0x2098 &amp;#x2192; &lt;code&gt;dwStartType&lt;/code&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;DWORD&lt;/code&gt; start type (e.g., &lt;code&gt;SERVICE_DEMAND_START&lt;/code&gt; = 0x3)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;input + 0x209C &amp;#x2192; &lt;code&gt;dwErrorControl&lt;/code&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;DWORD&lt;/code&gt; error control (e.g., &lt;code&gt;SERVICE_ERROR_NORMAL&lt;/code&gt; = 0x1)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;input + 0x20A0 &amp;#x2192; &lt;code&gt;lpBinaryPathName&lt;/code&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;LPCWSTR&lt;/code&gt; executable file path (e.g., L&amp;#x201D;C:\Temp\poc.exe&amp;#x201D;)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;input + 0x30E0 &amp;#x2192; &lt;code&gt;lpLoadOrderGroup&lt;/code&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;LPCWSTR&lt;/code&gt; load order group (e.g., L&amp;#x201D;Base&amp;#x201D;)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;input + 0x4120 &amp;#x2192; &lt;code&gt;lpDependencies&lt;/code&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;LPCWSTR&lt;/code&gt; dependency service list&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;input + 0x5160 &amp;#x2192; &lt;code&gt;lpServiceStartName&lt;/code&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;LPCWSTR&lt;/code&gt; logon account (e.g., L&amp;#x201D;NT AUTHORITY\System&amp;#x201D;)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;input + 0x61A0 &amp;#x2192; &lt;code&gt;lpPassword&lt;/code&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;LPCWSTR&lt;/code&gt; password for that account (NULL if none)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;But you can&amp;#x2019;t say it&amp;#x2019;s perfect LPE just by creating it, right? There is also an API that runs it.&lt;/p&gt;
+&lt;h3 id=&#34;3-3-StartServiceW&#34;&gt;&lt;a href=&#34;#3-3-StartServiceW&#34; class=&#34;headerlink&#34; title=&#34;3.3 StartServiceW()&#34;&gt;&lt;/a&gt;3.3 &lt;strong&gt;StartServiceW()&lt;/strong&gt;&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;BOOL &lt;span class=&#34;hljs-title&#34;&gt;StartServiceW&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]           SC_HANDLE hService,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]           DWORD     dwNumServiceArgs,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional] LPCWSTR   *lpServiceArgVectors&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;)&lt;/span&gt;&lt;/span&gt;;&lt;/code&gt;&lt;/pre&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x1040&lt;/span&gt;:
+{
+  SC_HANDLE hSvc = *(SC_HANDLE *)(input + &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;);  &lt;span class=&#34;hljs-comment&#34;&gt;// attacker-controlled (handle from prior call)&lt;/span&gt;
+
+  BOOL ok = StartServiceW(hSvc, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;);
+
+  DWORD err = GetLastError();
+  &lt;span class=&#34;hljs-comment&#34;&gt;// ... (put ok/err into the response Buffer and return)&lt;/span&gt;
+  WriteFile(a3, Buffer, &lt;span class=&#34;hljs-number&#34;&gt;0x10018&lt;/span&gt;u, &amp;amp;written, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Now it executes StartServiceW() in the case 0x1040 branch that starts the created service.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;input + 8 &amp;#x2192; &lt;code&gt;hService&lt;/code&gt; (&lt;code&gt;SC_HANDLE&lt;/code&gt;)&lt;/li&gt;
+&lt;li&gt;dwNumServiceArgs &amp;#x2192; &lt;code&gt;0&lt;/code&gt; (fixed)&lt;/li&gt;
+&lt;li&gt;lpServiceArgVectors &amp;#x2192; &lt;code&gt;NULL&lt;/code&gt; (fixed)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;You just need to put the handle received as the return value of CreateServiceW() into input + 8 and execute it!&lt;/p&gt;
+&lt;p&gt;This time too, shall we verify step by step first with dynamic analysis?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image25.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;First, let&amp;#x2019;s set a bp near the OpenSCManagerW() function and check.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image26.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;You can confirm that the SC_MANAGER_ALL_ACCESS(0xf003f) that we inserted is in the dwDesiredAccess part!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image27.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;After that, if you look at the output screen, you can confirm that it properly receives the hSCM handle.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image28.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Now, let&amp;#x2019;s set a bp near CreateServiceW() and check.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image29.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;I wrote System in lpServiceStartName.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image30.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;And lpBinaryPathName has the malicious file path that we will register as a service.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image31.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;If you look at the output routine after that, you can see that the service is created and you can also get the service handle value.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image32.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image33.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;If you check the service, you can see that the LPE service was created and the path is also set to the malicious file path.&lt;/p&gt;
+&lt;p&gt;Now, if you only execute it via StartServiceW()? The malicious service will run with SYSTEM privileges!!&lt;/p&gt;
+&lt;h2 id=&#34;Conclusion&#34;&gt;&lt;a href=&#34;#Conclusion&#34; class=&#34;headerlink&#34; title=&#34;Conclusion&#34;&gt;&lt;/a&gt;Conclusion&lt;/h2&gt;&lt;hr&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/18/gongjae/WHS3-bughunting2/EN/image34.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;I hope the explanation of multiple LPE vectors of the Named Pipe vulnerability in this Part 2 helped you!! That due to the permission setting of Named Pipe, there can be a situation where a medium user can act with SYSTEM privileges! As I wrote, I think I wrote it like a very heavy &amp;#x201C;gobongbap&amp;#x201D; and failed at controlling the length&amp;#x2026; but!! I&amp;#x2019;d appreciate it if you read it thinking &amp;#x201C;Wow, LPE is possible in this way too!!&amp;#x201D; &amp;#x1F609; Next time, I will come back with a vulnerability in a Kernel Driver, which is the flower of Windows LPE~ Thank you!&lt;/p&gt;
+&lt;h2 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://learn.microsoft.com/ko-kr/windows/win32/api/winsvc/nf-winsvc-openscmanagerw&#34;&gt;https://learn.microsoft.com/ko-kr/windows/win32/api/winsvc/nf-winsvc-openscmanagerw&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://learn.microsoft.com/ko-kr/windows/win32/services/service-security-and-access-rights&#34;&gt;https://learn.microsoft.com/ko-kr/windows/win32/services/service-security-and-access-rights&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://learn.microsoft.com/ko-kr/windows/win32/api/winsvc/nf-winsvc-createservicew&#34;&gt;https://learn.microsoft.com/ko-kr/windows/win32/api/winsvc/nf-winsvc-createservicew&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://learn.microsoft.com/ko-kr/windows/win32/api/winsvc/nf-winsvc-startservicew&#34;&gt;https://learn.microsoft.com/ko-kr/windows/win32/api/winsvc/nf-winsvc-startservicew&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://learn.microsoft.com/ko-kr/windows/win32/api/shlwapi/nf-shlwapi-shsetvaluew&#34;&gt;https://learn.microsoft.com/ko-kr/windows/win32/api/shlwapi/nf-shlwapi-shsetvaluew&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://learn.microsoft.com/ko-kr/windows/win32/api/winbase/nf-winbase-copyfilew&#34;&gt;https://learn.microsoft.com/ko-kr/windows/win32/api/winbase/nf-winbase-copyfilew&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2026/01/18/gongjae/WHS3-bughunting2/EN/logo_window.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2026/01/18/gongjae/whs3-bughunting2/en/">
+
+  <title>[Research] Windows LPE Bug Hunting, Served by the Team’s Youngest: Part 2 (EN) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2026-01-18 17:00" pubdate>
+      2026년 1월 18일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      2.6k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      52
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] Windows LPE Bug Hunting, Served by the Team’s Youngest: Part 2 (EN)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/logo_window.png" srcset="/img/loading.gif" alt></p>
+<h2 id="Introduction"><a href="#Introduction" class="headerlink" title="Introduction"></a>Introduction</h2><hr>
+<p>Happy New Year, everyone! This is my second research write-up, and I&#x2019;m gongjae, taking charge of Part 2 for the &#x201C;maknaes&#x201D; &#x1F600;</p>
+<p>banda already did an awesome job on <a href="https://hackyboiz.github.io/2025/12/28/banda/WHS3-bughunting/en/">Part 1</a>, so I wondered if there would be anything left for me to explain&#x2026; but I still wanted to share the vulnerabilities I personally discovered and hopefully provide a little help to those who are interested in bug hunting. &#x1F604;</p>
+<p>In this post, we&#x2019;ll look at several LPE vectors that can arise from Named Pipes, and show that &#x201C;wow, vulnerabilities can happen in <em>this</em> way too!&#x201D;</p>
+<h2 id="Target"><a href="#Target" class="headerlink" title="Target"></a>Target</h2><hr>
+<p>The vulnerability I found is a Named Pipe issue in an antivirus product. It has already been patched, and I reported it to ZDI&#x2014;so a CVE has been assigned as well.</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image1.png" srcset="/img/loading.gif" alt></p>
+<p>The cases I&#x2019;ll show today can be categorized into <strong>File-related</strong>, <strong>Registry-related</strong>, and <strong>Service-related</strong> behaviors. Let&#x2019;s see what happens when an IPC interface is exposed through an overly permissive Named Pipe&#x2014;case by case.</p>
+<h2 id="0-Attack-Surface"><a href="#0-Attack-Surface" class="headerlink" title="0. Attack Surface"></a>0. Attack Surface</h2><hr>
+<p>Before we get into the individual vulnerabilities, this is the first thing we must check. If <strong>Everyone</strong> has access, that&#x2019;s often the very first step toward reaching <strong>SYSTEM</strong>. It&#x2019;s very similar to Part 1&#x2014;but <del>it would be a shame not to show it</del> let&#x2019;s go through it together anyway.</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image2.png" srcset="/img/loading.gif" alt></p>
+<p>When you install the target program and check Process Explorer, you can see that there is a process called SASCore64.exe running with SYSTEM privileges! And you can also confirm that there is a Named Pipe in the Handles section.</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image3.png" srcset="/img/loading.gif" alt></p>
+<p>And then, the biggest gatekeeper is the ACL part..!! I checked the permissions using SysinternalsSuite&#x2019;s accesschk and confirmed that Everyone has RW permission~ Therefore, it means that a medium user can access a process running with SYSTEM privileges without any special permissions, right!</p>
+<p>So now, let&#x2019;s extract the SASCore64.exe binary, open it with IDA, and then check if there are Named Pipe-related APIs in Imports.</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image4.png" srcset="/img/loading.gif" alt></p>
+<p>Let&#x2019;s go to the sub_140013F60 function that has the CreateNamedPipe API.</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image5.png" srcset="/img/loading.gif" alt></p>
+<p>If you look at the code, you can see that it creates a named pipe through CreateNamedPipeA and connects. The key here is that it configures SECURITY_ATTRIBUTES for the Named Pipe, and all local users can have full access! Let&#x2019;s go to the StartAddress function.</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image6.png" srcset="/img/loading.gif" alt></p>
+<p>If you look at the code, you can see that it creates a named pipe through CreateNamedPipeA and connects. The key here is that it configures SECURITY_ATTRIBUTES for the Named Pipe, and all local users can have full access! Let&#x2019;s go to the StartAddress function.</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image7.png" srcset="/img/loading.gif" alt></p>
+<p>We can put our input value into v6, and it is divided into cases so we can use various functions! However, in order to use the functions, you must first obtain a Token through the 0x103A branch below.</p>
+<pre><code class="hljs cpp"><span class="hljs-keyword">case</span> <span class="hljs-number">0x103A</span>:
+{
+  <span class="hljs-comment">// ... (input/time validation and other auxiliary logic)</span>
+
+  <span class="hljs-keyword">if</span> (ImpersonateNamedPipeClient(a3))
+  {
+    <span class="hljs-comment">// ... (store registry context in TLS, etc.)</span>
+
+    HANDLE hProc = OpenProcess(PROCESS_ALL_ACCESS, FALSE, *(DWORD *)(input + <span class="hljs-number">8</span>));
+    <span class="hljs-keyword">if</span> (hProc)
+    {
+      HANDLE hToken = <span class="hljs-literal">NULL</span>;
+      <span class="hljs-keyword">if</span> (OpenProcessToken(hProc, TOKEN_ALL_ACCESS, &amp;hToken) &amp;&amp; hToken)
+      {
+        <span class="hljs-comment">// ... (store the token into the internal session/table)</span>
+        CloseHandle(hToken);
+      }
+      CloseHandle(hProc);
+    }
+
+    RevertToSelf();
+    FileSize = <span class="hljs-number">1</span>; <span class="hljs-comment">// session established</span>
+  }
+
+  <span class="hljs-comment">// ... (build response)</span>
+  WriteFile(a3, Buffer, <span class="hljs-number">0x10018</span>u, &amp;written, <span class="hljs-number">0</span>);
+  <span class="hljs-keyword">return</span> <span class="hljs-number">1</span>;
+}
+</code></pre>
+<ul>
+<li>If ImpersonateNamedPipeClient and OpenProcessToken(&#x2026;Pid&#x2026;) succeed, a new <strong>node + token</strong> is stored in the internal list (a1 + 0x68).</li>
+<li>Since the token value is returned at offset 0x04 among the 0x10018-byte response, you can store this Token and use it.</li>
+</ul>
+<p>After obtaining a token in this way, you can use other functions, and these functions are the vulnerability vectors I will talk about.</p>
+<h2 id="1-LPE-using-File-related-APIs"><a href="#1-LPE-using-File-related-APIs" class="headerlink" title="1. LPE using File-related APIs"></a>1. LPE using File-related APIs</h2><hr>
+<p>First, shall we look at File-related APIs? Windows has various APIs, and most of them verify them so that they can be used safely. The important part is that the user should not be able to touch them.. But what if the user can manipulate important arguments?</p>
+<h3 id="1-1-CopyFileW"><a href="#1-1-CopyFileW" class="headerlink" title="1-1. CopyFileW()"></a>1-1. CopyFileW()</h3><p>If you look at MS&#x2019;s <code>CopyFileW()</code> function, you can see that it copies an existing file to a new file.</p>
+<pre><code class="hljs cpp"><span class="hljs-function">BOOL <span class="hljs-title">CopyFileW</span><span class="hljs-params">(</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in] LPCWSTR lpExistingFileName,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in] LPCWSTR lpNewFileName,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in] BOOL    bFailIfExists</span></span>
+<span class="hljs-function"><span class="hljs-params">)</span></span>;</code></pre>
+<p>Then, if you can change the file at the desired path into a malicious file with SYSTEM privileges, privilege escalation would happen, right?</p>
+<pre><code class="hljs cpp"><span class="hljs-keyword">case</span> <span class="hljs-number">0x100D</span>:
+{
+  <span class="hljs-comment">// ...</span>
+  BOOL ok = CopyFileW(
+      (LPCWSTR)(input + <span class="hljs-number">8</span>),       <span class="hljs-comment">// attacker-controlled: src</span>
+      (LPCWSTR)(input + <span class="hljs-number">0x1048</span>),  <span class="hljs-comment">// attacker-controlled: dst</span>
+      *(DWORD *)(input + <span class="hljs-number">0x2088</span>)  <span class="hljs-comment">// attacker-controlled: bFailIfExists</span>
+  );
+
+  DWORD err = GetLastError();
+  <span class="hljs-comment">// ... (put ok/err into the response Buffer and return)</span>
+  WriteFile(a3, Buffer, <span class="hljs-number">0x10018</span>u, &amp;written, <span class="hljs-number">0</span>);
+  <span class="hljs-keyword">return</span> <span class="hljs-number">1</span>;
+}
+</code></pre>
+<p>After obtaining the Token, if you branch to case 0x100D, you can put the file path to copy into input+8, and the file path to overwrite into input+0x1048, and call the API!</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image8.png" srcset="/img/loading.gif" alt></p>
+<p>Why is this LPE..? There are files that we cannot change or delete with normal privileges, right. And if there is a file that runs every few seconds? If you change this file into a malicious file that can run cmd with SYSTEM privileges, then literally a SYSTEM-privileged cmd will open every few seconds!! That&#x2019;s the principle.&#x1F47D;</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image9.png" srcset="/img/loading.gif" alt></p>
+<p>Shall we verify this directly with Process Monitor? This is the Chrome updater process, it runs every few seconds, and its privilege is high so it&#x2019;s impossible to access with normal privileges. But if you change it into a malicious file using the vulnerability above!?</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image10.png" srcset="/img/loading.gif" alt></p>
+<p>You can confirm that a SYSTEM cmd opens like this! &#x1F44F;</p>
+<p>Shall we confirm a bit more clearly through dynamic analysis?</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/imag11.png" srcset="/img/loading.gif" alt></p>
+<p>After attaching to the process with WinDbg, get the base address with the lm command, and then set the base in IDA and set a bp near the CopyFileW() function to check.</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image12.png" srcset="/img/loading.gif" alt></p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image13.png" srcset="/img/loading.gif" alt></p>
+<p>As follows, Dst contains the updater path mentioned earlier.</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image14.png" srcset="/img/loading.gif" alt></p>
+<p>And you can see that the source contains the file path to be copied as-is. This fake <code>updater.exe</code> is a malicious file that launches <code>cmd</code> with a SYSTEM token, and once it is copied, the LPE is successfully achieved.</p>
+<h2 id="2-LPE-using-Registry-related-APIs"><a href="#2-LPE-using-Registry-related-APIs" class="headerlink" title="2. LPE using Registry-related APIs"></a>2. LPE using Registry-related APIs</h2><hr>
+<p>Now, shall we look at Registry-related APIs!</p>
+<h3 id="2-1-SHSetValueW"><a href="#2-1-SHSetValueW" class="headerlink" title="2-1. SHSetValueW()"></a>2-1. SHSetValueW()</h3><pre><code class="hljs cpp"><span class="hljs-function">LSTATUS <span class="hljs-title">SHSetValueW</span><span class="hljs-params">(</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in]           HKEY    hkey,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in, optional] LPCWSTR pszSubKey,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in, optional] LPCWSTR pszValue,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in]           DWORD   dwType,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in, optional] LPCVOID pvData,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in]           DWORD   cbData</span></span>
+<span class="hljs-function"><span class="hljs-params">)</span></span>;</code></pre>
+<p>The <code>SHSetValueW()</code> function sets the value of a registry key. If you look at the argument setup, you can set SubKey and ValueName. What this means is, if you can manipulate these arguments, you can arbitrarily change the Value of the registry at the desired path!! Let&#x2019;s confirm through the code directly.</p>
+<pre><code class="hljs cpp"><span class="hljs-keyword">case</span> <span class="hljs-number">0x102C</span>:
+{
+  <span class="hljs-keyword">const</span> WCHAR *SubKey    = (<span class="hljs-keyword">const</span> WCHAR *)(input + <span class="hljs-number">16</span>);    <span class="hljs-comment">// attacker-controlled</span>
+  <span class="hljs-keyword">const</span> WCHAR *ValueName = (<span class="hljs-keyword">const</span> WCHAR *)(input + <span class="hljs-number">4176</span>);  <span class="hljs-comment">// attacker-controlled</span>
+  HKEY RootKey           = *(HKEY *)(input + <span class="hljs-number">8</span>);           <span class="hljs-comment">// attacker-controlled</span>
+  DWORD Type             = *(DWORD *)(input + <span class="hljs-number">0xA094</span>);     <span class="hljs-comment">// attacker-controlled</span>
+  LPCVOID Data           = (LPCVOID)(input + <span class="hljs-number">0x2090</span>);      <span class="hljs-comment">// attacker-controlled</span>
+  DWORD DataSize         = *(DWORD *)(input + <span class="hljs-number">0xA090</span>);     <span class="hljs-comment">// attacker-controlled</span>
+
+  <span class="hljs-comment">// ... (HKCR wrapping / HKCU TLS substitution / table handle logic, etc.)</span>
+
+  LSTATUS st = SHSetValueW(
+      RootKey,
+      SubKey,
+      ValueName,
+      Type,
+      Data,
+      DataSize
+  );
+
+  DWORD err = GetLastError();
+  <span class="hljs-comment">// ... (put st/err into the response Buffer and return)</span>
+  WriteFile(a3, Buffer, <span class="hljs-number">0x10018</span>u, &amp;written, <span class="hljs-number">0</span>);
+  <span class="hljs-keyword">return</span> <span class="hljs-number">1</span>;
+}
+</code></pre>
+<p>If you go to case 0x102C, in the end, you can set the desired registry value through the SHSetValueW function.</p>
+<pre><code class="hljs cpp">offset +<span class="hljs-number">0x0008</span> &#x2192; <span class="hljs-function">HKEY <span class="hljs-title">Root</span> <span class="hljs-params">(e.g., HKEY_LOCAL_MACHINE)</span></span>
+offset +0x0010 &#x2192; SubKey
+offset +<span class="hljs-number">0x1050</span> &#x2192; ValueName
+offset +<span class="hljs-number">0xA068</span> &#x2192; Type (e.g., REG_SZ)
+offset +<span class="hljs-number">0x2090</span> &#x2192; Buffer (value to <span class="hljs-built_in">set</span>)
+offset +<span class="hljs-number">0xA064</span> &#x2192; Buffer size</code></pre>
+<p>The input structure is as follows.</p>
+<pre><code class="hljs cpp"><span class="hljs-keyword">if</span> (RootKey == HKEY_CLASSES_ROOT)
+{
+  <span class="hljs-comment">// wrap into an internal class</span>
+  CClassesRoot ctx;
+  ctx.h1 = TlsGetValue(...);
+  ctx.h2 = TlsGetValue(...);
+  SHSetValueW(ctx.h1 <span class="hljs-keyword">or</span> h2, SubKey, ValueName, Type, Data, Size);
+}
+<span class="hljs-keyword">else</span> <span class="hljs-keyword">if</span> (RootKey &amp; <span class="hljs-number">0x80000000</span>)  <span class="hljs-comment">// e.g., HKEY_LOCAL_MACHINE, HKEY_USERS, etc.</span>
+{
+  keyctx = get_handle_from_table(RootKey);
+  SHSetValueW(keyctx, SubKey, ValueName, Type, Data, Size);
+}
+<span class="hljs-keyword">else</span>
+{
+  <span class="hljs-comment">// if it&apos;s a normal HKEY_CURRENT_USER, substitute it with a TLS-based key</span>
+  <span class="hljs-keyword">if</span> (RootKey == HKEY_CURRENT_USER)
+    RootKey = TlsGetValue(...);
+
+  SHSetValueW(RootKey, SubKey, ValueName, Type, Data, Size);
+}</code></pre>
+<p>The core vulnerable logic is like above; in the end, the arbitrary HKEY + SubKey + Value + Data provided by the user goes into SHSetValueW&#x2019;s arguments &#xADF8;&#xB300;&#xB85C; under SYSTEM privileges.</p>
+<p>Then this time too, shall we find a process that runs with SYSTEM privileges and has ImagePath in the Registry in the same way?</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image15.png" srcset="/img/loading.gif" alt></p>
+<p>I selected the MicrosoftEdgeElevationService service as the target and proceeded. If you check through Process Monitor, you can confirm that when you turn on Edge, the service is automatically loaded with SYSTEM privileges.</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image16.png" srcset="/img/loading.gif" alt></p>
+<p>After that, let&#x2019;s check in Services and Registry Editor where this service is executed from.</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image17.png" srcset="/img/loading.gif" alt></p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image18.png" srcset="/img/loading.gif" alt></p>
+<p>As in the pictures above, you can confirm that it is MicroSoftEdgeElevationService, and you can confirm that ImagePath is <code>&quot;C:\Program Files (x86)\Microsoft\Edge\Application\xxx.xxx.xxx\elevation_service.exe&#x201D;</code>. Now, after triggering the vulnerability, let&#x2019;s check again.</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image19.png" srcset="/img/loading.gif" alt></p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image20.png" srcset="/img/loading.gif" alt></p>
+<p>You can confirm that the service&#x2019;s Path and the registry&#x2019;s ImagePath have changed like this!! Now, if you run MicrosoftEdge, a cmd with SYSTEM privileges will open!</p>
+<p>We can&#x2019;t skip dynamic analysis this time either, right?</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image21.png" srcset="/img/loading.gif" alt></p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image22.png" srcset="/img/loading.gif" alt></p>
+<p>If you look at the Value part, you can confirm that ImagePath is included.</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image23.png" srcset="/img/loading.gif" alt></p>
+<p>If you look at the SubKey part, you can confirm that the registry path mentioned earlier is included.</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image24.png" srcset="/img/loading.gif" alt></p>
+<p>Finally, you can see that the key contains 0x80000002 meaning HKEY_LOCAL_MACHINE. If you use this function, you can change the high-path registry ImagePath that I want into the value I want!</p>
+<h2 id="3-LPE-using-Service-related-APIs"><a href="#3-LPE-using-Service-related-APIs" class="headerlink" title="3. LPE using Service-related APIs"></a>3. LPE using Service-related APIs</h2><hr>
+<p>Then lastly, shall we look at Service-related APIs! This time, you can achieve LPE using three APIs, so let&#x2019;s look at them one by one.</p>
+<h3 id="3-1-OpenSCManagerW"><a href="#3-1-OpenSCManagerW" class="headerlink" title="3.1 OpenSCManagerW()"></a>3.1 OpenSCManagerW()</h3><pre><code class="hljs cpp"><span class="hljs-function">SC_HANDLE <span class="hljs-title">OpenSCManagerW</span><span class="hljs-params">(</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in, optional] LPCWSTR lpMachineName,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in, optional] LPCWSTR lpDatabaseName,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in]           DWORD   dwDesiredAccess</span></span>
+<span class="hljs-function"><span class="hljs-params">)</span></span>;</code></pre>
+<p>First is the <code>OpenSCManagerW()</code> function. The CreateService or StartService that will come later are pretty intuitive about what they do, but this <code>OpenSCManagerW()</code> API must be executed first!</p>
+<p>Because services are objects registered in the &#x201C;SCM database,&#x201D; you need to have a handle (context) to that DB first for subsequent tasks (create/modify/start). You can say this API is the one that opens and returns that handle.</p>
+<pre><code class="hljs cpp"><span class="hljs-keyword">case</span> <span class="hljs-number">0x103B</span>:
+{
+  <span class="hljs-keyword">const</span> WCHAR *Machine  = (<span class="hljs-keyword">const</span> WCHAR *)(input + <span class="hljs-number">8</span>);      <span class="hljs-comment">// attacker-controlled (optional)</span>
+  <span class="hljs-keyword">const</span> WCHAR *Database = (<span class="hljs-keyword">const</span> WCHAR *)(input + <span class="hljs-number">0x1048</span>); <span class="hljs-comment">// attacker-controlled (optional)</span>
+  DWORD Access          = *(DWORD *)(input + <span class="hljs-number">0x2088</span>);      <span class="hljs-comment">// attacker-controlled</span>
+
+  <span class="hljs-comment">// ... (convert empty string to NULL, etc.)</span>
+
+  SC_HANDLE hScm = OpenSCManagerW(Machine, Database, Access);
+
+  DWORD err = GetLastError();
+  <span class="hljs-comment">// ... (return hScm/err in the response)</span>
+  WriteFile(a3, Buffer, <span class="hljs-number">0x10018</span>u, &amp;written, <span class="hljs-number">0</span>);
+  <span class="hljs-keyword">return</span> <span class="hljs-number">1</span>;
+}</code></pre>
+<p>Through case 0x103B branch, you can call the API and obtain the handle:</p>
+<ul>
+<li>input + 8 &#x2192; lpMachineName</li>
+<li>input + 0x1048 &#x2192; lpDatabaseName</li>
+<li>input + 0x2088 &#x2192; dwDesiredAccess</li>
+</ul>
+<p>The important thing here is dwDesiredAccess, it must be set to SC_MANAGER_ALL_ACCESS(0xF003F)!</p>
+<h3 id="3-2-CreateServiceW"><a href="#3-2-CreateServiceW" class="headerlink" title="3.2 CreateServiceW()"></a>3.2 <strong>CreateServiceW()</strong></h3><pre><code class="hljs cpp"><span class="hljs-function">SC_HANDLE <span class="hljs-title">CreateServiceW</span><span class="hljs-params">(</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in]            SC_HANDLE hSCManager,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in]            LPCWSTR   lpServiceName,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in, optional]  LPCWSTR   lpDisplayName,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in]            DWORD     dwDesiredAccess,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in]            DWORD     dwServiceType,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in]            DWORD     dwStartType,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in]            DWORD     dwErrorControl,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in, optional]  LPCWSTR   lpBinaryPathName,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in, optional]  LPCWSTR   lpLoadOrderGroup,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [out, optional] LPDWORD   lpdwTagId,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in, optional]  LPCWSTR   lpDependencies,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in, optional]  LPCWSTR   lpServiceStartName,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in, optional]  LPCWSTR   lpPassword</span></span>
+<span class="hljs-function"><span class="hljs-params">)</span></span>;</code></pre>
+<p>Then now that we got the handle, shall we create a Service?</p>
+<pre><code class="hljs cpp"><span class="hljs-keyword">case</span> <span class="hljs-number">0x103F</span>:
+{
+  SC_HANDLE hScm = *(SC_HANDLE *)(input + <span class="hljs-number">8</span>);
+
+  <span class="hljs-keyword">const</span> WCHAR *SvcName    = (<span class="hljs-keyword">const</span> WCHAR *)(input + <span class="hljs-number">16</span>);     <span class="hljs-comment">// attacker-controlled</span>
+  <span class="hljs-keyword">const</span> WCHAR *DispName   = (<span class="hljs-keyword">const</span> WCHAR *)(input + <span class="hljs-number">4176</span>);   <span class="hljs-comment">// attacker-controlled</span>
+  <span class="hljs-keyword">const</span> WCHAR *BinPath    = (<span class="hljs-keyword">const</span> WCHAR *)(input + <span class="hljs-number">8352</span>);   <span class="hljs-comment">// attacker-controlled</span>
+
+  DWORD DesiredAccess     = *(DWORD *)(input + <span class="hljs-number">0x2090</span>);      <span class="hljs-comment">// attacker-controlled</span>
+  DWORD ServiceType       = *(DWORD *)(input + <span class="hljs-number">0x2094</span>);      <span class="hljs-comment">// attacker-controlled</span>
+  DWORD StartType         = *(DWORD *)(input + <span class="hljs-number">0x2098</span>);      <span class="hljs-comment">// attacker-controlled</span>
+  DWORD ErrorControl      = *(DWORD *)(input + <span class="hljs-number">0x209C</span>);      <span class="hljs-comment">// attacker-controlled</span>
+
+  <span class="hljs-comment">// ... (normalize Group/Deps/StartName/Password pointers and handle NULL)</span>
+
+  SC_HANDLE hSvc = CreateServiceW(
+      hScm,
+      SvcName,
+      DispName,
+      DesiredAccess,
+      ServiceType,
+      StartType,
+      ErrorControl,
+      BinPath,
+      <span class="hljs-comment">/* ... */</span> <span class="hljs-number">0</span>, <span class="hljs-number">0</span>, <span class="hljs-number">0</span>, <span class="hljs-number">0</span>, <span class="hljs-number">0</span>
+  );
+
+  DWORD err = GetLastError();
+  <span class="hljs-comment">// ... (return hSvc/err in the response)</span>
+  WriteFile(a3, Buffer, <span class="hljs-number">0x10018</span>u, &amp;written, <span class="hljs-number">0</span>);
+  <span class="hljs-keyword">return</span> <span class="hljs-number">1</span>;
+}</code></pre>
+<p>In case 0x103F branch, you can directly register an arbitrary file as a service via CreateServiceW()!</p>
+<ul>
+<li>input + 0x08 &#x2192; <code>hSCManager</code><ul>
+<li><code>SC_HANDLE</code> (SCM handle obtained from the previous <code>0x103B</code> call)</li>
+</ul>
+</li>
+<li>input + 0x10 &#x2192; <code>lpServiceName</code><ul>
+<li><code>LPCWSTR</code> internal service name (e.g., L&#x201D;LPE&#x201D;)</li>
+</ul>
+</li>
+<li>input + 0x1050 &#x2192; <code>lpDisplayName</code><ul>
+<li><code>LPCWSTR</code> service name shown to the user (e.g., L&#x201D;My Payload Service&#x201D;)</li>
+</ul>
+</li>
+<li>input + 0x2090 &#x2192; <code>dwDesiredAccess</code><ul>
+<li><code>DWORD</code> access right flags (e.g., <code>SERVICE_ALL_ACCESS</code> = 0xF01FF)</li>
+</ul>
+</li>
+<li>input + 0x2094 &#x2192; <code>dwServiceType</code><ul>
+<li><code>DWORD</code> service type (e.g., <code>SERVICE_WIN32_OWN_PROCESS</code> = 0x10)</li>
+</ul>
+</li>
+<li>input + 0x2098 &#x2192; <code>dwStartType</code><ul>
+<li><code>DWORD</code> start type (e.g., <code>SERVICE_DEMAND_START</code> = 0x3)</li>
+</ul>
+</li>
+<li>input + 0x209C &#x2192; <code>dwErrorControl</code><ul>
+<li><code>DWORD</code> error control (e.g., <code>SERVICE_ERROR_NORMAL</code> = 0x1)</li>
+</ul>
+</li>
+<li>input + 0x20A0 &#x2192; <code>lpBinaryPathName</code><ul>
+<li><code>LPCWSTR</code> executable file path (e.g., L&#x201D;C:\Temp\poc.exe&#x201D;)</li>
+</ul>
+</li>
+<li>input + 0x30E0 &#x2192; <code>lpLoadOrderGroup</code><ul>
+<li><code>LPCWSTR</code> load order group (e.g., L&#x201D;Base&#x201D;)</li>
+</ul>
+</li>
+<li>input + 0x4120 &#x2192; <code>lpDependencies</code><ul>
+<li><code>LPCWSTR</code> dependency service list</li>
+</ul>
+</li>
+<li>input + 0x5160 &#x2192; <code>lpServiceStartName</code><ul>
+<li><code>LPCWSTR</code> logon account (e.g., L&#x201D;NT AUTHORITY\System&#x201D;)</li>
+</ul>
+</li>
+<li>input + 0x61A0 &#x2192; <code>lpPassword</code><ul>
+<li><code>LPCWSTR</code> password for that account (NULL if none)</li>
+</ul>
+</li>
+</ul>
+<p>But you can&#x2019;t say it&#x2019;s perfect LPE just by creating it, right? There is also an API that runs it.</p>
+<h3 id="3-3-StartServiceW"><a href="#3-3-StartServiceW" class="headerlink" title="3.3 StartServiceW()"></a>3.3 <strong>StartServiceW()</strong></h3><pre><code class="hljs cpp"><span class="hljs-function">BOOL <span class="hljs-title">StartServiceW</span><span class="hljs-params">(</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in]           SC_HANDLE hService,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in]           DWORD     dwNumServiceArgs,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in, optional] LPCWSTR   *lpServiceArgVectors</span></span>
+<span class="hljs-function"><span class="hljs-params">)</span></span>;</code></pre>
+<pre><code class="hljs cpp"><span class="hljs-keyword">case</span> <span class="hljs-number">0x1040</span>:
+{
+  SC_HANDLE hSvc = *(SC_HANDLE *)(input + <span class="hljs-number">8</span>);  <span class="hljs-comment">// attacker-controlled (handle from prior call)</span>
+
+  BOOL ok = StartServiceW(hSvc, <span class="hljs-number">0</span>, <span class="hljs-literal">NULL</span>);
+
+  DWORD err = GetLastError();
+  <span class="hljs-comment">// ... (put ok/err into the response Buffer and return)</span>
+  WriteFile(a3, Buffer, <span class="hljs-number">0x10018</span>u, &amp;written, <span class="hljs-number">0</span>);
+  <span class="hljs-keyword">return</span> <span class="hljs-number">1</span>;
+}</code></pre>
+<p>Now it executes StartServiceW() in the case 0x1040 branch that starts the created service.</p>
+<ul>
+<li>input + 8 &#x2192; <code>hService</code> (<code>SC_HANDLE</code>)</li>
+<li>dwNumServiceArgs &#x2192; <code>0</code> (fixed)</li>
+<li>lpServiceArgVectors &#x2192; <code>NULL</code> (fixed)</li>
+</ul>
+<p>You just need to put the handle received as the return value of CreateServiceW() into input + 8 and execute it!</p>
+<p>This time too, shall we verify step by step first with dynamic analysis?</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image25.png" srcset="/img/loading.gif" alt></p>
+<p>First, let&#x2019;s set a bp near the OpenSCManagerW() function and check.</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image26.png" srcset="/img/loading.gif" alt></p>
+<p>You can confirm that the SC_MANAGER_ALL_ACCESS(0xf003f) that we inserted is in the dwDesiredAccess part!</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image27.png" srcset="/img/loading.gif" alt></p>
+<p>After that, if you look at the output screen, you can confirm that it properly receives the hSCM handle.</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image28.png" srcset="/img/loading.gif" alt></p>
+<p>Now, let&#x2019;s set a bp near CreateServiceW() and check.</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image29.png" srcset="/img/loading.gif" alt></p>
+<p>I wrote System in lpServiceStartName.</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image30.png" srcset="/img/loading.gif" alt></p>
+<p>And lpBinaryPathName has the malicious file path that we will register as a service.</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image31.png" srcset="/img/loading.gif" alt></p>
+<p>If you look at the output routine after that, you can see that the service is created and you can also get the service handle value.</p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image32.png" srcset="/img/loading.gif" alt></p>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image33.png" srcset="/img/loading.gif" alt></p>
+<p>If you check the service, you can see that the LPE service was created and the path is also set to the malicious file path.</p>
+<p>Now, if you only execute it via StartServiceW()? The malicious service will run with SYSTEM privileges!!</p>
+<h2 id="Conclusion"><a href="#Conclusion" class="headerlink" title="Conclusion"></a>Conclusion</h2><hr>
+<p><img src="/2026/01/18/gongjae/WHS3-bughunting2/EN/image34.png" srcset="/img/loading.gif" alt></p>
+<p>I hope the explanation of multiple LPE vectors of the Named Pipe vulnerability in this Part 2 helped you!! That due to the permission setting of Named Pipe, there can be a situation where a medium user can act with SYSTEM privileges! As I wrote, I think I wrote it like a very heavy &#x201C;gobongbap&#x201D; and failed at controlling the length&#x2026; but!! I&#x2019;d appreciate it if you read it thinking &#x201C;Wow, LPE is possible in this way too!!&#x201D; &#x1F609; Next time, I will come back with a vulnerability in a Kernel Driver, which is the flower of Windows LPE~ Thank you!</p>
+<h2 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a>Reference</h2><ul>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://learn.microsoft.com/ko-kr/windows/win32/api/winsvc/nf-winsvc-openscmanagerw">https://learn.microsoft.com/ko-kr/windows/win32/api/winsvc/nf-winsvc-openscmanagerw</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://learn.microsoft.com/ko-kr/windows/win32/services/service-security-and-access-rights">https://learn.microsoft.com/ko-kr/windows/win32/services/service-security-and-access-rights</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://learn.microsoft.com/ko-kr/windows/win32/api/winsvc/nf-winsvc-createservicew">https://learn.microsoft.com/ko-kr/windows/win32/api/winsvc/nf-winsvc-createservicew</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://learn.microsoft.com/ko-kr/windows/win32/api/winsvc/nf-winsvc-startservicew">https://learn.microsoft.com/ko-kr/windows/win32/api/winsvc/nf-winsvc-startservicew</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://learn.microsoft.com/ko-kr/windows/win32/api/shlwapi/nf-shlwapi-shsetvaluew">https://learn.microsoft.com/ko-kr/windows/win32/api/shlwapi/nf-shlwapi-shsetvaluew</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://learn.microsoft.com/ko-kr/windows/win32/api/winbase/nf-winbase-copyfilew">https://learn.microsoft.com/ko-kr/windows/win32/api/winbase/nf-winbase-copyfilew</a></li>
+</ul>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/LPE/">LPE</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Windows/">Windows</a>
+                  
+                  <a class="hover-with-bg" href="/tags/BugHunting/">BugHunting</a>
+                  
+                  <a class="hover-with-bg" href="/tags/KernelDriver/">KernelDriver</a>
+                  
+                  <a class="hover-with-bg" href="/tags/NamedPipe/">NamedPipe</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_gongjae.jpg" srcset="/img/loading.gif" alt="gongjae">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">gongjae</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/gongjae">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2026/01/18/gongjae/WHS3-bughunting2/KR/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[Research] 해키보이즈 막내들이 말아주는 Windows LPE 버그헌팅 체험기 Part 2 (KR)</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2026/01/17/millet/cve-2025-57833/">
+                    <span class="hidden-mobile">[하루한줄] CVE-2025-57833: Django ORM에서 발생한 SQL Injection 취약점</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2026/01/18/gongjae/WHS3-bughunting2/EN/';
+        this.page.identifier = '/2026/01/18/gongjae/WHS3-bughunting2/EN/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] Windows LPE Bug Hunting, Served by the Team’s Youngest: Part 2 (EN)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
