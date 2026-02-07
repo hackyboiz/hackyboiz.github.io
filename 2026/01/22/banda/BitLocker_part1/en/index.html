@@ -1,0 +1,1102 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;h1 id=&#34;1-Introduction&#34;&gt;&lt;a href=&#34;#1-Introduction&#34; class=&#34;headerlink&#34; title=&#34;1. Introduction&#34;&gt;&lt;/a&gt;1. Introduction&lt;/h1&gt;&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/logo.jpg&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;BitLocker is a disk encryption feature built into the Windows operating system designed to protect data by preventing unauthorized access when a device is lost, stolen, or accessed offline. BitLocker uses a combination of XTS-AES and TPM to provide strong key protection and data encryption; however, it does not provide integrity protection for the ciphertext itself. Today, we will understand the AES-XTS mechanism and examine the &lt;a href=&#34;https://dfir.ru/2025/01/20/cve-2025-21210-aka-crashxts-a-practical-randomization-attack-against-bitlocker/&#34;&gt;BitLocker CrashXTS&lt;/a&gt; method, a vulnerability that can be discovered through this mechanism.&lt;/p&gt;
+&lt;h3 id=&#34;1-1-Understanding-the-Boot-System&#34;&gt;&lt;a href=&#34;#1-1-Understanding-the-Boot-System&#34; class=&#34;headerlink&#34; title=&#34;1.1 Understanding the Boot System&#34;&gt;&lt;/a&gt;1.1 Understanding the Boot System&lt;/h3&gt;&lt;p&gt;The UEFI firmware reads the signed &lt;code&gt;bootmgfw.efi&lt;/code&gt; and BCD (Boot Configuration Data) from the EFI System Partition (ESP). This section is composed of plaintext. Secure Boot validates this boot application and the chain&amp;#x2019;s DBX to establish a root of trust. While the ESP boot components are read, if trust verification fails, the VMK unseal is denied, and the system moves to the recovery path.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image1.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Does the encrypted area only contain user files? No. BitLocker describes &lt;strong&gt;Key Protectors&lt;/strong&gt; and the key hierarchy in the volume metadata. Specifically, it uses a two-layer key design consisting of the &lt;strong&gt;VMK (Volume Master Key)&lt;/strong&gt; and &lt;strong&gt;FVEK (Full Volume Encryption Key)&lt;/strong&gt;. The key actually used for block encryption/decryption is the FVEK.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image2.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;The screenshot shows the output of the &lt;code&gt;manage-bde -protectors -get C:&lt;/code&gt; command, which lists the key protectors registered for the C: volume. The &amp;#x201C;numerical password&amp;#x201D; shown here is one type of protector used to unlock the VMK; it serves as a recovery mechanism when TPM-based unsealing fails in the normal boot path or when the system falls back into recovery mode. In other words, a BitLocker volume does not only contain encrypted data: it also stores, as part of its metadata, information about how the VMK can be recovered and the key hierarchy (VMK &amp;#x2192; FVEK), and ultimately relies on the FVEK to perform sector-level encryption and decryption.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image17.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;TPM&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;The TPM is a dTPM (discrete TPM) hardware chip with a secure storage repository that isolates keys and counters inside the chip. It allows secret keys to be released based on boot reliability measurements (PCR - Platform Configuration Registers) to verify if the system has &amp;#x201C;booted in a trusted state.&amp;#x201D;&lt;/p&gt;
+&lt;p&gt;BitLocker seals the VMK to specific PCR values. By default, it uses PCR 7 (Secure Boot state, UEFI variables, Boot Manager code) and PCR 11 (BitLocker access control).&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;If the boot chain is normal, the TPM allows the VMK to be &lt;strong&gt;unsealed&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;If the boot chain has been tampered with, the PCR values change, the unseal fails, and the system moves to the recovery screen.  &lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;VMK (Volume Master Key)&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;The VMK is the parent key that protects the FVEK. If the VMK cannot be legitimately restored, the FVEK cannot be unlocked, and thus the sector plaintext cannot be accessed. The VMK can be wrapped by multiple protectors:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;TPM Protector:&lt;/strong&gt; Bound to TPM PCRs.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Recovery Password Protector:&lt;/strong&gt; A 48-digit numeric recovery key.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Password Protector:&lt;/strong&gt; User password.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;TPM+PIN Protector:&lt;/strong&gt; Combination of TPM and PIN.  &lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;FVEK (Full Volume Encryption Key)&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;The FVEK handles the actual encryption of disk sectors. The targets encrypted by the FVEK include the kernel, drivers, software, and user data. The FVEK is an AES-256 (or AES-128) key. In XTS mode, 512 bits (or 256 bits) are actually used. Half is used for data encryption (K1), and the other half is used for tweak generation (K2)!  &lt;/p&gt;
+&lt;h3 id=&#34;1-2-BitLocker-Filter-Driver-Operation-Principle&#34;&gt;&lt;a href=&#34;#1-2-BitLocker-Filter-Driver-Operation-Principle&#34; class=&#34;headerlink&#34; title=&#34;1.2 BitLocker Filter Driver Operation Principle&#34;&gt;&lt;/a&gt;1.2 BitLocker Filter Driver Operation Principle&lt;/h3&gt;&lt;p&gt;When the kernel loads, the BitLocker filter driver, &lt;code&gt;fvevol.sys&lt;/code&gt;, intercepts disk I/O to perform encryption and decryption. Let&amp;#x2019;s see how this is performed!&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;When the computer boots, &lt;code&gt;winload.efi&lt;/code&gt; loads the kernel and &lt;code&gt;BOOT_START&lt;/code&gt; (0) drivers, and &lt;code&gt;fvevol.sys&lt;/code&gt; is loaded together at this stage. (This is before NTFS mounts the system volume).&lt;/li&gt;
+&lt;li&gt;In the early boot stage, before keys are ready and TPM PCR 7/11 verification hasn&amp;#x2019;t occurred (VMK/FVEK not yet ready), &lt;code&gt;fvevol.sys&lt;/code&gt; operates in a &lt;strong&gt;locked&lt;/strong&gt; state. At this stage, the boot environment (like &lt;code&gt;bootmgr&lt;/code&gt; or &lt;code&gt;winload&lt;/code&gt;) reads the FVE-FS (metadata), performs TPM verification, unseals the VMK, and then decrypts the FVEK.&lt;/li&gt;
+&lt;li&gt;Only when the VMK is unsealed and the FVEK is decrypted does &lt;code&gt;fvevol&lt;/code&gt; switch to an &lt;strong&gt;unlocked&lt;/strong&gt; state. From this point on, all data I/O for that volume is transparently encrypted and decrypted via the respective FVEK.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;In other words, the flow is: &lt;code&gt;App/Service&lt;/code&gt; &amp;#x2192; &lt;code&gt;NTFS (ReFS)&lt;/code&gt; &amp;#x2192; &lt;code&gt;I/O Manager&lt;/code&gt; &amp;#x2192; &lt;code&gt;[fvevol]&lt;/code&gt; &amp;#x2192; &lt;code&gt;volmgr/Storage Class&lt;/code&gt; &amp;#x2192; &lt;code&gt;Port/Miniport (NVMe/SATA)&lt;/code&gt; &amp;#x2192; &lt;code&gt;Disk&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;BitLocker&amp;#x2019;s core encryption method, &lt;strong&gt;XTS-AES&lt;/strong&gt;, encrypts data in disk sector units. It is designed so that each block applies a &lt;strong&gt;tweak value (based on sector/offset)&lt;/strong&gt;, ensuring that identical plaintext generates different ciphertext depending on its location.&lt;/p&gt;
+&lt;p&gt;This design was introduced to mitigate the &lt;strong&gt;malleability&lt;/strong&gt; problem found in CTR/CBC modes, where an attacker could manipulate plaintext by directly manipulating ciphertext. However, today we will look at a case showing that even this XTS structure is not perfectly secure.&lt;/p&gt;
+&lt;h2 id=&#34;2-Windows-AES-CBC-vs-AES-XTS-Operation-Modes&#34;&gt;&lt;a href=&#34;#2-Windows-AES-CBC-vs-AES-XTS-Operation-Modes&#34; class=&#34;headerlink&#34; title=&#34;2. Windows AES-CBC vs. AES-XTS Operation Modes&#34;&gt;&lt;/a&gt;2. Windows AES-CBC vs. AES-XTS Operation Modes&lt;/h2&gt;&lt;h3 id=&#34;2-1-BitLocker-Encryption-Mode&#34;&gt;&lt;a href=&#34;#2-1-BitLocker-Encryption-Mode&#34; class=&#34;headerlink&#34; title=&#34;2.1 BitLocker Encryption Mode&#34;&gt;&lt;/a&gt;2.1 BitLocker Encryption Mode&lt;/h3&gt;&lt;p&gt;We mentioned earlier that BitLocker encrypts sector data with the FVEK. To understand the vulnerability we&amp;#x2019;ll explain today, we must focus on the &lt;strong&gt;&amp;#x201C;operation mode used on the disk medium.&amp;#x201D;&lt;/strong&gt; A hint: a disk is an &amp;#x201C;access medium that reads and writes to specific locations called sectors.&amp;#x201D; Therefore, BitLocker must use a block cipher operation mode that operates securely even with random access to avoid vulnerabilities.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image3.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Starting with Windows 11, BitLocker defaults to using &lt;strong&gt;AES-XTS&lt;/strong&gt; instead of the previously used AES-CBC. This is to reduce the attack surface that can structurally occur in the CBC encryption method.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image4.png&#34; alt&gt;&lt;/p&gt;
+&lt;script type=&#34;math/tex; mode=display&#34;&gt;
+C_i = E_K\!\left(P_i \oplus C_{i-1}\right)&lt;/script&gt;&lt;script type=&#34;math/tex; mode=display&#34;&gt;
+P_i = D_K\!\left(C_i\right) \oplus C_{i-1}&lt;/script&gt;&lt;p&gt;The CBC encryption method is likely familiar to you. It chains AES blocks together. The points where CBC becomes problematic from a disk perspective are:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Chaining Dependency&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Because CBC inherently allows the previous block to affect the next block, it is difficult to manage in an environment like a disk where only intermediate blocks are changed. Disks may update only parts of a file, or the OS may update only specific sectors. Independent encryption/decryption per sector is impossible, causing performance degradation.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Bit Flipping&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; As seen in the CBC decryption formula, if an attacker flips a specific bit, the bit at the same position in the decrypted plaintext is flipped in the same way. This means the ciphertext can be manipulated to change the plaintext predictably.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;IV (Initialization Vector) Management Issues&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Each sector requires a unique IV. Using the sector number as an IV creates predictability, while using a random IV requires additional storage space.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Considering this flow, in past CBC-based FDE (Full Disk Encryption), it was theoretically possible for an attacker to modify the ciphertext on the disk bit-by-bit to insert malicious payloads into the bootloader or OS code.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image5.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Due to the structural vulnerability of &lt;strong&gt;Malleability&lt;/strong&gt; in CBC mode, the risk of tampering with encrypted boot sectors or critical OS files was raised. Accordingly, starting with &lt;strong&gt;TrueCrypt 5.0 in 2008&lt;/strong&gt;, XTS-AES was pioneered, and Microsoft subsequently adopted &lt;strong&gt;XTS-AES&lt;/strong&gt; as the standard for BitLocker starting with Windows 10 to counter these threats.&lt;/p&gt;
+&lt;p&gt;Checking the operation of XTS, XTS applies a value called a &lt;strong&gt;tweak&lt;/strong&gt; to each block. This tweak is a value determined by the &amp;#x2018;disk location,&amp;#x2019; usually based on the sector number and the block index within the sector. A disk reads and writes in sectors of sizes like 512B (or 4KB), and since AES is a 16B block, a 512B sector would be divided into 32 blocks. XTS is designed so that a different tweak is applied to each of these 16B blocks.&lt;/p&gt;
+&lt;script type=&#34;math/tex; mode=display&#34;&gt;
+T_i = \mathrm{Tweak}_{K_2}(s, j)&lt;/script&gt;&lt;script type=&#34;math/tex; mode=display&#34;&gt;
+C_i = E_{K_1}\!\left(P_i \oplus T_i\right) \oplus T_i&lt;/script&gt;&lt;p&gt;XTS uses two keys. &lt;strong&gt;Key1&lt;/strong&gt; is used for the purpose of encrypting and decrypting the actual data, and &lt;strong&gt;Key2&lt;/strong&gt; is used for generating the tweak containing the data&amp;#x2019;s location information.&lt;/p&gt;
+&lt;p&gt;Using this XTS mode, even if an attacker manipulates a specific ciphertext block, the &lt;strong&gt;non-linearity&lt;/strong&gt; causes the result to be damaged in a way that is unpredictable and close to random at the 16-byte block level. In other words, sophisticated manipulation, such as changing a specific bit of the next block to a desired value like in CBC, becomes virtually impossible.&lt;/p&gt;
+&lt;h3 id=&#34;2-2-Unresolved-Challenges-of-XTS&#34;&gt;&lt;a href=&#34;#2-2-Unresolved-Challenges-of-XTS&#34; class=&#34;headerlink&#34; title=&#34;2.2 Unresolved Challenges of XTS&#34;&gt;&lt;/a&gt;2.2 Unresolved Challenges of XTS&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image6.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;However, XTS still has the following fundamental limitations:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Lack of Integrity Protection&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; XTS makes manipulation results difficult to predict, but it does not provide integrity protection to detect or reject the manipulation itself. If an attacker changes the ciphertext, the system does not detect this tampering to stop the process. The system simply decrypts the tampered data and processes it as broken plaintext (garbage).&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Granular Tampering Detection&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; XTS accurately isolates changes to the specific block level. Paradoxically, this offers better granularity than CBC, providing useful clues for identifying the specific location where the modification occurred. An attacker can easily verify &amp;#x201C;which block has changed&amp;#x201D; from the perspective of the entire disk.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Copy-Paste Attacks&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Identical plaintext blocks always generate identical ciphertext in the same sector. An attacker can copy a previous version of the ciphertext from the same sector and overwrite the current version, or copy ciphertext from another sector and paste it.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Narrow Block Size&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Since XTS operates in 16-byte block units, if the same 16-byte plaintext pattern is repeated, a pattern may also be observed in the ciphertext. This can be used for ciphertext analysis.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image7.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image8.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;To verify this directly, we conducted a practical experiment to intuitively check the lack of integrity in XTS-AES on a BitLocker volume. First, we created a 16MiB file on a BitLocker-protected volume (V:), output its SHA-256 hash immediately after creation, and recorded it as the baseline. Then, with the volume locked, we directly edited the raw disk area to partially tamper with the 16-byte ciphertext block containing the file. After unlocking the volume again and recalculating the SHA-256 hash of the same file, we confirmed that the hash value had changed compared to the baseline.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image9.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image10.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Even if only 1 bit is changed in the ciphertext, in XTS results, changing 1 bit randomizes the entire corresponding 16-byte block. At the same time, we can confirm that this has no effect on other neighboring blocks.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Why Windows Cannot Switch to AEAD&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;However, there are limitations for Windows to completely switch to a form of disk encryption that attaches integrity, such as MAC or AEAD.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Full System Redesign Required:&lt;/strong&gt; Adding integrity is not just a matter of changing the encryption mode; it requires a complete redesign of the system architecture regarding how the Windows boot, recovery, file system, and crash dump paths handle integrity failures.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Performance Overhead:&lt;/strong&gt; Adding a MAC to every sector has a significant impact on storage space and I/O performance.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Partial Write Problem:&lt;/strong&gt; File systems often modify only parts of a sector, but AEAD operates on the whole unit, making this complex to handle.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Recovery Scenarios:&lt;/strong&gt; If a part of the disk is damaged, integrity verification failure could make the entire volume unmountable.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Due to concerns about availability degradation&amp;#x2014;where mounting the entire volume could be refused due to strict verification failures from small data corruption&amp;#x2014;it is said that it is difficult to prepare a complete countermeasure for this yet.&lt;/p&gt;
+&lt;h3 id=&#34;2-3-CASE-CVE-2025-21210-CrashXTS&#34;&gt;&lt;a href=&#34;#2-3-CASE-CVE-2025-21210-CrashXTS&#34; class=&#34;headerlink&#34; title=&#34;2.3 CASE: CVE-2025-21210 (CrashXTS)&#34;&gt;&lt;/a&gt;2.3 CASE: CVE-2025-21210 (CrashXTS)&lt;/h3&gt;&lt;p&gt;The property of XTS that &amp;#x201C;the same sector is encrypted with the same tweak&amp;#x201D; means that given the same sector number and the same FVEK, the same plaintext is always converted to the same ciphertext. Even if rebooted multiple times, the ciphertext remains constant as long as the sector number does not change. Also, while it is difficult to obtain a Write primitive in XTS, we can cause the system operation flow to fail via &lt;strong&gt;Corrupt&lt;/strong&gt;. This point is explained by &lt;strong&gt;CVE-2025-21210&lt;/strong&gt;, &lt;a href=&#34;https://dfir.ru/wp-content/uploads/2025/01/crashxts.pdf&#34;&gt;known as CrashXTS&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image11.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;When BitLocker processes normal runtime I/O in Windows, XTS-AES encryption/decryption is applied sector-by-sector via the &lt;code&gt;fvevol.sys&lt;/code&gt; stack. However, in special paths that write directly to the disk with a minimal dump stack&amp;#x2014;such as &lt;strong&gt;Crash Dump/Hibernation&lt;/strong&gt;&amp;#x2014;we cannot assume that all filters in the normal I/O path are operating. Because of this, BitLocker separately loads a dump filter called &lt;code&gt;dumpfve.sys&lt;/code&gt; designed to maintain encryption even when dump/hibernation data is written to the disk.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image12.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;This flow is also confirmed in decompiled code. The function goes through the process &lt;code&gt;FveGroupPolicyGetMultiSzValue()&lt;/code&gt; to read the &lt;code&gt;DumpFilters&lt;/code&gt; value under &lt;code&gt;SYSTEM\CurrentControlSet\Control\CrashControl&lt;/code&gt;, and iterates through the list to check if &lt;code&gt;dumpfve.sys&lt;/code&gt; is included via &lt;code&gt;_wcsicmp()&lt;/code&gt;. Furthermore, if &lt;code&gt;dumpfve.sys&lt;/code&gt; is missing or parsing fails, it aborts immediately. Normally, the flow prevents dump/hibernation from proceeding if the encryption dump filter is missing.&lt;/p&gt;
+&lt;p&gt;However, the problem is that &lt;strong&gt;XTS-based disk encryption does not provide integrity.&lt;/strong&gt; By using the properties of XTS to manipulate a specific ciphertext block and break the 16-byte plaintext block, one can damage the block containing the &lt;code&gt;DumpFilters&lt;/code&gt; offset inside the Registry Hive. This induces a state where the parser cannot normally locate the &lt;code&gt;DumpFilters&lt;/code&gt; entry. In other words, the goal is to induce the failure of the expected operation through this &lt;strong&gt;Corrupt&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image13.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;The screen shows the bytes around the &lt;code&gt;ControlSet...\Control\CrashControl&lt;/code&gt; key inside the SYSTEM registry hive as Hex values. In the ASCII area on the right, strings like &lt;code&gt;CrashControl&lt;/code&gt;, &lt;code&gt;AutoReboot&lt;/code&gt;, &lt;code&gt;CrashDumpEnabled&lt;/code&gt;, &lt;code&gt;DumpFile&lt;/code&gt;, and &lt;code&gt;DumpFilters&lt;/code&gt; are visible. This means the key/value names exist as strings inside the actual file.&lt;/p&gt;
+&lt;p&gt;In XTS, if you manipulate the ciphertext, the plaintext of that 16-byte block is uncontrollably randomized. That is, if you target the 4-byte offset inside the registry hive structure and randomize the 16-byte block containing this field, from the kernel&amp;#x2019;s perspective, it looks as if the &lt;code&gt;DumpFilters&lt;/code&gt; value does not exist, and the hive loader enters a state where it cannot find the value list location. And inducing this is our goal!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image14.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Considering the entire disk, there are a huge number of 16-byte blocks. Since we cannot pick a random block on a multi-GB disk to break &lt;code&gt;DumpFilters&lt;/code&gt;, we find that the &lt;code&gt;CrashControl&lt;/code&gt; string is near the hive file offset &lt;code&gt;0x13B330&lt;/code&gt;. Then, we can consider a method of keeping only a few dozen surrounding blocks as candidates and breaking them one by one. We confirmed via Hex values that the &lt;code&gt;DumpFilter&lt;/code&gt; related structure is located approximately 248 bytes away from the location containing &lt;code&gt;CrashControl&lt;/code&gt;. 248 bytes is roughly 15.5 blocks in terms of 16-byte blocks. Therefore, we can target blocks around &lt;code&gt;+0xF0&lt;/code&gt; or &lt;code&gt;+0x100&lt;/code&gt; as candidate blocks.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image15.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;So, how can we specifically find where the SYSTEM hive is in the encrypted volume and where the &lt;code&gt;CrashControl&lt;/code&gt; key node is located within it? If you trigger states like clean shutdown, forced shutdown, or reboot after a crash on the same computer, specific blocks in the SYSTEM hive file change. This part can be identified as near the start of the SYSTEM hive. Specifically, after a BSOD reboot, a specific volatile subkey called &lt;code&gt;LastCrashDump&lt;/code&gt; is created under &lt;code&gt;CrashControl&lt;/code&gt; and disappears after a clean shutdown. At this time, only some fields of the corresponding key node structure change in a predictable way. In other words, by scanning the entire hive, blocks that change exactly according to that pattern can be thought of as the &lt;code&gt;CrashControl&lt;/code&gt; key node!&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Normal Boot State&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;Offset      Hex &lt;span class=&#34;hljs-title&#34;&gt;bytes&lt;/span&gt; &lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-number&#34;&gt;16B&lt;/span&gt;)&lt;/span&gt;                                      ASCII&lt;/span&gt;
+0x0056e2f0  a0 ff ff ff 6e 6b 20 00 ad 71 01 42 ed f0 da 01    ....nk ..q.B....
+&lt;span class=&#34;hljs-number&#34;&gt;0x0056e300&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;03&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; e8 &lt;span class=&#34;hljs-number&#34;&gt;03&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;01&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    ................
+&lt;span class=&#34;hljs-number&#34;&gt;0x0056e310&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;28&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;7b&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;74&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; ff ff ff ff &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;38&lt;/span&gt; f4 a7 &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    ({t........&lt;span class=&#34;hljs-number&#34;&gt;.8&lt;/span&gt;...
+&lt;span class=&#34;hljs-number&#34;&gt;0x0056e320&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt; bc &lt;span class=&#34;hljs-number&#34;&gt;46&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; ff ff ff ff &lt;span class=&#34;hljs-number&#34;&gt;20&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    ..F..... .......
+&lt;span class=&#34;hljs-number&#34;&gt;0x0056e330&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;30&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    ,..&lt;span class=&#34;hljs-number&#34;&gt;.0&lt;/span&gt;...........
+&lt;span class=&#34;hljs-number&#34;&gt;0x0056e340&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;43&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;72&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;61&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;73&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;68&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;43&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;6f&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;e &lt;span class=&#34;hljs-number&#34;&gt;74&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;72&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;6f&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    CrashControl....&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;strong&gt;Immediately After Crash/BSOD&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;Offset      Hex &lt;span class=&#34;hljs-title&#34;&gt;bytes&lt;/span&gt; &lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-number&#34;&gt;16B&lt;/span&gt;)&lt;/span&gt;                                      ASCII&lt;/span&gt;
+0x0056e2f0  a0 ff ff ff 6e 6b 20 00 73 62 74 ab 14 f7 da 01    ....nk ..sbt.....
+&lt;span class=&#34;hljs-number&#34;&gt;0x0056e300&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;03&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; e8 &lt;span class=&#34;hljs-number&#34;&gt;03&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;01&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    ................
+&lt;span class=&#34;hljs-number&#34;&gt;0x0056e310&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;28&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;7b&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;74&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; c8 &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;e &lt;span class=&#34;hljs-number&#34;&gt;01&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;80&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;38&lt;/span&gt; f4 a7 &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    ({t........&lt;span class=&#34;hljs-number&#34;&gt;.8&lt;/span&gt;...
+&lt;span class=&#34;hljs-number&#34;&gt;0x0056e320&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt; bc &lt;span class=&#34;hljs-number&#34;&gt;46&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; ff ff ff ff &lt;span class=&#34;hljs-number&#34;&gt;20&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    ..F..... .......
+&lt;span class=&#34;hljs-number&#34;&gt;0x0056e330&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;30&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    ,..&lt;span class=&#34;hljs-number&#34;&gt;.0&lt;/span&gt;...........
+&lt;span class=&#34;hljs-number&#34;&gt;0x0056e340&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;43&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;72&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;61&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;73&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;68&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;43&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;6f&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;e &lt;span class=&#34;hljs-number&#34;&gt;74&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;72&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;6f&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    CrashControl....&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Looking at the two dumps, the first thing that stands out is that the string itself is maintained. In both states, the &lt;code&gt;CrashControl&lt;/code&gt; string remains at line &lt;code&gt;0x0056e340&lt;/code&gt;. In other words, it is not a situation where the text &lt;code&gt;CrashControl&lt;/code&gt; disappears and cannot be found, but a state where some fields inside the structure describing &lt;code&gt;CrashControl&lt;/code&gt; change. It is not that the whole thing is swapped, but only &lt;strong&gt;some fields of the structure change selectively&lt;/strong&gt;. And this becomes a strong clue that we are looking at a structure with some meaning, not a random dump.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;Offset      Hex &lt;span class=&#34;hljs-title&#34;&gt;bytes&lt;/span&gt; &lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-number&#34;&gt;16B&lt;/span&gt;)&lt;/span&gt;                                      ASCII&lt;/span&gt;
+0x00000000  9c 1e d1 7a 39 39 d4 13 0c d4 40 c5 a8 6f c4 de    ...z99....@..o..
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000010&lt;/span&gt;  e0 &lt;span class=&#34;hljs-number&#34;&gt;79&lt;/span&gt; bc &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;d dd &lt;span class=&#34;hljs-number&#34;&gt;66&lt;/span&gt; e2 &lt;span class=&#34;hljs-number&#34;&gt;25&lt;/span&gt; b0 &lt;span class=&#34;hljs-number&#34;&gt;48&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0f&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;58&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;53&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;2f&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;06&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;d    .y.-.f.%.H.XS/.]
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000020&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;74&lt;/span&gt; ac c3 &lt;span class=&#34;hljs-number&#34;&gt;51&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;86&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;e &lt;span class=&#34;hljs-number&#34;&gt;74&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;64&lt;/span&gt; e2 d9 &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;e d0 &lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt; ee &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;d    t..Q..td..n....M
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000030&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;03&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;40&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;03&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;52&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;05&lt;/span&gt; e0 bc &lt;span class=&#34;hljs-number&#34;&gt;37&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;41&lt;/span&gt; c1 &lt;span class=&#34;hljs-number&#34;&gt;3f&lt;/span&gt; a2 &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;e &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;a &lt;span class=&#34;hljs-number&#34;&gt;09&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;84&lt;/span&gt;    .@.R..&lt;span class=&#34;hljs-number&#34;&gt;.7&lt;/span&gt;A.?.~*..
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000040&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;24&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;80&lt;/span&gt; dc b8 &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;a &lt;span class=&#34;hljs-number&#34;&gt;20&lt;/span&gt; c8 &lt;span class=&#34;hljs-number&#34;&gt;81&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;d c6 &lt;span class=&#34;hljs-number&#34;&gt;61&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;30&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;39&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;9f&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;30&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;51&lt;/span&gt;    $...j ..-.a09&lt;span class=&#34;hljs-number&#34;&gt;.0&lt;/span&gt;Q
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000050&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;31&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1b&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;74&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;80&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;96&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;c f2 ad &lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;d &lt;span class=&#34;hljs-number&#34;&gt;28&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;26&lt;/span&gt; f9 ce &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;d &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;    &lt;span class=&#34;hljs-number&#34;&gt;1.&lt;/span&gt;.t......(&amp;amp;....
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000060&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;23&lt;/span&gt; fd d1 &lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;45&lt;/span&gt; f0 c1 &lt;span class=&#34;hljs-number&#34;&gt;84&lt;/span&gt; bb e5 &lt;span class=&#34;hljs-number&#34;&gt;84&lt;/span&gt; bf b6 &lt;span class=&#34;hljs-number&#34;&gt;73&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;17&lt;/span&gt;    .#...E........s.
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000070&lt;/span&gt;  f0 e3 &lt;span class=&#34;hljs-number&#34;&gt;50&lt;/span&gt; f2 &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;35&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;7b&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;91&lt;/span&gt; bd e5 &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;e b3 a7 &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;d &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;c bf    ..P.|&lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;{...^..ML.
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000080&lt;/span&gt;  db f0 de &lt;span class=&#34;hljs-number&#34;&gt;96&lt;/span&gt; ba &lt;span class=&#34;hljs-number&#34;&gt;50&lt;/span&gt; d9 &lt;span class=&#34;hljs-number&#34;&gt;09&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;d &lt;span class=&#34;hljs-number&#34;&gt;83&lt;/span&gt; b2 fb &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;a f4 &lt;span class=&#34;hljs-number&#34;&gt;35&lt;/span&gt; aa    .....P..=....&lt;span class=&#34;hljs-number&#34;&gt;.5&lt;/span&gt;.&lt;/code&gt;&lt;/pre&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;Offset      Hex &lt;span class=&#34;hljs-title&#34;&gt;bytes&lt;/span&gt; &lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-number&#34;&gt;16B&lt;/span&gt;)&lt;/span&gt;                                      ASCII&lt;/span&gt;
+0x00000000  48 49 42 52 09 00 00 00 33 c0 00 00 d8 04 00 00    HIBR....3.......
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000010&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;04&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;e &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;a &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    .&amp;gt;..............
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000020&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;e &lt;span class=&#34;hljs-number&#34;&gt;73&lt;/span&gt; b2 &lt;span class=&#34;hljs-number&#34;&gt;1f&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;2b&lt;/span&gt; f7 da &lt;span class=&#34;hljs-number&#34;&gt;01&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;e &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;d &lt;span class=&#34;hljs-number&#34;&gt;07&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;a &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    &amp;gt;s..+...&amp;gt;..*....
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000030&lt;/span&gt;  ff bd &lt;span class=&#34;hljs-number&#34;&gt;9b&lt;/span&gt; bd &lt;span class=&#34;hljs-number&#34;&gt;7f&lt;/span&gt; a4 &lt;span class=&#34;hljs-number&#34;&gt;5f&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;06&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;01&lt;/span&gt; ca &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;a &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    ......_.........
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000040&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;30&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;44&lt;/span&gt; a8 &lt;span class=&#34;hljs-number&#34;&gt;80&lt;/span&gt; c2 ff ff &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;14&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;e &lt;span class=&#34;hljs-number&#34;&gt;21&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    &lt;span class=&#34;hljs-number&#34;&gt;.0&lt;/span&gt;D.........N!..
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000050&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;61&lt;/span&gt; d7 &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;34&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;54&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    a......&lt;span class=&#34;hljs-number&#34;&gt;.4&lt;/span&gt;T......
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000060&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    ........,.......
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000070&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;13&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; fc &lt;span class=&#34;hljs-number&#34;&gt;57&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;02&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    |........W......
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000080&lt;/span&gt;  a7 bf &lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;82&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;99&lt;/span&gt; a9 &lt;span class=&#34;hljs-number&#34;&gt;68&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;02&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    ...........h....&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Comparing the raw sectors before and after the exploit: before the exploit, a byte sequence that looks random due to the nature of ciphertext is observed. However, after the exploit, we can observe the &lt;strong&gt;hibernation header starting with the &lt;code&gt;HIBR&lt;/code&gt; signature exactly as it is!&lt;/strong&gt; In other words, we can confirm that dump/hibernation data is exposed in an unencrypted form in the special path.&lt;/p&gt;
+&lt;h3 id=&#34;2-4-Reliability-vs-Randomization&#34;&gt;&lt;a href=&#34;#2-4-Reliability-vs-Randomization&#34; class=&#34;headerlink&#34; title=&#34;2.4 Reliability vs. Randomization&#34;&gt;&lt;/a&gt;2.4 Reliability vs. Randomization&lt;/h3&gt;&lt;p&gt;The core of probabilistic vulnerabilities like CrashXTS is corruption through lack of integrity. However, this reaction varies easily depending on the Windows system, version, and state, making it difficult to actually induce. Even with the same Windows version, the internal structure of the registry hive and file layout vary depending on installation history, update history, and driver installation/removal. Therefore, differential analysis must be performed from scratch for every system, making automation of this process virtually impossible. Also, even if BitLocker policies change, already encrypted blocks are not re-encrypted; however, since the layout itself changes depending on operation history, a problem arises where an attack location that succeeded once may not work at all on another system.&lt;/p&gt;
+&lt;h2 id=&#34;3-Conclusion&#34;&gt;&lt;a href=&#34;#3-Conclusion&#34; class=&#34;headerlink&#34; title=&#34;3. Conclusion&#34;&gt;&lt;/a&gt;3. Conclusion&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image16.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;CrashXTS empirically demonstrated the fundamental limitations of XTS, but it is somewhat limited in terms of practicality. Therefore, for BitLocker, rather than causing corruption of the encryption mode block itself, let&amp;#x2019;s look into exploits using &lt;strong&gt;logical flaws&lt;/strong&gt; such as WinRE verification omissions, recovery path defects, and key management errors.&lt;/p&gt;
+&lt;h3 id=&#34;References&#34;&gt;&lt;a href=&#34;#References&#34; class=&#34;headerlink&#34; title=&#34;References&#34;&gt;&lt;/a&gt;References&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://dfir.ru/wp-content/uploads/2025/01/crashxts.pdf&#34;&gt;https://dfir.ru/wp-content/uploads/2025/01/crashxts.pdf&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://csrc.nist.gov/csrc/media/projects/block-cipher-techniques/documents/bcm/comments/xts/follow-up_xts_comments-ball.pdf&#34;&gt;https://csrc.nist.gov/csrc/media/projects/block-cipher-techniques/documents/bcm/comments/xts/follow-up_xts_comments-ball.pdf&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://dfir.ru/2025/01/20/cve-2025-21210-aka-crashxts-a-practical-randomization-attack-against-bitlocker/&#34;&gt;https://dfir.ru/2025/01/20/cve-2025-21210-aka-crashxts-a-practical-randomization-attack-against-bitlocker/&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://msrc.microsoft.com/update-guide/vulnerability/CVE-2025-21210&#34;&gt;https://msrc.microsoft.com/update-guide/vulnerability/CVE-2025-21210&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://www.iaesjournal.com/windows-bitlocker-bug-leaks-aes-xts-encryption/&#34;&gt;https://www.iaesjournal.com/windows-bitlocker-bug-leaks-aes-xts-encryption/&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] Unlocking BitLocker: Windows Full-Disk Encryption Under Attack: Part 1 (EN) - hackyboiz">
+  <meta property="og:description" content="&lt;h1 id=&#34;1-Introduction&#34;&gt;&lt;a href=&#34;#1-Introduction&#34; class=&#34;headerlink&#34; title=&#34;1. Introduction&#34;&gt;&lt;/a&gt;1. Introduction&lt;/h1&gt;&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/logo.jpg&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;BitLocker is a disk encryption feature built into the Windows operating system designed to protect data by preventing unauthorized access when a device is lost, stolen, or accessed offline. BitLocker uses a combination of XTS-AES and TPM to provide strong key protection and data encryption; however, it does not provide integrity protection for the ciphertext itself. Today, we will understand the AES-XTS mechanism and examine the &lt;a href=&#34;https://dfir.ru/2025/01/20/cve-2025-21210-aka-crashxts-a-practical-randomization-attack-against-bitlocker/&#34;&gt;BitLocker CrashXTS&lt;/a&gt; method, a vulnerability that can be discovered through this mechanism.&lt;/p&gt;
+&lt;h3 id=&#34;1-1-Understanding-the-Boot-System&#34;&gt;&lt;a href=&#34;#1-1-Understanding-the-Boot-System&#34; class=&#34;headerlink&#34; title=&#34;1.1 Understanding the Boot System&#34;&gt;&lt;/a&gt;1.1 Understanding the Boot System&lt;/h3&gt;&lt;p&gt;The UEFI firmware reads the signed &lt;code&gt;bootmgfw.efi&lt;/code&gt; and BCD (Boot Configuration Data) from the EFI System Partition (ESP). This section is composed of plaintext. Secure Boot validates this boot application and the chain&amp;#x2019;s DBX to establish a root of trust. While the ESP boot components are read, if trust verification fails, the VMK unseal is denied, and the system moves to the recovery path.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image1.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Does the encrypted area only contain user files? No. BitLocker describes &lt;strong&gt;Key Protectors&lt;/strong&gt; and the key hierarchy in the volume metadata. Specifically, it uses a two-layer key design consisting of the &lt;strong&gt;VMK (Volume Master Key)&lt;/strong&gt; and &lt;strong&gt;FVEK (Full Volume Encryption Key)&lt;/strong&gt;. The key actually used for block encryption/decryption is the FVEK.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image2.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;The screenshot shows the output of the &lt;code&gt;manage-bde -protectors -get C:&lt;/code&gt; command, which lists the key protectors registered for the C: volume. The &amp;#x201C;numerical password&amp;#x201D; shown here is one type of protector used to unlock the VMK; it serves as a recovery mechanism when TPM-based unsealing fails in the normal boot path or when the system falls back into recovery mode. In other words, a BitLocker volume does not only contain encrypted data: it also stores, as part of its metadata, information about how the VMK can be recovered and the key hierarchy (VMK &amp;#x2192; FVEK), and ultimately relies on the FVEK to perform sector-level encryption and decryption.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image17.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;TPM&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;The TPM is a dTPM (discrete TPM) hardware chip with a secure storage repository that isolates keys and counters inside the chip. It allows secret keys to be released based on boot reliability measurements (PCR - Platform Configuration Registers) to verify if the system has &amp;#x201C;booted in a trusted state.&amp;#x201D;&lt;/p&gt;
+&lt;p&gt;BitLocker seals the VMK to specific PCR values. By default, it uses PCR 7 (Secure Boot state, UEFI variables, Boot Manager code) and PCR 11 (BitLocker access control).&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;If the boot chain is normal, the TPM allows the VMK to be &lt;strong&gt;unsealed&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;If the boot chain has been tampered with, the PCR values change, the unseal fails, and the system moves to the recovery screen.  &lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;VMK (Volume Master Key)&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;The VMK is the parent key that protects the FVEK. If the VMK cannot be legitimately restored, the FVEK cannot be unlocked, and thus the sector plaintext cannot be accessed. The VMK can be wrapped by multiple protectors:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;TPM Protector:&lt;/strong&gt; Bound to TPM PCRs.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Recovery Password Protector:&lt;/strong&gt; A 48-digit numeric recovery key.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Password Protector:&lt;/strong&gt; User password.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;TPM+PIN Protector:&lt;/strong&gt; Combination of TPM and PIN.  &lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;FVEK (Full Volume Encryption Key)&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;The FVEK handles the actual encryption of disk sectors. The targets encrypted by the FVEK include the kernel, drivers, software, and user data. The FVEK is an AES-256 (or AES-128) key. In XTS mode, 512 bits (or 256 bits) are actually used. Half is used for data encryption (K1), and the other half is used for tweak generation (K2)!  &lt;/p&gt;
+&lt;h3 id=&#34;1-2-BitLocker-Filter-Driver-Operation-Principle&#34;&gt;&lt;a href=&#34;#1-2-BitLocker-Filter-Driver-Operation-Principle&#34; class=&#34;headerlink&#34; title=&#34;1.2 BitLocker Filter Driver Operation Principle&#34;&gt;&lt;/a&gt;1.2 BitLocker Filter Driver Operation Principle&lt;/h3&gt;&lt;p&gt;When the kernel loads, the BitLocker filter driver, &lt;code&gt;fvevol.sys&lt;/code&gt;, intercepts disk I/O to perform encryption and decryption. Let&amp;#x2019;s see how this is performed!&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;When the computer boots, &lt;code&gt;winload.efi&lt;/code&gt; loads the kernel and &lt;code&gt;BOOT_START&lt;/code&gt; (0) drivers, and &lt;code&gt;fvevol.sys&lt;/code&gt; is loaded together at this stage. (This is before NTFS mounts the system volume).&lt;/li&gt;
+&lt;li&gt;In the early boot stage, before keys are ready and TPM PCR 7/11 verification hasn&amp;#x2019;t occurred (VMK/FVEK not yet ready), &lt;code&gt;fvevol.sys&lt;/code&gt; operates in a &lt;strong&gt;locked&lt;/strong&gt; state. At this stage, the boot environment (like &lt;code&gt;bootmgr&lt;/code&gt; or &lt;code&gt;winload&lt;/code&gt;) reads the FVE-FS (metadata), performs TPM verification, unseals the VMK, and then decrypts the FVEK.&lt;/li&gt;
+&lt;li&gt;Only when the VMK is unsealed and the FVEK is decrypted does &lt;code&gt;fvevol&lt;/code&gt; switch to an &lt;strong&gt;unlocked&lt;/strong&gt; state. From this point on, all data I/O for that volume is transparently encrypted and decrypted via the respective FVEK.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;In other words, the flow is: &lt;code&gt;App/Service&lt;/code&gt; &amp;#x2192; &lt;code&gt;NTFS (ReFS)&lt;/code&gt; &amp;#x2192; &lt;code&gt;I/O Manager&lt;/code&gt; &amp;#x2192; &lt;code&gt;[fvevol]&lt;/code&gt; &amp;#x2192; &lt;code&gt;volmgr/Storage Class&lt;/code&gt; &amp;#x2192; &lt;code&gt;Port/Miniport (NVMe/SATA)&lt;/code&gt; &amp;#x2192; &lt;code&gt;Disk&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;BitLocker&amp;#x2019;s core encryption method, &lt;strong&gt;XTS-AES&lt;/strong&gt;, encrypts data in disk sector units. It is designed so that each block applies a &lt;strong&gt;tweak value (based on sector/offset)&lt;/strong&gt;, ensuring that identical plaintext generates different ciphertext depending on its location.&lt;/p&gt;
+&lt;p&gt;This design was introduced to mitigate the &lt;strong&gt;malleability&lt;/strong&gt; problem found in CTR/CBC modes, where an attacker could manipulate plaintext by directly manipulating ciphertext. However, today we will look at a case showing that even this XTS structure is not perfectly secure.&lt;/p&gt;
+&lt;h2 id=&#34;2-Windows-AES-CBC-vs-AES-XTS-Operation-Modes&#34;&gt;&lt;a href=&#34;#2-Windows-AES-CBC-vs-AES-XTS-Operation-Modes&#34; class=&#34;headerlink&#34; title=&#34;2. Windows AES-CBC vs. AES-XTS Operation Modes&#34;&gt;&lt;/a&gt;2. Windows AES-CBC vs. AES-XTS Operation Modes&lt;/h2&gt;&lt;h3 id=&#34;2-1-BitLocker-Encryption-Mode&#34;&gt;&lt;a href=&#34;#2-1-BitLocker-Encryption-Mode&#34; class=&#34;headerlink&#34; title=&#34;2.1 BitLocker Encryption Mode&#34;&gt;&lt;/a&gt;2.1 BitLocker Encryption Mode&lt;/h3&gt;&lt;p&gt;We mentioned earlier that BitLocker encrypts sector data with the FVEK. To understand the vulnerability we&amp;#x2019;ll explain today, we must focus on the &lt;strong&gt;&amp;#x201C;operation mode used on the disk medium.&amp;#x201D;&lt;/strong&gt; A hint: a disk is an &amp;#x201C;access medium that reads and writes to specific locations called sectors.&amp;#x201D; Therefore, BitLocker must use a block cipher operation mode that operates securely even with random access to avoid vulnerabilities.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image3.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Starting with Windows 11, BitLocker defaults to using &lt;strong&gt;AES-XTS&lt;/strong&gt; instead of the previously used AES-CBC. This is to reduce the attack surface that can structurally occur in the CBC encryption method.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image4.png&#34; alt&gt;&lt;/p&gt;
+&lt;script type=&#34;math/tex; mode=display&#34;&gt;
+C_i = E_K\!\left(P_i \oplus C_{i-1}\right)&lt;/script&gt;&lt;script type=&#34;math/tex; mode=display&#34;&gt;
+P_i = D_K\!\left(C_i\right) \oplus C_{i-1}&lt;/script&gt;&lt;p&gt;The CBC encryption method is likely familiar to you. It chains AES blocks together. The points where CBC becomes problematic from a disk perspective are:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Chaining Dependency&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Because CBC inherently allows the previous block to affect the next block, it is difficult to manage in an environment like a disk where only intermediate blocks are changed. Disks may update only parts of a file, or the OS may update only specific sectors. Independent encryption/decryption per sector is impossible, causing performance degradation.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Bit Flipping&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; As seen in the CBC decryption formula, if an attacker flips a specific bit, the bit at the same position in the decrypted plaintext is flipped in the same way. This means the ciphertext can be manipulated to change the plaintext predictably.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;IV (Initialization Vector) Management Issues&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Each sector requires a unique IV. Using the sector number as an IV creates predictability, while using a random IV requires additional storage space.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Considering this flow, in past CBC-based FDE (Full Disk Encryption), it was theoretically possible for an attacker to modify the ciphertext on the disk bit-by-bit to insert malicious payloads into the bootloader or OS code.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image5.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Due to the structural vulnerability of &lt;strong&gt;Malleability&lt;/strong&gt; in CBC mode, the risk of tampering with encrypted boot sectors or critical OS files was raised. Accordingly, starting with &lt;strong&gt;TrueCrypt 5.0 in 2008&lt;/strong&gt;, XTS-AES was pioneered, and Microsoft subsequently adopted &lt;strong&gt;XTS-AES&lt;/strong&gt; as the standard for BitLocker starting with Windows 10 to counter these threats.&lt;/p&gt;
+&lt;p&gt;Checking the operation of XTS, XTS applies a value called a &lt;strong&gt;tweak&lt;/strong&gt; to each block. This tweak is a value determined by the &amp;#x2018;disk location,&amp;#x2019; usually based on the sector number and the block index within the sector. A disk reads and writes in sectors of sizes like 512B (or 4KB), and since AES is a 16B block, a 512B sector would be divided into 32 blocks. XTS is designed so that a different tweak is applied to each of these 16B blocks.&lt;/p&gt;
+&lt;script type=&#34;math/tex; mode=display&#34;&gt;
+T_i = \mathrm{Tweak}_{K_2}(s, j)&lt;/script&gt;&lt;script type=&#34;math/tex; mode=display&#34;&gt;
+C_i = E_{K_1}\!\left(P_i \oplus T_i\right) \oplus T_i&lt;/script&gt;&lt;p&gt;XTS uses two keys. &lt;strong&gt;Key1&lt;/strong&gt; is used for the purpose of encrypting and decrypting the actual data, and &lt;strong&gt;Key2&lt;/strong&gt; is used for generating the tweak containing the data&amp;#x2019;s location information.&lt;/p&gt;
+&lt;p&gt;Using this XTS mode, even if an attacker manipulates a specific ciphertext block, the &lt;strong&gt;non-linearity&lt;/strong&gt; causes the result to be damaged in a way that is unpredictable and close to random at the 16-byte block level. In other words, sophisticated manipulation, such as changing a specific bit of the next block to a desired value like in CBC, becomes virtually impossible.&lt;/p&gt;
+&lt;h3 id=&#34;2-2-Unresolved-Challenges-of-XTS&#34;&gt;&lt;a href=&#34;#2-2-Unresolved-Challenges-of-XTS&#34; class=&#34;headerlink&#34; title=&#34;2.2 Unresolved Challenges of XTS&#34;&gt;&lt;/a&gt;2.2 Unresolved Challenges of XTS&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image6.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;However, XTS still has the following fundamental limitations:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Lack of Integrity Protection&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; XTS makes manipulation results difficult to predict, but it does not provide integrity protection to detect or reject the manipulation itself. If an attacker changes the ciphertext, the system does not detect this tampering to stop the process. The system simply decrypts the tampered data and processes it as broken plaintext (garbage).&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Granular Tampering Detection&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; XTS accurately isolates changes to the specific block level. Paradoxically, this offers better granularity than CBC, providing useful clues for identifying the specific location where the modification occurred. An attacker can easily verify &amp;#x201C;which block has changed&amp;#x201D; from the perspective of the entire disk.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Copy-Paste Attacks&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Identical plaintext blocks always generate identical ciphertext in the same sector. An attacker can copy a previous version of the ciphertext from the same sector and overwrite the current version, or copy ciphertext from another sector and paste it.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;Narrow Block Size&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt; Since XTS operates in 16-byte block units, if the same 16-byte plaintext pattern is repeated, a pattern may also be observed in the ciphertext. This can be used for ciphertext analysis.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image7.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image8.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;To verify this directly, we conducted a practical experiment to intuitively check the lack of integrity in XTS-AES on a BitLocker volume. First, we created a 16MiB file on a BitLocker-protected volume (V:), output its SHA-256 hash immediately after creation, and recorded it as the baseline. Then, with the volume locked, we directly edited the raw disk area to partially tamper with the 16-byte ciphertext block containing the file. After unlocking the volume again and recalculating the SHA-256 hash of the same file, we confirmed that the hash value had changed compared to the baseline.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image9.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image10.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Even if only 1 bit is changed in the ciphertext, in XTS results, changing 1 bit randomizes the entire corresponding 16-byte block. At the same time, we can confirm that this has no effect on other neighboring blocks.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Why Windows Cannot Switch to AEAD&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;However, there are limitations for Windows to completely switch to a form of disk encryption that attaches integrity, such as MAC or AEAD.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Full System Redesign Required:&lt;/strong&gt; Adding integrity is not just a matter of changing the encryption mode; it requires a complete redesign of the system architecture regarding how the Windows boot, recovery, file system, and crash dump paths handle integrity failures.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Performance Overhead:&lt;/strong&gt; Adding a MAC to every sector has a significant impact on storage space and I/O performance.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Partial Write Problem:&lt;/strong&gt; File systems often modify only parts of a sector, but AEAD operates on the whole unit, making this complex to handle.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Recovery Scenarios:&lt;/strong&gt; If a part of the disk is damaged, integrity verification failure could make the entire volume unmountable.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Due to concerns about availability degradation&amp;#x2014;where mounting the entire volume could be refused due to strict verification failures from small data corruption&amp;#x2014;it is said that it is difficult to prepare a complete countermeasure for this yet.&lt;/p&gt;
+&lt;h3 id=&#34;2-3-CASE-CVE-2025-21210-CrashXTS&#34;&gt;&lt;a href=&#34;#2-3-CASE-CVE-2025-21210-CrashXTS&#34; class=&#34;headerlink&#34; title=&#34;2.3 CASE: CVE-2025-21210 (CrashXTS)&#34;&gt;&lt;/a&gt;2.3 CASE: CVE-2025-21210 (CrashXTS)&lt;/h3&gt;&lt;p&gt;The property of XTS that &amp;#x201C;the same sector is encrypted with the same tweak&amp;#x201D; means that given the same sector number and the same FVEK, the same plaintext is always converted to the same ciphertext. Even if rebooted multiple times, the ciphertext remains constant as long as the sector number does not change. Also, while it is difficult to obtain a Write primitive in XTS, we can cause the system operation flow to fail via &lt;strong&gt;Corrupt&lt;/strong&gt;. This point is explained by &lt;strong&gt;CVE-2025-21210&lt;/strong&gt;, &lt;a href=&#34;https://dfir.ru/wp-content/uploads/2025/01/crashxts.pdf&#34;&gt;known as CrashXTS&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image11.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;When BitLocker processes normal runtime I/O in Windows, XTS-AES encryption/decryption is applied sector-by-sector via the &lt;code&gt;fvevol.sys&lt;/code&gt; stack. However, in special paths that write directly to the disk with a minimal dump stack&amp;#x2014;such as &lt;strong&gt;Crash Dump/Hibernation&lt;/strong&gt;&amp;#x2014;we cannot assume that all filters in the normal I/O path are operating. Because of this, BitLocker separately loads a dump filter called &lt;code&gt;dumpfve.sys&lt;/code&gt; designed to maintain encryption even when dump/hibernation data is written to the disk.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image12.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;This flow is also confirmed in decompiled code. The function goes through the process &lt;code&gt;FveGroupPolicyGetMultiSzValue()&lt;/code&gt; to read the &lt;code&gt;DumpFilters&lt;/code&gt; value under &lt;code&gt;SYSTEM\CurrentControlSet\Control\CrashControl&lt;/code&gt;, and iterates through the list to check if &lt;code&gt;dumpfve.sys&lt;/code&gt; is included via &lt;code&gt;_wcsicmp()&lt;/code&gt;. Furthermore, if &lt;code&gt;dumpfve.sys&lt;/code&gt; is missing or parsing fails, it aborts immediately. Normally, the flow prevents dump/hibernation from proceeding if the encryption dump filter is missing.&lt;/p&gt;
+&lt;p&gt;However, the problem is that &lt;strong&gt;XTS-based disk encryption does not provide integrity.&lt;/strong&gt; By using the properties of XTS to manipulate a specific ciphertext block and break the 16-byte plaintext block, one can damage the block containing the &lt;code&gt;DumpFilters&lt;/code&gt; offset inside the Registry Hive. This induces a state where the parser cannot normally locate the &lt;code&gt;DumpFilters&lt;/code&gt; entry. In other words, the goal is to induce the failure of the expected operation through this &lt;strong&gt;Corrupt&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image13.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;The screen shows the bytes around the &lt;code&gt;ControlSet...\Control\CrashControl&lt;/code&gt; key inside the SYSTEM registry hive as Hex values. In the ASCII area on the right, strings like &lt;code&gt;CrashControl&lt;/code&gt;, &lt;code&gt;AutoReboot&lt;/code&gt;, &lt;code&gt;CrashDumpEnabled&lt;/code&gt;, &lt;code&gt;DumpFile&lt;/code&gt;, and &lt;code&gt;DumpFilters&lt;/code&gt; are visible. This means the key/value names exist as strings inside the actual file.&lt;/p&gt;
+&lt;p&gt;In XTS, if you manipulate the ciphertext, the plaintext of that 16-byte block is uncontrollably randomized. That is, if you target the 4-byte offset inside the registry hive structure and randomize the 16-byte block containing this field, from the kernel&amp;#x2019;s perspective, it looks as if the &lt;code&gt;DumpFilters&lt;/code&gt; value does not exist, and the hive loader enters a state where it cannot find the value list location. And inducing this is our goal!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image14.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Considering the entire disk, there are a huge number of 16-byte blocks. Since we cannot pick a random block on a multi-GB disk to break &lt;code&gt;DumpFilters&lt;/code&gt;, we find that the &lt;code&gt;CrashControl&lt;/code&gt; string is near the hive file offset &lt;code&gt;0x13B330&lt;/code&gt;. Then, we can consider a method of keeping only a few dozen surrounding blocks as candidates and breaking them one by one. We confirmed via Hex values that the &lt;code&gt;DumpFilter&lt;/code&gt; related structure is located approximately 248 bytes away from the location containing &lt;code&gt;CrashControl&lt;/code&gt;. 248 bytes is roughly 15.5 blocks in terms of 16-byte blocks. Therefore, we can target blocks around &lt;code&gt;+0xF0&lt;/code&gt; or &lt;code&gt;+0x100&lt;/code&gt; as candidate blocks.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image15.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;So, how can we specifically find where the SYSTEM hive is in the encrypted volume and where the &lt;code&gt;CrashControl&lt;/code&gt; key node is located within it? If you trigger states like clean shutdown, forced shutdown, or reboot after a crash on the same computer, specific blocks in the SYSTEM hive file change. This part can be identified as near the start of the SYSTEM hive. Specifically, after a BSOD reboot, a specific volatile subkey called &lt;code&gt;LastCrashDump&lt;/code&gt; is created under &lt;code&gt;CrashControl&lt;/code&gt; and disappears after a clean shutdown. At this time, only some fields of the corresponding key node structure change in a predictable way. In other words, by scanning the entire hive, blocks that change exactly according to that pattern can be thought of as the &lt;code&gt;CrashControl&lt;/code&gt; key node!&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Normal Boot State&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;Offset      Hex &lt;span class=&#34;hljs-title&#34;&gt;bytes&lt;/span&gt; &lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-number&#34;&gt;16B&lt;/span&gt;)&lt;/span&gt;                                      ASCII&lt;/span&gt;
+0x0056e2f0  a0 ff ff ff 6e 6b 20 00 ad 71 01 42 ed f0 da 01    ....nk ..q.B....
+&lt;span class=&#34;hljs-number&#34;&gt;0x0056e300&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;03&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; e8 &lt;span class=&#34;hljs-number&#34;&gt;03&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;01&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    ................
+&lt;span class=&#34;hljs-number&#34;&gt;0x0056e310&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;28&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;7b&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;74&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; ff ff ff ff &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;38&lt;/span&gt; f4 a7 &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    ({t........&lt;span class=&#34;hljs-number&#34;&gt;.8&lt;/span&gt;...
+&lt;span class=&#34;hljs-number&#34;&gt;0x0056e320&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt; bc &lt;span class=&#34;hljs-number&#34;&gt;46&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; ff ff ff ff &lt;span class=&#34;hljs-number&#34;&gt;20&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    ..F..... .......
+&lt;span class=&#34;hljs-number&#34;&gt;0x0056e330&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;30&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    ,..&lt;span class=&#34;hljs-number&#34;&gt;.0&lt;/span&gt;...........
+&lt;span class=&#34;hljs-number&#34;&gt;0x0056e340&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;43&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;72&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;61&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;73&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;68&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;43&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;6f&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;e &lt;span class=&#34;hljs-number&#34;&gt;74&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;72&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;6f&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    CrashControl....&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;strong&gt;Immediately After Crash/BSOD&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;Offset      Hex &lt;span class=&#34;hljs-title&#34;&gt;bytes&lt;/span&gt; &lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-number&#34;&gt;16B&lt;/span&gt;)&lt;/span&gt;                                      ASCII&lt;/span&gt;
+0x0056e2f0  a0 ff ff ff 6e 6b 20 00 73 62 74 ab 14 f7 da 01    ....nk ..sbt.....
+&lt;span class=&#34;hljs-number&#34;&gt;0x0056e300&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;03&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; e8 &lt;span class=&#34;hljs-number&#34;&gt;03&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;01&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    ................
+&lt;span class=&#34;hljs-number&#34;&gt;0x0056e310&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;28&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;7b&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;74&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; c8 &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;e &lt;span class=&#34;hljs-number&#34;&gt;01&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;80&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;38&lt;/span&gt; f4 a7 &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    ({t........&lt;span class=&#34;hljs-number&#34;&gt;.8&lt;/span&gt;...
+&lt;span class=&#34;hljs-number&#34;&gt;0x0056e320&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt; bc &lt;span class=&#34;hljs-number&#34;&gt;46&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; ff ff ff ff &lt;span class=&#34;hljs-number&#34;&gt;20&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    ..F..... .......
+&lt;span class=&#34;hljs-number&#34;&gt;0x0056e330&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;30&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    ,..&lt;span class=&#34;hljs-number&#34;&gt;.0&lt;/span&gt;...........
+&lt;span class=&#34;hljs-number&#34;&gt;0x0056e340&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;43&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;72&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;61&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;73&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;68&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;43&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;6f&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;e &lt;span class=&#34;hljs-number&#34;&gt;74&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;72&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;6f&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    CrashControl....&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Looking at the two dumps, the first thing that stands out is that the string itself is maintained. In both states, the &lt;code&gt;CrashControl&lt;/code&gt; string remains at line &lt;code&gt;0x0056e340&lt;/code&gt;. In other words, it is not a situation where the text &lt;code&gt;CrashControl&lt;/code&gt; disappears and cannot be found, but a state where some fields inside the structure describing &lt;code&gt;CrashControl&lt;/code&gt; change. It is not that the whole thing is swapped, but only &lt;strong&gt;some fields of the structure change selectively&lt;/strong&gt;. And this becomes a strong clue that we are looking at a structure with some meaning, not a random dump.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;Offset      Hex &lt;span class=&#34;hljs-title&#34;&gt;bytes&lt;/span&gt; &lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-number&#34;&gt;16B&lt;/span&gt;)&lt;/span&gt;                                      ASCII&lt;/span&gt;
+0x00000000  9c 1e d1 7a 39 39 d4 13 0c d4 40 c5 a8 6f c4 de    ...z99....@..o..
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000010&lt;/span&gt;  e0 &lt;span class=&#34;hljs-number&#34;&gt;79&lt;/span&gt; bc &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;d dd &lt;span class=&#34;hljs-number&#34;&gt;66&lt;/span&gt; e2 &lt;span class=&#34;hljs-number&#34;&gt;25&lt;/span&gt; b0 &lt;span class=&#34;hljs-number&#34;&gt;48&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0f&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;58&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;53&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;2f&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;06&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;d    .y.-.f.%.H.XS/.]
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000020&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;74&lt;/span&gt; ac c3 &lt;span class=&#34;hljs-number&#34;&gt;51&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;86&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;e &lt;span class=&#34;hljs-number&#34;&gt;74&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;64&lt;/span&gt; e2 d9 &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;e d0 &lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt; ee &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;d    t..Q..td..n....M
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000030&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;03&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;40&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;03&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;52&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;05&lt;/span&gt; e0 bc &lt;span class=&#34;hljs-number&#34;&gt;37&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;41&lt;/span&gt; c1 &lt;span class=&#34;hljs-number&#34;&gt;3f&lt;/span&gt; a2 &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;e &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;a &lt;span class=&#34;hljs-number&#34;&gt;09&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;84&lt;/span&gt;    .@.R..&lt;span class=&#34;hljs-number&#34;&gt;.7&lt;/span&gt;A.?.~*..
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000040&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;24&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;80&lt;/span&gt; dc b8 &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;a &lt;span class=&#34;hljs-number&#34;&gt;20&lt;/span&gt; c8 &lt;span class=&#34;hljs-number&#34;&gt;81&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;d c6 &lt;span class=&#34;hljs-number&#34;&gt;61&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;30&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;39&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;9f&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;30&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;51&lt;/span&gt;    $...j ..-.a09&lt;span class=&#34;hljs-number&#34;&gt;.0&lt;/span&gt;Q
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000050&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;31&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1b&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;74&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;80&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;96&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;c f2 ad &lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;d &lt;span class=&#34;hljs-number&#34;&gt;28&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;26&lt;/span&gt; f9 ce &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;d &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;    &lt;span class=&#34;hljs-number&#34;&gt;1.&lt;/span&gt;.t......(&amp;amp;....
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000060&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;23&lt;/span&gt; fd d1 &lt;span class=&#34;hljs-number&#34;&gt;08&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;45&lt;/span&gt; f0 c1 &lt;span class=&#34;hljs-number&#34;&gt;84&lt;/span&gt; bb e5 &lt;span class=&#34;hljs-number&#34;&gt;84&lt;/span&gt; bf b6 &lt;span class=&#34;hljs-number&#34;&gt;73&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;17&lt;/span&gt;    .#...E........s.
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000070&lt;/span&gt;  f0 e3 &lt;span class=&#34;hljs-number&#34;&gt;50&lt;/span&gt; f2 &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;35&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;7b&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;91&lt;/span&gt; bd e5 &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;e b3 a7 &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;d &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;c bf    ..P.|&lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;{...^..ML.
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000080&lt;/span&gt;  db f0 de &lt;span class=&#34;hljs-number&#34;&gt;96&lt;/span&gt; ba &lt;span class=&#34;hljs-number&#34;&gt;50&lt;/span&gt; d9 &lt;span class=&#34;hljs-number&#34;&gt;09&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;d &lt;span class=&#34;hljs-number&#34;&gt;83&lt;/span&gt; b2 fb &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;a f4 &lt;span class=&#34;hljs-number&#34;&gt;35&lt;/span&gt; aa    .....P..=....&lt;span class=&#34;hljs-number&#34;&gt;.5&lt;/span&gt;.&lt;/code&gt;&lt;/pre&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;Offset      Hex &lt;span class=&#34;hljs-title&#34;&gt;bytes&lt;/span&gt; &lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-number&#34;&gt;16B&lt;/span&gt;)&lt;/span&gt;                                      ASCII&lt;/span&gt;
+0x00000000  48 49 42 52 09 00 00 00 33 c0 00 00 d8 04 00 00    HIBR....3.......
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000010&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;04&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;e &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;a &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    .&amp;gt;..............
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000020&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;e &lt;span class=&#34;hljs-number&#34;&gt;73&lt;/span&gt; b2 &lt;span class=&#34;hljs-number&#34;&gt;1f&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;2b&lt;/span&gt; f7 da &lt;span class=&#34;hljs-number&#34;&gt;01&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;e &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;d &lt;span class=&#34;hljs-number&#34;&gt;07&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;a &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    &amp;gt;s..+...&amp;gt;..*....
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000030&lt;/span&gt;  ff bd &lt;span class=&#34;hljs-number&#34;&gt;9b&lt;/span&gt; bd &lt;span class=&#34;hljs-number&#34;&gt;7f&lt;/span&gt; a4 &lt;span class=&#34;hljs-number&#34;&gt;5f&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;06&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;01&lt;/span&gt; ca &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;a &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    ......_.........
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000040&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;30&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;44&lt;/span&gt; a8 &lt;span class=&#34;hljs-number&#34;&gt;80&lt;/span&gt; c2 ff ff &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;14&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;e &lt;span class=&#34;hljs-number&#34;&gt;21&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    &lt;span class=&#34;hljs-number&#34;&gt;.0&lt;/span&gt;D.........N!..
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000050&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;61&lt;/span&gt; d7 &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;34&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;54&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    a......&lt;span class=&#34;hljs-number&#34;&gt;.4&lt;/span&gt;T......
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000060&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    ........,.......
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000070&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;c &lt;span class=&#34;hljs-number&#34;&gt;13&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; fc &lt;span class=&#34;hljs-number&#34;&gt;57&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;02&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    |........W......
+&lt;span class=&#34;hljs-number&#34;&gt;0x00000080&lt;/span&gt;  a7 bf &lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;82&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;99&lt;/span&gt; a9 &lt;span class=&#34;hljs-number&#34;&gt;68&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;02&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;    ...........h....&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Comparing the raw sectors before and after the exploit: before the exploit, a byte sequence that looks random due to the nature of ciphertext is observed. However, after the exploit, we can observe the &lt;strong&gt;hibernation header starting with the &lt;code&gt;HIBR&lt;/code&gt; signature exactly as it is!&lt;/strong&gt; In other words, we can confirm that dump/hibernation data is exposed in an unencrypted form in the special path.&lt;/p&gt;
+&lt;h3 id=&#34;2-4-Reliability-vs-Randomization&#34;&gt;&lt;a href=&#34;#2-4-Reliability-vs-Randomization&#34; class=&#34;headerlink&#34; title=&#34;2.4 Reliability vs. Randomization&#34;&gt;&lt;/a&gt;2.4 Reliability vs. Randomization&lt;/h3&gt;&lt;p&gt;The core of probabilistic vulnerabilities like CrashXTS is corruption through lack of integrity. However, this reaction varies easily depending on the Windows system, version, and state, making it difficult to actually induce. Even with the same Windows version, the internal structure of the registry hive and file layout vary depending on installation history, update history, and driver installation/removal. Therefore, differential analysis must be performed from scratch for every system, making automation of this process virtually impossible. Also, even if BitLocker policies change, already encrypted blocks are not re-encrypted; however, since the layout itself changes depending on operation history, a problem arises where an attack location that succeeded once may not work at all on another system.&lt;/p&gt;
+&lt;h2 id=&#34;3-Conclusion&#34;&gt;&lt;a href=&#34;#3-Conclusion&#34; class=&#34;headerlink&#34; title=&#34;3. Conclusion&#34;&gt;&lt;/a&gt;3. Conclusion&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2026/01/22/banda/BitLocker_part1/en/image16.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;CrashXTS empirically demonstrated the fundamental limitations of XTS, but it is somewhat limited in terms of practicality. Therefore, for BitLocker, rather than causing corruption of the encryption mode block itself, let&amp;#x2019;s look into exploits using &lt;strong&gt;logical flaws&lt;/strong&gt; such as WinRE verification omissions, recovery path defects, and key management errors.&lt;/p&gt;
+&lt;h3 id=&#34;References&#34;&gt;&lt;a href=&#34;#References&#34; class=&#34;headerlink&#34; title=&#34;References&#34;&gt;&lt;/a&gt;References&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://dfir.ru/wp-content/uploads/2025/01/crashxts.pdf&#34;&gt;https://dfir.ru/wp-content/uploads/2025/01/crashxts.pdf&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://csrc.nist.gov/csrc/media/projects/block-cipher-techniques/documents/bcm/comments/xts/follow-up_xts_comments-ball.pdf&#34;&gt;https://csrc.nist.gov/csrc/media/projects/block-cipher-techniques/documents/bcm/comments/xts/follow-up_xts_comments-ball.pdf&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://dfir.ru/2025/01/20/cve-2025-21210-aka-crashxts-a-practical-randomization-attack-against-bitlocker/&#34;&gt;https://dfir.ru/2025/01/20/cve-2025-21210-aka-crashxts-a-practical-randomization-attack-against-bitlocker/&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://msrc.microsoft.com/update-guide/vulnerability/CVE-2025-21210&#34;&gt;https://msrc.microsoft.com/update-guide/vulnerability/CVE-2025-21210&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://www.iaesjournal.com/windows-bitlocker-bug-leaks-aes-xts-encryption/&#34;&gt;https://www.iaesjournal.com/windows-bitlocker-bug-leaks-aes-xts-encryption/&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2026/01/22/banda/BitLocker_part1/en/logo.jpg">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2026/01/22/banda/bitlocker_part1/en/">
+
+  <title>[Research] Unlocking BitLocker: Windows Full-Disk Encryption Under Attack: Part 1 (EN) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2026-01-22 17:00" pubdate>
+      2026년 1월 22일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      3.6k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      72
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] Unlocking BitLocker: Windows Full-Disk Encryption Under Attack: Part 1 (EN)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <h1 id="1-Introduction"><a href="#1-Introduction" class="headerlink" title="1. Introduction"></a>1. Introduction</h1><p><img src="/2026/01/22/banda/BitLocker_part1/en/logo.jpg" srcset="/img/loading.gif" alt></p>
+<p>BitLocker is a disk encryption feature built into the Windows operating system designed to protect data by preventing unauthorized access when a device is lost, stolen, or accessed offline. BitLocker uses a combination of XTS-AES and TPM to provide strong key protection and data encryption; however, it does not provide integrity protection for the ciphertext itself. Today, we will understand the AES-XTS mechanism and examine the <a target="_blank" rel="external nofollow noopener noreferrer" href="https://dfir.ru/2025/01/20/cve-2025-21210-aka-crashxts-a-practical-randomization-attack-against-bitlocker/">BitLocker CrashXTS</a> method, a vulnerability that can be discovered through this mechanism.</p>
+<h3 id="1-1-Understanding-the-Boot-System"><a href="#1-1-Understanding-the-Boot-System" class="headerlink" title="1.1 Understanding the Boot System"></a>1.1 Understanding the Boot System</h3><p>The UEFI firmware reads the signed <code>bootmgfw.efi</code> and BCD (Boot Configuration Data) from the EFI System Partition (ESP). This section is composed of plaintext. Secure Boot validates this boot application and the chain&#x2019;s DBX to establish a root of trust. While the ESP boot components are read, if trust verification fails, the VMK unseal is denied, and the system moves to the recovery path.</p>
+<p><img src="/2026/01/22/banda/BitLocker_part1/en/image1.png" srcset="/img/loading.gif" alt></p>
+<p>Does the encrypted area only contain user files? No. BitLocker describes <strong>Key Protectors</strong> and the key hierarchy in the volume metadata. Specifically, it uses a two-layer key design consisting of the <strong>VMK (Volume Master Key)</strong> and <strong>FVEK (Full Volume Encryption Key)</strong>. The key actually used for block encryption/decryption is the FVEK.</p>
+<p><img src="/2026/01/22/banda/BitLocker_part1/en/image2.png" srcset="/img/loading.gif" alt></p>
+<p>The screenshot shows the output of the <code>manage-bde -protectors -get C:</code> command, which lists the key protectors registered for the C: volume. The &#x201C;numerical password&#x201D; shown here is one type of protector used to unlock the VMK; it serves as a recovery mechanism when TPM-based unsealing fails in the normal boot path or when the system falls back into recovery mode. In other words, a BitLocker volume does not only contain encrypted data: it also stores, as part of its metadata, information about how the VMK can be recovered and the key hierarchy (VMK &#x2192; FVEK), and ultimately relies on the FVEK to perform sector-level encryption and decryption.</p>
+<p><img src="/2026/01/22/banda/BitLocker_part1/en/image17.png" srcset="/img/loading.gif" alt></p>
+<p><strong>TPM</strong></p>
+<p>The TPM is a dTPM (discrete TPM) hardware chip with a secure storage repository that isolates keys and counters inside the chip. It allows secret keys to be released based on boot reliability measurements (PCR - Platform Configuration Registers) to verify if the system has &#x201C;booted in a trusted state.&#x201D;</p>
+<p>BitLocker seals the VMK to specific PCR values. By default, it uses PCR 7 (Secure Boot state, UEFI variables, Boot Manager code) and PCR 11 (BitLocker access control).</p>
+<ul>
+<li>If the boot chain is normal, the TPM allows the VMK to be <strong>unsealed</strong>.</li>
+<li>If the boot chain has been tampered with, the PCR values change, the unseal fails, and the system moves to the recovery screen.  </li>
+</ul>
+<p><strong>VMK (Volume Master Key)</strong></p>
+<p>The VMK is the parent key that protects the FVEK. If the VMK cannot be legitimately restored, the FVEK cannot be unlocked, and thus the sector plaintext cannot be accessed. The VMK can be wrapped by multiple protectors:</p>
+<ul>
+<li><strong>TPM Protector:</strong> Bound to TPM PCRs.</li>
+<li><strong>Recovery Password Protector:</strong> A 48-digit numeric recovery key.</li>
+<li><strong>Password Protector:</strong> User password.</li>
+<li><strong>TPM+PIN Protector:</strong> Combination of TPM and PIN.  </li>
+</ul>
+<p><strong>FVEK (Full Volume Encryption Key)</strong></p>
+<p>The FVEK handles the actual encryption of disk sectors. The targets encrypted by the FVEK include the kernel, drivers, software, and user data. The FVEK is an AES-256 (or AES-128) key. In XTS mode, 512 bits (or 256 bits) are actually used. Half is used for data encryption (K1), and the other half is used for tweak generation (K2)!  </p>
+<h3 id="1-2-BitLocker-Filter-Driver-Operation-Principle"><a href="#1-2-BitLocker-Filter-Driver-Operation-Principle" class="headerlink" title="1.2 BitLocker Filter Driver Operation Principle"></a>1.2 BitLocker Filter Driver Operation Principle</h3><p>When the kernel loads, the BitLocker filter driver, <code>fvevol.sys</code>, intercepts disk I/O to perform encryption and decryption. Let&#x2019;s see how this is performed!</p>
+<ol>
+<li>When the computer boots, <code>winload.efi</code> loads the kernel and <code>BOOT_START</code> (0) drivers, and <code>fvevol.sys</code> is loaded together at this stage. (This is before NTFS mounts the system volume).</li>
+<li>In the early boot stage, before keys are ready and TPM PCR 7/11 verification hasn&#x2019;t occurred (VMK/FVEK not yet ready), <code>fvevol.sys</code> operates in a <strong>locked</strong> state. At this stage, the boot environment (like <code>bootmgr</code> or <code>winload</code>) reads the FVE-FS (metadata), performs TPM verification, unseals the VMK, and then decrypts the FVEK.</li>
+<li>Only when the VMK is unsealed and the FVEK is decrypted does <code>fvevol</code> switch to an <strong>unlocked</strong> state. From this point on, all data I/O for that volume is transparently encrypted and decrypted via the respective FVEK.</li>
+</ol>
+<p>In other words, the flow is: <code>App/Service</code> &#x2192; <code>NTFS (ReFS)</code> &#x2192; <code>I/O Manager</code> &#x2192; <code>[fvevol]</code> &#x2192; <code>volmgr/Storage Class</code> &#x2192; <code>Port/Miniport (NVMe/SATA)</code> &#x2192; <code>Disk</code>.</p>
+<p>BitLocker&#x2019;s core encryption method, <strong>XTS-AES</strong>, encrypts data in disk sector units. It is designed so that each block applies a <strong>tweak value (based on sector/offset)</strong>, ensuring that identical plaintext generates different ciphertext depending on its location.</p>
+<p>This design was introduced to mitigate the <strong>malleability</strong> problem found in CTR/CBC modes, where an attacker could manipulate plaintext by directly manipulating ciphertext. However, today we will look at a case showing that even this XTS structure is not perfectly secure.</p>
+<h2 id="2-Windows-AES-CBC-vs-AES-XTS-Operation-Modes"><a href="#2-Windows-AES-CBC-vs-AES-XTS-Operation-Modes" class="headerlink" title="2. Windows AES-CBC vs. AES-XTS Operation Modes"></a>2. Windows AES-CBC vs. AES-XTS Operation Modes</h2><h3 id="2-1-BitLocker-Encryption-Mode"><a href="#2-1-BitLocker-Encryption-Mode" class="headerlink" title="2.1 BitLocker Encryption Mode"></a>2.1 BitLocker Encryption Mode</h3><p>We mentioned earlier that BitLocker encrypts sector data with the FVEK. To understand the vulnerability we&#x2019;ll explain today, we must focus on the <strong>&#x201C;operation mode used on the disk medium.&#x201D;</strong> A hint: a disk is an &#x201C;access medium that reads and writes to specific locations called sectors.&#x201D; Therefore, BitLocker must use a block cipher operation mode that operates securely even with random access to avoid vulnerabilities.</p>
+<p><img src="/2026/01/22/banda/BitLocker_part1/en/image3.png" srcset="/img/loading.gif" alt></p>
+<p>Starting with Windows 11, BitLocker defaults to using <strong>AES-XTS</strong> instead of the previously used AES-CBC. This is to reduce the attack surface that can structurally occur in the CBC encryption method.</p>
+<p><img src="/2026/01/22/banda/BitLocker_part1/en/image4.png" srcset="/img/loading.gif" alt></p>
+<script type="math/tex; mode=display">
+C_i = E_K\!\left(P_i \oplus C_{i-1}\right)</script><script type="math/tex; mode=display">
+P_i = D_K\!\left(C_i\right) \oplus C_{i-1}</script><p>The CBC encryption method is likely familiar to you. It chains AES blocks together. The points where CBC becomes problematic from a disk perspective are:</p>
+<ol>
+<li><p><strong>Chaining Dependency</strong></p>
+<p> Because CBC inherently allows the previous block to affect the next block, it is difficult to manage in an environment like a disk where only intermediate blocks are changed. Disks may update only parts of a file, or the OS may update only specific sectors. Independent encryption/decryption per sector is impossible, causing performance degradation.</p>
+</li>
+<li><p><strong>Bit Flipping</strong></p>
+<p> As seen in the CBC decryption formula, if an attacker flips a specific bit, the bit at the same position in the decrypted plaintext is flipped in the same way. This means the ciphertext can be manipulated to change the plaintext predictably.</p>
+</li>
+<li><p><strong>IV (Initialization Vector) Management Issues</strong></p>
+<p> Each sector requires a unique IV. Using the sector number as an IV creates predictability, while using a random IV requires additional storage space.</p>
+</li>
+</ol>
+<p>Considering this flow, in past CBC-based FDE (Full Disk Encryption), it was theoretically possible for an attacker to modify the ciphertext on the disk bit-by-bit to insert malicious payloads into the bootloader or OS code.</p>
+<p><img src="/2026/01/22/banda/BitLocker_part1/en/image5.png" srcset="/img/loading.gif" alt></p>
+<p>Due to the structural vulnerability of <strong>Malleability</strong> in CBC mode, the risk of tampering with encrypted boot sectors or critical OS files was raised. Accordingly, starting with <strong>TrueCrypt 5.0 in 2008</strong>, XTS-AES was pioneered, and Microsoft subsequently adopted <strong>XTS-AES</strong> as the standard for BitLocker starting with Windows 10 to counter these threats.</p>
+<p>Checking the operation of XTS, XTS applies a value called a <strong>tweak</strong> to each block. This tweak is a value determined by the &#x2018;disk location,&#x2019; usually based on the sector number and the block index within the sector. A disk reads and writes in sectors of sizes like 512B (or 4KB), and since AES is a 16B block, a 512B sector would be divided into 32 blocks. XTS is designed so that a different tweak is applied to each of these 16B blocks.</p>
+<script type="math/tex; mode=display">
+T_i = \mathrm{Tweak}_{K_2}(s, j)</script><script type="math/tex; mode=display">
+C_i = E_{K_1}\!\left(P_i \oplus T_i\right) \oplus T_i</script><p>XTS uses two keys. <strong>Key1</strong> is used for the purpose of encrypting and decrypting the actual data, and <strong>Key2</strong> is used for generating the tweak containing the data&#x2019;s location information.</p>
+<p>Using this XTS mode, even if an attacker manipulates a specific ciphertext block, the <strong>non-linearity</strong> causes the result to be damaged in a way that is unpredictable and close to random at the 16-byte block level. In other words, sophisticated manipulation, such as changing a specific bit of the next block to a desired value like in CBC, becomes virtually impossible.</p>
+<h3 id="2-2-Unresolved-Challenges-of-XTS"><a href="#2-2-Unresolved-Challenges-of-XTS" class="headerlink" title="2.2 Unresolved Challenges of XTS"></a>2.2 Unresolved Challenges of XTS</h3><p><img src="/2026/01/22/banda/BitLocker_part1/en/image6.png" srcset="/img/loading.gif" alt></p>
+<p>However, XTS still has the following fundamental limitations:</p>
+<ol>
+<li><p><strong>Lack of Integrity Protection</strong></p>
+<p> XTS makes manipulation results difficult to predict, but it does not provide integrity protection to detect or reject the manipulation itself. If an attacker changes the ciphertext, the system does not detect this tampering to stop the process. The system simply decrypts the tampered data and processes it as broken plaintext (garbage).</p>
+</li>
+<li><p><strong>Granular Tampering Detection</strong></p>
+<p> XTS accurately isolates changes to the specific block level. Paradoxically, this offers better granularity than CBC, providing useful clues for identifying the specific location where the modification occurred. An attacker can easily verify &#x201C;which block has changed&#x201D; from the perspective of the entire disk.</p>
+</li>
+<li><p><strong>Copy-Paste Attacks</strong></p>
+<p> Identical plaintext blocks always generate identical ciphertext in the same sector. An attacker can copy a previous version of the ciphertext from the same sector and overwrite the current version, or copy ciphertext from another sector and paste it.</p>
+</li>
+<li><p><strong>Narrow Block Size</strong></p>
+<p> Since XTS operates in 16-byte block units, if the same 16-byte plaintext pattern is repeated, a pattern may also be observed in the ciphertext. This can be used for ciphertext analysis.</p>
+</li>
+</ol>
+<p><img src="/2026/01/22/banda/BitLocker_part1/en/image7.png" srcset="/img/loading.gif" alt></p>
+<p><img src="/2026/01/22/banda/BitLocker_part1/en/image8.png" srcset="/img/loading.gif" alt></p>
+<p>To verify this directly, we conducted a practical experiment to intuitively check the lack of integrity in XTS-AES on a BitLocker volume. First, we created a 16MiB file on a BitLocker-protected volume (V:), output its SHA-256 hash immediately after creation, and recorded it as the baseline. Then, with the volume locked, we directly edited the raw disk area to partially tamper with the 16-byte ciphertext block containing the file. After unlocking the volume again and recalculating the SHA-256 hash of the same file, we confirmed that the hash value had changed compared to the baseline.</p>
+<p><img src="/2026/01/22/banda/BitLocker_part1/en/image9.png" srcset="/img/loading.gif" alt></p>
+<p><img src="/2026/01/22/banda/BitLocker_part1/en/image10.png" srcset="/img/loading.gif" alt></p>
+<p>Even if only 1 bit is changed in the ciphertext, in XTS results, changing 1 bit randomizes the entire corresponding 16-byte block. At the same time, we can confirm that this has no effect on other neighboring blocks.</p>
+<p><strong>Why Windows Cannot Switch to AEAD</strong></p>
+<p>However, there are limitations for Windows to completely switch to a form of disk encryption that attaches integrity, such as MAC or AEAD.</p>
+<ol>
+<li><strong>Full System Redesign Required:</strong> Adding integrity is not just a matter of changing the encryption mode; it requires a complete redesign of the system architecture regarding how the Windows boot, recovery, file system, and crash dump paths handle integrity failures.</li>
+<li><strong>Performance Overhead:</strong> Adding a MAC to every sector has a significant impact on storage space and I/O performance.</li>
+<li><strong>Partial Write Problem:</strong> File systems often modify only parts of a sector, but AEAD operates on the whole unit, making this complex to handle.</li>
+<li><strong>Recovery Scenarios:</strong> If a part of the disk is damaged, integrity verification failure could make the entire volume unmountable.</li>
+</ol>
+<p>Due to concerns about availability degradation&#x2014;where mounting the entire volume could be refused due to strict verification failures from small data corruption&#x2014;it is said that it is difficult to prepare a complete countermeasure for this yet.</p>
+<h3 id="2-3-CASE-CVE-2025-21210-CrashXTS"><a href="#2-3-CASE-CVE-2025-21210-CrashXTS" class="headerlink" title="2.3 CASE: CVE-2025-21210 (CrashXTS)"></a>2.3 CASE: CVE-2025-21210 (CrashXTS)</h3><p>The property of XTS that &#x201C;the same sector is encrypted with the same tweak&#x201D; means that given the same sector number and the same FVEK, the same plaintext is always converted to the same ciphertext. Even if rebooted multiple times, the ciphertext remains constant as long as the sector number does not change. Also, while it is difficult to obtain a Write primitive in XTS, we can cause the system operation flow to fail via <strong>Corrupt</strong>. This point is explained by <strong>CVE-2025-21210</strong>, <a target="_blank" rel="external nofollow noopener noreferrer" href="https://dfir.ru/wp-content/uploads/2025/01/crashxts.pdf">known as CrashXTS</a>.</p>
+<p><img src="/2026/01/22/banda/BitLocker_part1/en/image11.png" srcset="/img/loading.gif" alt></p>
+<p>When BitLocker processes normal runtime I/O in Windows, XTS-AES encryption/decryption is applied sector-by-sector via the <code>fvevol.sys</code> stack. However, in special paths that write directly to the disk with a minimal dump stack&#x2014;such as <strong>Crash Dump/Hibernation</strong>&#x2014;we cannot assume that all filters in the normal I/O path are operating. Because of this, BitLocker separately loads a dump filter called <code>dumpfve.sys</code> designed to maintain encryption even when dump/hibernation data is written to the disk.</p>
+<p><img src="/2026/01/22/banda/BitLocker_part1/en/image12.png" srcset="/img/loading.gif" alt></p>
+<p>This flow is also confirmed in decompiled code. The function goes through the process <code>FveGroupPolicyGetMultiSzValue()</code> to read the <code>DumpFilters</code> value under <code>SYSTEM\CurrentControlSet\Control\CrashControl</code>, and iterates through the list to check if <code>dumpfve.sys</code> is included via <code>_wcsicmp()</code>. Furthermore, if <code>dumpfve.sys</code> is missing or parsing fails, it aborts immediately. Normally, the flow prevents dump/hibernation from proceeding if the encryption dump filter is missing.</p>
+<p>However, the problem is that <strong>XTS-based disk encryption does not provide integrity.</strong> By using the properties of XTS to manipulate a specific ciphertext block and break the 16-byte plaintext block, one can damage the block containing the <code>DumpFilters</code> offset inside the Registry Hive. This induces a state where the parser cannot normally locate the <code>DumpFilters</code> entry. In other words, the goal is to induce the failure of the expected operation through this <strong>Corrupt</strong>.</p>
+<p><img src="/2026/01/22/banda/BitLocker_part1/en/image13.png" srcset="/img/loading.gif" alt></p>
+<p>The screen shows the bytes around the <code>ControlSet...\Control\CrashControl</code> key inside the SYSTEM registry hive as Hex values. In the ASCII area on the right, strings like <code>CrashControl</code>, <code>AutoReboot</code>, <code>CrashDumpEnabled</code>, <code>DumpFile</code>, and <code>DumpFilters</code> are visible. This means the key/value names exist as strings inside the actual file.</p>
+<p>In XTS, if you manipulate the ciphertext, the plaintext of that 16-byte block is uncontrollably randomized. That is, if you target the 4-byte offset inside the registry hive structure and randomize the 16-byte block containing this field, from the kernel&#x2019;s perspective, it looks as if the <code>DumpFilters</code> value does not exist, and the hive loader enters a state where it cannot find the value list location. And inducing this is our goal!</p>
+<p><img src="/2026/01/22/banda/BitLocker_part1/en/image14.png" srcset="/img/loading.gif" alt></p>
+<p>Considering the entire disk, there are a huge number of 16-byte blocks. Since we cannot pick a random block on a multi-GB disk to break <code>DumpFilters</code>, we find that the <code>CrashControl</code> string is near the hive file offset <code>0x13B330</code>. Then, we can consider a method of keeping only a few dozen surrounding blocks as candidates and breaking them one by one. We confirmed via Hex values that the <code>DumpFilter</code> related structure is located approximately 248 bytes away from the location containing <code>CrashControl</code>. 248 bytes is roughly 15.5 blocks in terms of 16-byte blocks. Therefore, we can target blocks around <code>+0xF0</code> or <code>+0x100</code> as candidate blocks.</p>
+<p><img src="/2026/01/22/banda/BitLocker_part1/en/image15.png" srcset="/img/loading.gif" alt></p>
+<p>So, how can we specifically find where the SYSTEM hive is in the encrypted volume and where the <code>CrashControl</code> key node is located within it? If you trigger states like clean shutdown, forced shutdown, or reboot after a crash on the same computer, specific blocks in the SYSTEM hive file change. This part can be identified as near the start of the SYSTEM hive. Specifically, after a BSOD reboot, a specific volatile subkey called <code>LastCrashDump</code> is created under <code>CrashControl</code> and disappears after a clean shutdown. At this time, only some fields of the corresponding key node structure change in a predictable way. In other words, by scanning the entire hive, blocks that change exactly according to that pattern can be thought of as the <code>CrashControl</code> key node!</p>
+<p><strong>Normal Boot State</strong></p>
+<pre><code class="hljs c"><span class="hljs-function">Offset      Hex <span class="hljs-title">bytes</span> <span class="hljs-params">(<span class="hljs-number">16B</span>)</span>                                      ASCII</span>
+0x0056e2f0  a0 ff ff ff 6e 6b 20 00 ad 71 01 42 ed f0 da 01    ....nk ..q.B....
+<span class="hljs-number">0x0056e300</span>  <span class="hljs-number">03</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> e8 <span class="hljs-number">03</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">01</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span>    ................
+<span class="hljs-number">0x0056e310</span>  <span class="hljs-number">28</span> <span class="hljs-number">7b</span> <span class="hljs-number">74</span> <span class="hljs-number">00</span> ff ff ff ff <span class="hljs-number">0</span>c <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">38</span> f4 a7 <span class="hljs-number">00</span>    ({t........<span class="hljs-number">.8</span>...
+<span class="hljs-number">0x0056e320</span>  <span class="hljs-number">08</span> bc <span class="hljs-number">46</span> <span class="hljs-number">00</span> ff ff ff ff <span class="hljs-number">20</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span>    ..F..... .......
+<span class="hljs-number">0x0056e330</span>  <span class="hljs-number">2</span>c <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">30</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">0</span>c <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span>    ,..<span class="hljs-number">.0</span>...........
+<span class="hljs-number">0x0056e340</span>  <span class="hljs-number">43</span> <span class="hljs-number">72</span> <span class="hljs-number">61</span> <span class="hljs-number">73</span> <span class="hljs-number">68</span> <span class="hljs-number">43</span> <span class="hljs-number">6f</span> <span class="hljs-number">6</span>e <span class="hljs-number">74</span> <span class="hljs-number">72</span> <span class="hljs-number">6f</span> <span class="hljs-number">6</span>c <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span>    CrashControl....</code></pre>
+<p><strong>Immediately After Crash/BSOD</strong></p>
+<pre><code class="hljs c"><span class="hljs-function">Offset      Hex <span class="hljs-title">bytes</span> <span class="hljs-params">(<span class="hljs-number">16B</span>)</span>                                      ASCII</span>
+0x0056e2f0  a0 ff ff ff 6e 6b 20 00 73 62 74 ab 14 f7 da 01    ....nk ..sbt.....
+<span class="hljs-number">0x0056e300</span>  <span class="hljs-number">03</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> e8 <span class="hljs-number">03</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">01</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span>    ................
+<span class="hljs-number">0x0056e310</span>  <span class="hljs-number">28</span> <span class="hljs-number">7b</span> <span class="hljs-number">74</span> <span class="hljs-number">00</span> c8 <span class="hljs-number">8</span>e <span class="hljs-number">01</span> <span class="hljs-number">80</span> <span class="hljs-number">0</span>c <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">38</span> f4 a7 <span class="hljs-number">00</span>    ({t........<span class="hljs-number">.8</span>...
+<span class="hljs-number">0x0056e320</span>  <span class="hljs-number">08</span> bc <span class="hljs-number">46</span> <span class="hljs-number">00</span> ff ff ff ff <span class="hljs-number">20</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span>    ..F..... .......
+<span class="hljs-number">0x0056e330</span>  <span class="hljs-number">2</span>c <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">30</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">0</span>c <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span>    ,..<span class="hljs-number">.0</span>...........
+<span class="hljs-number">0x0056e340</span>  <span class="hljs-number">43</span> <span class="hljs-number">72</span> <span class="hljs-number">61</span> <span class="hljs-number">73</span> <span class="hljs-number">68</span> <span class="hljs-number">43</span> <span class="hljs-number">6f</span> <span class="hljs-number">6</span>e <span class="hljs-number">74</span> <span class="hljs-number">72</span> <span class="hljs-number">6f</span> <span class="hljs-number">6</span>c <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span>    CrashControl....</code></pre>
+<p>Looking at the two dumps, the first thing that stands out is that the string itself is maintained. In both states, the <code>CrashControl</code> string remains at line <code>0x0056e340</code>. In other words, it is not a situation where the text <code>CrashControl</code> disappears and cannot be found, but a state where some fields inside the structure describing <code>CrashControl</code> change. It is not that the whole thing is swapped, but only <strong>some fields of the structure change selectively</strong>. And this becomes a strong clue that we are looking at a structure with some meaning, not a random dump.</p>
+<pre><code class="hljs c"><span class="hljs-function">Offset      Hex <span class="hljs-title">bytes</span> <span class="hljs-params">(<span class="hljs-number">16B</span>)</span>                                      ASCII</span>
+0x00000000  9c 1e d1 7a 39 39 d4 13 0c d4 40 c5 a8 6f c4 de    ...z99....@..o..
+<span class="hljs-number">0x00000010</span>  e0 <span class="hljs-number">79</span> bc <span class="hljs-number">2</span>d dd <span class="hljs-number">66</span> e2 <span class="hljs-number">25</span> b0 <span class="hljs-number">48</span> <span class="hljs-number">0f</span> <span class="hljs-number">58</span> <span class="hljs-number">53</span> <span class="hljs-number">2f</span> <span class="hljs-number">06</span> <span class="hljs-number">5</span>d    .y.-.f.%.H.XS/.]
+<span class="hljs-number">0x00000020</span>  <span class="hljs-number">74</span> ac c3 <span class="hljs-number">51</span> <span class="hljs-number">86</span> <span class="hljs-number">9</span>e <span class="hljs-number">74</span> <span class="hljs-number">64</span> e2 d9 <span class="hljs-number">6</span>e d0 <span class="hljs-number">9</span>c <span class="hljs-number">11</span> ee <span class="hljs-number">4</span>d    t..Q..td..n....M
+<span class="hljs-number">0x00000030</span>  <span class="hljs-number">03</span> <span class="hljs-number">40</span> <span class="hljs-number">03</span> <span class="hljs-number">52</span> <span class="hljs-number">05</span> e0 bc <span class="hljs-number">37</span> <span class="hljs-number">41</span> c1 <span class="hljs-number">3f</span> a2 <span class="hljs-number">7</span>e <span class="hljs-number">2</span>a <span class="hljs-number">09</span> <span class="hljs-number">84</span>    .@.R..<span class="hljs-number">.7</span>A.?.~*..
+<span class="hljs-number">0x00000040</span>  <span class="hljs-number">24</span> <span class="hljs-number">80</span> dc b8 <span class="hljs-number">6</span>a <span class="hljs-number">20</span> c8 <span class="hljs-number">81</span> <span class="hljs-number">2</span>d c6 <span class="hljs-number">61</span> <span class="hljs-number">30</span> <span class="hljs-number">39</span> <span class="hljs-number">9f</span> <span class="hljs-number">30</span> <span class="hljs-number">51</span>    $...j ..-.a09<span class="hljs-number">.0</span>Q
+<span class="hljs-number">0x00000050</span>  <span class="hljs-number">31</span> <span class="hljs-number">1b</span> <span class="hljs-number">0</span>c <span class="hljs-number">74</span> <span class="hljs-number">80</span> <span class="hljs-number">96</span> <span class="hljs-number">8</span>c f2 ad <span class="hljs-number">9</span>d <span class="hljs-number">28</span> <span class="hljs-number">26</span> f9 ce <span class="hljs-number">8</span>d <span class="hljs-number">16</span>    <span class="hljs-number">1.</span>.t......(&amp;....
+<span class="hljs-number">0x00000060</span>  <span class="hljs-number">1</span>c <span class="hljs-number">23</span> fd d1 <span class="hljs-number">08</span> <span class="hljs-number">45</span> f0 c1 <span class="hljs-number">84</span> bb e5 <span class="hljs-number">84</span> bf b6 <span class="hljs-number">73</span> <span class="hljs-number">17</span>    .#...E........s.
+<span class="hljs-number">0x00000070</span>  f0 e3 <span class="hljs-number">50</span> f2 <span class="hljs-number">7</span>c <span class="hljs-number">35</span> <span class="hljs-number">7b</span> <span class="hljs-number">91</span> bd e5 <span class="hljs-number">5</span>e b3 a7 <span class="hljs-number">4</span>d <span class="hljs-number">4</span>c bf    ..P.|<span class="hljs-number">5</span>{...^..ML.
+<span class="hljs-number">0x00000080</span>  db f0 de <span class="hljs-number">96</span> ba <span class="hljs-number">50</span> d9 <span class="hljs-number">09</span> <span class="hljs-number">3</span>d <span class="hljs-number">83</span> b2 fb <span class="hljs-number">1</span>a f4 <span class="hljs-number">35</span> aa    .....P..=....<span class="hljs-number">.5</span>.</code></pre>
+<pre><code class="hljs c"><span class="hljs-function">Offset      Hex <span class="hljs-title">bytes</span> <span class="hljs-params">(<span class="hljs-number">16B</span>)</span>                                      ASCII</span>
+0x00000000  48 49 42 52 09 00 00 00 33 c0 00 00 d8 04 00 00    HIBR....3.......
+<span class="hljs-number">0x00000010</span>  <span class="hljs-number">04</span> <span class="hljs-number">3</span>e <span class="hljs-number">0</span>a <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">10</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span>    .&gt;..............
+<span class="hljs-number">0x00000020</span>  <span class="hljs-number">3</span>e <span class="hljs-number">73</span> b2 <span class="hljs-number">1f</span> <span class="hljs-number">2b</span> f7 da <span class="hljs-number">01</span> <span class="hljs-number">3</span>e <span class="hljs-number">1</span>d <span class="hljs-number">07</span> <span class="hljs-number">2</span>a <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span>    &gt;s..+...&gt;..*....
+<span class="hljs-number">0x00000030</span>  ff bd <span class="hljs-number">9b</span> bd <span class="hljs-number">7f</span> a4 <span class="hljs-number">5f</span> <span class="hljs-number">06</span> <span class="hljs-number">01</span> ca <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">0</span>a <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span>    ......_.........
+<span class="hljs-number">0x00000040</span>  <span class="hljs-number">00</span> <span class="hljs-number">30</span> <span class="hljs-number">44</span> a8 <span class="hljs-number">80</span> c2 ff ff <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">14</span> <span class="hljs-number">00</span> <span class="hljs-number">4</span>e <span class="hljs-number">21</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span>    <span class="hljs-number">.0</span>D.........N!..
+<span class="hljs-number">0x00000050</span>  <span class="hljs-number">61</span> d7 <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">34</span> <span class="hljs-number">54</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span>    a......<span class="hljs-number">.4</span>T......
+<span class="hljs-number">0x00000060</span>  <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">2</span>c <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span>    ........,.......
+<span class="hljs-number">0x00000070</span>  <span class="hljs-number">7</span>c <span class="hljs-number">13</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> fc <span class="hljs-number">57</span> <span class="hljs-number">02</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span>    |........W......
+<span class="hljs-number">0x00000080</span>  a7 bf <span class="hljs-number">12</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">82</span> <span class="hljs-number">99</span> a9 <span class="hljs-number">68</span> <span class="hljs-number">02</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span> <span class="hljs-number">00</span>    ...........h....</code></pre>
+<p>Comparing the raw sectors before and after the exploit: before the exploit, a byte sequence that looks random due to the nature of ciphertext is observed. However, after the exploit, we can observe the <strong>hibernation header starting with the <code>HIBR</code> signature exactly as it is!</strong> In other words, we can confirm that dump/hibernation data is exposed in an unencrypted form in the special path.</p>
+<h3 id="2-4-Reliability-vs-Randomization"><a href="#2-4-Reliability-vs-Randomization" class="headerlink" title="2.4 Reliability vs. Randomization"></a>2.4 Reliability vs. Randomization</h3><p>The core of probabilistic vulnerabilities like CrashXTS is corruption through lack of integrity. However, this reaction varies easily depending on the Windows system, version, and state, making it difficult to actually induce. Even with the same Windows version, the internal structure of the registry hive and file layout vary depending on installation history, update history, and driver installation/removal. Therefore, differential analysis must be performed from scratch for every system, making automation of this process virtually impossible. Also, even if BitLocker policies change, already encrypted blocks are not re-encrypted; however, since the layout itself changes depending on operation history, a problem arises where an attack location that succeeded once may not work at all on another system.</p>
+<h2 id="3-Conclusion"><a href="#3-Conclusion" class="headerlink" title="3. Conclusion"></a>3. Conclusion</h2><p><img src="/2026/01/22/banda/BitLocker_part1/en/image16.png" srcset="/img/loading.gif" alt></p>
+<p>CrashXTS empirically demonstrated the fundamental limitations of XTS, but it is somewhat limited in terms of practicality. Therefore, for BitLocker, rather than causing corruption of the encryption mode block itself, let&#x2019;s look into exploits using <strong>logical flaws</strong> such as WinRE verification omissions, recovery path defects, and key management errors.</p>
+<h3 id="References"><a href="#References" class="headerlink" title="References"></a>References</h3><ul>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://dfir.ru/wp-content/uploads/2025/01/crashxts.pdf">https://dfir.ru/wp-content/uploads/2025/01/crashxts.pdf</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://csrc.nist.gov/csrc/media/projects/block-cipher-techniques/documents/bcm/comments/xts/follow-up_xts_comments-ball.pdf">https://csrc.nist.gov/csrc/media/projects/block-cipher-techniques/documents/bcm/comments/xts/follow-up_xts_comments-ball.pdf</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://dfir.ru/2025/01/20/cve-2025-21210-aka-crashxts-a-practical-randomization-attack-against-bitlocker/">https://dfir.ru/2025/01/20/cve-2025-21210-aka-crashxts-a-practical-randomization-attack-against-bitlocker/</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://msrc.microsoft.com/update-guide/vulnerability/CVE-2025-21210">https://msrc.microsoft.com/update-guide/vulnerability/CVE-2025-21210</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.iaesjournal.com/windows-bitlocker-bug-leaks-aes-xts-encryption/">https://www.iaesjournal.com/windows-bitlocker-bug-leaks-aes-xts-encryption/</a></li>
+</ul>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/banda/">banda</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Windows/">Windows</a>
+                  
+                  <a class="hover-with-bg" href="/tags/BitLocker/">BitLocker</a>
+                  
+                  <a class="hover-with-bg" href="/tags/CrashXTS/">CrashXTS</a>
+                  
+                  <a class="hover-with-bg" href="/tags/AES-XTS/">AES-XTS</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_banda.jpg" srcset="/img/loading.gif" alt="banda">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">banda</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/banda">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2026/01/24/bekim/2026-01-24/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2026-24061: GNU Inetutils의 telnetd에서 발생 원격 인증 우회 취약점</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2026/01/22/banda/BitLocker_part1/ko/">
+                    <span class="hidden-mobile">[Research] Unlocking BitLocker: Windows Full-Disk Encryption Under Attack: Part 1 (KR)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2026/01/22/banda/BitLocker_part1/en/';
+        this.page.identifier = '/2026/01/22/banda/BitLocker_part1/en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] Unlocking BitLocker: Windows Full-Disk Encryption Under Attack: Part 1 (EN)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
