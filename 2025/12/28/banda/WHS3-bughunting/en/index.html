@@ -1,0 +1,1030 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/logo_window.png&#34; alt&gt;&lt;/p&gt;
+&lt;h2 id=&#34;Introduction&#34;&gt;&lt;a href=&#34;#Introduction&#34; class=&#34;headerlink&#34; title=&#34;Introduction&#34;&gt;&lt;/a&gt;Introduction&lt;/h2&gt;&lt;p&gt;Hello, 2025 is already coming to an end. Is everyone enjoying the end of the year? &amp;#x1F385; Some of our team members participated in a project at the Whitehat School on the topic of &amp;#x2018;Windows Kernel Driver &amp;amp; Named Pipe LPE Bug Hunting&amp;#x2019;. It was back in May 2025&amp;#x2026; I&amp;#x2019;m banda, and I started looking for Windows vulnerabilities after our mentor simply said, &amp;#x2018;Join the project.&amp;#x2019;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image1.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Today, I&amp;#x2019;ll be writing Part 1, focusing on sharing some great bug hunting tips, especially on the Kernel Driver &amp;amp; Named Pipe vectors! Also, our team members will be covering more informative content in the upcoming series, so please make sure to read them! In this series, we will look at the two elements, Kernel Driver and Named Pipe, as separate LPE attack surfaces and introduce the vulnerabilities we found.&lt;/p&gt;
+&lt;h2 id=&#34;Chapter-1-Kernel-Driver-as-an-Attack-Surface&#34;&gt;&lt;a href=&#34;#Chapter-1-Kernel-Driver-as-an-Attack-Surface&#34; class=&#34;headerlink&#34; title=&#34;Chapter 1: Kernel Driver as an Attack Surface&#34;&gt;&lt;/a&gt;Chapter 1: Kernel Driver as an Attack Surface&lt;/h2&gt;&lt;h3 id=&#34;1-1-Overview-of-the-Kernel-Driver-Attack-Surface&#34;&gt;&lt;a href=&#34;#1-1-Overview-of-the-Kernel-Driver-Attack-Surface&#34; class=&#34;headerlink&#34; title=&#34;1.1 Overview of the Kernel Driver Attack Surface&#34;&gt;&lt;/a&gt;&lt;strong&gt;1.1 Overview of the Kernel Driver Attack Surface&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;In the Windows environment, LPE vulnerabilities often occur due to a lack of trust boundary validation between user mode and kernel mode, making kernel drivers a good target. A WDM-structured kernel driver basically processes an IRP (&lt;code&gt;IRP_MJ_DEVICE_CONTROL&lt;/code&gt;) and receives the IOCTL code and the lengths of the input and output buffers from the kernel through the &lt;code&gt;IO_STACK_LOCATION&lt;/code&gt; structure. At this point, it accesses the user input buffer through each field of the IRP structure depending on the IOCTL transfer method!&lt;/p&gt;
+&lt;p&gt;Especially in WDM with &lt;code&gt;METHOD_BUFFERED&lt;/code&gt;, the I/O Manager allocates a kernel buffer and provides its pointer as &lt;code&gt;Irp-&amp;gt;AssociatedIrp.SystemBuffer&lt;/code&gt;, with both input and output passing through this buffer. In other words, vulnerabilities can arise because this IOCTL processing logic is designed to interpret user input within the kernel address space, and because the I/O Manager does not perform validation on user input when constructing the IRP. Keeping this in mind, let&amp;#x2019;s look at the process of collecting and analyzing targets.&lt;/p&gt;
+&lt;h3 id=&#34;1-2-Kernel-Driver-Target-Collection&#34;&gt;&lt;a href=&#34;#1-2-Kernel-Driver-Target-Collection&#34; class=&#34;headerlink&#34; title=&#34;1.2 Kernel Driver Target Collection&#34;&gt;&lt;/a&gt;1.2 Kernel Driver Target Collection&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image2.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;First, I need to quickly find the third-party drivers I&amp;#x2019;ve installed, right? In the first step, I use FolderChangesView to track the &lt;code&gt;.sys&lt;/code&gt; files created in the user environment, checking the created sys file names and their paths.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image3.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Since we need to analyze drivers that are actually loaded and running in the kernel, the next step is to use DriverView to check the list of currently loaded drivers. A loaded state means that the IOCTL and IRP processing routines are active, right?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image4.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;And we created a simple automation tool to extract &lt;code&gt;.sys&lt;/code&gt; files through FolderChangesView and copy them from the driver&amp;#x2019;s directory to an analysis directory. We can start the analysis by checking if the extracted files have been moved correctly to the analysis directory.&lt;/p&gt;
+&lt;h3 id=&#34;1-3-Kernel-Driver-Analysis&#34;&gt;&lt;a href=&#34;#1-3-Kernel-Driver-Analysis&#34; class=&#34;headerlink&#34; title=&#34;1.3 Kernel Driver Analysis&#34;&gt;&lt;/a&gt;1.3 Kernel Driver Analysis&lt;/h3&gt;&lt;p&gt;Driver analysis can be performed in the following order.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Exposed &lt;code&gt;DeviceName&lt;/code&gt; &amp;#x2192; Determine user accessibility&lt;/li&gt;
+&lt;li&gt;Check accessibility of the &lt;code&gt;\Device&lt;/code&gt; node with WinObj&lt;/li&gt;
+&lt;li&gt;Start WDM driver analysis using IDA/Plugins&lt;/li&gt;
+&lt;li&gt;Identify IOCTL Table through IDA&lt;/li&gt;
+&lt;li&gt;Analyze &lt;code&gt;DispatchRoutine&lt;/code&gt; &amp;#x2192; Check input validation parts/structures/fields&lt;/li&gt;
+&lt;li&gt;Perform dynamic analysis by tracing function flow/Device request processing with WinDBG&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image5.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;The first step is to check if the Device and Symlink are exposed in DriverEntry. If, for example, a Device Name like &lt;code&gt;\Device\PdFwKrnl&lt;/code&gt; and a Symlink like &lt;code&gt;\DosDevices\PdFwKrnl&lt;/code&gt; are created, it means we have secured a possible entry point to send requests to the driver from user mode using &lt;code&gt;CreateFile/DeviceControl&lt;/code&gt;. We then check which dispatch routine (&lt;code&gt;DispatchDeviceControl&lt;/code&gt;) &lt;code&gt;IRP_MJ_DEVICE_CONTROL&lt;/code&gt; is connected to through the &lt;code&gt;DriverObject-&amp;gt;MajorFunction&lt;/code&gt; table.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image6.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Once we have information about &lt;code&gt;\Device&lt;/code&gt;, we need to check if this driver exposes an actually accessible entry point from user mode and how access control is configured. In WinObj, we verify that the Device Object we found is actually created under &lt;code&gt;\Device&lt;/code&gt; and also check for the existence of a Symlink. Then, we open the Security tab for both the Device and Symlink to ensure that a general user (Everyone) has Read/Write permissions! This is necessary for a general user to open a handle and send IOCTL requests.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image7.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Afterward, I quickly identified the main dispatch routines using IDA&amp;#x2019;s DriverBuddy and determined it was a WDM driver. DriverBuddy helps find traces of kernel API calls, and as an example, we can see that call points like &lt;code&gt;MmMapIoSpace&lt;/code&gt;, &lt;code&gt;MmUnmapIoSpace&lt;/code&gt;, &lt;code&gt;MmBuildMdlForNonPagedPool&lt;/code&gt;, and &lt;code&gt;MmMapLockedPages&lt;/code&gt; are located near &lt;code&gt;DispatchDeviceControl&lt;/code&gt;. In particular, a routine like &lt;code&gt;MmMapIoSpace&lt;/code&gt; that maps a physical address to a kernel virtual address can become a vulnerability if an attacker can indirectly control the physical address, length, and cache type. So, in my case, I will designate this as an analysis vector and analyze the code.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image8.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Then, I proceed to reverse-engineer the IOCTL branching structure based on the switch-case inside &lt;code&gt;DispatchDeviceControl&lt;/code&gt;. In the case of the WDM driver above, you can see that specific IOCTL Cases branch in the form of &lt;code&gt;0x80002000&lt;/code&gt;, &lt;code&gt;0x80002004&lt;/code&gt;, &lt;code&gt;0x8000201C&lt;/code&gt;&amp;#x2026; within the &lt;code&gt;DispatchDeviceControl&lt;/code&gt;&amp;#x2018;s switch-case. Here, I was able to identify the IOCTL Case directly linked to the &lt;code&gt;MmMapIoSpace&lt;/code&gt; call. By classifying these cases based on their behavior, you can check how input validation for things like option values, lengths, and pointer handling is processed.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image9.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image10.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;For example, the key point in this analysis is the &lt;code&gt;0x8000202C&lt;/code&gt; case. In this case, a flow appears where specific offset values from the input buffer within the IRP are interpreted as arguments like &lt;code&gt;dst&lt;/code&gt;/&lt;code&gt;src&lt;/code&gt;/&lt;code&gt;size&lt;/code&gt;, extracted, and passed to &lt;code&gt;memmove&lt;/code&gt;. From a WDM perspective, if the IOCTL in the &lt;code&gt;DeviceIoControl&lt;/code&gt; path is &lt;code&gt;METHOD_BUFFERED&lt;/code&gt;, the I/O Manager places the address of a kernel-allocated buffer into &lt;code&gt;IRP&amp;#x2192;AssociatedIrp.SystemBuffer&lt;/code&gt; and fills that buffer with content copied from the user input.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image11.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Checking how to enter the &lt;code&gt;0x8000202C&lt;/code&gt; case, if the input buffer length is just &lt;code&gt;0x38&lt;/code&gt;, it trusts the values taken from offsets (+&lt;code&gt;0x20&lt;/code&gt;/+&lt;code&gt;0x28&lt;/code&gt;/+&lt;code&gt;0x30&lt;/code&gt;) within that buffer as a pointer/length and passes them to &lt;code&gt;memmove(dst, src, size)&lt;/code&gt;. This confirms that a read/write primitive can be established in this way.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image12.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Afterward, you can follow the function flow in WinDBG using the information obtained from static analysis. We confirmed earlier that in the &lt;code&gt;0x8000202C&lt;/code&gt; case, the values from &lt;code&gt;SystemBuffer(rsi)+0x20/0x28/0x30&lt;/code&gt; are put into &lt;code&gt;memmove(dst, src, size)&lt;/code&gt;. If you write a payload and check the area around the &lt;code&gt;SystemBuffer&lt;/code&gt; of &lt;code&gt;METHOD_BUFFERED&lt;/code&gt; pointed to by &lt;code&gt;rsi&lt;/code&gt;&amp;#x2026; you can see that it&amp;#x2019;s overwritten with &amp;#x2018;A&amp;#x2019;s as intended, right?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image13.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Once the vulnerability is confirmed, it&amp;#x2019;s time to exploit it. For example, in the case above, if you call &lt;code&gt;DeviceIoControl&lt;/code&gt; with &lt;code&gt;dst=output_buf&lt;/code&gt; (user address), &lt;code&gt;src=desired kernel address to read&lt;/code&gt;, and &lt;code&gt;size=8&lt;/code&gt; in the IOCTL input structure, the kernel performs &lt;code&gt;memmove(dst, src, size)&lt;/code&gt;, establishing an 8-byte arbitrary read. Using the familiar &lt;code&gt;NtQuerySystemInformation&lt;/code&gt; handle table (for Windows bug hunters) to get the EPROCESS address, we add TOKENOFFSET to the obtained SYSTEM EPROCESS address to read the &lt;code&gt;EPROCESS-&amp;gt;Token&lt;/code&gt; value. Then, in the same way, we find the current EPROCESS address, calculate the Token field&amp;#x2019;s location, and perform an Arbitrary Write by setting &lt;code&gt;dst=current EPROCESS+TOKENOFFSET&lt;/code&gt;, &lt;code&gt;src=prepared SYSTEM token pointer&lt;/code&gt;, and &lt;code&gt;size=8&lt;/code&gt; in the IOCTL to achieve privilege escalation. As you can see, the detailed payload construction depends on the type of vulnerability found.&lt;/p&gt;
+&lt;h2 id=&#34;Chapter-2-Named-Pipe-as-an-Attack-Surface&#34;&gt;&lt;a href=&#34;#Chapter-2-Named-Pipe-as-an-Attack-Surface&#34; class=&#34;headerlink&#34; title=&#34;Chapter 2: Named Pipe as an Attack Surface&#34;&gt;&lt;/a&gt;Chapter 2: Named Pipe as an Attack Surface&lt;/h2&gt;&lt;h3 id=&#34;2-1-Overview-of-the-Named-Pipe-Attack-Surface&#34;&gt;&lt;a href=&#34;#2-1-Overview-of-the-Named-Pipe-Attack-Surface&#34; class=&#34;headerlink&#34; title=&#34;2.1 Overview of the Named Pipe Attack Surface&#34;&gt;&lt;/a&gt;2.1 Overview of the Named Pipe Attack Surface&lt;/h3&gt;&lt;p&gt;Now that we&amp;#x2019;ve looked at kernel drivers, it&amp;#x2019;s time to examine Named Pipes. This section assumes a slight understanding of the Named Pipe communication method, so I recommend checking out the related research article &lt;a href=&#34;https://hackyboiz.github.io/2025/05/12/ogu123/NamedPipe/EN/&#34;&gt;&amp;#x1F449;here&lt;/a&gt;! Although Named Pipes are used as an IPC communication mechanism, they are managed as kernel objects and, like kernel drivers, are frequently used by SYSTEM-privileged processes to communicate with user mode. In particular, there are many cases where a service process trusts the Named Pipe input as an internal message, parses it into a structure, or connects it to sensitive operations like permission changes, registry actions, or process execution. A lack of validation can lead to LPE. Curious about how to approach IPC differently from IOCTL? Let&amp;#x2019;s find out!&lt;/p&gt;
+&lt;h3 id=&#34;2-2-Named-Pipe-Target-Collection&#34;&gt;&lt;a href=&#34;#2-2-Named-Pipe-Target-Collection&#34; class=&#34;headerlink&#34; title=&#34;2.2 Named Pipe Target Collection&#34;&gt;&lt;/a&gt;2.2 Named Pipe Target Collection&lt;/h3&gt;&lt;p&gt;General target collection proceeds in the following order: (1) select SYSTEM/service process candidates, (2) obtain the pipe handles opened by that process, and then (3) check if non-administrators like Everyone have Read/Write access through the pipe&amp;#x2019;s ACL.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image14.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;I start by selecting process candidates using Process Explorer. My criteria for narrowing down targets are checking if the execution account is a SYSTEM process, if it&amp;#x2019;s a third-party service, if a Named Pipe exists in its HANDLEs, and if its Integrity Level is SYSTEM.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image15.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;You can find out if a NamedPipe exists in the Handles tab at the bottom of Process Explorer. An item with Type &amp;#x2018;File&amp;#x2019; and a Name starting with &lt;code&gt;\Device\NamedPipe\...&lt;/code&gt; is a Named Pipe. The collected &lt;code&gt;\Device\NamedPipe\...&lt;/code&gt; path becomes the mapping point in user mode, like &lt;code&gt;\\.\pipe\...&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image16.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;However, there&amp;#x2019;s one major hurdle left&amp;#x2026; the ACL. If you go through the trouble of confirming a Named Pipe exists but can&amp;#x2019;t read or write to it&amp;#x2026; you have to say goodbye to that Named Pipe. &amp;#x1F62D; If only Administrators have RW access and others have no permissions, it&amp;#x2019;s hard to see it as a successful LPE vector. You need to use a tool like accesschk to inspect the pipe&amp;#x2019;s ACL and check if broad groups like Everyone, Authenticated Users, or Users have RW access, then narrow down your targets.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image17.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Once a target is selected, the target collection process is completed by opening the binary, quickly searching for APIs like &lt;code&gt;CreateNamedPipeA/W&lt;/code&gt;, &lt;code&gt;ConnectNamedPipe&lt;/code&gt;, and &lt;code&gt;DisconnectNamedPipe&lt;/code&gt; to confirm it&amp;#x2019;s a server implementation, and then analyzing the code by checking the &lt;code&gt;Connect &amp;#x2192; Read&lt;/code&gt; flow, parsing branches, and permission-related branches like token/access control.&lt;/p&gt;
+&lt;h3 id=&#34;2-3-Named-Pipe-Analysis&#34;&gt;&lt;a href=&#34;#2-3-Named-Pipe-Analysis&#34; class=&#34;headerlink&#34; title=&#34;2.3 Named Pipe Analysis&#34;&gt;&lt;/a&gt;2.3 Named Pipe Analysis&lt;/h3&gt;&lt;p&gt;The analysis could be conducted in the following order.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Select server (SYSTEM service) process candidates with Process Explorer.&lt;/li&gt;
+&lt;li&gt;Verify if the collected &lt;code&gt;\Device\NamedPipe\...&lt;/code&gt; is the connection point for &lt;code&gt;\\.\pipe\...&lt;/code&gt; in user mode.&lt;/li&gt;
+&lt;li&gt;Check Pipe ACL with accesschk &amp;#x2192; Verify if Read/Write is open for broad groups like Everyone.&lt;/li&gt;
+&lt;li&gt;In IDA, trace the flow like &lt;code&gt;CreateNamedPipe*&lt;/code&gt; &amp;#x2192; &lt;code&gt;ConnectNamedPipe&lt;/code&gt; &amp;#x2192; &lt;code&gt;ReadFile/WriteFile&lt;/code&gt; and identify the request handling function dispatch.&lt;/li&gt;
+&lt;li&gt;Narrow down to branches where a request leads to privilege-sensitive operations like registry/HKLM access or service configuration.&lt;/li&gt;
+&lt;li&gt;Perform dynamic analysis by capturing events with ProcMon.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image18.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Once a target is set, dynamic analysis begins by using ProcMon to see what vulnerable behavior the pipe I/O leads to. First, narrow down the server process that creates and receives the pipe and the client process that connects and sends to the pipe. Then, prepare to trace IPC call flows like &lt;code&gt;CreateNamedPipe&lt;/code&gt;, &lt;code&gt;CreateFile&lt;/code&gt;, &lt;code&gt;ReadFile&lt;/code&gt;, and &lt;code&gt;WriteFile&lt;/code&gt; within the scope of those processes. It&amp;#x2019;s a good practice to register filters for registry key-related events or core named pipe I/O events under &amp;#x2018;Process Name&amp;#x2019; and &amp;#x2018;Operation&amp;#x2019;, and to fix the filter for the server&amp;#x2019;s Integrity Level as System. This makes it easier to check if user input can lead to privilege escalation to SYSTEM.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image19.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;As it happens, the program I analyzed has a checkbox in its settings that allows Non-Admins some administrative functions via Access Control. It makes sense for an antivirus. But this isn&amp;#x2019;t typical, and even when I keep clicking the &amp;#x201C;Allow setting changes / disable protection&amp;#x201D; checkbox as a non-administrator, no UAC prompt appears. Suspicious, right? Let&amp;#x2019;s prioritize this service for investigation.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;PS C:\Users\banda\Downloads\AccessChk&amp;gt; .\accesschk.exe -accepteula -lv &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;\pipe\K7TSMngrService1&amp;quot;&lt;/span&gt;
+
+\\.\Pipe\K7TSMngrService1
+  DESCRIPTOR FLAGS:
+      [SE_DACL_PRESENT]
+      [SE_SACL_PRESENT]
+      [SE_SACL_AUTO_INHERITED]
+      [SE_SELF_RELATIVE]
+  OWNER: NT AUTHORITY\SYSTEM
+  LABEL: Low Mandatory Level
+        SYSTEM_MANDATORY_LABEL_NO_WRITE_UP
+  ACCESS_ALLOWED_ACE_TYPE: NT AUTHORITY\SYSTEM
+        FILE_ADD_FILE
+        FILE_CREATE_PIPE_INSTANCE
+        FILE_APPEND_DATA
+        FILE_LIST_DIRECTORY
+        FILE_READ_ATTRIBUTES
+        FILE_READ_DATA
+        FILE_READ_EA
+        FILE_WRITE_ATTRIBUTES
+        FILE_WRITE_DATA
+        FILE_WRITE_EA
+        SYNCHRONIZE
+        READ_CONTROL
+  ACCESS_ALLOWED_ACE_TYPE: Everyone
+        FILE_ADD_FILE
+        FILE_CREATE_PIPE_INSTANCE
+        FILE_APPEND_DATA
+        FILE_LIST_DIRECTORY
+        FILE_READ_ATTRIBUTES
+        FILE_READ_DATA
+        FILE_READ_EA
+        FILE_WRITE_ATTRIBUTES
+        FILE_WRITE_DATA
+        FILE_WRITE_EA
+        SYNCHRONIZE
+        READ_CONTROL&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;After checking the ACL directly, as suspected, the DACL for &lt;code&gt;\\.\pipe\K7TSMngrService1&lt;/code&gt; is set too loosely. Since &amp;#x2018;file read&amp;#x2019;, &amp;#x2018;file write&amp;#x2019;, and &amp;#x2018;file append&amp;#x2019; are allowed for Everyone, it means that virtually anyone can request a connection to this pipe to write and read. Once this is confirmed, from this point on, let&amp;#x2019;s perform static analysis on the dispatch or parsing routines to see with our own eyes which requests lead to privilege-sensitive operations.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image20.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Now that we&amp;#x2019;ve confirmed the permission information, it would be good to check the Named Pipe&amp;#x2019;s server code through static analysis, right? It&amp;#x2019;s best to check the broad structure from the creation point. For example, here we can see a flow where a Named Pipe is created with &lt;code&gt;CreateNamedPipeA(&amp;quot;\\\\.\\pipe\\K7TSMngrService1&amp;quot;, ...)&lt;/code&gt; and, upon a successful &lt;code&gt;ConnectNamedPipe&lt;/code&gt;, it dispatches to a request handler function! Once this pattern is confirmed, the next step is to check the protocol validation part, like what header is read with &lt;code&gt;ReadFile&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image21.png&#34; alt&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// request header (28 bytes)&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;typedef&lt;/span&gt; &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; _&lt;span class=&#34;hljs-title&#34;&gt;K7TS_REQ_HDR&lt;/span&gt; {&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt; magic;      &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;apos;K7TS&amp;apos;&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt; ver;        &lt;span class=&#34;hljs-comment&#34;&gt;// 0x1010&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt; hdr_sz;     &lt;span class=&#34;hljs-comment&#34;&gt;// 28&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt; reserved;   &lt;span class=&#34;hljs-comment&#34;&gt;// 0&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt; op;         &lt;span class=&#34;hljs-comment&#34;&gt;// v21&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt; in_len;     &lt;span class=&#34;hljs-comment&#34;&gt;// nNumberOfBytesToRead&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt; out_len;    &lt;span class=&#34;hljs-comment&#34;&gt;// v23&lt;/span&gt;
+} K7TS_REQ_HDR;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;For example, to communicate with &lt;code&gt;\\.\pipe\K7TSMngrService1&lt;/code&gt;, how should the request buffer be structured to succeed? Looking at the code, it performs a protocol validation routine: it targets the pipe &lt;code&gt;\\.\pipe\K7TSMngrService1&lt;/code&gt;, sets &lt;code&gt;result = 0x4B375453(&amp;apos;K7TS&amp;apos;)&lt;/code&gt;, &lt;code&gt;ver=0x1010&lt;/code&gt;, &lt;code&gt;hdr_sz=28&lt;/code&gt;, and limits the request type and I/O length to 1MB. Only then does it allocate a heap buffer, receive the request with &lt;code&gt;ReadFile&lt;/code&gt;, pass it to an internal dispatcher to create a response, return a 36-byte response header + response body with &lt;code&gt;WriteFile&lt;/code&gt;, and finally terminate the session with &lt;code&gt;DisconnectNamedPipe&lt;/code&gt; and &lt;code&gt;CloseHandle&lt;/code&gt;. We&amp;#x2019;ve learned crucial information for connecting and communicating with the pipe!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image22.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Now that we&amp;#x2019;ve checked the validation routine, let&amp;#x2019;s look for the part that leads to a privilege-sensitive operation, like allowing a normal user to enable administrative functions as we saw in the settings earlier. Following the string references, we could see that K7TS components directly reference registry-based policy flags through strings like &lt;code&gt;AdminNonAdminIsValid&lt;/code&gt;, &lt;code&gt;AdminChangesNeedPassword&lt;/code&gt;, and &lt;code&gt;AdminEnableNeedVerification&lt;/code&gt;. With this single pipe request, the SYSTEM service is performing a Write to HKLM. If the validation isn&amp;#x2019;t sufficiently restrictive, it could become a primitive for a normal user like us to perform a SYSTEM registry write.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image23.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Now, based on the information gathered above, I sent a request that satisfies the protocol conditions and checked the Process Monitor logs. Since a Named Pipe is an IPC endpoint, it&amp;#x2019;s good to carefully check for events centered around points of change, such as registry/HKLM, service settings, file read/write, and process execution. For example, the current ProcMon log shows that after I, a normal user, send a request through the pipe, the SYSTEM-privileged &lt;code&gt;K7TSMngr.exe&lt;/code&gt; performs a write operation to HKLM. By triggering writes to related keys like &lt;code&gt;AdminNonAdminIsValid&lt;/code&gt;, &lt;code&gt;AdminChangesNeedPassword&lt;/code&gt;, and &lt;code&gt;AdminChangesPasswordHash&lt;/code&gt;, I reconfirmed that security boundaries like requiring administrator rights or allowing non-administrators could be bypassed.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image24.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Now, let&amp;#x2019;s try the LPE. First, as a normal user, I send a connection request to &lt;code&gt;\\.\pipe\K7TSMngrService1&lt;/code&gt; with a request that satisfies the K7TS header and magic format, making the SYSTEM service configure the registry settings on my behalf. Then, using HKLM IFEO, I target the key &lt;code&gt;HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\K7TSHlpr.exe&lt;/code&gt; and replace the intended debugger with &lt;code&gt;cmd.exe /c C:\temp\payload.bat&lt;/code&gt;. And&amp;#x2026;? The LPE is successful! The entity processing the &lt;code&gt;K7TSMngrService1&lt;/code&gt; pipe request was &lt;code&gt;K7TSMngr.exe&lt;/code&gt;. Through static analysis, I was able to confirm a vulnerability where the auxiliary process &lt;code&gt;K7TSHlpr.exe&lt;/code&gt;, which performs internal operations, runs in a high-privilege context. This is what allowed us to execute our desired bat file.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image25.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Through privilege escalation, you can see that the user is now a member of the Administrators group in Local Group Memberships. Additionally, I hope it&amp;#x2019;s helpful to know that vulnerabilities in Named Pipes often involve ACLs, lack of permission checks, memory vulnerabilities, path manipulation, and race conditions!&lt;/p&gt;
+&lt;h2 id=&#34;Conclusion&#34;&gt;&lt;a href=&#34;#Conclusion&#34; class=&#34;headerlink&#34; title=&#34;Conclusion&#34;&gt;&lt;/a&gt;Conclusion&lt;/h2&gt;&lt;p&gt;I hope the Kernel Driver and Named Pipe collection and analysis process in this article has been helpful to you! Please note that while I referred to old CVEs when explaining the process, the verification was done in a Win11 24H2 environment. TMI, but as I was writing and opening up the tools, driver targets kept catching my eye, and I kept getting sidetracked&amp;#x2026; haha. In the next series, we will introduce the vulnerabilities we found! Thank you.&lt;/p&gt;
+&lt;h2 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://voidsec.com/windows-drivers-reverse-engineering-methodology/&#34;&gt;Windows Driver RE Methodology (voidsec)&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://www.amd.com/en/resources/product-security/bulletin/amd-sb-6009.html&#34;&gt;AMD-SB-6009: Radeon Graphics Kernel Driver Privilege Management&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://owasp.org/www-chapter-seoul/#div-pastevents&#34;&gt;OWASP Seoul(2025.07) - Windows 3rd-Party Driver LPE BugHunting&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://blog.quarkslab.com/k7-antivirus-named-pipe-abuse-registry-manipulation-and-privilege-escalation.html&#34;&gt;K7 Antivirus Named Pipe Abuse &amp;#x2192; Registry Manipulation&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] Windows LPE Bug Hunting, Served by the Team’s Youngest: Part 1 (EN) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/logo_window.png&#34; alt&gt;&lt;/p&gt;
+&lt;h2 id=&#34;Introduction&#34;&gt;&lt;a href=&#34;#Introduction&#34; class=&#34;headerlink&#34; title=&#34;Introduction&#34;&gt;&lt;/a&gt;Introduction&lt;/h2&gt;&lt;p&gt;Hello, 2025 is already coming to an end. Is everyone enjoying the end of the year? &amp;#x1F385; Some of our team members participated in a project at the Whitehat School on the topic of &amp;#x2018;Windows Kernel Driver &amp;amp; Named Pipe LPE Bug Hunting&amp;#x2019;. It was back in May 2025&amp;#x2026; I&amp;#x2019;m banda, and I started looking for Windows vulnerabilities after our mentor simply said, &amp;#x2018;Join the project.&amp;#x2019;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image1.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Today, I&amp;#x2019;ll be writing Part 1, focusing on sharing some great bug hunting tips, especially on the Kernel Driver &amp;amp; Named Pipe vectors! Also, our team members will be covering more informative content in the upcoming series, so please make sure to read them! In this series, we will look at the two elements, Kernel Driver and Named Pipe, as separate LPE attack surfaces and introduce the vulnerabilities we found.&lt;/p&gt;
+&lt;h2 id=&#34;Chapter-1-Kernel-Driver-as-an-Attack-Surface&#34;&gt;&lt;a href=&#34;#Chapter-1-Kernel-Driver-as-an-Attack-Surface&#34; class=&#34;headerlink&#34; title=&#34;Chapter 1: Kernel Driver as an Attack Surface&#34;&gt;&lt;/a&gt;Chapter 1: Kernel Driver as an Attack Surface&lt;/h2&gt;&lt;h3 id=&#34;1-1-Overview-of-the-Kernel-Driver-Attack-Surface&#34;&gt;&lt;a href=&#34;#1-1-Overview-of-the-Kernel-Driver-Attack-Surface&#34; class=&#34;headerlink&#34; title=&#34;1.1 Overview of the Kernel Driver Attack Surface&#34;&gt;&lt;/a&gt;&lt;strong&gt;1.1 Overview of the Kernel Driver Attack Surface&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;In the Windows environment, LPE vulnerabilities often occur due to a lack of trust boundary validation between user mode and kernel mode, making kernel drivers a good target. A WDM-structured kernel driver basically processes an IRP (&lt;code&gt;IRP_MJ_DEVICE_CONTROL&lt;/code&gt;) and receives the IOCTL code and the lengths of the input and output buffers from the kernel through the &lt;code&gt;IO_STACK_LOCATION&lt;/code&gt; structure. At this point, it accesses the user input buffer through each field of the IRP structure depending on the IOCTL transfer method!&lt;/p&gt;
+&lt;p&gt;Especially in WDM with &lt;code&gt;METHOD_BUFFERED&lt;/code&gt;, the I/O Manager allocates a kernel buffer and provides its pointer as &lt;code&gt;Irp-&amp;gt;AssociatedIrp.SystemBuffer&lt;/code&gt;, with both input and output passing through this buffer. In other words, vulnerabilities can arise because this IOCTL processing logic is designed to interpret user input within the kernel address space, and because the I/O Manager does not perform validation on user input when constructing the IRP. Keeping this in mind, let&amp;#x2019;s look at the process of collecting and analyzing targets.&lt;/p&gt;
+&lt;h3 id=&#34;1-2-Kernel-Driver-Target-Collection&#34;&gt;&lt;a href=&#34;#1-2-Kernel-Driver-Target-Collection&#34; class=&#34;headerlink&#34; title=&#34;1.2 Kernel Driver Target Collection&#34;&gt;&lt;/a&gt;1.2 Kernel Driver Target Collection&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image2.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;First, I need to quickly find the third-party drivers I&amp;#x2019;ve installed, right? In the first step, I use FolderChangesView to track the &lt;code&gt;.sys&lt;/code&gt; files created in the user environment, checking the created sys file names and their paths.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image3.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Since we need to analyze drivers that are actually loaded and running in the kernel, the next step is to use DriverView to check the list of currently loaded drivers. A loaded state means that the IOCTL and IRP processing routines are active, right?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image4.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;And we created a simple automation tool to extract &lt;code&gt;.sys&lt;/code&gt; files through FolderChangesView and copy them from the driver&amp;#x2019;s directory to an analysis directory. We can start the analysis by checking if the extracted files have been moved correctly to the analysis directory.&lt;/p&gt;
+&lt;h3 id=&#34;1-3-Kernel-Driver-Analysis&#34;&gt;&lt;a href=&#34;#1-3-Kernel-Driver-Analysis&#34; class=&#34;headerlink&#34; title=&#34;1.3 Kernel Driver Analysis&#34;&gt;&lt;/a&gt;1.3 Kernel Driver Analysis&lt;/h3&gt;&lt;p&gt;Driver analysis can be performed in the following order.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Exposed &lt;code&gt;DeviceName&lt;/code&gt; &amp;#x2192; Determine user accessibility&lt;/li&gt;
+&lt;li&gt;Check accessibility of the &lt;code&gt;\Device&lt;/code&gt; node with WinObj&lt;/li&gt;
+&lt;li&gt;Start WDM driver analysis using IDA/Plugins&lt;/li&gt;
+&lt;li&gt;Identify IOCTL Table through IDA&lt;/li&gt;
+&lt;li&gt;Analyze &lt;code&gt;DispatchRoutine&lt;/code&gt; &amp;#x2192; Check input validation parts/structures/fields&lt;/li&gt;
+&lt;li&gt;Perform dynamic analysis by tracing function flow/Device request processing with WinDBG&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image5.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;The first step is to check if the Device and Symlink are exposed in DriverEntry. If, for example, a Device Name like &lt;code&gt;\Device\PdFwKrnl&lt;/code&gt; and a Symlink like &lt;code&gt;\DosDevices\PdFwKrnl&lt;/code&gt; are created, it means we have secured a possible entry point to send requests to the driver from user mode using &lt;code&gt;CreateFile/DeviceControl&lt;/code&gt;. We then check which dispatch routine (&lt;code&gt;DispatchDeviceControl&lt;/code&gt;) &lt;code&gt;IRP_MJ_DEVICE_CONTROL&lt;/code&gt; is connected to through the &lt;code&gt;DriverObject-&amp;gt;MajorFunction&lt;/code&gt; table.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image6.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Once we have information about &lt;code&gt;\Device&lt;/code&gt;, we need to check if this driver exposes an actually accessible entry point from user mode and how access control is configured. In WinObj, we verify that the Device Object we found is actually created under &lt;code&gt;\Device&lt;/code&gt; and also check for the existence of a Symlink. Then, we open the Security tab for both the Device and Symlink to ensure that a general user (Everyone) has Read/Write permissions! This is necessary for a general user to open a handle and send IOCTL requests.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image7.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Afterward, I quickly identified the main dispatch routines using IDA&amp;#x2019;s DriverBuddy and determined it was a WDM driver. DriverBuddy helps find traces of kernel API calls, and as an example, we can see that call points like &lt;code&gt;MmMapIoSpace&lt;/code&gt;, &lt;code&gt;MmUnmapIoSpace&lt;/code&gt;, &lt;code&gt;MmBuildMdlForNonPagedPool&lt;/code&gt;, and &lt;code&gt;MmMapLockedPages&lt;/code&gt; are located near &lt;code&gt;DispatchDeviceControl&lt;/code&gt;. In particular, a routine like &lt;code&gt;MmMapIoSpace&lt;/code&gt; that maps a physical address to a kernel virtual address can become a vulnerability if an attacker can indirectly control the physical address, length, and cache type. So, in my case, I will designate this as an analysis vector and analyze the code.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image8.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Then, I proceed to reverse-engineer the IOCTL branching structure based on the switch-case inside &lt;code&gt;DispatchDeviceControl&lt;/code&gt;. In the case of the WDM driver above, you can see that specific IOCTL Cases branch in the form of &lt;code&gt;0x80002000&lt;/code&gt;, &lt;code&gt;0x80002004&lt;/code&gt;, &lt;code&gt;0x8000201C&lt;/code&gt;&amp;#x2026; within the &lt;code&gt;DispatchDeviceControl&lt;/code&gt;&amp;#x2018;s switch-case. Here, I was able to identify the IOCTL Case directly linked to the &lt;code&gt;MmMapIoSpace&lt;/code&gt; call. By classifying these cases based on their behavior, you can check how input validation for things like option values, lengths, and pointer handling is processed.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image9.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image10.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;For example, the key point in this analysis is the &lt;code&gt;0x8000202C&lt;/code&gt; case. In this case, a flow appears where specific offset values from the input buffer within the IRP are interpreted as arguments like &lt;code&gt;dst&lt;/code&gt;/&lt;code&gt;src&lt;/code&gt;/&lt;code&gt;size&lt;/code&gt;, extracted, and passed to &lt;code&gt;memmove&lt;/code&gt;. From a WDM perspective, if the IOCTL in the &lt;code&gt;DeviceIoControl&lt;/code&gt; path is &lt;code&gt;METHOD_BUFFERED&lt;/code&gt;, the I/O Manager places the address of a kernel-allocated buffer into &lt;code&gt;IRP&amp;#x2192;AssociatedIrp.SystemBuffer&lt;/code&gt; and fills that buffer with content copied from the user input.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image11.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Checking how to enter the &lt;code&gt;0x8000202C&lt;/code&gt; case, if the input buffer length is just &lt;code&gt;0x38&lt;/code&gt;, it trusts the values taken from offsets (+&lt;code&gt;0x20&lt;/code&gt;/+&lt;code&gt;0x28&lt;/code&gt;/+&lt;code&gt;0x30&lt;/code&gt;) within that buffer as a pointer/length and passes them to &lt;code&gt;memmove(dst, src, size)&lt;/code&gt;. This confirms that a read/write primitive can be established in this way.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image12.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Afterward, you can follow the function flow in WinDBG using the information obtained from static analysis. We confirmed earlier that in the &lt;code&gt;0x8000202C&lt;/code&gt; case, the values from &lt;code&gt;SystemBuffer(rsi)+0x20/0x28/0x30&lt;/code&gt; are put into &lt;code&gt;memmove(dst, src, size)&lt;/code&gt;. If you write a payload and check the area around the &lt;code&gt;SystemBuffer&lt;/code&gt; of &lt;code&gt;METHOD_BUFFERED&lt;/code&gt; pointed to by &lt;code&gt;rsi&lt;/code&gt;&amp;#x2026; you can see that it&amp;#x2019;s overwritten with &amp;#x2018;A&amp;#x2019;s as intended, right?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image13.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Once the vulnerability is confirmed, it&amp;#x2019;s time to exploit it. For example, in the case above, if you call &lt;code&gt;DeviceIoControl&lt;/code&gt; with &lt;code&gt;dst=output_buf&lt;/code&gt; (user address), &lt;code&gt;src=desired kernel address to read&lt;/code&gt;, and &lt;code&gt;size=8&lt;/code&gt; in the IOCTL input structure, the kernel performs &lt;code&gt;memmove(dst, src, size)&lt;/code&gt;, establishing an 8-byte arbitrary read. Using the familiar &lt;code&gt;NtQuerySystemInformation&lt;/code&gt; handle table (for Windows bug hunters) to get the EPROCESS address, we add TOKENOFFSET to the obtained SYSTEM EPROCESS address to read the &lt;code&gt;EPROCESS-&amp;gt;Token&lt;/code&gt; value. Then, in the same way, we find the current EPROCESS address, calculate the Token field&amp;#x2019;s location, and perform an Arbitrary Write by setting &lt;code&gt;dst=current EPROCESS+TOKENOFFSET&lt;/code&gt;, &lt;code&gt;src=prepared SYSTEM token pointer&lt;/code&gt;, and &lt;code&gt;size=8&lt;/code&gt; in the IOCTL to achieve privilege escalation. As you can see, the detailed payload construction depends on the type of vulnerability found.&lt;/p&gt;
+&lt;h2 id=&#34;Chapter-2-Named-Pipe-as-an-Attack-Surface&#34;&gt;&lt;a href=&#34;#Chapter-2-Named-Pipe-as-an-Attack-Surface&#34; class=&#34;headerlink&#34; title=&#34;Chapter 2: Named Pipe as an Attack Surface&#34;&gt;&lt;/a&gt;Chapter 2: Named Pipe as an Attack Surface&lt;/h2&gt;&lt;h3 id=&#34;2-1-Overview-of-the-Named-Pipe-Attack-Surface&#34;&gt;&lt;a href=&#34;#2-1-Overview-of-the-Named-Pipe-Attack-Surface&#34; class=&#34;headerlink&#34; title=&#34;2.1 Overview of the Named Pipe Attack Surface&#34;&gt;&lt;/a&gt;2.1 Overview of the Named Pipe Attack Surface&lt;/h3&gt;&lt;p&gt;Now that we&amp;#x2019;ve looked at kernel drivers, it&amp;#x2019;s time to examine Named Pipes. This section assumes a slight understanding of the Named Pipe communication method, so I recommend checking out the related research article &lt;a href=&#34;https://hackyboiz.github.io/2025/05/12/ogu123/NamedPipe/EN/&#34;&gt;&amp;#x1F449;here&lt;/a&gt;! Although Named Pipes are used as an IPC communication mechanism, they are managed as kernel objects and, like kernel drivers, are frequently used by SYSTEM-privileged processes to communicate with user mode. In particular, there are many cases where a service process trusts the Named Pipe input as an internal message, parses it into a structure, or connects it to sensitive operations like permission changes, registry actions, or process execution. A lack of validation can lead to LPE. Curious about how to approach IPC differently from IOCTL? Let&amp;#x2019;s find out!&lt;/p&gt;
+&lt;h3 id=&#34;2-2-Named-Pipe-Target-Collection&#34;&gt;&lt;a href=&#34;#2-2-Named-Pipe-Target-Collection&#34; class=&#34;headerlink&#34; title=&#34;2.2 Named Pipe Target Collection&#34;&gt;&lt;/a&gt;2.2 Named Pipe Target Collection&lt;/h3&gt;&lt;p&gt;General target collection proceeds in the following order: (1) select SYSTEM/service process candidates, (2) obtain the pipe handles opened by that process, and then (3) check if non-administrators like Everyone have Read/Write access through the pipe&amp;#x2019;s ACL.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image14.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;I start by selecting process candidates using Process Explorer. My criteria for narrowing down targets are checking if the execution account is a SYSTEM process, if it&amp;#x2019;s a third-party service, if a Named Pipe exists in its HANDLEs, and if its Integrity Level is SYSTEM.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image15.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;You can find out if a NamedPipe exists in the Handles tab at the bottom of Process Explorer. An item with Type &amp;#x2018;File&amp;#x2019; and a Name starting with &lt;code&gt;\Device\NamedPipe\...&lt;/code&gt; is a Named Pipe. The collected &lt;code&gt;\Device\NamedPipe\...&lt;/code&gt; path becomes the mapping point in user mode, like &lt;code&gt;\\.\pipe\...&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image16.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;However, there&amp;#x2019;s one major hurdle left&amp;#x2026; the ACL. If you go through the trouble of confirming a Named Pipe exists but can&amp;#x2019;t read or write to it&amp;#x2026; you have to say goodbye to that Named Pipe. &amp;#x1F62D; If only Administrators have RW access and others have no permissions, it&amp;#x2019;s hard to see it as a successful LPE vector. You need to use a tool like accesschk to inspect the pipe&amp;#x2019;s ACL and check if broad groups like Everyone, Authenticated Users, or Users have RW access, then narrow down your targets.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image17.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Once a target is selected, the target collection process is completed by opening the binary, quickly searching for APIs like &lt;code&gt;CreateNamedPipeA/W&lt;/code&gt;, &lt;code&gt;ConnectNamedPipe&lt;/code&gt;, and &lt;code&gt;DisconnectNamedPipe&lt;/code&gt; to confirm it&amp;#x2019;s a server implementation, and then analyzing the code by checking the &lt;code&gt;Connect &amp;#x2192; Read&lt;/code&gt; flow, parsing branches, and permission-related branches like token/access control.&lt;/p&gt;
+&lt;h3 id=&#34;2-3-Named-Pipe-Analysis&#34;&gt;&lt;a href=&#34;#2-3-Named-Pipe-Analysis&#34; class=&#34;headerlink&#34; title=&#34;2.3 Named Pipe Analysis&#34;&gt;&lt;/a&gt;2.3 Named Pipe Analysis&lt;/h3&gt;&lt;p&gt;The analysis could be conducted in the following order.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Select server (SYSTEM service) process candidates with Process Explorer.&lt;/li&gt;
+&lt;li&gt;Verify if the collected &lt;code&gt;\Device\NamedPipe\...&lt;/code&gt; is the connection point for &lt;code&gt;\\.\pipe\...&lt;/code&gt; in user mode.&lt;/li&gt;
+&lt;li&gt;Check Pipe ACL with accesschk &amp;#x2192; Verify if Read/Write is open for broad groups like Everyone.&lt;/li&gt;
+&lt;li&gt;In IDA, trace the flow like &lt;code&gt;CreateNamedPipe*&lt;/code&gt; &amp;#x2192; &lt;code&gt;ConnectNamedPipe&lt;/code&gt; &amp;#x2192; &lt;code&gt;ReadFile/WriteFile&lt;/code&gt; and identify the request handling function dispatch.&lt;/li&gt;
+&lt;li&gt;Narrow down to branches where a request leads to privilege-sensitive operations like registry/HKLM access or service configuration.&lt;/li&gt;
+&lt;li&gt;Perform dynamic analysis by capturing events with ProcMon.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image18.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Once a target is set, dynamic analysis begins by using ProcMon to see what vulnerable behavior the pipe I/O leads to. First, narrow down the server process that creates and receives the pipe and the client process that connects and sends to the pipe. Then, prepare to trace IPC call flows like &lt;code&gt;CreateNamedPipe&lt;/code&gt;, &lt;code&gt;CreateFile&lt;/code&gt;, &lt;code&gt;ReadFile&lt;/code&gt;, and &lt;code&gt;WriteFile&lt;/code&gt; within the scope of those processes. It&amp;#x2019;s a good practice to register filters for registry key-related events or core named pipe I/O events under &amp;#x2018;Process Name&amp;#x2019; and &amp;#x2018;Operation&amp;#x2019;, and to fix the filter for the server&amp;#x2019;s Integrity Level as System. This makes it easier to check if user input can lead to privilege escalation to SYSTEM.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image19.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;As it happens, the program I analyzed has a checkbox in its settings that allows Non-Admins some administrative functions via Access Control. It makes sense for an antivirus. But this isn&amp;#x2019;t typical, and even when I keep clicking the &amp;#x201C;Allow setting changes / disable protection&amp;#x201D; checkbox as a non-administrator, no UAC prompt appears. Suspicious, right? Let&amp;#x2019;s prioritize this service for investigation.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;PS C:\Users\banda\Downloads\AccessChk&amp;gt; .\accesschk.exe -accepteula -lv &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;\pipe\K7TSMngrService1&amp;quot;&lt;/span&gt;
+
+\\.\Pipe\K7TSMngrService1
+  DESCRIPTOR FLAGS:
+      [SE_DACL_PRESENT]
+      [SE_SACL_PRESENT]
+      [SE_SACL_AUTO_INHERITED]
+      [SE_SELF_RELATIVE]
+  OWNER: NT AUTHORITY\SYSTEM
+  LABEL: Low Mandatory Level
+        SYSTEM_MANDATORY_LABEL_NO_WRITE_UP
+  ACCESS_ALLOWED_ACE_TYPE: NT AUTHORITY\SYSTEM
+        FILE_ADD_FILE
+        FILE_CREATE_PIPE_INSTANCE
+        FILE_APPEND_DATA
+        FILE_LIST_DIRECTORY
+        FILE_READ_ATTRIBUTES
+        FILE_READ_DATA
+        FILE_READ_EA
+        FILE_WRITE_ATTRIBUTES
+        FILE_WRITE_DATA
+        FILE_WRITE_EA
+        SYNCHRONIZE
+        READ_CONTROL
+  ACCESS_ALLOWED_ACE_TYPE: Everyone
+        FILE_ADD_FILE
+        FILE_CREATE_PIPE_INSTANCE
+        FILE_APPEND_DATA
+        FILE_LIST_DIRECTORY
+        FILE_READ_ATTRIBUTES
+        FILE_READ_DATA
+        FILE_READ_EA
+        FILE_WRITE_ATTRIBUTES
+        FILE_WRITE_DATA
+        FILE_WRITE_EA
+        SYNCHRONIZE
+        READ_CONTROL&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;After checking the ACL directly, as suspected, the DACL for &lt;code&gt;\\.\pipe\K7TSMngrService1&lt;/code&gt; is set too loosely. Since &amp;#x2018;file read&amp;#x2019;, &amp;#x2018;file write&amp;#x2019;, and &amp;#x2018;file append&amp;#x2019; are allowed for Everyone, it means that virtually anyone can request a connection to this pipe to write and read. Once this is confirmed, from this point on, let&amp;#x2019;s perform static analysis on the dispatch or parsing routines to see with our own eyes which requests lead to privilege-sensitive operations.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image20.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Now that we&amp;#x2019;ve confirmed the permission information, it would be good to check the Named Pipe&amp;#x2019;s server code through static analysis, right? It&amp;#x2019;s best to check the broad structure from the creation point. For example, here we can see a flow where a Named Pipe is created with &lt;code&gt;CreateNamedPipeA(&amp;quot;\\\\.\\pipe\\K7TSMngrService1&amp;quot;, ...)&lt;/code&gt; and, upon a successful &lt;code&gt;ConnectNamedPipe&lt;/code&gt;, it dispatches to a request handler function! Once this pattern is confirmed, the next step is to check the protocol validation part, like what header is read with &lt;code&gt;ReadFile&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image21.png&#34; alt&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// request header (28 bytes)&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;typedef&lt;/span&gt; &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; _&lt;span class=&#34;hljs-title&#34;&gt;K7TS_REQ_HDR&lt;/span&gt; {&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt; magic;      &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;apos;K7TS&amp;apos;&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt; ver;        &lt;span class=&#34;hljs-comment&#34;&gt;// 0x1010&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt; hdr_sz;     &lt;span class=&#34;hljs-comment&#34;&gt;// 28&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt; reserved;   &lt;span class=&#34;hljs-comment&#34;&gt;// 0&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt; op;         &lt;span class=&#34;hljs-comment&#34;&gt;// v21&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt; in_len;     &lt;span class=&#34;hljs-comment&#34;&gt;// nNumberOfBytesToRead&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt; out_len;    &lt;span class=&#34;hljs-comment&#34;&gt;// v23&lt;/span&gt;
+} K7TS_REQ_HDR;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;For example, to communicate with &lt;code&gt;\\.\pipe\K7TSMngrService1&lt;/code&gt;, how should the request buffer be structured to succeed? Looking at the code, it performs a protocol validation routine: it targets the pipe &lt;code&gt;\\.\pipe\K7TSMngrService1&lt;/code&gt;, sets &lt;code&gt;result = 0x4B375453(&amp;apos;K7TS&amp;apos;)&lt;/code&gt;, &lt;code&gt;ver=0x1010&lt;/code&gt;, &lt;code&gt;hdr_sz=28&lt;/code&gt;, and limits the request type and I/O length to 1MB. Only then does it allocate a heap buffer, receive the request with &lt;code&gt;ReadFile&lt;/code&gt;, pass it to an internal dispatcher to create a response, return a 36-byte response header + response body with &lt;code&gt;WriteFile&lt;/code&gt;, and finally terminate the session with &lt;code&gt;DisconnectNamedPipe&lt;/code&gt; and &lt;code&gt;CloseHandle&lt;/code&gt;. We&amp;#x2019;ve learned crucial information for connecting and communicating with the pipe!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image22.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Now that we&amp;#x2019;ve checked the validation routine, let&amp;#x2019;s look for the part that leads to a privilege-sensitive operation, like allowing a normal user to enable administrative functions as we saw in the settings earlier. Following the string references, we could see that K7TS components directly reference registry-based policy flags through strings like &lt;code&gt;AdminNonAdminIsValid&lt;/code&gt;, &lt;code&gt;AdminChangesNeedPassword&lt;/code&gt;, and &lt;code&gt;AdminEnableNeedVerification&lt;/code&gt;. With this single pipe request, the SYSTEM service is performing a Write to HKLM. If the validation isn&amp;#x2019;t sufficiently restrictive, it could become a primitive for a normal user like us to perform a SYSTEM registry write.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image23.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Now, based on the information gathered above, I sent a request that satisfies the protocol conditions and checked the Process Monitor logs. Since a Named Pipe is an IPC endpoint, it&amp;#x2019;s good to carefully check for events centered around points of change, such as registry/HKLM, service settings, file read/write, and process execution. For example, the current ProcMon log shows that after I, a normal user, send a request through the pipe, the SYSTEM-privileged &lt;code&gt;K7TSMngr.exe&lt;/code&gt; performs a write operation to HKLM. By triggering writes to related keys like &lt;code&gt;AdminNonAdminIsValid&lt;/code&gt;, &lt;code&gt;AdminChangesNeedPassword&lt;/code&gt;, and &lt;code&gt;AdminChangesPasswordHash&lt;/code&gt;, I reconfirmed that security boundaries like requiring administrator rights or allowing non-administrators could be bypassed.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image24.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Now, let&amp;#x2019;s try the LPE. First, as a normal user, I send a connection request to &lt;code&gt;\\.\pipe\K7TSMngrService1&lt;/code&gt; with a request that satisfies the K7TS header and magic format, making the SYSTEM service configure the registry settings on my behalf. Then, using HKLM IFEO, I target the key &lt;code&gt;HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\K7TSHlpr.exe&lt;/code&gt; and replace the intended debugger with &lt;code&gt;cmd.exe /c C:\temp\payload.bat&lt;/code&gt;. And&amp;#x2026;? The LPE is successful! The entity processing the &lt;code&gt;K7TSMngrService1&lt;/code&gt; pipe request was &lt;code&gt;K7TSMngr.exe&lt;/code&gt;. Through static analysis, I was able to confirm a vulnerability where the auxiliary process &lt;code&gt;K7TSHlpr.exe&lt;/code&gt;, which performs internal operations, runs in a high-privilege context. This is what allowed us to execute our desired bat file.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/28/banda/WHS3-bughunting/en/image25.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Through privilege escalation, you can see that the user is now a member of the Administrators group in Local Group Memberships. Additionally, I hope it&amp;#x2019;s helpful to know that vulnerabilities in Named Pipes often involve ACLs, lack of permission checks, memory vulnerabilities, path manipulation, and race conditions!&lt;/p&gt;
+&lt;h2 id=&#34;Conclusion&#34;&gt;&lt;a href=&#34;#Conclusion&#34; class=&#34;headerlink&#34; title=&#34;Conclusion&#34;&gt;&lt;/a&gt;Conclusion&lt;/h2&gt;&lt;p&gt;I hope the Kernel Driver and Named Pipe collection and analysis process in this article has been helpful to you! Please note that while I referred to old CVEs when explaining the process, the verification was done in a Win11 24H2 environment. TMI, but as I was writing and opening up the tools, driver targets kept catching my eye, and I kept getting sidetracked&amp;#x2026; haha. In the next series, we will introduce the vulnerabilities we found! Thank you.&lt;/p&gt;
+&lt;h2 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://voidsec.com/windows-drivers-reverse-engineering-methodology/&#34;&gt;Windows Driver RE Methodology (voidsec)&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://www.amd.com/en/resources/product-security/bulletin/amd-sb-6009.html&#34;&gt;AMD-SB-6009: Radeon Graphics Kernel Driver Privilege Management&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://owasp.org/www-chapter-seoul/#div-pastevents&#34;&gt;OWASP Seoul(2025.07) - Windows 3rd-Party Driver LPE BugHunting&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://blog.quarkslab.com/k7-antivirus-named-pipe-abuse-registry-manipulation-and-privilege-escalation.html&#34;&gt;K7 Antivirus Named Pipe Abuse &amp;#x2192; Registry Manipulation&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/12/28/banda/WHS3-bughunting/en/logo_window.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/12/28/banda/whs3-bughunting/en/">
+
+  <title>[Research] Windows LPE Bug Hunting, Served by the Team’s Youngest: Part 1 (EN) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-12-28 17:00" pubdate>
+      2025년 12월 28일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      2.8k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      56
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] Windows LPE Bug Hunting, Served by the Team’s Youngest: Part 1 (EN)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p><img src="/2025/12/28/banda/WHS3-bughunting/en/logo_window.png" srcset="/img/loading.gif" alt></p>
+<h2 id="Introduction"><a href="#Introduction" class="headerlink" title="Introduction"></a>Introduction</h2><p>Hello, 2025 is already coming to an end. Is everyone enjoying the end of the year? &#x1F385; Some of our team members participated in a project at the Whitehat School on the topic of &#x2018;Windows Kernel Driver &amp; Named Pipe LPE Bug Hunting&#x2019;. It was back in May 2025&#x2026; I&#x2019;m banda, and I started looking for Windows vulnerabilities after our mentor simply said, &#x2018;Join the project.&#x2019;</p>
+<p><img src="/2025/12/28/banda/WHS3-bughunting/en/image1.png" srcset="/img/loading.gif" alt></p>
+<p>Today, I&#x2019;ll be writing Part 1, focusing on sharing some great bug hunting tips, especially on the Kernel Driver &amp; Named Pipe vectors! Also, our team members will be covering more informative content in the upcoming series, so please make sure to read them! In this series, we will look at the two elements, Kernel Driver and Named Pipe, as separate LPE attack surfaces and introduce the vulnerabilities we found.</p>
+<h2 id="Chapter-1-Kernel-Driver-as-an-Attack-Surface"><a href="#Chapter-1-Kernel-Driver-as-an-Attack-Surface" class="headerlink" title="Chapter 1: Kernel Driver as an Attack Surface"></a>Chapter 1: Kernel Driver as an Attack Surface</h2><h3 id="1-1-Overview-of-the-Kernel-Driver-Attack-Surface"><a href="#1-1-Overview-of-the-Kernel-Driver-Attack-Surface" class="headerlink" title="1.1 Overview of the Kernel Driver Attack Surface"></a><strong>1.1 Overview of the Kernel Driver Attack Surface</strong></h3><p>In the Windows environment, LPE vulnerabilities often occur due to a lack of trust boundary validation between user mode and kernel mode, making kernel drivers a good target. A WDM-structured kernel driver basically processes an IRP (<code>IRP_MJ_DEVICE_CONTROL</code>) and receives the IOCTL code and the lengths of the input and output buffers from the kernel through the <code>IO_STACK_LOCATION</code> structure. At this point, it accesses the user input buffer through each field of the IRP structure depending on the IOCTL transfer method!</p>
+<p>Especially in WDM with <code>METHOD_BUFFERED</code>, the I/O Manager allocates a kernel buffer and provides its pointer as <code>Irp-&gt;AssociatedIrp.SystemBuffer</code>, with both input and output passing through this buffer. In other words, vulnerabilities can arise because this IOCTL processing logic is designed to interpret user input within the kernel address space, and because the I/O Manager does not perform validation on user input when constructing the IRP. Keeping this in mind, let&#x2019;s look at the process of collecting and analyzing targets.</p>
+<h3 id="1-2-Kernel-Driver-Target-Collection"><a href="#1-2-Kernel-Driver-Target-Collection" class="headerlink" title="1.2 Kernel Driver Target Collection"></a>1.2 Kernel Driver Target Collection</h3><p><img src="/2025/12/28/banda/WHS3-bughunting/en/image2.png" srcset="/img/loading.gif" alt></p>
+<p>First, I need to quickly find the third-party drivers I&#x2019;ve installed, right? In the first step, I use FolderChangesView to track the <code>.sys</code> files created in the user environment, checking the created sys file names and their paths.</p>
+<p><img src="/2025/12/28/banda/WHS3-bughunting/en/image3.png" srcset="/img/loading.gif" alt></p>
+<p>Since we need to analyze drivers that are actually loaded and running in the kernel, the next step is to use DriverView to check the list of currently loaded drivers. A loaded state means that the IOCTL and IRP processing routines are active, right?</p>
+<p><img src="/2025/12/28/banda/WHS3-bughunting/en/image4.png" srcset="/img/loading.gif" alt></p>
+<p>And we created a simple automation tool to extract <code>.sys</code> files through FolderChangesView and copy them from the driver&#x2019;s directory to an analysis directory. We can start the analysis by checking if the extracted files have been moved correctly to the analysis directory.</p>
+<h3 id="1-3-Kernel-Driver-Analysis"><a href="#1-3-Kernel-Driver-Analysis" class="headerlink" title="1.3 Kernel Driver Analysis"></a>1.3 Kernel Driver Analysis</h3><p>Driver analysis can be performed in the following order.</p>
+<ol>
+<li>Exposed <code>DeviceName</code> &#x2192; Determine user accessibility</li>
+<li>Check accessibility of the <code>\Device</code> node with WinObj</li>
+<li>Start WDM driver analysis using IDA/Plugins</li>
+<li>Identify IOCTL Table through IDA</li>
+<li>Analyze <code>DispatchRoutine</code> &#x2192; Check input validation parts/structures/fields</li>
+<li>Perform dynamic analysis by tracing function flow/Device request processing with WinDBG</li>
+</ol>
+<p><img src="/2025/12/28/banda/WHS3-bughunting/en/image5.png" srcset="/img/loading.gif" alt></p>
+<p>The first step is to check if the Device and Symlink are exposed in DriverEntry. If, for example, a Device Name like <code>\Device\PdFwKrnl</code> and a Symlink like <code>\DosDevices\PdFwKrnl</code> are created, it means we have secured a possible entry point to send requests to the driver from user mode using <code>CreateFile/DeviceControl</code>. We then check which dispatch routine (<code>DispatchDeviceControl</code>) <code>IRP_MJ_DEVICE_CONTROL</code> is connected to through the <code>DriverObject-&gt;MajorFunction</code> table.</p>
+<p><img src="/2025/12/28/banda/WHS3-bughunting/en/image6.png" srcset="/img/loading.gif" alt></p>
+<p>Once we have information about <code>\Device</code>, we need to check if this driver exposes an actually accessible entry point from user mode and how access control is configured. In WinObj, we verify that the Device Object we found is actually created under <code>\Device</code> and also check for the existence of a Symlink. Then, we open the Security tab for both the Device and Symlink to ensure that a general user (Everyone) has Read/Write permissions! This is necessary for a general user to open a handle and send IOCTL requests.</p>
+<p><img src="/2025/12/28/banda/WHS3-bughunting/en/image7.png" srcset="/img/loading.gif" alt></p>
+<p>Afterward, I quickly identified the main dispatch routines using IDA&#x2019;s DriverBuddy and determined it was a WDM driver. DriverBuddy helps find traces of kernel API calls, and as an example, we can see that call points like <code>MmMapIoSpace</code>, <code>MmUnmapIoSpace</code>, <code>MmBuildMdlForNonPagedPool</code>, and <code>MmMapLockedPages</code> are located near <code>DispatchDeviceControl</code>. In particular, a routine like <code>MmMapIoSpace</code> that maps a physical address to a kernel virtual address can become a vulnerability if an attacker can indirectly control the physical address, length, and cache type. So, in my case, I will designate this as an analysis vector and analyze the code.</p>
+<p><img src="/2025/12/28/banda/WHS3-bughunting/en/image8.png" srcset="/img/loading.gif" alt></p>
+<p>Then, I proceed to reverse-engineer the IOCTL branching structure based on the switch-case inside <code>DispatchDeviceControl</code>. In the case of the WDM driver above, you can see that specific IOCTL Cases branch in the form of <code>0x80002000</code>, <code>0x80002004</code>, <code>0x8000201C</code>&#x2026; within the <code>DispatchDeviceControl</code>&#x2018;s switch-case. Here, I was able to identify the IOCTL Case directly linked to the <code>MmMapIoSpace</code> call. By classifying these cases based on their behavior, you can check how input validation for things like option values, lengths, and pointer handling is processed.</p>
+<p><img src="/2025/12/28/banda/WHS3-bughunting/en/image9.png" srcset="/img/loading.gif" alt></p>
+<p><img src="/2025/12/28/banda/WHS3-bughunting/en/image10.png" srcset="/img/loading.gif" alt></p>
+<p>For example, the key point in this analysis is the <code>0x8000202C</code> case. In this case, a flow appears where specific offset values from the input buffer within the IRP are interpreted as arguments like <code>dst</code>/<code>src</code>/<code>size</code>, extracted, and passed to <code>memmove</code>. From a WDM perspective, if the IOCTL in the <code>DeviceIoControl</code> path is <code>METHOD_BUFFERED</code>, the I/O Manager places the address of a kernel-allocated buffer into <code>IRP&#x2192;AssociatedIrp.SystemBuffer</code> and fills that buffer with content copied from the user input.</p>
+<p><img src="/2025/12/28/banda/WHS3-bughunting/en/image11.png" srcset="/img/loading.gif" alt></p>
+<p>Checking how to enter the <code>0x8000202C</code> case, if the input buffer length is just <code>0x38</code>, it trusts the values taken from offsets (+<code>0x20</code>/+<code>0x28</code>/+<code>0x30</code>) within that buffer as a pointer/length and passes them to <code>memmove(dst, src, size)</code>. This confirms that a read/write primitive can be established in this way.</p>
+<p><img src="/2025/12/28/banda/WHS3-bughunting/en/image12.png" srcset="/img/loading.gif" alt></p>
+<p>Afterward, you can follow the function flow in WinDBG using the information obtained from static analysis. We confirmed earlier that in the <code>0x8000202C</code> case, the values from <code>SystemBuffer(rsi)+0x20/0x28/0x30</code> are put into <code>memmove(dst, src, size)</code>. If you write a payload and check the area around the <code>SystemBuffer</code> of <code>METHOD_BUFFERED</code> pointed to by <code>rsi</code>&#x2026; you can see that it&#x2019;s overwritten with &#x2018;A&#x2019;s as intended, right?</p>
+<p><img src="/2025/12/28/banda/WHS3-bughunting/en/image13.png" srcset="/img/loading.gif" alt></p>
+<p>Once the vulnerability is confirmed, it&#x2019;s time to exploit it. For example, in the case above, if you call <code>DeviceIoControl</code> with <code>dst=output_buf</code> (user address), <code>src=desired kernel address to read</code>, and <code>size=8</code> in the IOCTL input structure, the kernel performs <code>memmove(dst, src, size)</code>, establishing an 8-byte arbitrary read. Using the familiar <code>NtQuerySystemInformation</code> handle table (for Windows bug hunters) to get the EPROCESS address, we add TOKENOFFSET to the obtained SYSTEM EPROCESS address to read the <code>EPROCESS-&gt;Token</code> value. Then, in the same way, we find the current EPROCESS address, calculate the Token field&#x2019;s location, and perform an Arbitrary Write by setting <code>dst=current EPROCESS+TOKENOFFSET</code>, <code>src=prepared SYSTEM token pointer</code>, and <code>size=8</code> in the IOCTL to achieve privilege escalation. As you can see, the detailed payload construction depends on the type of vulnerability found.</p>
+<h2 id="Chapter-2-Named-Pipe-as-an-Attack-Surface"><a href="#Chapter-2-Named-Pipe-as-an-Attack-Surface" class="headerlink" title="Chapter 2: Named Pipe as an Attack Surface"></a>Chapter 2: Named Pipe as an Attack Surface</h2><h3 id="2-1-Overview-of-the-Named-Pipe-Attack-Surface"><a href="#2-1-Overview-of-the-Named-Pipe-Attack-Surface" class="headerlink" title="2.1 Overview of the Named Pipe Attack Surface"></a>2.1 Overview of the Named Pipe Attack Surface</h3><p>Now that we&#x2019;ve looked at kernel drivers, it&#x2019;s time to examine Named Pipes. This section assumes a slight understanding of the Named Pipe communication method, so I recommend checking out the related research article <a href="https://hackyboiz.github.io/2025/05/12/ogu123/NamedPipe/EN/">&#x1F449;here</a>! Although Named Pipes are used as an IPC communication mechanism, they are managed as kernel objects and, like kernel drivers, are frequently used by SYSTEM-privileged processes to communicate with user mode. In particular, there are many cases where a service process trusts the Named Pipe input as an internal message, parses it into a structure, or connects it to sensitive operations like permission changes, registry actions, or process execution. A lack of validation can lead to LPE. Curious about how to approach IPC differently from IOCTL? Let&#x2019;s find out!</p>
+<h3 id="2-2-Named-Pipe-Target-Collection"><a href="#2-2-Named-Pipe-Target-Collection" class="headerlink" title="2.2 Named Pipe Target Collection"></a>2.2 Named Pipe Target Collection</h3><p>General target collection proceeds in the following order: (1) select SYSTEM/service process candidates, (2) obtain the pipe handles opened by that process, and then (3) check if non-administrators like Everyone have Read/Write access through the pipe&#x2019;s ACL.</p>
+<p><img src="/2025/12/28/banda/WHS3-bughunting/en/image14.png" srcset="/img/loading.gif" alt></p>
+<p>I start by selecting process candidates using Process Explorer. My criteria for narrowing down targets are checking if the execution account is a SYSTEM process, if it&#x2019;s a third-party service, if a Named Pipe exists in its HANDLEs, and if its Integrity Level is SYSTEM.</p>
+<p><img src="/2025/12/28/banda/WHS3-bughunting/en/image15.png" srcset="/img/loading.gif" alt></p>
+<p>You can find out if a NamedPipe exists in the Handles tab at the bottom of Process Explorer. An item with Type &#x2018;File&#x2019; and a Name starting with <code>\Device\NamedPipe\...</code> is a Named Pipe. The collected <code>\Device\NamedPipe\...</code> path becomes the mapping point in user mode, like <code>\\.\pipe\...</code>.</p>
+<p><img src="/2025/12/28/banda/WHS3-bughunting/en/image16.png" srcset="/img/loading.gif" alt></p>
+<p>However, there&#x2019;s one major hurdle left&#x2026; the ACL. If you go through the trouble of confirming a Named Pipe exists but can&#x2019;t read or write to it&#x2026; you have to say goodbye to that Named Pipe. &#x1F62D; If only Administrators have RW access and others have no permissions, it&#x2019;s hard to see it as a successful LPE vector. You need to use a tool like accesschk to inspect the pipe&#x2019;s ACL and check if broad groups like Everyone, Authenticated Users, or Users have RW access, then narrow down your targets.</p>
+<p><img src="/2025/12/28/banda/WHS3-bughunting/en/image17.png" srcset="/img/loading.gif" alt></p>
+<p>Once a target is selected, the target collection process is completed by opening the binary, quickly searching for APIs like <code>CreateNamedPipeA/W</code>, <code>ConnectNamedPipe</code>, and <code>DisconnectNamedPipe</code> to confirm it&#x2019;s a server implementation, and then analyzing the code by checking the <code>Connect &#x2192; Read</code> flow, parsing branches, and permission-related branches like token/access control.</p>
+<h3 id="2-3-Named-Pipe-Analysis"><a href="#2-3-Named-Pipe-Analysis" class="headerlink" title="2.3 Named Pipe Analysis"></a>2.3 Named Pipe Analysis</h3><p>The analysis could be conducted in the following order.</p>
+<ol>
+<li>Select server (SYSTEM service) process candidates with Process Explorer.</li>
+<li>Verify if the collected <code>\Device\NamedPipe\...</code> is the connection point for <code>\\.\pipe\...</code> in user mode.</li>
+<li>Check Pipe ACL with accesschk &#x2192; Verify if Read/Write is open for broad groups like Everyone.</li>
+<li>In IDA, trace the flow like <code>CreateNamedPipe*</code> &#x2192; <code>ConnectNamedPipe</code> &#x2192; <code>ReadFile/WriteFile</code> and identify the request handling function dispatch.</li>
+<li>Narrow down to branches where a request leads to privilege-sensitive operations like registry/HKLM access or service configuration.</li>
+<li>Perform dynamic analysis by capturing events with ProcMon.</li>
+</ol>
+<p><img src="/2025/12/28/banda/WHS3-bughunting/en/image18.png" srcset="/img/loading.gif" alt></p>
+<p>Once a target is set, dynamic analysis begins by using ProcMon to see what vulnerable behavior the pipe I/O leads to. First, narrow down the server process that creates and receives the pipe and the client process that connects and sends to the pipe. Then, prepare to trace IPC call flows like <code>CreateNamedPipe</code>, <code>CreateFile</code>, <code>ReadFile</code>, and <code>WriteFile</code> within the scope of those processes. It&#x2019;s a good practice to register filters for registry key-related events or core named pipe I/O events under &#x2018;Process Name&#x2019; and &#x2018;Operation&#x2019;, and to fix the filter for the server&#x2019;s Integrity Level as System. This makes it easier to check if user input can lead to privilege escalation to SYSTEM.</p>
+<p><img src="/2025/12/28/banda/WHS3-bughunting/en/image19.png" srcset="/img/loading.gif" alt></p>
+<p>As it happens, the program I analyzed has a checkbox in its settings that allows Non-Admins some administrative functions via Access Control. It makes sense for an antivirus. But this isn&#x2019;t typical, and even when I keep clicking the &#x201C;Allow setting changes / disable protection&#x201D; checkbox as a non-administrator, no UAC prompt appears. Suspicious, right? Let&#x2019;s prioritize this service for investigation.</p>
+<pre><code class="hljs c">PS C:\Users\banda\Downloads\AccessChk&gt; .\accesschk.exe -accepteula -lv <span class="hljs-string">&quot;\pipe\K7TSMngrService1&quot;</span>
+
+\\.\Pipe\K7TSMngrService1
+  DESCRIPTOR FLAGS:
+      [SE_DACL_PRESENT]
+      [SE_SACL_PRESENT]
+      [SE_SACL_AUTO_INHERITED]
+      [SE_SELF_RELATIVE]
+  OWNER: NT AUTHORITY\SYSTEM
+  LABEL: Low Mandatory Level
+        SYSTEM_MANDATORY_LABEL_NO_WRITE_UP
+  ACCESS_ALLOWED_ACE_TYPE: NT AUTHORITY\SYSTEM
+        FILE_ADD_FILE
+        FILE_CREATE_PIPE_INSTANCE
+        FILE_APPEND_DATA
+        FILE_LIST_DIRECTORY
+        FILE_READ_ATTRIBUTES
+        FILE_READ_DATA
+        FILE_READ_EA
+        FILE_WRITE_ATTRIBUTES
+        FILE_WRITE_DATA
+        FILE_WRITE_EA
+        SYNCHRONIZE
+        READ_CONTROL
+  ACCESS_ALLOWED_ACE_TYPE: Everyone
+        FILE_ADD_FILE
+        FILE_CREATE_PIPE_INSTANCE
+        FILE_APPEND_DATA
+        FILE_LIST_DIRECTORY
+        FILE_READ_ATTRIBUTES
+        FILE_READ_DATA
+        FILE_READ_EA
+        FILE_WRITE_ATTRIBUTES
+        FILE_WRITE_DATA
+        FILE_WRITE_EA
+        SYNCHRONIZE
+        READ_CONTROL</code></pre>
+<p>After checking the ACL directly, as suspected, the DACL for <code>\\.\pipe\K7TSMngrService1</code> is set too loosely. Since &#x2018;file read&#x2019;, &#x2018;file write&#x2019;, and &#x2018;file append&#x2019; are allowed for Everyone, it means that virtually anyone can request a connection to this pipe to write and read. Once this is confirmed, from this point on, let&#x2019;s perform static analysis on the dispatch or parsing routines to see with our own eyes which requests lead to privilege-sensitive operations.</p>
+<p><img src="/2025/12/28/banda/WHS3-bughunting/en/image20.png" srcset="/img/loading.gif" alt></p>
+<p>Now that we&#x2019;ve confirmed the permission information, it would be good to check the Named Pipe&#x2019;s server code through static analysis, right? It&#x2019;s best to check the broad structure from the creation point. For example, here we can see a flow where a Named Pipe is created with <code>CreateNamedPipeA(&quot;\\\\.\\pipe\\K7TSMngrService1&quot;, ...)</code> and, upon a successful <code>ConnectNamedPipe</code>, it dispatches to a request handler function! Once this pattern is confirmed, the next step is to check the protocol validation part, like what header is read with <code>ReadFile</code>.</p>
+<p><img src="/2025/12/28/banda/WHS3-bughunting/en/image21.png" srcset="/img/loading.gif" alt></p>
+<pre><code class="hljs c"><span class="hljs-comment">// request header (28 bytes)</span>
+<span class="hljs-keyword">typedef</span> <span class="hljs-class"><span class="hljs-keyword">struct</span> _<span class="hljs-title">K7TS_REQ_HDR</span> {</span>
+  <span class="hljs-keyword">uint32_t</span> magic;      <span class="hljs-comment">// &apos;K7TS&apos;</span>
+  <span class="hljs-keyword">uint32_t</span> ver;        <span class="hljs-comment">// 0x1010</span>
+  <span class="hljs-keyword">uint32_t</span> hdr_sz;     <span class="hljs-comment">// 28</span>
+  <span class="hljs-keyword">uint32_t</span> reserved;   <span class="hljs-comment">// 0</span>
+  <span class="hljs-keyword">uint32_t</span> op;         <span class="hljs-comment">// v21</span>
+  <span class="hljs-keyword">uint32_t</span> in_len;     <span class="hljs-comment">// nNumberOfBytesToRead</span>
+  <span class="hljs-keyword">uint32_t</span> out_len;    <span class="hljs-comment">// v23</span>
+} K7TS_REQ_HDR;</code></pre>
+<p>For example, to communicate with <code>\\.\pipe\K7TSMngrService1</code>, how should the request buffer be structured to succeed? Looking at the code, it performs a protocol validation routine: it targets the pipe <code>\\.\pipe\K7TSMngrService1</code>, sets <code>result = 0x4B375453(&apos;K7TS&apos;)</code>, <code>ver=0x1010</code>, <code>hdr_sz=28</code>, and limits the request type and I/O length to 1MB. Only then does it allocate a heap buffer, receive the request with <code>ReadFile</code>, pass it to an internal dispatcher to create a response, return a 36-byte response header + response body with <code>WriteFile</code>, and finally terminate the session with <code>DisconnectNamedPipe</code> and <code>CloseHandle</code>. We&#x2019;ve learned crucial information for connecting and communicating with the pipe!</p>
+<p><img src="/2025/12/28/banda/WHS3-bughunting/en/image22.png" srcset="/img/loading.gif" alt></p>
+<p>Now that we&#x2019;ve checked the validation routine, let&#x2019;s look for the part that leads to a privilege-sensitive operation, like allowing a normal user to enable administrative functions as we saw in the settings earlier. Following the string references, we could see that K7TS components directly reference registry-based policy flags through strings like <code>AdminNonAdminIsValid</code>, <code>AdminChangesNeedPassword</code>, and <code>AdminEnableNeedVerification</code>. With this single pipe request, the SYSTEM service is performing a Write to HKLM. If the validation isn&#x2019;t sufficiently restrictive, it could become a primitive for a normal user like us to perform a SYSTEM registry write.</p>
+<p><img src="/2025/12/28/banda/WHS3-bughunting/en/image23.png" srcset="/img/loading.gif" alt></p>
+<p>Now, based on the information gathered above, I sent a request that satisfies the protocol conditions and checked the Process Monitor logs. Since a Named Pipe is an IPC endpoint, it&#x2019;s good to carefully check for events centered around points of change, such as registry/HKLM, service settings, file read/write, and process execution. For example, the current ProcMon log shows that after I, a normal user, send a request through the pipe, the SYSTEM-privileged <code>K7TSMngr.exe</code> performs a write operation to HKLM. By triggering writes to related keys like <code>AdminNonAdminIsValid</code>, <code>AdminChangesNeedPassword</code>, and <code>AdminChangesPasswordHash</code>, I reconfirmed that security boundaries like requiring administrator rights or allowing non-administrators could be bypassed.</p>
+<p><img src="/2025/12/28/banda/WHS3-bughunting/en/image24.png" srcset="/img/loading.gif" alt></p>
+<p>Now, let&#x2019;s try the LPE. First, as a normal user, I send a connection request to <code>\\.\pipe\K7TSMngrService1</code> with a request that satisfies the K7TS header and magic format, making the SYSTEM service configure the registry settings on my behalf. Then, using HKLM IFEO, I target the key <code>HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\K7TSHlpr.exe</code> and replace the intended debugger with <code>cmd.exe /c C:\temp\payload.bat</code>. And&#x2026;? The LPE is successful! The entity processing the <code>K7TSMngrService1</code> pipe request was <code>K7TSMngr.exe</code>. Through static analysis, I was able to confirm a vulnerability where the auxiliary process <code>K7TSHlpr.exe</code>, which performs internal operations, runs in a high-privilege context. This is what allowed us to execute our desired bat file.</p>
+<p><img src="/2025/12/28/banda/WHS3-bughunting/en/image25.png" srcset="/img/loading.gif" alt></p>
+<p>Through privilege escalation, you can see that the user is now a member of the Administrators group in Local Group Memberships. Additionally, I hope it&#x2019;s helpful to know that vulnerabilities in Named Pipes often involve ACLs, lack of permission checks, memory vulnerabilities, path manipulation, and race conditions!</p>
+<h2 id="Conclusion"><a href="#Conclusion" class="headerlink" title="Conclusion"></a>Conclusion</h2><p>I hope the Kernel Driver and Named Pipe collection and analysis process in this article has been helpful to you! Please note that while I referred to old CVEs when explaining the process, the verification was done in a Win11 24H2 environment. TMI, but as I was writing and opening up the tools, driver targets kept catching my eye, and I kept getting sidetracked&#x2026; haha. In the next series, we will introduce the vulnerabilities we found! Thank you.</p>
+<h2 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a>Reference</h2><ul>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://voidsec.com/windows-drivers-reverse-engineering-methodology/">Windows Driver RE Methodology (voidsec)</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.amd.com/en/resources/product-security/bulletin/amd-sb-6009.html">AMD-SB-6009: Radeon Graphics Kernel Driver Privilege Management</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://owasp.org/www-chapter-seoul/#div-pastevents">OWASP Seoul(2025.07) - Windows 3rd-Party Driver LPE BugHunting</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://blog.quarkslab.com/k7-antivirus-named-pipe-abuse-registry-manipulation-and-privilege-escalation.html">K7 Antivirus Named Pipe Abuse &#x2192; Registry Manipulation</a></li>
+</ul>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/LPE/">LPE</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Windows/">Windows</a>
+                  
+                  <a class="hover-with-bg" href="/tags/BugHunting/">BugHunting</a>
+                  
+                  <a class="hover-with-bg" href="/tags/KernelDriver/">KernelDriver</a>
+                  
+                  <a class="hover-with-bg" href="/tags/NamedPipe/">NamedPipe</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_banda.jpg" srcset="/img/loading.gif" alt="banda">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">banda</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/banda">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2026/01/14/OUYA77/2026-01-14/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2025-2783 : Chrome의 Mojo IPC 내 핸들 검증 미흡으로 인한 샌드박스 탈출</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/12/28/banda/WHS3-bughunting/ko/">
+                    <span class="hidden-mobile">[Research] 해키보이즈 막내들이 말아주는 Windows LPE 버그헌팅 체험기 Part 1 (KR)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/12/28/banda/WHS3-bughunting/en/';
+        this.page.identifier = '/2025/12/28/banda/WHS3-bughunting/en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] Windows LPE Bug Hunting, Served by the Team’s Youngest: Part 1 (EN)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>

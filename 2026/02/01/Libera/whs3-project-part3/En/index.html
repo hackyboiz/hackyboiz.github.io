@@ -1,0 +1,1110 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;&lt;img src=&#34;/2026/02/01/Libera/whs3-project-part3/En/logo.png&#34; alt&gt;&lt;/p&gt;
+&lt;h1 id=&#34;Introduction&#34;&gt;&lt;a href=&#34;#Introduction&#34; class=&#34;headerlink&#34; title=&#34;Introduction&#34;&gt;&lt;/a&gt;Introduction&lt;/h1&gt;&lt;p&gt;Hello. It feels like 2025 just ended, yet January is almost over already. Did everyone have a good start to the new year?&lt;/p&gt;
+&lt;p&gt;I&amp;#x2019;m Libera, taking on the role of writing Part 3 of the Maknaez series as my first research post. I was strongly drawn to the phrase &amp;#x201C;Windows Zero-day vulnerability,&amp;#x201D; which led me to join this project as team leader. That passion to discover zero-days is what brought me here.&lt;/p&gt;
+&lt;p&gt;In Part 2 today, I&amp;#x2019;ll focus on the Kernel Driver vector&amp;#x2014;one of our project&amp;#x2019;s outcomes&amp;#x2014;and introduce the types and details of the vulnerabilities I uncovered. So, shall we dive right into what vulnerabilities we discovered in the kernel driver?&lt;/p&gt;
+&lt;h1 id=&#34;Target-amp-Summary&#34;&gt;&lt;a href=&#34;#Target-amp-Summary&#34; class=&#34;headerlink&#34; title=&#34;Target &amp;amp; Summary&#34;&gt;&lt;/a&gt;Target &amp;amp; Summary&lt;/h1&gt;&lt;p&gt;Today, I&amp;#x2019;ll explain why the vulnerabilities I&amp;#x2019;ll introduce&amp;#x2014;LPE using the MSR R/W Primitive and Arbitrary Port I/O&amp;#x2014;were ultimately limited to DoS.&lt;/p&gt;
+&lt;h1 id=&#34;1-Attack-Surface&#34;&gt;&lt;a href=&#34;#1-Attack-Surface&#34; class=&#34;headerlink&#34; title=&#34;1. Attack Surface&#34;&gt;&lt;/a&gt;1. Attack Surface&lt;/h1&gt;&lt;p&gt;Before looking at the vulnerabilities, let&amp;#x2019;s cover the prerequisites. As mentioned in Part 1 and Part 2, it took some time, so I&amp;#x2019;ll keep this brief!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/02/01/Libera/whs3-project-part3/En/image1.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;When installing the target program, use FolderChangesView to verify the drivers installed alongside the program during setup, and use DriverView to verify the drivers automatically loaded when the program is installed or executed. &lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/02/01/Libera/whs3-project-part3/En/image2.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Next, we need to check the driver&amp;#x2019;s permissions. To do this, we must know the &lt;code&gt;DeviceName&lt;/code&gt;. I opened the driver file in IDA and located the &lt;code&gt;DriverEntry&lt;/code&gt;to find the &lt;code&gt;DeviceName&lt;/code&gt;. Additionally, it&amp;#x2019;s a good idea to check if &lt;code&gt;MajorFunction[14]&lt;/code&gt; is present. &lt;code&gt;MajorFunction[14]&lt;/code&gt; points to a function pointer that handles the &lt;code&gt;IRP_MJ_DEVICE_CONTROL&lt;/code&gt; in the Windows kernel&amp;#x2019;s &lt;code&gt;DRIVER_OBJECT&lt;/code&gt; structure. This indicates that a Dispatch Routine exists to handle calls to the &lt;code&gt;DeviceIoControl&lt;/code&gt; API made by user-mode applications. Now, shall we check the permissions again?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/02/01/Libera/whs3-project-part3/En/image2.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Using &lt;code&gt;WinObj64.exe&lt;/code&gt; to check permissions reveals that everyone has RW permissions! This means a medium user can issue &lt;code&gt;DeviceIoControl&lt;/code&gt; requests to this driver.&lt;/p&gt;
+&lt;p&gt;Now that we&amp;#x2019;ve verified the permissions and &lt;code&gt;MajorFunction[14]&lt;/code&gt;, shall we dive into analyzing the vulnerability?&lt;/p&gt;
+&lt;h1 id=&#34;2-LPE-via-MSR-Read-Write-Primitive&#34;&gt;&lt;a href=&#34;#2-LPE-via-MSR-Read-Write-Primitive&#34; class=&#34;headerlink&#34; title=&#34;2. LPE via MSR Read/Write Primitive&#34;&gt;&lt;/a&gt;2. LPE via MSR Read/Write Primitive&lt;/h1&gt;&lt;p&gt;By exploiting an untrusted pointer dereference vulnerability, I identified an MSR read/write primitive and achieved LPE through it. I reported this to the vendor but received no response, so I will unfortunately have to redact certain parts before publishing. I kindly ask for your understanding. &amp;#x1F62D;&lt;/p&gt;
+&lt;h2 id=&#34;2-1-Static-Analysis&#34;&gt;&lt;a href=&#34;#2-1-Static-Analysis&#34; class=&#34;headerlink&#34; title=&#34;2-1. Static Analysis&#34;&gt;&lt;/a&gt;2-1. Static Analysis&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2026/02/01/Libera/whs3-project-part3/En/image4.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;When the user calls the &lt;code&gt;DeviceIoControl&lt;/code&gt; API to send a request to this driver, it checks the &lt;code&gt;sub_1400010E0&lt;/code&gt; function, which is the Dispatch Routine (&lt;code&gt;MajorFunction[14]&lt;/code&gt;) triggered by this request.&lt;/p&gt;
+&lt;h3 id=&#34;2-1-1-sub-1400010E0-Function-Dispatch-Routine&#34;&gt;&lt;a href=&#34;#2-1-1-sub-1400010E0-Function-Dispatch-Routine&#34; class=&#34;headerlink&#34; title=&#34;2-1-1. sub_1400010E0() Function - Dispatch Routine&#34;&gt;&lt;/a&gt;2-1-1. sub_1400010E0() Function - Dispatch Routine&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;__int64 __fastcall &lt;span class=&#34;hljs-title&#34;&gt;sub_1400010E0&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(__int64 a1, IRP *IRP)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+...
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( MajorFunction != &lt;span class=&#34;hljs-number&#34;&gt;14&lt;/span&gt; )
+    &lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; LABEL_54;
+  IOCTL = CurrentStackLocation-&amp;gt;Parameters.DeviceIoControl.IoControlCode;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( IOCTL &amp;lt;= &lt;span class=&#34;hljs-number&#34;&gt;0x9C000000&lt;/span&gt; )
+  {
+		...
+	}
+  &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+  {
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( IOCTL != &lt;span class=&#34;hljs-number&#34;&gt;0x9C000000&lt;/span&gt; )
+    {
+      &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( IOCTL == &lt;span class=&#34;hljs-number&#34;&gt;0x9C&lt;/span&gt;------ )
+      {
+        &lt;span class=&#34;hljs-comment&#34;&gt;// ReadMsr&lt;/span&gt;
+        v5 = ((__int64 (__fastcall *)(PVOID, PVOID))sub_140001380)(
+                   IRP-&amp;gt;AssociatedIrp.SystemBuffer,
+                   IRP-&amp;gt;AssociatedIrp.SystemBuffer);
+      }
+      &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( IOCTL == &lt;span class=&#34;hljs-number&#34;&gt;0x9C&lt;/span&gt;====== )
+      {
+        &lt;span class=&#34;hljs-comment&#34;&gt;//WriteMsr&lt;/span&gt;
+        v5 = sub_1400013C0(IRP-&amp;gt;AssociatedIrp.SystemBuffer, p_Information);
+      }
+      &lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; LABEL_54;
+    }
+    *(_DWORD *)IRP-&amp;gt;AssociatedIrp.SystemBuffer = dword_140003000;
+    *p_Information = &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;;
+  }
+LABEL_53:
+...
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;sub_1400010E0&lt;/code&gt; contains several conditional statements. It is a function triggered when &lt;code&gt;MajorFunction[14]&lt;/code&gt;, but internally, its functionality varies again depending on which index of &lt;code&gt;MajorFunction[i]&lt;/code&gt; it is.&lt;/p&gt;
+&lt;p&gt;Requests sent via the &lt;code&gt;DeviceIoControl&lt;/code&gt; API branch to index &lt;code&gt;14&lt;/code&gt;. Within this index, the IOCTL Code must be checked to branch to the desired functionality. &lt;code&gt;0x9C------&lt;/code&gt; and &lt;code&gt;0x9C======&lt;/code&gt; are the IOCTL Codes containing the vulnerabilities we need to trigger.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;I/O Control Codes (IOCTL Code)&lt;br&gt;These serve as communication identifiers between user mode and drivers, and are also used for communication between drivers on the same stack. IOCTL Codes are transmitted using IRP.&lt;br&gt;For user-mode applications, the DeviceIoControl API is called to pass the IOCTL Code to the driver. The driver then performs the corresponding function based on the received IOCTL Code.&lt;br&gt;Most drivers use conditional statements to execute the necessary functionality based on the IOCTL Code.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h3 id=&#34;2-1-2-sub-140001380-Function-ReadMsr-Primitive&#34;&gt;&lt;a href=&#34;#2-1-2-sub-140001380-Function-ReadMsr-Primitive&#34; class=&#34;headerlink&#34; title=&#34;2-1-2. sub_140001380() Function - ReadMsr Primitive&#34;&gt;&lt;/a&gt;2-1-2. sub_140001380() Function - ReadMsr Primitive&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( IOCTL == &lt;span class=&#34;hljs-number&#34;&gt;0x9C&lt;/span&gt;------ )
+      {
+        &lt;span class=&#34;hljs-comment&#34;&gt;// ReadMsr&lt;/span&gt;
+        v5 = ((__int64 (__fastcall *)(PVOID, PVOID))sub_140001380)(
+                   IRP-&amp;gt;AssociatedIrp.SystemBuffer,
+                   IRP-&amp;gt;AssociatedIrp.SystemBuffer);
+      }&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Transmitting IOCTL Code &lt;code&gt;0x9C------&lt;/code&gt; triggers the &lt;code&gt;sub_140001380&lt;/code&gt; function. At this point, the &lt;code&gt;SystemBuffer&lt;/code&gt; passed as an argument points to the kernel buffer where the data sent from user mode is stored.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;__int64 __fastcall &lt;span class=&#34;hljs-title&#34;&gt;sub_140001380&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *SystemBuffer, &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int64 *SystemBuffer2, _DWORD *a3)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int64 v3; &lt;span class=&#34;hljs-comment&#34;&gt;// rax&lt;/span&gt;
+
+  v3 = __readmsr(*SystemBuffer);
+  *SystemBuffer2 = ((&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int64)HIDWORD(v3) &amp;lt;&amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;32&lt;/span&gt;) | (&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;)v3;
+  *a3 = &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Looking at the function &lt;code&gt;sub_140001380&lt;/code&gt;, you can see that data sent from user mode is used as an argument to the &lt;code&gt;__readmsr&lt;/code&gt; function without any validation.&lt;/p&gt;
+&lt;h3 id=&#34;2-1-3-sub-1400013C0-Function-WriteMsr-Primitive&#34;&gt;&lt;a href=&#34;#2-1-3-sub-1400013C0-Function-WriteMsr-Primitive&#34; class=&#34;headerlink&#34; title=&#34;2-1-3. sub_1400013C0() Function - WriteMsr Primitive&#34;&gt;&lt;/a&gt;2-1-3. sub_1400013C0() Function - WriteMsr Primitive&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( IOCTL == &lt;span class=&#34;hljs-number&#34;&gt;0x9C&lt;/span&gt;====== )
+      {
+        &lt;span class=&#34;hljs-comment&#34;&gt;//WriteMsr&lt;/span&gt;
+        v5 = sub_1400013C0(IRP-&amp;gt;AssociatedIrp.SystemBuffer, p_Information);
+      }&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Sending IOCTL Code &lt;code&gt;0x9C======&lt;/code&gt; triggers the &lt;code&gt;sub_1400013C0&lt;/code&gt; function. At this point, the &lt;code&gt;SystemBuffer&lt;/code&gt; passed as an argument also points to a kernel buffer containing the data sent from user mode.&lt;/p&gt;
+&lt;p&gt;Sending IOCTL Code &lt;code&gt;0x9C======&lt;/code&gt; triggers the &lt;code&gt;sub_1400013C0&lt;/code&gt; function. At this point, the &lt;code&gt;SystemBuffer&lt;/code&gt; passed as an argument also points to a kernel buffer storing data sent from user mode.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;__int64 __fastcall &lt;span class=&#34;hljs-title&#34;&gt;sub_1400013C0&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(__int64 SystemBuffer, _DWORD *a2)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+  __writemsr(*(_DWORD *)SystemBuffer, *(_QWORD *)(SystemBuffer + &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;));
+  *a2 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Looking at the &lt;code&gt;sub_1400013C0&lt;/code&gt; function, we can see that data sent from user mode is passed as an argument to the &lt;code&gt;__writemsr&lt;/code&gt; function without any validation.&lt;/p&gt;
+&lt;p&gt;We have confirmed that these two IOCTL codes can be used to pass arbitrary values to the respective MSR read/write functions. Now let&amp;#x2019;s find out what this &lt;code&gt;MSR&lt;/code&gt; is and why exploiting this function is possible!&lt;/p&gt;
+&lt;h2 id=&#34;2-2-How-to-Exploit-using-MSR-Register&#34;&gt;&lt;a href=&#34;#2-2-How-to-Exploit-using-MSR-Register&#34; class=&#34;headerlink&#34; title=&#34;2-2. How to Exploit using MSR Register&#34;&gt;&lt;/a&gt;2-2. How to Exploit using MSR Register&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2026/02/01/Libera/whs3-project-part3/Er/image5.png&#34; alt=&#34;Source : [IIia dafchev blog](https://idafchev.github.io/blog/)&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Source : &lt;a href=&#34;https://idafchev.github.io/blog/&#34;&gt;IIia dafchev blog&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;MSRs (&lt;code&gt;Model Specific Registers&lt;/code&gt;) were introduced to control features specific to particular processor models. While compatibility between models is not guaranteed in principle, some MSRs responsible for core functions like system call handlers are classified as Architectural MSRs and are consistently supported.&lt;/p&gt;
+&lt;p&gt;The feature we should focus on here is the LSTAR (&lt;code&gt;Long-mode System call Target Address Register&lt;/code&gt;) MSR. This register holds the address of the kernel-level system call handler (&lt;code&gt;KiSystemCall64&lt;/code&gt;) that the CPU will jump to when executing the &lt;code&gt;syscall&lt;/code&gt; instruction. The operating system stores the address of the system call handler in this register. When the &lt;code&gt;syscall&lt;/code&gt; instruction executes, the CPU transitions to Ring0 mode (kernel mode), and the instruction pointer (&lt;code&gt;RIP&lt;/code&gt;) is set to the value stored in the LSTAR register.&lt;/p&gt;
+&lt;p&gt;Until the mid-point of Windows 10, kernel addresses could be leaked using APIs like &lt;code&gt;NtQuerySystemInformation&lt;/code&gt; even with KASLR. However, it was later patched so that addresses are no longer returned under standard user privileges, making a leak primitive necessary for exploitation. For more details, check out &lt;a href=&#34;https://hackyboiz.github.io/2025/04/13/l0ch/bypassing-kernel-mitigation-part0/ko/&#34;&gt;a team member&amp;#x2019;s previous article on KASLR&lt;/a&gt;!&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;IA32_LSTAR&lt;/code&gt; register holds the actual address of &lt;code&gt;KiSystemCall64&lt;/code&gt;, a core function that handles system calls during Windows kernel boot. Therefore, by reading the &lt;code&gt;IA32_LSTAR&lt;/code&gt; register via the &lt;code&gt;__readmsr&lt;/code&gt; function, we can find the actual address of &lt;code&gt;KiSystemCall64&lt;/code&gt; and determine the kernel base address through its offset.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; __writemsr(
+   &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; Register,  &lt;span class=&#34;hljs-comment&#34;&gt;// [ECX] Select MSR register&lt;/span&gt;
+   &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int64 Value   &lt;span class=&#34;hljs-comment&#34;&gt;// [EDX:EAX] Value to write to the selected register&lt;/span&gt;
+);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The &lt;code&gt;__writemsr&lt;/code&gt; function writes the value of the second argument to the MSR register specified as the first argument. As previously discussed, when the &lt;code&gt;syscall&lt;/code&gt; instruction executes, RIP is set to the value stored in the LSTAR register. Therefore, overwriting the LSTAR register with the starting address of the shell code causes the attacker&amp;#x2019;s shell code to execute with Ring0 (kernel mode) privileges when the &lt;code&gt;syscall&lt;/code&gt; is invoked.&lt;/p&gt;
+&lt;p&gt;Now that we&amp;#x2019;ve determined how to exploit this, shall we verify that the values I entered are actually being passed correctly?&lt;/p&gt;
+&lt;h2 id=&#34;2-3-Dynamic-Analysis&#34;&gt;&lt;a href=&#34;#2-3-Dynamic-Analysis&#34; class=&#34;headerlink&#34; title=&#34;2-3. Dynamic Analysis&#34;&gt;&lt;/a&gt;2-3. Dynamic Analysis&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2026/02/01/Libera/whs3-project-part3/Er/image6.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Looking at the &lt;code&gt;__readmsr&lt;/code&gt; function first, you can see that it takes &lt;code&gt;c0000082&lt;/code&gt; as an argument, which represents &lt;code&gt;IA32_LSTAR&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/02/01/Libera/whs3-project-part3/Er/image7.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;__writemsr&lt;/code&gt; function takes &lt;code&gt;IA32_LSTAR&lt;/code&gt; as its first argument and &lt;code&gt;FFFF&lt;/code&gt; a value I arbitrarily inserted as its second argument.&lt;/p&gt;
+&lt;p&gt;Now, if we set this arbitrarily inserted value as the starting address for the shell code, the exploit will succeed!!&lt;/p&gt;
+&lt;h2 id=&#34;2-4-Points-to-Note&#34;&gt;&lt;a href=&#34;#2-4-Points-to-Note&#34; class=&#34;headerlink&#34; title=&#34;2-4. Points to Note&#34;&gt;&lt;/a&gt;2-4. Points to Note&lt;/h2&gt;&lt;p&gt;It would be great if simply placing the shellcode start address in the LSTAR register made the exploit work, but for a successful exploit, we need to perform three additional steps. If you&amp;#x2019;re curious about the details of the protection techniques mentioned here, I recommend reading &lt;a href=&#34;https://hackyboiz.github.io/2024/12/08/l0ch/bypassing-kernel-mitigation-part1/ko/&#34;&gt;L0ch&amp;#x2019;s Kernel Mitigation article&lt;/a&gt;!&lt;/p&gt;
+&lt;p&gt;First, bypassing SMEP. Modern Windows applies SMEP/SMAP protections, preventing direct execution of shellcode in user space. As explained earlier, overwriting LSTAR with the shellcode start address doesn&amp;#x2019;t guarantee immediate execution. Instead, you must overwrite LSTAR with a Stack Pivot gadget to capture the execution flow, then use a ROP Chain to disable the 20th bit of the &lt;code&gt;CR4&lt;/code&gt; register (the &lt;code&gt;SMEP bit&lt;/code&gt;).&lt;/p&gt;
+&lt;p&gt;Second, privilege escalation. Based on the kernel address obtained via the MSR Read Primitive, calculate the offset to find the kernel base address and the system process&amp;#x2019;s token. Then, overwrite the current process&amp;#x2019;s token location with the System process&amp;#x2019;s token to gain System privileges.&lt;/p&gt;
+&lt;p&gt;Finally, third, system cleanup. The modified LSTAR value, the SMEP bit setting in &lt;code&gt;CR4&lt;/code&gt;, and the corrupted stack frame must be restored. If it exits without restoring, a BSOD occurs the moment the next system call is invoked. Therefore, the modified registers must be restored to achieve a stable LPE (privilege escalation)!&lt;/p&gt;
+&lt;h1 id=&#34;3-DoS-Vulnerabilities&#34;&gt;&lt;a href=&#34;#3-DoS-Vulnerabilities&#34; class=&#34;headerlink&#34; title=&#34;3. DoS Vulnerabilities&#34;&gt;&lt;/a&gt;3. DoS Vulnerabilities&lt;/h1&gt;&lt;p&gt;We identified several vulnerabilities that cause BSODs. Among them, we will examine the results of the Arbitrary Port I/O vulnerability and why it was not possible to achieve LPE.&lt;/p&gt;
+&lt;h2 id=&#34;3-1-Arbitrary-Port-I-O-Vulnerability-Trigger-amp-Root-Cause&#34;&gt;&lt;a href=&#34;#3-1-Arbitrary-Port-I-O-Vulnerability-Trigger-amp-Root-Cause&#34; class=&#34;headerlink&#34; title=&#34;3-1. Arbitrary Port I/O Vulnerability Trigger &amp;amp; Root Cause&#34;&gt;&lt;/a&gt;3-1. Arbitrary Port I/O Vulnerability Trigger &amp;amp; Root Cause&lt;/h2&gt;&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;switch&lt;/span&gt; ( IoControlCode )
+{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0xC350A0D8&lt;/span&gt;:
+    __outbyte(SystemBuffer_Value, *((_BYTE *)SystemBuffer_Addr + &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;));
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0xC350A0DC&lt;/span&gt;:
+    __outword(SystemBuffer_Value, *((_WORD *)SystemBuffer_Addr + &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;));
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0xC350A0E0&lt;/span&gt;:
+    __outdword(SystemBuffer_Value, SystemBuffer_Addr[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;]);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The code above is part of the driver&amp;#x2019;s &lt;code&gt;Dispatch Routine&lt;/code&gt; function. It can be triggered by specific IOCTL codes, each triggering the &lt;code&gt;__outbyte&lt;/code&gt;, &lt;code&gt;__outword&lt;/code&gt;, or &lt;code&gt;__outdword&lt;/code&gt; functions. Since all three functions&amp;#x2019; arguments can be controlled by an attacker, manipulating these arguments causes a BSOD.&lt;/p&gt;
+&lt;p&gt;Sending &lt;code&gt;0xFE&lt;/code&gt; data to the &lt;code&gt;0xCF9&lt;/code&gt; port causes a forced reboot. Additionally, sending any unusual data other than &lt;code&gt;0xFE&lt;/code&gt; to this port triggers a BSOD. Port &lt;code&gt;0xCF9&lt;/code&gt; is the Reset Control Register defined in the Intel chipset specification, and &lt;code&gt;0xFE&lt;/code&gt; is &lt;code&gt;1111 1110&lt;/code&gt; in binary. Consulting the Intel datasheet reveals the bit operations of this register:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Bit 1 (System Reset): Setting to 1 triggers a system reset.&lt;/li&gt;
+&lt;li&gt;Bit 2 (Reset CPU): Setting this to 1 performs a CPU reset.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Therefore, sending &lt;code&gt;0xFE&lt;/code&gt; transmits a command that activates both of these two bits. This ignores the OS&amp;#x2019;s normal shutdown procedure and immediately forces a reboot.&lt;/p&gt;
+&lt;p&gt;Now, let&amp;#x2019;s explore why a BSOD occurs when using functions like &lt;code&gt;__outbyte&lt;/code&gt;, which are simply read/write operations.&lt;/p&gt;
+&lt;h3 id=&#34;3-1-1-in-out-Functions&#34;&gt;&lt;a href=&#34;#3-1-1-in-out-Functions&#34; class=&#34;headerlink&#34; title=&#34;3-1-1. in, out Functions&#34;&gt;&lt;/a&gt;3-1-1. in, out Functions&lt;/h3&gt;&lt;p&gt;The &lt;code&gt;__inbyte&lt;/code&gt;, &lt;code&gt;__inword&lt;/code&gt;, &lt;code&gt;__indword&lt;/code&gt;, &lt;code&gt;__outbyte&lt;/code&gt;, &lt;code&gt;__outword&lt;/code&gt;, and &lt;code&gt;__outdword&lt;/code&gt; functions are not passed through the operating system&amp;#x2019;s API but are directly translated into machine code. For the in functions, they read data from the port received as an argument in a size appropriate for the function. They load the port number into the &lt;code&gt;DX&lt;/code&gt; register, read it using the &lt;code&gt;IN&lt;/code&gt; instruction, and store it in &lt;code&gt;AX&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;out&lt;/code&gt; functions write the data received as an argument to the port received as an argument. They load the port number and data into registers and use the &lt;code&gt;OUT&lt;/code&gt; instruction to transmit the data to the specified port number.&lt;/p&gt;
+&lt;h3 id=&#34;3-1-2-Isolated-I-O-and-BSOD-Causes&#34;&gt;&lt;a href=&#34;#3-1-2-Isolated-I-O-and-BSOD-Causes&#34; class=&#34;headerlink&#34; title=&#34;3-1-2. Isolated I/O and BSOD Causes&#34;&gt;&lt;/a&gt;3-1-2. Isolated I/O and BSOD Causes&lt;/h3&gt;&lt;p&gt;The x86 architecture physically separates the memory address space (&lt;code&gt;Memory Space&lt;/code&gt;) and the I/O address space (&lt;code&gt;I/O Space&lt;/code&gt;), a feature known as isolated I/O. The Memory Map is the RAM space we commonly think of, accessed via the &lt;code&gt;MOV&lt;/code&gt; instruction. The I/O Map is the space used by the &lt;code&gt;IN&lt;/code&gt; and &lt;code&gt;OUT&lt;/code&gt; functions. This space spans the range &lt;code&gt;0x0000~0xFFFF&lt;/code&gt; and is directly connected to the registers of hardware devices attached to the motherboard. Therefore, executing &lt;code&gt;__outword&lt;/code&gt;(&lt;code&gt;0x64&lt;/code&gt;, data) does not write data to memory address 100; instead, it sends an electrical signal to the hardware chip with port &lt;code&gt;0x64&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;The problem arises when this signal is sent to critical or sensitive hardware (e.g., PCI bus configuration). If an attacker overwrites a critical port with arbitrary values, it can corrupt hardware settings or cause the CPU to encounter an unhandled exception. This triggers the OS to display a blue screen as a system protection measure.&lt;/p&gt;
+&lt;h2 id=&#34;3-2-Why-doesn&amp;#x2019;t-LPE-work&#34;&gt;&lt;a href=&#34;#3-2-Why-doesn&amp;#x2019;t-LPE-work&#34; class=&#34;headerlink&#34; title=&#34;3-2. Why doesn&amp;#x2019;t LPE work?&#34;&gt;&lt;/a&gt;3-2. Why doesn&amp;#x2019;t LPE work?&lt;/h2&gt;&lt;p&gt;In the past, exploits worked by manipulating the BAR (Base Address Register) in the PCI Configuration Space to overlap the device&amp;#x2019;s MMIO (Memory Mapped I/O) address with the physical address where the kernel&amp;#x2019;s critical data structures reside. However, protective techniques implemented to counter this have blocked this approach.&lt;/p&gt;
+&lt;h3 id=&#34;3-2-1-Asynchronous-OS-Memory-Manager-and-Hardware-State&#34;&gt;&lt;a href=&#34;#3-2-1-Asynchronous-OS-Memory-Manager-and-Hardware-State&#34; class=&#34;headerlink&#34; title=&#34;3-2-1. Asynchronous OS Memory Manager and Hardware State&#34;&gt;&lt;/a&gt;3-2-1. Asynchronous OS Memory Manager and Hardware State&lt;/h3&gt;&lt;p&gt;Fundamentally, the blockage occurred because hardware-level address changes were no longer immediately reflected in the OS&amp;#x2019;s memory management system.&lt;/p&gt;
+&lt;p&gt;Suppose an attacker uses an OUT instruction to modify the BAR register value of a PCI device, changing the physical address from &lt;code&gt;0xA0000000&lt;/code&gt; to &lt;code&gt;0x10000000&lt;/code&gt;, where critical kernel structures reside. The Windows kernel generates a PTE for the device&amp;#x2019;s physical address and assigns a virtual address either at boot time or when loading a driver. The problem arises because even if the attacker modifies the hardware register (&lt;code&gt;BAR&lt;/code&gt;), the mapping information in the page table managed by the OS&amp;#x2019;s memory manager (MMU) is not updated or corrected.&lt;/p&gt;
+&lt;p&gt;When the driver accesses the original virtual address, the memory manager (&lt;code&gt;MMU&lt;/code&gt;) still sends the transaction to the original address, which is &lt;code&gt;0xA0000000&lt;/code&gt;. However, since the attacker changed it to &lt;code&gt;0x10000000&lt;/code&gt;, no device responds to the transaction sent to the original address. This ultimately results in a Master Abort or reading garbage values, causing a BSOD.&lt;/p&gt;
+&lt;h3 id=&#34;3-2-2-Physical-Memory-Isolation-via-VBS-and-SLAT&#34;&gt;&lt;a href=&#34;#3-2-2-Physical-Memory-Isolation-via-VBS-and-SLAT&#34; class=&#34;headerlink&#34; title=&#34;3-2-2. Physical Memory Isolation via VBS and SLAT&#34;&gt;&lt;/a&gt;3-2-2. Physical Memory Isolation via VBS and SLAT&lt;/h3&gt;&lt;p&gt;In a VBS environment, the hypervisor controls physical memory access. When VBS is enabled, the physical addresses accessed by the OS differ from the actual hardware&amp;#x2019;s machine physical addresses. This translation is handled by SLAT, the CPU&amp;#x2019;s hardware virtualization feature.&lt;/p&gt;
+&lt;p&gt;If an attacker attempts to manipulate BARs to map device memory into kernel code regions or critical data areas, the hypervisor detects an EPT violation. The hypervisor monitors and prevents physical pages configured for MMIO from overlapping with executable code regions or read-only data regions.&lt;/p&gt;
+&lt;p&gt;In other words, even if hardware registers are manipulated, the hypervisor layer denies access, making physical memory overwriting impossible from the outset.&lt;/p&gt;
+&lt;h3 id=&#34;3-2-3-DMA-Protection-and-IOMMU&#34;&gt;&lt;a href=&#34;#3-2-3-DMA-Protection-and-IOMMU&#34; class=&#34;headerlink&#34; title=&#34;3-2-3. DMA Protection and IOMMU&#34;&gt;&lt;/a&gt;3-2-3. DMA Protection and IOMMU&lt;/h3&gt;&lt;p&gt;This is a defense technique that activates when an attacker attempts to overwrite memory using DMA rather than the CPU. The IOMMU virtualizes the memory addresses accessed by devices. Even if a device requests a write to a physical address, the IOMMU either remaps the address or blocks it, indicating that the device can only write to a specific region. This is called DMA Remapping.&lt;/p&gt;
+&lt;p&gt;Additionally, Windows closes DMA ports for untrusted external devices or uninitialized devices during the boot process. These devices cannot access system memory until drivers are properly loaded and IOMMU mapping is complete. This is called Pre-boot DMA Protection.&lt;/p&gt;
+&lt;h1 id=&#34;Conclusion&#34;&gt;&lt;a href=&#34;#Conclusion&#34; class=&#34;headerlink&#34; title=&#34;Conclusion&#34;&gt;&lt;/a&gt;Conclusion&lt;/h1&gt;&lt;p&gt;With this Part 3, we conclude our introduction to the &amp;#x201C;Windows Kernel Driver &amp;amp; Named Pipe LPE Bug Hunting&amp;#x201D; project conducted during White Hat School&amp;#x2019;s 3rd session. It&amp;#x2019;s truly rewarding and delightful to share the results of our hard work over three months with a team of six members. &amp;#x263A;&amp;#xFE0F;&lt;/p&gt;
+&lt;p&gt;I hope this series has been helpful for those starting vulnerability analysis. With that, we&amp;#x2019;ll wrap up this series here! While I&amp;#x2019;m not yet sure what the next research post will cover, I&amp;#x2019;d appreciate your continued interest and support! Thank you.&lt;/p&gt;
+&lt;h2 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://cdrdv2-public.intel.com/774206/vt-directed-io-spec%20.pdf&#34;&gt;https://cdrdv2-public.intel.com/774206/vt-directed-io-spec .pdf&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://idafchev.github.io/blog/wrmsr/#2-model-specific-registers&#34;&gt;https://idafchev.github.io/blog/wrmsr/#2-model-specific-registers&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://learn.microsoft.com/en-us/windows/security/hardware-security/kernel-dma-protection-for-thunderbolt&#34;&gt;https://learn.microsoft.com/en-us/windows/security/hardware-security/kernel-dma-protection-for-thunderbolt&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://learn.microsoft.com/en-us/cpp/intrinsics/readmsr&#34;&gt;https://learn.microsoft.com/en-us/cpp/intrinsics/readmsr&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://learn.microsoft.com/en-us/cpp/intrinsics/writemsr&#34;&gt;https://learn.microsoft.com/en-us/cpp/intrinsics/writemsr&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://www.coresecurity.com/core-labs/publications/windows-smep-bypass-us&#34;&gt;https://www.coresecurity.com/core-labs/publications/windows-smep-bypass-us&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] Windows LPE Bug Hunting, Served by the Team’s Youngest: Part 3 (EN) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;&lt;img src=&#34;/2026/02/01/Libera/whs3-project-part3/En/logo.png&#34; alt&gt;&lt;/p&gt;
+&lt;h1 id=&#34;Introduction&#34;&gt;&lt;a href=&#34;#Introduction&#34; class=&#34;headerlink&#34; title=&#34;Introduction&#34;&gt;&lt;/a&gt;Introduction&lt;/h1&gt;&lt;p&gt;Hello. It feels like 2025 just ended, yet January is almost over already. Did everyone have a good start to the new year?&lt;/p&gt;
+&lt;p&gt;I&amp;#x2019;m Libera, taking on the role of writing Part 3 of the Maknaez series as my first research post. I was strongly drawn to the phrase &amp;#x201C;Windows Zero-day vulnerability,&amp;#x201D; which led me to join this project as team leader. That passion to discover zero-days is what brought me here.&lt;/p&gt;
+&lt;p&gt;In Part 2 today, I&amp;#x2019;ll focus on the Kernel Driver vector&amp;#x2014;one of our project&amp;#x2019;s outcomes&amp;#x2014;and introduce the types and details of the vulnerabilities I uncovered. So, shall we dive right into what vulnerabilities we discovered in the kernel driver?&lt;/p&gt;
+&lt;h1 id=&#34;Target-amp-Summary&#34;&gt;&lt;a href=&#34;#Target-amp-Summary&#34; class=&#34;headerlink&#34; title=&#34;Target &amp;amp; Summary&#34;&gt;&lt;/a&gt;Target &amp;amp; Summary&lt;/h1&gt;&lt;p&gt;Today, I&amp;#x2019;ll explain why the vulnerabilities I&amp;#x2019;ll introduce&amp;#x2014;LPE using the MSR R/W Primitive and Arbitrary Port I/O&amp;#x2014;were ultimately limited to DoS.&lt;/p&gt;
+&lt;h1 id=&#34;1-Attack-Surface&#34;&gt;&lt;a href=&#34;#1-Attack-Surface&#34; class=&#34;headerlink&#34; title=&#34;1. Attack Surface&#34;&gt;&lt;/a&gt;1. Attack Surface&lt;/h1&gt;&lt;p&gt;Before looking at the vulnerabilities, let&amp;#x2019;s cover the prerequisites. As mentioned in Part 1 and Part 2, it took some time, so I&amp;#x2019;ll keep this brief!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/02/01/Libera/whs3-project-part3/En/image1.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;When installing the target program, use FolderChangesView to verify the drivers installed alongside the program during setup, and use DriverView to verify the drivers automatically loaded when the program is installed or executed. &lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/02/01/Libera/whs3-project-part3/En/image2.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Next, we need to check the driver&amp;#x2019;s permissions. To do this, we must know the &lt;code&gt;DeviceName&lt;/code&gt;. I opened the driver file in IDA and located the &lt;code&gt;DriverEntry&lt;/code&gt;to find the &lt;code&gt;DeviceName&lt;/code&gt;. Additionally, it&amp;#x2019;s a good idea to check if &lt;code&gt;MajorFunction[14]&lt;/code&gt; is present. &lt;code&gt;MajorFunction[14]&lt;/code&gt; points to a function pointer that handles the &lt;code&gt;IRP_MJ_DEVICE_CONTROL&lt;/code&gt; in the Windows kernel&amp;#x2019;s &lt;code&gt;DRIVER_OBJECT&lt;/code&gt; structure. This indicates that a Dispatch Routine exists to handle calls to the &lt;code&gt;DeviceIoControl&lt;/code&gt; API made by user-mode applications. Now, shall we check the permissions again?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/02/01/Libera/whs3-project-part3/En/image2.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Using &lt;code&gt;WinObj64.exe&lt;/code&gt; to check permissions reveals that everyone has RW permissions! This means a medium user can issue &lt;code&gt;DeviceIoControl&lt;/code&gt; requests to this driver.&lt;/p&gt;
+&lt;p&gt;Now that we&amp;#x2019;ve verified the permissions and &lt;code&gt;MajorFunction[14]&lt;/code&gt;, shall we dive into analyzing the vulnerability?&lt;/p&gt;
+&lt;h1 id=&#34;2-LPE-via-MSR-Read-Write-Primitive&#34;&gt;&lt;a href=&#34;#2-LPE-via-MSR-Read-Write-Primitive&#34; class=&#34;headerlink&#34; title=&#34;2. LPE via MSR Read/Write Primitive&#34;&gt;&lt;/a&gt;2. LPE via MSR Read/Write Primitive&lt;/h1&gt;&lt;p&gt;By exploiting an untrusted pointer dereference vulnerability, I identified an MSR read/write primitive and achieved LPE through it. I reported this to the vendor but received no response, so I will unfortunately have to redact certain parts before publishing. I kindly ask for your understanding. &amp;#x1F62D;&lt;/p&gt;
+&lt;h2 id=&#34;2-1-Static-Analysis&#34;&gt;&lt;a href=&#34;#2-1-Static-Analysis&#34; class=&#34;headerlink&#34; title=&#34;2-1. Static Analysis&#34;&gt;&lt;/a&gt;2-1. Static Analysis&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2026/02/01/Libera/whs3-project-part3/En/image4.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;When the user calls the &lt;code&gt;DeviceIoControl&lt;/code&gt; API to send a request to this driver, it checks the &lt;code&gt;sub_1400010E0&lt;/code&gt; function, which is the Dispatch Routine (&lt;code&gt;MajorFunction[14]&lt;/code&gt;) triggered by this request.&lt;/p&gt;
+&lt;h3 id=&#34;2-1-1-sub-1400010E0-Function-Dispatch-Routine&#34;&gt;&lt;a href=&#34;#2-1-1-sub-1400010E0-Function-Dispatch-Routine&#34; class=&#34;headerlink&#34; title=&#34;2-1-1. sub_1400010E0() Function - Dispatch Routine&#34;&gt;&lt;/a&gt;2-1-1. sub_1400010E0() Function - Dispatch Routine&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;__int64 __fastcall &lt;span class=&#34;hljs-title&#34;&gt;sub_1400010E0&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(__int64 a1, IRP *IRP)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+...
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( MajorFunction != &lt;span class=&#34;hljs-number&#34;&gt;14&lt;/span&gt; )
+    &lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; LABEL_54;
+  IOCTL = CurrentStackLocation-&amp;gt;Parameters.DeviceIoControl.IoControlCode;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( IOCTL &amp;lt;= &lt;span class=&#34;hljs-number&#34;&gt;0x9C000000&lt;/span&gt; )
+  {
+		...
+	}
+  &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+  {
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( IOCTL != &lt;span class=&#34;hljs-number&#34;&gt;0x9C000000&lt;/span&gt; )
+    {
+      &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( IOCTL == &lt;span class=&#34;hljs-number&#34;&gt;0x9C&lt;/span&gt;------ )
+      {
+        &lt;span class=&#34;hljs-comment&#34;&gt;// ReadMsr&lt;/span&gt;
+        v5 = ((__int64 (__fastcall *)(PVOID, PVOID))sub_140001380)(
+                   IRP-&amp;gt;AssociatedIrp.SystemBuffer,
+                   IRP-&amp;gt;AssociatedIrp.SystemBuffer);
+      }
+      &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( IOCTL == &lt;span class=&#34;hljs-number&#34;&gt;0x9C&lt;/span&gt;====== )
+      {
+        &lt;span class=&#34;hljs-comment&#34;&gt;//WriteMsr&lt;/span&gt;
+        v5 = sub_1400013C0(IRP-&amp;gt;AssociatedIrp.SystemBuffer, p_Information);
+      }
+      &lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; LABEL_54;
+    }
+    *(_DWORD *)IRP-&amp;gt;AssociatedIrp.SystemBuffer = dword_140003000;
+    *p_Information = &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;;
+  }
+LABEL_53:
+...
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;sub_1400010E0&lt;/code&gt; contains several conditional statements. It is a function triggered when &lt;code&gt;MajorFunction[14]&lt;/code&gt;, but internally, its functionality varies again depending on which index of &lt;code&gt;MajorFunction[i]&lt;/code&gt; it is.&lt;/p&gt;
+&lt;p&gt;Requests sent via the &lt;code&gt;DeviceIoControl&lt;/code&gt; API branch to index &lt;code&gt;14&lt;/code&gt;. Within this index, the IOCTL Code must be checked to branch to the desired functionality. &lt;code&gt;0x9C------&lt;/code&gt; and &lt;code&gt;0x9C======&lt;/code&gt; are the IOCTL Codes containing the vulnerabilities we need to trigger.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;I/O Control Codes (IOCTL Code)&lt;br&gt;These serve as communication identifiers between user mode and drivers, and are also used for communication between drivers on the same stack. IOCTL Codes are transmitted using IRP.&lt;br&gt;For user-mode applications, the DeviceIoControl API is called to pass the IOCTL Code to the driver. The driver then performs the corresponding function based on the received IOCTL Code.&lt;br&gt;Most drivers use conditional statements to execute the necessary functionality based on the IOCTL Code.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h3 id=&#34;2-1-2-sub-140001380-Function-ReadMsr-Primitive&#34;&gt;&lt;a href=&#34;#2-1-2-sub-140001380-Function-ReadMsr-Primitive&#34; class=&#34;headerlink&#34; title=&#34;2-1-2. sub_140001380() Function - ReadMsr Primitive&#34;&gt;&lt;/a&gt;2-1-2. sub_140001380() Function - ReadMsr Primitive&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( IOCTL == &lt;span class=&#34;hljs-number&#34;&gt;0x9C&lt;/span&gt;------ )
+      {
+        &lt;span class=&#34;hljs-comment&#34;&gt;// ReadMsr&lt;/span&gt;
+        v5 = ((__int64 (__fastcall *)(PVOID, PVOID))sub_140001380)(
+                   IRP-&amp;gt;AssociatedIrp.SystemBuffer,
+                   IRP-&amp;gt;AssociatedIrp.SystemBuffer);
+      }&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Transmitting IOCTL Code &lt;code&gt;0x9C------&lt;/code&gt; triggers the &lt;code&gt;sub_140001380&lt;/code&gt; function. At this point, the &lt;code&gt;SystemBuffer&lt;/code&gt; passed as an argument points to the kernel buffer where the data sent from user mode is stored.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;__int64 __fastcall &lt;span class=&#34;hljs-title&#34;&gt;sub_140001380&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; *SystemBuffer, &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int64 *SystemBuffer2, _DWORD *a3)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int64 v3; &lt;span class=&#34;hljs-comment&#34;&gt;// rax&lt;/span&gt;
+
+  v3 = __readmsr(*SystemBuffer);
+  *SystemBuffer2 = ((&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int64)HIDWORD(v3) &amp;lt;&amp;lt; &lt;span class=&#34;hljs-number&#34;&gt;32&lt;/span&gt;) | (&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;)v3;
+  *a3 = &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Looking at the function &lt;code&gt;sub_140001380&lt;/code&gt;, you can see that data sent from user mode is used as an argument to the &lt;code&gt;__readmsr&lt;/code&gt; function without any validation.&lt;/p&gt;
+&lt;h3 id=&#34;2-1-3-sub-1400013C0-Function-WriteMsr-Primitive&#34;&gt;&lt;a href=&#34;#2-1-3-sub-1400013C0-Function-WriteMsr-Primitive&#34; class=&#34;headerlink&#34; title=&#34;2-1-3. sub_1400013C0() Function - WriteMsr Primitive&#34;&gt;&lt;/a&gt;2-1-3. sub_1400013C0() Function - WriteMsr Primitive&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( IOCTL == &lt;span class=&#34;hljs-number&#34;&gt;0x9C&lt;/span&gt;====== )
+      {
+        &lt;span class=&#34;hljs-comment&#34;&gt;//WriteMsr&lt;/span&gt;
+        v5 = sub_1400013C0(IRP-&amp;gt;AssociatedIrp.SystemBuffer, p_Information);
+      }&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Sending IOCTL Code &lt;code&gt;0x9C======&lt;/code&gt; triggers the &lt;code&gt;sub_1400013C0&lt;/code&gt; function. At this point, the &lt;code&gt;SystemBuffer&lt;/code&gt; passed as an argument also points to a kernel buffer containing the data sent from user mode.&lt;/p&gt;
+&lt;p&gt;Sending IOCTL Code &lt;code&gt;0x9C======&lt;/code&gt; triggers the &lt;code&gt;sub_1400013C0&lt;/code&gt; function. At this point, the &lt;code&gt;SystemBuffer&lt;/code&gt; passed as an argument also points to a kernel buffer storing data sent from user mode.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;__int64 __fastcall &lt;span class=&#34;hljs-title&#34;&gt;sub_1400013C0&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(__int64 SystemBuffer, _DWORD *a2)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+  __writemsr(*(_DWORD *)SystemBuffer, *(_QWORD *)(SystemBuffer + &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;));
+  *a2 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Looking at the &lt;code&gt;sub_1400013C0&lt;/code&gt; function, we can see that data sent from user mode is passed as an argument to the &lt;code&gt;__writemsr&lt;/code&gt; function without any validation.&lt;/p&gt;
+&lt;p&gt;We have confirmed that these two IOCTL codes can be used to pass arbitrary values to the respective MSR read/write functions. Now let&amp;#x2019;s find out what this &lt;code&gt;MSR&lt;/code&gt; is and why exploiting this function is possible!&lt;/p&gt;
+&lt;h2 id=&#34;2-2-How-to-Exploit-using-MSR-Register&#34;&gt;&lt;a href=&#34;#2-2-How-to-Exploit-using-MSR-Register&#34; class=&#34;headerlink&#34; title=&#34;2-2. How to Exploit using MSR Register&#34;&gt;&lt;/a&gt;2-2. How to Exploit using MSR Register&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2026/02/01/Libera/whs3-project-part3/Er/image5.png&#34; alt=&#34;Source : [IIia dafchev blog](https://idafchev.github.io/blog/)&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Source : &lt;a href=&#34;https://idafchev.github.io/blog/&#34;&gt;IIia dafchev blog&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;MSRs (&lt;code&gt;Model Specific Registers&lt;/code&gt;) were introduced to control features specific to particular processor models. While compatibility between models is not guaranteed in principle, some MSRs responsible for core functions like system call handlers are classified as Architectural MSRs and are consistently supported.&lt;/p&gt;
+&lt;p&gt;The feature we should focus on here is the LSTAR (&lt;code&gt;Long-mode System call Target Address Register&lt;/code&gt;) MSR. This register holds the address of the kernel-level system call handler (&lt;code&gt;KiSystemCall64&lt;/code&gt;) that the CPU will jump to when executing the &lt;code&gt;syscall&lt;/code&gt; instruction. The operating system stores the address of the system call handler in this register. When the &lt;code&gt;syscall&lt;/code&gt; instruction executes, the CPU transitions to Ring0 mode (kernel mode), and the instruction pointer (&lt;code&gt;RIP&lt;/code&gt;) is set to the value stored in the LSTAR register.&lt;/p&gt;
+&lt;p&gt;Until the mid-point of Windows 10, kernel addresses could be leaked using APIs like &lt;code&gt;NtQuerySystemInformation&lt;/code&gt; even with KASLR. However, it was later patched so that addresses are no longer returned under standard user privileges, making a leak primitive necessary for exploitation. For more details, check out &lt;a href=&#34;https://hackyboiz.github.io/2025/04/13/l0ch/bypassing-kernel-mitigation-part0/ko/&#34;&gt;a team member&amp;#x2019;s previous article on KASLR&lt;/a&gt;!&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;IA32_LSTAR&lt;/code&gt; register holds the actual address of &lt;code&gt;KiSystemCall64&lt;/code&gt;, a core function that handles system calls during Windows kernel boot. Therefore, by reading the &lt;code&gt;IA32_LSTAR&lt;/code&gt; register via the &lt;code&gt;__readmsr&lt;/code&gt; function, we can find the actual address of &lt;code&gt;KiSystemCall64&lt;/code&gt; and determine the kernel base address through its offset.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; __writemsr(
+   &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt; Register,  &lt;span class=&#34;hljs-comment&#34;&gt;// [ECX] Select MSR register&lt;/span&gt;
+   &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int64 Value   &lt;span class=&#34;hljs-comment&#34;&gt;// [EDX:EAX] Value to write to the selected register&lt;/span&gt;
+);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The &lt;code&gt;__writemsr&lt;/code&gt; function writes the value of the second argument to the MSR register specified as the first argument. As previously discussed, when the &lt;code&gt;syscall&lt;/code&gt; instruction executes, RIP is set to the value stored in the LSTAR register. Therefore, overwriting the LSTAR register with the starting address of the shell code causes the attacker&amp;#x2019;s shell code to execute with Ring0 (kernel mode) privileges when the &lt;code&gt;syscall&lt;/code&gt; is invoked.&lt;/p&gt;
+&lt;p&gt;Now that we&amp;#x2019;ve determined how to exploit this, shall we verify that the values I entered are actually being passed correctly?&lt;/p&gt;
+&lt;h2 id=&#34;2-3-Dynamic-Analysis&#34;&gt;&lt;a href=&#34;#2-3-Dynamic-Analysis&#34; class=&#34;headerlink&#34; title=&#34;2-3. Dynamic Analysis&#34;&gt;&lt;/a&gt;2-3. Dynamic Analysis&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2026/02/01/Libera/whs3-project-part3/Er/image6.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Looking at the &lt;code&gt;__readmsr&lt;/code&gt; function first, you can see that it takes &lt;code&gt;c0000082&lt;/code&gt; as an argument, which represents &lt;code&gt;IA32_LSTAR&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/02/01/Libera/whs3-project-part3/Er/image7.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;__writemsr&lt;/code&gt; function takes &lt;code&gt;IA32_LSTAR&lt;/code&gt; as its first argument and &lt;code&gt;FFFF&lt;/code&gt; a value I arbitrarily inserted as its second argument.&lt;/p&gt;
+&lt;p&gt;Now, if we set this arbitrarily inserted value as the starting address for the shell code, the exploit will succeed!!&lt;/p&gt;
+&lt;h2 id=&#34;2-4-Points-to-Note&#34;&gt;&lt;a href=&#34;#2-4-Points-to-Note&#34; class=&#34;headerlink&#34; title=&#34;2-4. Points to Note&#34;&gt;&lt;/a&gt;2-4. Points to Note&lt;/h2&gt;&lt;p&gt;It would be great if simply placing the shellcode start address in the LSTAR register made the exploit work, but for a successful exploit, we need to perform three additional steps. If you&amp;#x2019;re curious about the details of the protection techniques mentioned here, I recommend reading &lt;a href=&#34;https://hackyboiz.github.io/2024/12/08/l0ch/bypassing-kernel-mitigation-part1/ko/&#34;&gt;L0ch&amp;#x2019;s Kernel Mitigation article&lt;/a&gt;!&lt;/p&gt;
+&lt;p&gt;First, bypassing SMEP. Modern Windows applies SMEP/SMAP protections, preventing direct execution of shellcode in user space. As explained earlier, overwriting LSTAR with the shellcode start address doesn&amp;#x2019;t guarantee immediate execution. Instead, you must overwrite LSTAR with a Stack Pivot gadget to capture the execution flow, then use a ROP Chain to disable the 20th bit of the &lt;code&gt;CR4&lt;/code&gt; register (the &lt;code&gt;SMEP bit&lt;/code&gt;).&lt;/p&gt;
+&lt;p&gt;Second, privilege escalation. Based on the kernel address obtained via the MSR Read Primitive, calculate the offset to find the kernel base address and the system process&amp;#x2019;s token. Then, overwrite the current process&amp;#x2019;s token location with the System process&amp;#x2019;s token to gain System privileges.&lt;/p&gt;
+&lt;p&gt;Finally, third, system cleanup. The modified LSTAR value, the SMEP bit setting in &lt;code&gt;CR4&lt;/code&gt;, and the corrupted stack frame must be restored. If it exits without restoring, a BSOD occurs the moment the next system call is invoked. Therefore, the modified registers must be restored to achieve a stable LPE (privilege escalation)!&lt;/p&gt;
+&lt;h1 id=&#34;3-DoS-Vulnerabilities&#34;&gt;&lt;a href=&#34;#3-DoS-Vulnerabilities&#34; class=&#34;headerlink&#34; title=&#34;3. DoS Vulnerabilities&#34;&gt;&lt;/a&gt;3. DoS Vulnerabilities&lt;/h1&gt;&lt;p&gt;We identified several vulnerabilities that cause BSODs. Among them, we will examine the results of the Arbitrary Port I/O vulnerability and why it was not possible to achieve LPE.&lt;/p&gt;
+&lt;h2 id=&#34;3-1-Arbitrary-Port-I-O-Vulnerability-Trigger-amp-Root-Cause&#34;&gt;&lt;a href=&#34;#3-1-Arbitrary-Port-I-O-Vulnerability-Trigger-amp-Root-Cause&#34; class=&#34;headerlink&#34; title=&#34;3-1. Arbitrary Port I/O Vulnerability Trigger &amp;amp; Root Cause&#34;&gt;&lt;/a&gt;3-1. Arbitrary Port I/O Vulnerability Trigger &amp;amp; Root Cause&lt;/h2&gt;&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;switch&lt;/span&gt; ( IoControlCode )
+{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0xC350A0D8&lt;/span&gt;:
+    __outbyte(SystemBuffer_Value, *((_BYTE *)SystemBuffer_Addr + &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;));
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0xC350A0DC&lt;/span&gt;:
+    __outword(SystemBuffer_Value, *((_WORD *)SystemBuffer_Addr + &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;));
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0xC350A0E0&lt;/span&gt;:
+    __outdword(SystemBuffer_Value, SystemBuffer_Addr[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;]);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The code above is part of the driver&amp;#x2019;s &lt;code&gt;Dispatch Routine&lt;/code&gt; function. It can be triggered by specific IOCTL codes, each triggering the &lt;code&gt;__outbyte&lt;/code&gt;, &lt;code&gt;__outword&lt;/code&gt;, or &lt;code&gt;__outdword&lt;/code&gt; functions. Since all three functions&amp;#x2019; arguments can be controlled by an attacker, manipulating these arguments causes a BSOD.&lt;/p&gt;
+&lt;p&gt;Sending &lt;code&gt;0xFE&lt;/code&gt; data to the &lt;code&gt;0xCF9&lt;/code&gt; port causes a forced reboot. Additionally, sending any unusual data other than &lt;code&gt;0xFE&lt;/code&gt; to this port triggers a BSOD. Port &lt;code&gt;0xCF9&lt;/code&gt; is the Reset Control Register defined in the Intel chipset specification, and &lt;code&gt;0xFE&lt;/code&gt; is &lt;code&gt;1111 1110&lt;/code&gt; in binary. Consulting the Intel datasheet reveals the bit operations of this register:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Bit 1 (System Reset): Setting to 1 triggers a system reset.&lt;/li&gt;
+&lt;li&gt;Bit 2 (Reset CPU): Setting this to 1 performs a CPU reset.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Therefore, sending &lt;code&gt;0xFE&lt;/code&gt; transmits a command that activates both of these two bits. This ignores the OS&amp;#x2019;s normal shutdown procedure and immediately forces a reboot.&lt;/p&gt;
+&lt;p&gt;Now, let&amp;#x2019;s explore why a BSOD occurs when using functions like &lt;code&gt;__outbyte&lt;/code&gt;, which are simply read/write operations.&lt;/p&gt;
+&lt;h3 id=&#34;3-1-1-in-out-Functions&#34;&gt;&lt;a href=&#34;#3-1-1-in-out-Functions&#34; class=&#34;headerlink&#34; title=&#34;3-1-1. in, out Functions&#34;&gt;&lt;/a&gt;3-1-1. in, out Functions&lt;/h3&gt;&lt;p&gt;The &lt;code&gt;__inbyte&lt;/code&gt;, &lt;code&gt;__inword&lt;/code&gt;, &lt;code&gt;__indword&lt;/code&gt;, &lt;code&gt;__outbyte&lt;/code&gt;, &lt;code&gt;__outword&lt;/code&gt;, and &lt;code&gt;__outdword&lt;/code&gt; functions are not passed through the operating system&amp;#x2019;s API but are directly translated into machine code. For the in functions, they read data from the port received as an argument in a size appropriate for the function. They load the port number into the &lt;code&gt;DX&lt;/code&gt; register, read it using the &lt;code&gt;IN&lt;/code&gt; instruction, and store it in &lt;code&gt;AX&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;out&lt;/code&gt; functions write the data received as an argument to the port received as an argument. They load the port number and data into registers and use the &lt;code&gt;OUT&lt;/code&gt; instruction to transmit the data to the specified port number.&lt;/p&gt;
+&lt;h3 id=&#34;3-1-2-Isolated-I-O-and-BSOD-Causes&#34;&gt;&lt;a href=&#34;#3-1-2-Isolated-I-O-and-BSOD-Causes&#34; class=&#34;headerlink&#34; title=&#34;3-1-2. Isolated I/O and BSOD Causes&#34;&gt;&lt;/a&gt;3-1-2. Isolated I/O and BSOD Causes&lt;/h3&gt;&lt;p&gt;The x86 architecture physically separates the memory address space (&lt;code&gt;Memory Space&lt;/code&gt;) and the I/O address space (&lt;code&gt;I/O Space&lt;/code&gt;), a feature known as isolated I/O. The Memory Map is the RAM space we commonly think of, accessed via the &lt;code&gt;MOV&lt;/code&gt; instruction. The I/O Map is the space used by the &lt;code&gt;IN&lt;/code&gt; and &lt;code&gt;OUT&lt;/code&gt; functions. This space spans the range &lt;code&gt;0x0000~0xFFFF&lt;/code&gt; and is directly connected to the registers of hardware devices attached to the motherboard. Therefore, executing &lt;code&gt;__outword&lt;/code&gt;(&lt;code&gt;0x64&lt;/code&gt;, data) does not write data to memory address 100; instead, it sends an electrical signal to the hardware chip with port &lt;code&gt;0x64&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;The problem arises when this signal is sent to critical or sensitive hardware (e.g., PCI bus configuration). If an attacker overwrites a critical port with arbitrary values, it can corrupt hardware settings or cause the CPU to encounter an unhandled exception. This triggers the OS to display a blue screen as a system protection measure.&lt;/p&gt;
+&lt;h2 id=&#34;3-2-Why-doesn&amp;#x2019;t-LPE-work&#34;&gt;&lt;a href=&#34;#3-2-Why-doesn&amp;#x2019;t-LPE-work&#34; class=&#34;headerlink&#34; title=&#34;3-2. Why doesn&amp;#x2019;t LPE work?&#34;&gt;&lt;/a&gt;3-2. Why doesn&amp;#x2019;t LPE work?&lt;/h2&gt;&lt;p&gt;In the past, exploits worked by manipulating the BAR (Base Address Register) in the PCI Configuration Space to overlap the device&amp;#x2019;s MMIO (Memory Mapped I/O) address with the physical address where the kernel&amp;#x2019;s critical data structures reside. However, protective techniques implemented to counter this have blocked this approach.&lt;/p&gt;
+&lt;h3 id=&#34;3-2-1-Asynchronous-OS-Memory-Manager-and-Hardware-State&#34;&gt;&lt;a href=&#34;#3-2-1-Asynchronous-OS-Memory-Manager-and-Hardware-State&#34; class=&#34;headerlink&#34; title=&#34;3-2-1. Asynchronous OS Memory Manager and Hardware State&#34;&gt;&lt;/a&gt;3-2-1. Asynchronous OS Memory Manager and Hardware State&lt;/h3&gt;&lt;p&gt;Fundamentally, the blockage occurred because hardware-level address changes were no longer immediately reflected in the OS&amp;#x2019;s memory management system.&lt;/p&gt;
+&lt;p&gt;Suppose an attacker uses an OUT instruction to modify the BAR register value of a PCI device, changing the physical address from &lt;code&gt;0xA0000000&lt;/code&gt; to &lt;code&gt;0x10000000&lt;/code&gt;, where critical kernel structures reside. The Windows kernel generates a PTE for the device&amp;#x2019;s physical address and assigns a virtual address either at boot time or when loading a driver. The problem arises because even if the attacker modifies the hardware register (&lt;code&gt;BAR&lt;/code&gt;), the mapping information in the page table managed by the OS&amp;#x2019;s memory manager (MMU) is not updated or corrected.&lt;/p&gt;
+&lt;p&gt;When the driver accesses the original virtual address, the memory manager (&lt;code&gt;MMU&lt;/code&gt;) still sends the transaction to the original address, which is &lt;code&gt;0xA0000000&lt;/code&gt;. However, since the attacker changed it to &lt;code&gt;0x10000000&lt;/code&gt;, no device responds to the transaction sent to the original address. This ultimately results in a Master Abort or reading garbage values, causing a BSOD.&lt;/p&gt;
+&lt;h3 id=&#34;3-2-2-Physical-Memory-Isolation-via-VBS-and-SLAT&#34;&gt;&lt;a href=&#34;#3-2-2-Physical-Memory-Isolation-via-VBS-and-SLAT&#34; class=&#34;headerlink&#34; title=&#34;3-2-2. Physical Memory Isolation via VBS and SLAT&#34;&gt;&lt;/a&gt;3-2-2. Physical Memory Isolation via VBS and SLAT&lt;/h3&gt;&lt;p&gt;In a VBS environment, the hypervisor controls physical memory access. When VBS is enabled, the physical addresses accessed by the OS differ from the actual hardware&amp;#x2019;s machine physical addresses. This translation is handled by SLAT, the CPU&amp;#x2019;s hardware virtualization feature.&lt;/p&gt;
+&lt;p&gt;If an attacker attempts to manipulate BARs to map device memory into kernel code regions or critical data areas, the hypervisor detects an EPT violation. The hypervisor monitors and prevents physical pages configured for MMIO from overlapping with executable code regions or read-only data regions.&lt;/p&gt;
+&lt;p&gt;In other words, even if hardware registers are manipulated, the hypervisor layer denies access, making physical memory overwriting impossible from the outset.&lt;/p&gt;
+&lt;h3 id=&#34;3-2-3-DMA-Protection-and-IOMMU&#34;&gt;&lt;a href=&#34;#3-2-3-DMA-Protection-and-IOMMU&#34; class=&#34;headerlink&#34; title=&#34;3-2-3. DMA Protection and IOMMU&#34;&gt;&lt;/a&gt;3-2-3. DMA Protection and IOMMU&lt;/h3&gt;&lt;p&gt;This is a defense technique that activates when an attacker attempts to overwrite memory using DMA rather than the CPU. The IOMMU virtualizes the memory addresses accessed by devices. Even if a device requests a write to a physical address, the IOMMU either remaps the address or blocks it, indicating that the device can only write to a specific region. This is called DMA Remapping.&lt;/p&gt;
+&lt;p&gt;Additionally, Windows closes DMA ports for untrusted external devices or uninitialized devices during the boot process. These devices cannot access system memory until drivers are properly loaded and IOMMU mapping is complete. This is called Pre-boot DMA Protection.&lt;/p&gt;
+&lt;h1 id=&#34;Conclusion&#34;&gt;&lt;a href=&#34;#Conclusion&#34; class=&#34;headerlink&#34; title=&#34;Conclusion&#34;&gt;&lt;/a&gt;Conclusion&lt;/h1&gt;&lt;p&gt;With this Part 3, we conclude our introduction to the &amp;#x201C;Windows Kernel Driver &amp;amp; Named Pipe LPE Bug Hunting&amp;#x201D; project conducted during White Hat School&amp;#x2019;s 3rd session. It&amp;#x2019;s truly rewarding and delightful to share the results of our hard work over three months with a team of six members. &amp;#x263A;&amp;#xFE0F;&lt;/p&gt;
+&lt;p&gt;I hope this series has been helpful for those starting vulnerability analysis. With that, we&amp;#x2019;ll wrap up this series here! While I&amp;#x2019;m not yet sure what the next research post will cover, I&amp;#x2019;d appreciate your continued interest and support! Thank you.&lt;/p&gt;
+&lt;h2 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://cdrdv2-public.intel.com/774206/vt-directed-io-spec%20.pdf&#34;&gt;https://cdrdv2-public.intel.com/774206/vt-directed-io-spec .pdf&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://idafchev.github.io/blog/wrmsr/#2-model-specific-registers&#34;&gt;https://idafchev.github.io/blog/wrmsr/#2-model-specific-registers&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://learn.microsoft.com/en-us/windows/security/hardware-security/kernel-dma-protection-for-thunderbolt&#34;&gt;https://learn.microsoft.com/en-us/windows/security/hardware-security/kernel-dma-protection-for-thunderbolt&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://learn.microsoft.com/en-us/cpp/intrinsics/readmsr&#34;&gt;https://learn.microsoft.com/en-us/cpp/intrinsics/readmsr&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://learn.microsoft.com/en-us/cpp/intrinsics/writemsr&#34;&gt;https://learn.microsoft.com/en-us/cpp/intrinsics/writemsr&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://www.coresecurity.com/core-labs/publications/windows-smep-bypass-us&#34;&gt;https://www.coresecurity.com/core-labs/publications/windows-smep-bypass-us&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2026/02/01/Libera/whs3-project-part3/En/logo.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2026/02/01/libera/whs3-project-part3/en/">
+
+  <title>[Research] Windows LPE Bug Hunting, Served by the Team’s Youngest: Part 3 (EN) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2026-02-01 17:00" pubdate>
+      2026년 2월 1일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      2.7k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      54
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] Windows LPE Bug Hunting, Served by the Team’s Youngest: Part 3 (EN)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p><img src="/2026/02/01/Libera/whs3-project-part3/En/logo.png" srcset="/img/loading.gif" alt></p>
+<h1 id="Introduction"><a href="#Introduction" class="headerlink" title="Introduction"></a>Introduction</h1><p>Hello. It feels like 2025 just ended, yet January is almost over already. Did everyone have a good start to the new year?</p>
+<p>I&#x2019;m Libera, taking on the role of writing Part 3 of the Maknaez series as my first research post. I was strongly drawn to the phrase &#x201C;Windows Zero-day vulnerability,&#x201D; which led me to join this project as team leader. That passion to discover zero-days is what brought me here.</p>
+<p>In Part 2 today, I&#x2019;ll focus on the Kernel Driver vector&#x2014;one of our project&#x2019;s outcomes&#x2014;and introduce the types and details of the vulnerabilities I uncovered. So, shall we dive right into what vulnerabilities we discovered in the kernel driver?</p>
+<h1 id="Target-amp-Summary"><a href="#Target-amp-Summary" class="headerlink" title="Target &amp; Summary"></a>Target &amp; Summary</h1><p>Today, I&#x2019;ll explain why the vulnerabilities I&#x2019;ll introduce&#x2014;LPE using the MSR R/W Primitive and Arbitrary Port I/O&#x2014;were ultimately limited to DoS.</p>
+<h1 id="1-Attack-Surface"><a href="#1-Attack-Surface" class="headerlink" title="1. Attack Surface"></a>1. Attack Surface</h1><p>Before looking at the vulnerabilities, let&#x2019;s cover the prerequisites. As mentioned in Part 1 and Part 2, it took some time, so I&#x2019;ll keep this brief!</p>
+<p><img src="/2026/02/01/Libera/whs3-project-part3/En/image1.png" srcset="/img/loading.gif" alt></p>
+<p>When installing the target program, use FolderChangesView to verify the drivers installed alongside the program during setup, and use DriverView to verify the drivers automatically loaded when the program is installed or executed. </p>
+<p><img src="/2026/02/01/Libera/whs3-project-part3/En/image2.png" srcset="/img/loading.gif" alt></p>
+<p>Next, we need to check the driver&#x2019;s permissions. To do this, we must know the <code>DeviceName</code>. I opened the driver file in IDA and located the <code>DriverEntry</code>to find the <code>DeviceName</code>. Additionally, it&#x2019;s a good idea to check if <code>MajorFunction[14]</code> is present. <code>MajorFunction[14]</code> points to a function pointer that handles the <code>IRP_MJ_DEVICE_CONTROL</code> in the Windows kernel&#x2019;s <code>DRIVER_OBJECT</code> structure. This indicates that a Dispatch Routine exists to handle calls to the <code>DeviceIoControl</code> API made by user-mode applications. Now, shall we check the permissions again?</p>
+<p><img src="/2026/02/01/Libera/whs3-project-part3/En/image2.png" srcset="/img/loading.gif" alt></p>
+<p>Using <code>WinObj64.exe</code> to check permissions reveals that everyone has RW permissions! This means a medium user can issue <code>DeviceIoControl</code> requests to this driver.</p>
+<p>Now that we&#x2019;ve verified the permissions and <code>MajorFunction[14]</code>, shall we dive into analyzing the vulnerability?</p>
+<h1 id="2-LPE-via-MSR-Read-Write-Primitive"><a href="#2-LPE-via-MSR-Read-Write-Primitive" class="headerlink" title="2. LPE via MSR Read/Write Primitive"></a>2. LPE via MSR Read/Write Primitive</h1><p>By exploiting an untrusted pointer dereference vulnerability, I identified an MSR read/write primitive and achieved LPE through it. I reported this to the vendor but received no response, so I will unfortunately have to redact certain parts before publishing. I kindly ask for your understanding. &#x1F62D;</p>
+<h2 id="2-1-Static-Analysis"><a href="#2-1-Static-Analysis" class="headerlink" title="2-1. Static Analysis"></a>2-1. Static Analysis</h2><p><img src="/2026/02/01/Libera/whs3-project-part3/En/image4.png" srcset="/img/loading.gif" alt></p>
+<p>When the user calls the <code>DeviceIoControl</code> API to send a request to this driver, it checks the <code>sub_1400010E0</code> function, which is the Dispatch Routine (<code>MajorFunction[14]</code>) triggered by this request.</p>
+<h3 id="2-1-1-sub-1400010E0-Function-Dispatch-Routine"><a href="#2-1-1-sub-1400010E0-Function-Dispatch-Routine" class="headerlink" title="2-1-1. sub_1400010E0() Function - Dispatch Routine"></a>2-1-1. sub_1400010E0() Function - Dispatch Routine</h3><pre><code class="hljs c"><span class="hljs-function">__int64 __fastcall <span class="hljs-title">sub_1400010E0</span><span class="hljs-params">(__int64 a1, IRP *IRP)</span></span>
+<span class="hljs-function"></span>{
+...
+  <span class="hljs-keyword">if</span> ( MajorFunction != <span class="hljs-number">14</span> )
+    <span class="hljs-keyword">goto</span> LABEL_54;
+  IOCTL = CurrentStackLocation-&gt;Parameters.DeviceIoControl.IoControlCode;
+  <span class="hljs-keyword">if</span> ( IOCTL &lt;= <span class="hljs-number">0x9C000000</span> )
+  {
+		...
+	}
+  <span class="hljs-keyword">else</span>
+  {
+    <span class="hljs-keyword">if</span> ( IOCTL != <span class="hljs-number">0x9C000000</span> )
+    {
+      <span class="hljs-keyword">if</span> ( IOCTL == <span class="hljs-number">0x9C</span>------ )
+      {
+        <span class="hljs-comment">// ReadMsr</span>
+        v5 = ((__int64 (__fastcall *)(PVOID, PVOID))sub_140001380)(
+                   IRP-&gt;AssociatedIrp.SystemBuffer,
+                   IRP-&gt;AssociatedIrp.SystemBuffer);
+      }
+      <span class="hljs-keyword">else</span> <span class="hljs-keyword">if</span> ( IOCTL == <span class="hljs-number">0x9C</span>====== )
+      {
+        <span class="hljs-comment">//WriteMsr</span>
+        v5 = sub_1400013C0(IRP-&gt;AssociatedIrp.SystemBuffer, p_Information);
+      }
+      <span class="hljs-keyword">goto</span> LABEL_54;
+    }
+    *(_DWORD *)IRP-&gt;AssociatedIrp.SystemBuffer = dword_140003000;
+    *p_Information = <span class="hljs-number">4</span>;
+  }
+LABEL_53:
+...
+}</code></pre>
+<p><code>sub_1400010E0</code> contains several conditional statements. It is a function triggered when <code>MajorFunction[14]</code>, but internally, its functionality varies again depending on which index of <code>MajorFunction[i]</code> it is.</p>
+<p>Requests sent via the <code>DeviceIoControl</code> API branch to index <code>14</code>. Within this index, the IOCTL Code must be checked to branch to the desired functionality. <code>0x9C------</code> and <code>0x9C======</code> are the IOCTL Codes containing the vulnerabilities we need to trigger.</p>
+<blockquote>
+<p>I/O Control Codes (IOCTL Code)<br>These serve as communication identifiers between user mode and drivers, and are also used for communication between drivers on the same stack. IOCTL Codes are transmitted using IRP.<br>For user-mode applications, the DeviceIoControl API is called to pass the IOCTL Code to the driver. The driver then performs the corresponding function based on the received IOCTL Code.<br>Most drivers use conditional statements to execute the necessary functionality based on the IOCTL Code.</p>
+</blockquote>
+<h3 id="2-1-2-sub-140001380-Function-ReadMsr-Primitive"><a href="#2-1-2-sub-140001380-Function-ReadMsr-Primitive" class="headerlink" title="2-1-2. sub_140001380() Function - ReadMsr Primitive"></a>2-1-2. sub_140001380() Function - ReadMsr Primitive</h3><pre><code class="hljs c"><span class="hljs-keyword">if</span> ( IOCTL == <span class="hljs-number">0x9C</span>------ )
+      {
+        <span class="hljs-comment">// ReadMsr</span>
+        v5 = ((__int64 (__fastcall *)(PVOID, PVOID))sub_140001380)(
+                   IRP-&gt;AssociatedIrp.SystemBuffer,
+                   IRP-&gt;AssociatedIrp.SystemBuffer);
+      }</code></pre>
+<p>Transmitting IOCTL Code <code>0x9C------</code> triggers the <code>sub_140001380</code> function. At this point, the <code>SystemBuffer</code> passed as an argument points to the kernel buffer where the data sent from user mode is stored.</p>
+<pre><code class="hljs c">
+<span class="hljs-function">__int64 __fastcall <span class="hljs-title">sub_140001380</span><span class="hljs-params">(<span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span> *SystemBuffer, <span class="hljs-keyword">unsigned</span> __int64 *SystemBuffer2, _DWORD *a3)</span></span>
+<span class="hljs-function"></span>{
+  <span class="hljs-keyword">unsigned</span> __int64 v3; <span class="hljs-comment">// rax</span>
+
+  v3 = __readmsr(*SystemBuffer);
+  *SystemBuffer2 = ((<span class="hljs-keyword">unsigned</span> __int64)HIDWORD(v3) &lt;&lt; <span class="hljs-number">32</span>) | (<span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span>)v3;
+  *a3 = <span class="hljs-number">8</span>;
+  <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}</code></pre>
+<p>Looking at the function <code>sub_140001380</code>, you can see that data sent from user mode is used as an argument to the <code>__readmsr</code> function without any validation.</p>
+<h3 id="2-1-3-sub-1400013C0-Function-WriteMsr-Primitive"><a href="#2-1-3-sub-1400013C0-Function-WriteMsr-Primitive" class="headerlink" title="2-1-3. sub_1400013C0() Function - WriteMsr Primitive"></a>2-1-3. sub_1400013C0() Function - WriteMsr Primitive</h3><pre><code class="hljs c"><span class="hljs-keyword">else</span> <span class="hljs-keyword">if</span> ( IOCTL == <span class="hljs-number">0x9C</span>====== )
+      {
+        <span class="hljs-comment">//WriteMsr</span>
+        v5 = sub_1400013C0(IRP-&gt;AssociatedIrp.SystemBuffer, p_Information);
+      }</code></pre>
+<p>Sending IOCTL Code <code>0x9C======</code> triggers the <code>sub_1400013C0</code> function. At this point, the <code>SystemBuffer</code> passed as an argument also points to a kernel buffer containing the data sent from user mode.</p>
+<p>Sending IOCTL Code <code>0x9C======</code> triggers the <code>sub_1400013C0</code> function. At this point, the <code>SystemBuffer</code> passed as an argument also points to a kernel buffer storing data sent from user mode.</p>
+<pre><code class="hljs c"><span class="hljs-function">__int64 __fastcall <span class="hljs-title">sub_1400013C0</span><span class="hljs-params">(__int64 SystemBuffer, _DWORD *a2)</span></span>
+<span class="hljs-function"></span>{
+  __writemsr(*(_DWORD *)SystemBuffer, *(_QWORD *)(SystemBuffer + <span class="hljs-number">4</span>));
+  *a2 = <span class="hljs-number">0</span>;
+  <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}</code></pre>
+<p>Looking at the <code>sub_1400013C0</code> function, we can see that data sent from user mode is passed as an argument to the <code>__writemsr</code> function without any validation.</p>
+<p>We have confirmed that these two IOCTL codes can be used to pass arbitrary values to the respective MSR read/write functions. Now let&#x2019;s find out what this <code>MSR</code> is and why exploiting this function is possible!</p>
+<h2 id="2-2-How-to-Exploit-using-MSR-Register"><a href="#2-2-How-to-Exploit-using-MSR-Register" class="headerlink" title="2-2. How to Exploit using MSR Register"></a>2-2. How to Exploit using MSR Register</h2><p><img src="/2026/02/01/Libera/whs3-project-part3/Er/image5.png" srcset="/img/loading.gif" alt="Source : [IIia dafchev blog](https://idafchev.github.io/blog/)"></p>
+<p>Source : <a target="_blank" rel="external nofollow noopener noreferrer" href="https://idafchev.github.io/blog/">IIia dafchev blog</a></p>
+<p>MSRs (<code>Model Specific Registers</code>) were introduced to control features specific to particular processor models. While compatibility between models is not guaranteed in principle, some MSRs responsible for core functions like system call handlers are classified as Architectural MSRs and are consistently supported.</p>
+<p>The feature we should focus on here is the LSTAR (<code>Long-mode System call Target Address Register</code>) MSR. This register holds the address of the kernel-level system call handler (<code>KiSystemCall64</code>) that the CPU will jump to when executing the <code>syscall</code> instruction. The operating system stores the address of the system call handler in this register. When the <code>syscall</code> instruction executes, the CPU transitions to Ring0 mode (kernel mode), and the instruction pointer (<code>RIP</code>) is set to the value stored in the LSTAR register.</p>
+<p>Until the mid-point of Windows 10, kernel addresses could be leaked using APIs like <code>NtQuerySystemInformation</code> even with KASLR. However, it was later patched so that addresses are no longer returned under standard user privileges, making a leak primitive necessary for exploitation. For more details, check out <a href="https://hackyboiz.github.io/2025/04/13/l0ch/bypassing-kernel-mitigation-part0/ko/">a team member&#x2019;s previous article on KASLR</a>!</p>
+<p>The <code>IA32_LSTAR</code> register holds the actual address of <code>KiSystemCall64</code>, a core function that handles system calls during Windows kernel boot. Therefore, by reading the <code>IA32_LSTAR</code> register via the <code>__readmsr</code> function, we can find the actual address of <code>KiSystemCall64</code> and determine the kernel base address through its offset.</p>
+<pre><code class="hljs c"><span class="hljs-keyword">void</span> __writemsr(
+   <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">long</span> Register,  <span class="hljs-comment">// [ECX] Select MSR register</span>
+   <span class="hljs-keyword">unsigned</span> __int64 Value   <span class="hljs-comment">// [EDX:EAX] Value to write to the selected register</span>
+);</code></pre>
+<p>The <code>__writemsr</code> function writes the value of the second argument to the MSR register specified as the first argument. As previously discussed, when the <code>syscall</code> instruction executes, RIP is set to the value stored in the LSTAR register. Therefore, overwriting the LSTAR register with the starting address of the shell code causes the attacker&#x2019;s shell code to execute with Ring0 (kernel mode) privileges when the <code>syscall</code> is invoked.</p>
+<p>Now that we&#x2019;ve determined how to exploit this, shall we verify that the values I entered are actually being passed correctly?</p>
+<h2 id="2-3-Dynamic-Analysis"><a href="#2-3-Dynamic-Analysis" class="headerlink" title="2-3. Dynamic Analysis"></a>2-3. Dynamic Analysis</h2><p><img src="/2026/02/01/Libera/whs3-project-part3/Er/image6.png" srcset="/img/loading.gif" alt></p>
+<p>Looking at the <code>__readmsr</code> function first, you can see that it takes <code>c0000082</code> as an argument, which represents <code>IA32_LSTAR</code>.</p>
+<p><img src="/2026/02/01/Libera/whs3-project-part3/Er/image7.png" srcset="/img/loading.gif" alt></p>
+<p>The <code>__writemsr</code> function takes <code>IA32_LSTAR</code> as its first argument and <code>FFFF</code> a value I arbitrarily inserted as its second argument.</p>
+<p>Now, if we set this arbitrarily inserted value as the starting address for the shell code, the exploit will succeed!!</p>
+<h2 id="2-4-Points-to-Note"><a href="#2-4-Points-to-Note" class="headerlink" title="2-4. Points to Note"></a>2-4. Points to Note</h2><p>It would be great if simply placing the shellcode start address in the LSTAR register made the exploit work, but for a successful exploit, we need to perform three additional steps. If you&#x2019;re curious about the details of the protection techniques mentioned here, I recommend reading <a href="https://hackyboiz.github.io/2024/12/08/l0ch/bypassing-kernel-mitigation-part1/ko/">L0ch&#x2019;s Kernel Mitigation article</a>!</p>
+<p>First, bypassing SMEP. Modern Windows applies SMEP/SMAP protections, preventing direct execution of shellcode in user space. As explained earlier, overwriting LSTAR with the shellcode start address doesn&#x2019;t guarantee immediate execution. Instead, you must overwrite LSTAR with a Stack Pivot gadget to capture the execution flow, then use a ROP Chain to disable the 20th bit of the <code>CR4</code> register (the <code>SMEP bit</code>).</p>
+<p>Second, privilege escalation. Based on the kernel address obtained via the MSR Read Primitive, calculate the offset to find the kernel base address and the system process&#x2019;s token. Then, overwrite the current process&#x2019;s token location with the System process&#x2019;s token to gain System privileges.</p>
+<p>Finally, third, system cleanup. The modified LSTAR value, the SMEP bit setting in <code>CR4</code>, and the corrupted stack frame must be restored. If it exits without restoring, a BSOD occurs the moment the next system call is invoked. Therefore, the modified registers must be restored to achieve a stable LPE (privilege escalation)!</p>
+<h1 id="3-DoS-Vulnerabilities"><a href="#3-DoS-Vulnerabilities" class="headerlink" title="3. DoS Vulnerabilities"></a>3. DoS Vulnerabilities</h1><p>We identified several vulnerabilities that cause BSODs. Among them, we will examine the results of the Arbitrary Port I/O vulnerability and why it was not possible to achieve LPE.</p>
+<h2 id="3-1-Arbitrary-Port-I-O-Vulnerability-Trigger-amp-Root-Cause"><a href="#3-1-Arbitrary-Port-I-O-Vulnerability-Trigger-amp-Root-Cause" class="headerlink" title="3-1. Arbitrary Port I/O Vulnerability Trigger &amp; Root Cause"></a>3-1. Arbitrary Port I/O Vulnerability Trigger &amp; Root Cause</h2><pre><code class="hljs c"><span class="hljs-keyword">switch</span> ( IoControlCode )
+{
+  <span class="hljs-keyword">case</span> <span class="hljs-number">0xC350A0D8</span>:
+    __outbyte(SystemBuffer_Value, *((_BYTE *)SystemBuffer_Addr + <span class="hljs-number">4</span>));
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+  <span class="hljs-keyword">case</span> <span class="hljs-number">0xC350A0DC</span>:
+    __outword(SystemBuffer_Value, *((_WORD *)SystemBuffer_Addr + <span class="hljs-number">2</span>));
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+  <span class="hljs-keyword">case</span> <span class="hljs-number">0xC350A0E0</span>:
+    __outdword(SystemBuffer_Value, SystemBuffer_Addr[<span class="hljs-number">1</span>]);
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}</code></pre>
+<p>The code above is part of the driver&#x2019;s <code>Dispatch Routine</code> function. It can be triggered by specific IOCTL codes, each triggering the <code>__outbyte</code>, <code>__outword</code>, or <code>__outdword</code> functions. Since all three functions&#x2019; arguments can be controlled by an attacker, manipulating these arguments causes a BSOD.</p>
+<p>Sending <code>0xFE</code> data to the <code>0xCF9</code> port causes a forced reboot. Additionally, sending any unusual data other than <code>0xFE</code> to this port triggers a BSOD. Port <code>0xCF9</code> is the Reset Control Register defined in the Intel chipset specification, and <code>0xFE</code> is <code>1111 1110</code> in binary. Consulting the Intel datasheet reveals the bit operations of this register:</p>
+<ul>
+<li>Bit 1 (System Reset): Setting to 1 triggers a system reset.</li>
+<li>Bit 2 (Reset CPU): Setting this to 1 performs a CPU reset.</li>
+</ul>
+<p>Therefore, sending <code>0xFE</code> transmits a command that activates both of these two bits. This ignores the OS&#x2019;s normal shutdown procedure and immediately forces a reboot.</p>
+<p>Now, let&#x2019;s explore why a BSOD occurs when using functions like <code>__outbyte</code>, which are simply read/write operations.</p>
+<h3 id="3-1-1-in-out-Functions"><a href="#3-1-1-in-out-Functions" class="headerlink" title="3-1-1. in, out Functions"></a>3-1-1. in, out Functions</h3><p>The <code>__inbyte</code>, <code>__inword</code>, <code>__indword</code>, <code>__outbyte</code>, <code>__outword</code>, and <code>__outdword</code> functions are not passed through the operating system&#x2019;s API but are directly translated into machine code. For the in functions, they read data from the port received as an argument in a size appropriate for the function. They load the port number into the <code>DX</code> register, read it using the <code>IN</code> instruction, and store it in <code>AX</code>.</p>
+<p>The <code>out</code> functions write the data received as an argument to the port received as an argument. They load the port number and data into registers and use the <code>OUT</code> instruction to transmit the data to the specified port number.</p>
+<h3 id="3-1-2-Isolated-I-O-and-BSOD-Causes"><a href="#3-1-2-Isolated-I-O-and-BSOD-Causes" class="headerlink" title="3-1-2. Isolated I/O and BSOD Causes"></a>3-1-2. Isolated I/O and BSOD Causes</h3><p>The x86 architecture physically separates the memory address space (<code>Memory Space</code>) and the I/O address space (<code>I/O Space</code>), a feature known as isolated I/O. The Memory Map is the RAM space we commonly think of, accessed via the <code>MOV</code> instruction. The I/O Map is the space used by the <code>IN</code> and <code>OUT</code> functions. This space spans the range <code>0x0000~0xFFFF</code> and is directly connected to the registers of hardware devices attached to the motherboard. Therefore, executing <code>__outword</code>(<code>0x64</code>, data) does not write data to memory address 100; instead, it sends an electrical signal to the hardware chip with port <code>0x64</code>.</p>
+<p>The problem arises when this signal is sent to critical or sensitive hardware (e.g., PCI bus configuration). If an attacker overwrites a critical port with arbitrary values, it can corrupt hardware settings or cause the CPU to encounter an unhandled exception. This triggers the OS to display a blue screen as a system protection measure.</p>
+<h2 id="3-2-Why-doesn&#x2019;t-LPE-work"><a href="#3-2-Why-doesn&#x2019;t-LPE-work" class="headerlink" title="3-2. Why doesn&#x2019;t LPE work?"></a>3-2. Why doesn&#x2019;t LPE work?</h2><p>In the past, exploits worked by manipulating the BAR (Base Address Register) in the PCI Configuration Space to overlap the device&#x2019;s MMIO (Memory Mapped I/O) address with the physical address where the kernel&#x2019;s critical data structures reside. However, protective techniques implemented to counter this have blocked this approach.</p>
+<h3 id="3-2-1-Asynchronous-OS-Memory-Manager-and-Hardware-State"><a href="#3-2-1-Asynchronous-OS-Memory-Manager-and-Hardware-State" class="headerlink" title="3-2-1. Asynchronous OS Memory Manager and Hardware State"></a>3-2-1. Asynchronous OS Memory Manager and Hardware State</h3><p>Fundamentally, the blockage occurred because hardware-level address changes were no longer immediately reflected in the OS&#x2019;s memory management system.</p>
+<p>Suppose an attacker uses an OUT instruction to modify the BAR register value of a PCI device, changing the physical address from <code>0xA0000000</code> to <code>0x10000000</code>, where critical kernel structures reside. The Windows kernel generates a PTE for the device&#x2019;s physical address and assigns a virtual address either at boot time or when loading a driver. The problem arises because even if the attacker modifies the hardware register (<code>BAR</code>), the mapping information in the page table managed by the OS&#x2019;s memory manager (MMU) is not updated or corrected.</p>
+<p>When the driver accesses the original virtual address, the memory manager (<code>MMU</code>) still sends the transaction to the original address, which is <code>0xA0000000</code>. However, since the attacker changed it to <code>0x10000000</code>, no device responds to the transaction sent to the original address. This ultimately results in a Master Abort or reading garbage values, causing a BSOD.</p>
+<h3 id="3-2-2-Physical-Memory-Isolation-via-VBS-and-SLAT"><a href="#3-2-2-Physical-Memory-Isolation-via-VBS-and-SLAT" class="headerlink" title="3-2-2. Physical Memory Isolation via VBS and SLAT"></a>3-2-2. Physical Memory Isolation via VBS and SLAT</h3><p>In a VBS environment, the hypervisor controls physical memory access. When VBS is enabled, the physical addresses accessed by the OS differ from the actual hardware&#x2019;s machine physical addresses. This translation is handled by SLAT, the CPU&#x2019;s hardware virtualization feature.</p>
+<p>If an attacker attempts to manipulate BARs to map device memory into kernel code regions or critical data areas, the hypervisor detects an EPT violation. The hypervisor monitors and prevents physical pages configured for MMIO from overlapping with executable code regions or read-only data regions.</p>
+<p>In other words, even if hardware registers are manipulated, the hypervisor layer denies access, making physical memory overwriting impossible from the outset.</p>
+<h3 id="3-2-3-DMA-Protection-and-IOMMU"><a href="#3-2-3-DMA-Protection-and-IOMMU" class="headerlink" title="3-2-3. DMA Protection and IOMMU"></a>3-2-3. DMA Protection and IOMMU</h3><p>This is a defense technique that activates when an attacker attempts to overwrite memory using DMA rather than the CPU. The IOMMU virtualizes the memory addresses accessed by devices. Even if a device requests a write to a physical address, the IOMMU either remaps the address or blocks it, indicating that the device can only write to a specific region. This is called DMA Remapping.</p>
+<p>Additionally, Windows closes DMA ports for untrusted external devices or uninitialized devices during the boot process. These devices cannot access system memory until drivers are properly loaded and IOMMU mapping is complete. This is called Pre-boot DMA Protection.</p>
+<h1 id="Conclusion"><a href="#Conclusion" class="headerlink" title="Conclusion"></a>Conclusion</h1><p>With this Part 3, we conclude our introduction to the &#x201C;Windows Kernel Driver &amp; Named Pipe LPE Bug Hunting&#x201D; project conducted during White Hat School&#x2019;s 3rd session. It&#x2019;s truly rewarding and delightful to share the results of our hard work over three months with a team of six members. &#x263A;&#xFE0F;</p>
+<p>I hope this series has been helpful for those starting vulnerability analysis. With that, we&#x2019;ll wrap up this series here! While I&#x2019;m not yet sure what the next research post will cover, I&#x2019;d appreciate your continued interest and support! Thank you.</p>
+<h2 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a>Reference</h2><ul>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://cdrdv2-public.intel.com/774206/vt-directed-io-spec%20.pdf">https://cdrdv2-public.intel.com/774206/vt-directed-io-spec .pdf</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://idafchev.github.io/blog/wrmsr/#2-model-specific-registers">https://idafchev.github.io/blog/wrmsr/#2-model-specific-registers</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://learn.microsoft.com/en-us/windows/security/hardware-security/kernel-dma-protection-for-thunderbolt">https://learn.microsoft.com/en-us/windows/security/hardware-security/kernel-dma-protection-for-thunderbolt</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://learn.microsoft.com/en-us/cpp/intrinsics/readmsr">https://learn.microsoft.com/en-us/cpp/intrinsics/readmsr</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://learn.microsoft.com/en-us/cpp/intrinsics/writemsr">https://learn.microsoft.com/en-us/cpp/intrinsics/writemsr</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.coresecurity.com/core-labs/publications/windows-smep-bypass-us">https://www.coresecurity.com/core-labs/publications/windows-smep-bypass-us</a></li>
+</ul>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/Libera/">Libera</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Windows/">Windows</a>
+                  
+                  <a class="hover-with-bg" href="/tags/BugHunting/">BugHunting</a>
+                  
+                  <a class="hover-with-bg" href="/tags/KernelDriver/">KernelDriver</a>
+                  
+                  <a class="hover-with-bg" href="/tags/MSR-R-W/">MSR R/W</a>
+                  
+                  <a class="hover-with-bg" href="/tags/PortIO/">PortIO</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_Libera.jpg" srcset="/img/loading.gif" alt="Libera">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">Libera</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/Libera">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2026/02/04/Libera/CVE-2025-53149/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2025-53149 : Windows ksthunk.sys heap-based buffer overflow로 인한 LPE 취약점</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2026/02/01/Libera/whs3-project-part3/Kr/">
+                    <span class="hidden-mobile">[Research] 해키보이즈 막내들이 말아주는 Windows LPE 버그헌팅 체험기 Part 3 (KR)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2026/02/01/Libera/whs3-project-part3/En/';
+        this.page.identifier = '/2026/02/01/Libera/whs3-project-part3/En/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] Windows LPE Bug Hunting, Served by the Team’s Youngest: Part 3 (EN)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
