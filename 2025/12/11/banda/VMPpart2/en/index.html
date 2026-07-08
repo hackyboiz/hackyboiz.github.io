@@ -27,11 +27,11 @@
 &lt;/ol&gt;
 &lt;p&gt;&lt;strong&gt;VM State Transition&lt;/strong&gt;&lt;/p&gt;
 &lt;p&gt;To understand devirtualization, the key is to focus on &amp;#x201C;what state the VM maintains, and how that state changes when a handler executes.&amp;#x201D; The VM state can be defined as follows:&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&#34;hljs delphi&#34;&gt;VIP: &lt;span class=&#34;hljs-keyword&#34;&gt;Virtual&lt;/span&gt; Instruction Pointer
-VSP: &lt;span class=&#34;hljs-keyword&#34;&gt;Virtual&lt;/span&gt; Stack Pointer
-VStack: values currently &lt;span class=&#34;hljs-keyword&#34;&gt;stored&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;on&lt;/span&gt; the &lt;span class=&#34;hljs-keyword&#34;&gt;virtual&lt;/span&gt; stack
-Scratch: temporary storage
-VFlags: &lt;span class=&#34;hljs-keyword&#34;&gt;virtual&lt;/span&gt; flags (playing roles similar &lt;span class=&#34;hljs-keyword&#34;&gt;to&lt;/span&gt; ZF, CF, etc.)
+&lt;pre&gt;&lt;code class=&#34;hljs sql&#34;&gt;VIP: Virtual Instruction Pointer
+VSP: Virtual Stack Pointer
+VStack: &lt;span class=&#34;hljs-keyword&#34;&gt;values&lt;/span&gt; currently &lt;span class=&#34;hljs-keyword&#34;&gt;stored&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;on&lt;/span&gt; the &lt;span class=&#34;hljs-keyword&#34;&gt;virtual&lt;/span&gt; stack
+Scratch: &lt;span class=&#34;hljs-keyword&#34;&gt;temporary&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;storage&lt;/span&gt;
+VFlags: &lt;span class=&#34;hljs-keyword&#34;&gt;virtual&lt;/span&gt; flags (playing &lt;span class=&#34;hljs-keyword&#34;&gt;roles&lt;/span&gt; similar &lt;span class=&#34;hljs-keyword&#34;&gt;to&lt;/span&gt; ZF, CF, etc.)
 &lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;No matter how heavy the obfuscation is, what ultimately matters is &amp;#x201C;how the bundle of state changes after each handler.&amp;#x201D; You can think of the VM not as a CPU, but as a collection of state-transition functions that take &lt;code&gt;VIP&lt;/code&gt;, &lt;code&gt;VStack&lt;/code&gt;, &lt;code&gt;Scratch&lt;/code&gt;, and &lt;code&gt;VFlags&lt;/code&gt; as input and produce new &lt;code&gt;VIP&lt;/code&gt;, &lt;code&gt;VStack&lt;/code&gt;, &lt;code&gt;Scratch&lt;/code&gt;, and &lt;code&gt;VFlags&lt;/code&gt; as output.&lt;/p&gt;
 &lt;p&gt;When analyzing a handler, instead of trying to understand every single instruction in the disassembly, the important part is to be able to summarize: &amp;#x201C;this handler transforms the VM state in this way.&amp;#x201D; Once you can say that, you have essentially understood that handler&amp;#x2019;s semantics.&lt;/p&gt;
@@ -54,27 +54,27 @@ VFlags: &lt;span class=&#34;hljs-keyword&#34;&gt;virtual&lt;/span&gt; flags (pla
 &lt;p&gt;&lt;img src=&#34;/2025/12/11/banda/VMPpart2/en/image3.png&#34; alt&gt;&lt;/p&gt;
 &lt;p&gt;If we check the entropy view in DiE, we can see a typical pattern for Virtualization mode. The &lt;code&gt;.text&lt;/code&gt; section is obfuscated, and the presence of &lt;code&gt;.vmp0&lt;/code&gt; indicates that VMP&amp;#x2019;s core VM bytecode lives there. Entry stub and initialization stub are packed, and the runtime VM engine is expected to reside in &lt;code&gt;.vmp0&lt;/code&gt;.&lt;/p&gt;
 &lt;p&gt;We will follow the flow &lt;code&gt;WinMain&lt;/code&gt; &amp;#x2192; &lt;code&gt;UnpackMe&lt;/code&gt; &amp;#x2192; &lt;code&gt;Run&lt;/code&gt; and carefully locate where the VMEntry actually is.&lt;/p&gt;
-&lt;h3 id=&#34;Road-to-VMEntry&#34;&gt;&lt;a href=&#34;#Road-to-VMEntry&#34; class=&#34;headerlink&#34; title=&#34;Road to VMEntry&#34;&gt;&lt;/a&gt;Road to VMEntry&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; __stdcall &lt;span class=&#34;hljs-title function_&#34;&gt;WinMain&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, &lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; nShowCmd)&lt;/span&gt;
-{
-  &lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt; (__stdcall ***v4)(HINSTANCE); &lt;span class=&#34;hljs-comment&#34;&gt;// eax&lt;/span&gt;
-  &lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt; (__stdcall ***v5)(HINSTANCE); &lt;span class=&#34;hljs-comment&#34;&gt;// ecx&lt;/span&gt;
-  &lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt; (__stdcall **v6)(HINSTANCE); &lt;span class=&#34;hljs-comment&#34;&gt;// eax&lt;/span&gt;
-  &lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; result; &lt;span class=&#34;hljs-comment&#34;&gt;// eax&lt;/span&gt;
+&lt;h3 id=&#34;Road-to-VMEntry&#34;&gt;&lt;a href=&#34;#Road-to-VMEntry&#34; class=&#34;headerlink&#34; title=&#34;Road to VMEntry&#34;&gt;&lt;/a&gt;Road to VMEntry&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; __stdcall &lt;span class=&#34;hljs-title&#34;&gt;WinMain&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; nShowCmd)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; (__stdcall ***v4)(HINSTANCE); &lt;span class=&#34;hljs-comment&#34;&gt;// eax&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; (__stdcall ***v5)(HINSTANCE); &lt;span class=&#34;hljs-comment&#34;&gt;// ecx&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; (__stdcall **v6)(HINSTANCE); &lt;span class=&#34;hljs-comment&#34;&gt;// eax&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; result; &lt;span class=&#34;hljs-comment&#34;&gt;// eax&lt;/span&gt;
 
   SetUnhandledExceptionFilter(TopLevelExceptionFilter);
-  v4 = (&lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt; (__stdcall ***)(HINSTANCE))operator new(&lt;span class=&#34;hljs-number&#34;&gt;0x48u&lt;/span&gt;);
+  v4 = (&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; (__stdcall ***)(HINSTANCE))&lt;span class=&#34;hljs-keyword&#34;&gt;operator&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt;(&lt;span class=&#34;hljs-number&#34;&gt;0x48&lt;/span&gt;u);
   v5 = v4;
   &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( v4 )
-    *v4 = (&lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt; (__stdcall **)(HINSTANCE))&amp;amp;UnpackMe::`vftable&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;;  // vtable &amp;#xC124;&amp;#xC815;&lt;/span&gt;
-&lt;span class=&#34;hljs-string&#34;&gt;  else&lt;/span&gt;
-&lt;span class=&#34;hljs-string&#34;&gt;    v5 = 0;&lt;/span&gt;
-&lt;span class=&#34;hljs-string&#34;&gt;  v6 = *v5;&lt;/span&gt;
-&lt;span class=&#34;hljs-string&#34;&gt;  UnpackMe* this = v5;&lt;/span&gt;
-&lt;span class=&#34;hljs-string&#34;&gt;  (*v6)(hInstance);   // vtable[0] &amp;#xD638;&amp;#xCD9C;&lt;/span&gt;
-&lt;span class=&#34;hljs-string&#34;&gt;  j__free(UnpackMe* this);&lt;/span&gt;
-&lt;span class=&#34;hljs-string&#34;&gt;  return result;&lt;/span&gt;
-&lt;span class=&#34;hljs-string&#34;&gt;}&lt;/span&gt;
-&lt;span class=&#34;hljs-string&#34;&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+    *v4 = (&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; (__stdcall **)(HINSTANCE))&amp;amp;UnpackMe::`vftable&lt;span class=&#34;hljs-number&#34;&gt;&amp;apos;&lt;/span&gt;;  &lt;span class=&#34;hljs-comment&#34;&gt;// vtable &amp;#xC124;&amp;#xC815;&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+    v5 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+  v6 = *v5;
+  UnpackMe* &lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt; = v5;
+  (*v6)(hInstance);   &lt;span class=&#34;hljs-comment&#34;&gt;// vtable[0] &amp;#xD638;&amp;#xCD9C;&lt;/span&gt;
+  j__free(UnpackMe* &lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; result;
+}
+&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;A typical virtualization-based obfuscation VM can usually be broken down into the following components:&lt;/p&gt;
 &lt;ul&gt;
 &lt;li&gt;&lt;p&gt;&lt;code&gt;VM Entry&lt;/code&gt; / &lt;code&gt;VM Exit&lt;/code&gt;&lt;/p&gt;
@@ -93,9 +93,9 @@ VFlags: &lt;span class=&#34;hljs-keyword&#34;&gt;virtual&lt;/span&gt; flags (pla
 &lt;p&gt;The &lt;code&gt;WinMain()&lt;/code&gt; function itself is structurally simple. From a devirtualization perspective, note that VMP usually virtualizes only certain target functions and leaves the path leading up to those functions in normal C++ code. So here we just need to confirm that &lt;code&gt;vtable[0]&lt;/code&gt; is in fact &lt;code&gt;UnpackMe::Run&lt;/code&gt; and then move on.&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2025/12/11/banda/VMPpart2/en/image4.png&#34; alt&gt;&lt;/p&gt;
 &lt;p&gt;Following the vtable, we find that the C++ class &lt;code&gt;UnpackMe&lt;/code&gt;&amp;#x2019;s vtable lives in the &lt;code&gt;.rdata&lt;/code&gt; section. When IDA successfully reconstructs RTTI, it attaches the symbol &lt;code&gt;??_7UnpackMe@@6B@&lt;/code&gt; and automatically names the first vtable entry as &lt;code&gt;UnpackMe::Run&lt;/code&gt;. Let&amp;#x2019;s now jump into &lt;code&gt;UnpackMe::Run&lt;/code&gt;, which opens the main loop.&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; __thiscall &lt;span class=&#34;hljs-title function_&#34;&gt;UnpackMe::Run&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt; *this, HINSTANCE hInst)&lt;/span&gt;
-{
-    *((DWORD*)this + &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;) = hInst;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; __thiscall &lt;span class=&#34;hljs-title&#34;&gt;UnpackMe::Run&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; *&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;, HINSTANCE hInst)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+    *((DWORD*)&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt; + &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;) = hInst;
 
     WNDCLASSEXW wc = {&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;};
     wc.cbSize       = &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(wc);
@@ -105,7 +105,7 @@ VFlags: &lt;span class=&#34;hljs-keyword&#34;&gt;virtual&lt;/span&gt; flags (pla
     wc.lpszClassName = &lt;span class=&#34;hljs-string&#34;&gt;L&amp;quot;WndClass_DevirtualizeMe&amp;quot;&lt;/span&gt;;
     RegisterClassExW(&amp;amp;wc);
 
-    ((&lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt; (__thiscall*)(&lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt;*))(*(DWORD*)this + &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;))(this);
+    ((&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; (__thiscall*)(&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt;*))(*(DWORD*)&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt; + &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;))(&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;);
     &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; ( GetMessageW(&amp;amp;Msg, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;) )
     {
         TranslateMessage(&amp;amp;Msg);
@@ -115,12 +115,12 @@ VFlags: &lt;span class=&#34;hljs-keyword&#34;&gt;virtual&lt;/span&gt; flags (pla
 &lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;From a devirtualization point of view, &lt;code&gt;Run&lt;/code&gt; acts as a kind of gatekeeper into the VM. When the user presses the P key, the program flows through this loop and eventually reaches the VMProtect entry point.&lt;/p&gt;
 &lt;p&gt;This function registers a window class, sets &lt;code&gt;lpfnWndProc = sub_40CC70&lt;/code&gt; as the global WndProc, and then repeatedly calls &lt;code&gt;DispatchMessageW&lt;/code&gt; inside the message loop. All key input (including P) goes through this message loop and eventually arrives at &lt;code&gt;WndProc&lt;/code&gt;, which then routes messages into &lt;code&gt;UnpackMe&lt;/code&gt;&amp;#x2019;s member functions.&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;LRESULT __stdcall &lt;span class=&#34;hljs-title function_&#34;&gt;WndProc&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)&lt;/span&gt;
-{
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;LRESULT __stdcall &lt;span class=&#34;hljs-title&#34;&gt;WndProc&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
     &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( dword_415F08 )
         &lt;span class=&#34;hljs-comment&#34;&gt;// vtable[1] = UnpackMe::WndProc(sub_40CB60)&lt;/span&gt;
-        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; ((&lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; (__thiscall*)(&lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt;*, HWND, UINT, WPARAM, LPARAM))
-                (*(DWORD*)UnpackMe* this + &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;))(
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; ((&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; (__thiscall*)(&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt;*, HWND, UINT, WPARAM, LPARAM))
+                (*(DWORD*)UnpackMe* &lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt; + &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;))(
                     dword_415F08, hWnd, Msg, wParam, lParam);
     &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
         &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; DefWindowProcW(hWnd, Msg, wParam, lParam);
@@ -128,12 +128,12 @@ VFlags: &lt;span class=&#34;hljs-keyword&#34;&gt;virtual&lt;/span&gt; flags (pla
 &lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;The important point here is that the OS has no idea that a C++ class named &lt;code&gt;UnpackMe&lt;/code&gt; even exists, nor how many instances there are. The OS only knows that for windows of class &lt;code&gt;WndClass_DevirtualizeMe&lt;/code&gt;, the WndProc is &lt;code&gt;sub_40CC70&lt;/code&gt;, and that function internally forwards messages into &lt;code&gt;UnpackMe::WndProc&lt;/code&gt;.&lt;/p&gt;
 &lt;p&gt;In other words, from a devirtualization perspective, all keyboard messages eventually end up in &lt;code&gt;UnpackMe::WndProc&lt;/code&gt;. Therefore we only need to see how this &lt;code&gt;WndProc()&lt;/code&gt; handles &lt;code&gt;WM_KEYDOWN&lt;/code&gt;.&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; __thiscall &lt;span class=&#34;hljs-title function_&#34;&gt;UnpackMe::WndProc&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt; *this,&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;                                 HWND hWnd,&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;                                 UINT Msg,&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;                                 WPARAM wParam,&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;                                 LPARAM lParam)&lt;/span&gt;
-{
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; __thiscall &lt;span class=&#34;hljs-title&#34;&gt;UnpackMe::WndProc&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; *&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                 HWND hWnd,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                 UINT Msg,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                 WPARAM wParam,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                 LPARAM lParam)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
     &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( Msg &amp;gt; &lt;span class=&#34;hljs-number&#34;&gt;0x14&lt;/span&gt; )
     {
         &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( Msg &amp;lt;= &lt;span class=&#34;hljs-number&#34;&gt;0x111&lt;/span&gt; )
@@ -142,9 +142,9 @@ VFlags: &lt;span class=&#34;hljs-keyword&#34;&gt;virtual&lt;/span&gt; flags (pla
             {
             &lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x100&lt;/span&gt;:  &lt;span class=&#34;hljs-comment&#34;&gt;// WM_KEYDOWN&lt;/span&gt;
                 &lt;span class=&#34;hljs-comment&#34;&gt;// vtable[6] = OnKeyDown&lt;/span&gt;
-                &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; ((&lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; (__thiscall*)(&lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt;*, HWND, WPARAM, LPARAM))
-                        (*(DWORD*)this + &lt;span class=&#34;hljs-number&#34;&gt;24&lt;/span&gt;))(
-                            this, hWnd, wParam, lParam);
+                &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; ((&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; (__thiscall*)(&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt;*, HWND, WPARAM, LPARAM))
+                        (*(DWORD*)&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt; + &lt;span class=&#34;hljs-number&#34;&gt;24&lt;/span&gt;))(
+                            &lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;, hWnd, wParam, lParam);
 
             &lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x111&lt;/span&gt;:  &lt;span class=&#34;hljs-comment&#34;&gt;// WM_COMMAND&lt;/span&gt;
                 ...
@@ -155,11 +155,11 @@ VFlags: &lt;span class=&#34;hljs-keyword&#34;&gt;virtual&lt;/span&gt; flags (pla
 }
 &lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;When &lt;code&gt;WM_KEYDOWN&lt;/code&gt; arrives, this function forwards control to &lt;code&gt;OnKeyDown&lt;/code&gt;, which is mapped to &lt;code&gt;vtable[6]&lt;/code&gt;. Up to this point we are still just in the message routing layer, and no VMProtect virtualized code has appeared yet. But we do not have to be disappointed&amp;#x2014;things are about to get more interesting.&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; __thiscall &lt;span class=&#34;hljs-title function_&#34;&gt;UnpackMe::OnKeyDown&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; this,&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;                                   HWND hWnd,&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;                                   WPARAM wParam,&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;                                   LPARAM lParam)&lt;/span&gt;
-{
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; __thiscall &lt;span class=&#34;hljs-title&#34;&gt;UnpackMe::OnKeyDown&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                   HWND hWnd,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                   WPARAM wParam,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                   LPARAM lParam)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
     &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( wParam == &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;P&amp;apos;&lt;/span&gt; )
         proc();
     &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
@@ -300,7 +300,7 @@ ID82_003: IP=&lt;span class=&#34;hljs-number&#34;&gt;0x004323ff&lt;/span&gt; EAX
 &lt;h3 id=&#34;Splitting-the-VM-only-trace-by-ID-82-execution-segments&#34;&gt;&lt;a href=&#34;#Splitting-the-VM-only-trace-by-ID-82-execution-segments&#34; class=&#34;headerlink&#34; title=&#34;Splitting the VM-only trace by ID 82 execution segments&#34;&gt;&lt;/a&gt;Splitting the VM-only trace by ID 82 execution segments&lt;/h3&gt;&lt;p&gt;With these logs in hand, we can now start restoring the meaning of individual VM handlers.&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;total ins: &lt;span class=&#34;hljs-number&#34;&gt;58414&lt;/span&gt;
 ID82 entries: &lt;span class=&#34;hljs-number&#34;&gt;107&lt;/span&gt;
-ID82 &lt;span class=&#34;hljs-title function_&#34;&gt;segments&lt;/span&gt; &lt;span class=&#34;hljs-params&#34;&gt;(with glue)&lt;/span&gt;: 106
+&lt;span class=&#34;hljs-function&#34;&gt;ID82 &lt;span class=&#34;hljs-title&#34;&gt;segments&lt;/span&gt; &lt;span class=&#34;hljs-params&#34;&gt;(with glue)&lt;/span&gt;: 106&lt;/span&gt;
 written id82_segments.json
 &lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;To do that, I wrote a script that takes &lt;code&gt;vmtrace.out&lt;/code&gt;, locates each occurrence of ID 82, and slices the trace into segments corresponding to &amp;#x201C;one execution of ID 82, including its glue code.&amp;#x201D; Each such segment is then written into a JSON file. Earlier we counted 107 entries for ID 82; the script extracted 106 segments into the JSON.&lt;/p&gt;
@@ -381,109 +381,109 @@ indices: [&lt;span class=&#34;hljs-number&#34;&gt;22&lt;/span&gt;, &lt;span clas
 &lt;p&gt;But this is still not yet the end. To fully understand the mathematical transformation encoded by this handler, we need to load this code into Triton, feed it the initial register state and bytecode values we collected earlier, and perform symbolic execution.&lt;/p&gt;
 &lt;h3 id=&#34;Tracking-state-changes&#34;&gt;&lt;a href=&#34;#Tracking-state-changes&#34; class=&#34;headerlink&#34; title=&#34;Tracking state changes&#34;&gt;&lt;/a&gt;Tracking state changes&lt;/h3&gt;&lt;p&gt;Using Triton to execute the ID 82 path and compare the registers before and after, we obtain a trace like the following:&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;0x4442f2&lt;/span&gt;: shr dh, cl
-&lt;span class=&#34;hljs-number&#34;&gt;0x43641a&lt;/span&gt;: not bp
+&lt;span class=&#34;hljs-number&#34;&gt;0x43641a&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;not&lt;/span&gt; bp
 
---- [ Logic &lt;span class=&#34;hljs-title function_&#34;&gt;Start&lt;/span&gt; &lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-number&#34;&gt;0x41F637&lt;/span&gt;)&lt;/span&gt; ] ---
-0x41f638: movsx edi, di
-0x41f63c: lahf
-0x41f63d: bts ebp, esi
-0x41f641: cmp bh, 0xb4
-0x41f645: shr bp, 0xa6
-0x41f649: sub ebx, edx
-0x41f64b: test esi, ebp
-0x41f64e: xchg ah, bh
-0x41f650: sub ax, bx
-0x41f653: movsx ebx, bp
-0x41f656: mov eax, 0
-0x41f65b: not si
-0x41f65e: xadd ebp, esi
-0x41f662: mov esi, dword ptr [esp + 0x28]
-0x41f666: add esi, 0x55106798
-0x41f66c: neg esi
-0x41f66e: rol edi, 0x70
-0x41f671: add esi, 0x69733a52
-0x41f677: btr ebp, 0xc0
-0x41f67b: rol esi, 1
-0x41f67d: sbb ebx, 0x37516d2d
-0x41f683: not esi
-0x41f685: clc
-0x41f686: cmp eax, esp
-0x41f688: xor ebp, esp
-0x41f68a: add esi, eax
-0x41f68c: setns al
-0x41f68f: mov ebp, esp
-0x41f691: sub bx, sp
-0x41f694: rol ax, cl
-0x41f697: dec di
-0x41f69a: sub esp, 0xc0
-0x41f6a0: jmp 0x453e79
-0x453e79: mov ebx, esi
-0x453e7b: bt eax, esp
-0x453e7e: btc ax, 0x47
-0x453e83: btr eax, edx
-0x453e86: mov eax, 0
-0x453e8b: jmp 0x4620dd
-0x4620dd: sub ebx, eax
-0x4620df: shld eax, eax, 0xe3
-0x4620e3: sub eax, edi
-0x4620e5: stc
-0x4620e6: lea edi, [0x4620e6]
-0x4620ec: mov eax, dword ptr [esi]
-0x4620ee: cmc
-0x4620ef: test cl, 0x19
-0x4620f2: lea esi, [esi + 4]
-0x4620f8: cmc
-0x4620f9: test ebx, 0x76f532e4
-0x4620ff: xor eax, ebx
-0x462101: ror eax, 1
-0x462103: stc
-0x462104: xor eax, 0x4acb3db9
-0x462109: sub eax, 0x458c0140
-0x46210e: rol eax, 1
-0x462110: xor ebx, eax
-0x462112: cmc
-0x462113: cmp bx, sp
-0x462116: clc
-0x462117: add edi, eax
-0x462119: jmp 0x4323ff
---- [ Logic &lt;span class=&#34;hljs-title function_&#34;&gt;End&lt;/span&gt; &lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-number&#34;&gt;0x432400&lt;/span&gt;)&lt;/span&gt; ] ---
+--- [ Logic Start (0x41F637) ] ---
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f638&lt;/span&gt;: movsx edi, di
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f63c&lt;/span&gt;: lahf
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f63d&lt;/span&gt;: bts ebp, esi
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f641&lt;/span&gt;: cmp bh, &lt;span class=&#34;hljs-number&#34;&gt;0xb4&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f645&lt;/span&gt;: shr bp, &lt;span class=&#34;hljs-number&#34;&gt;0xa6&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f649&lt;/span&gt;: sub ebx, edx
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f64b&lt;/span&gt;: test esi, ebp
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f64e&lt;/span&gt;: xchg ah, bh
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f650&lt;/span&gt;: sub ax, bx
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f653&lt;/span&gt;: movsx ebx, bp
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f656&lt;/span&gt;: mov eax, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f65b&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;not&lt;/span&gt; si
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f65e&lt;/span&gt;: xadd ebp, esi
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f662&lt;/span&gt;: mov esi, dword ptr [esp + &lt;span class=&#34;hljs-number&#34;&gt;0x28&lt;/span&gt;]
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f666&lt;/span&gt;: add esi, &lt;span class=&#34;hljs-number&#34;&gt;0x55106798&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f66c&lt;/span&gt;: neg esi
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f66e&lt;/span&gt;: rol edi, &lt;span class=&#34;hljs-number&#34;&gt;0x70&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f671&lt;/span&gt;: add esi, &lt;span class=&#34;hljs-number&#34;&gt;0x69733a52&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f677&lt;/span&gt;: btr ebp, &lt;span class=&#34;hljs-number&#34;&gt;0xc0&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f67b&lt;/span&gt;: rol esi, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f67d&lt;/span&gt;: sbb ebx, &lt;span class=&#34;hljs-number&#34;&gt;0x37516d2d&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f683&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;not&lt;/span&gt; esi
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f685&lt;/span&gt;: clc
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f686&lt;/span&gt;: cmp eax, esp
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f688&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;xor&lt;/span&gt; ebp, esp
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f68a&lt;/span&gt;: add esi, eax
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f68c&lt;/span&gt;: setns al
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f68f&lt;/span&gt;: mov ebp, esp
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f691&lt;/span&gt;: sub bx, sp
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f694&lt;/span&gt;: rol ax, cl
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f697&lt;/span&gt;: dec di
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f69a&lt;/span&gt;: sub esp, &lt;span class=&#34;hljs-number&#34;&gt;0xc0&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f6a0&lt;/span&gt;: jmp &lt;span class=&#34;hljs-number&#34;&gt;0x453e79&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x453e79&lt;/span&gt;: mov ebx, esi
+&lt;span class=&#34;hljs-number&#34;&gt;0x453e7b&lt;/span&gt;: bt eax, esp
+&lt;span class=&#34;hljs-number&#34;&gt;0x453e7e&lt;/span&gt;: btc ax, &lt;span class=&#34;hljs-number&#34;&gt;0x47&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x453e83&lt;/span&gt;: btr eax, edx
+&lt;span class=&#34;hljs-number&#34;&gt;0x453e86&lt;/span&gt;: mov eax, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x453e8b&lt;/span&gt;: jmp &lt;span class=&#34;hljs-number&#34;&gt;0x4620dd&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x4620dd&lt;/span&gt;: sub ebx, eax
+&lt;span class=&#34;hljs-number&#34;&gt;0x4620df&lt;/span&gt;: shld eax, eax, &lt;span class=&#34;hljs-number&#34;&gt;0xe3&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x4620e3&lt;/span&gt;: sub eax, edi
+&lt;span class=&#34;hljs-number&#34;&gt;0x4620e5&lt;/span&gt;: stc
+&lt;span class=&#34;hljs-number&#34;&gt;0x4620e6&lt;/span&gt;: lea edi, [&lt;span class=&#34;hljs-number&#34;&gt;0x4620e6&lt;/span&gt;]
+&lt;span class=&#34;hljs-number&#34;&gt;0x4620ec&lt;/span&gt;: mov eax, dword ptr [esi]
+&lt;span class=&#34;hljs-number&#34;&gt;0x4620ee&lt;/span&gt;: cmc
+&lt;span class=&#34;hljs-number&#34;&gt;0x4620ef&lt;/span&gt;: test cl, &lt;span class=&#34;hljs-number&#34;&gt;0x19&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x4620f2&lt;/span&gt;: lea esi, [esi + &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;]
+&lt;span class=&#34;hljs-number&#34;&gt;0x4620f8&lt;/span&gt;: cmc
+&lt;span class=&#34;hljs-number&#34;&gt;0x4620f9&lt;/span&gt;: test ebx, &lt;span class=&#34;hljs-number&#34;&gt;0x76f532e4&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x4620ff&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;xor&lt;/span&gt; eax, ebx
+&lt;span class=&#34;hljs-number&#34;&gt;0x462101&lt;/span&gt;: ror eax, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x462103&lt;/span&gt;: stc
+&lt;span class=&#34;hljs-number&#34;&gt;0x462104&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;xor&lt;/span&gt; eax, &lt;span class=&#34;hljs-number&#34;&gt;0x4acb3db9&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x462109&lt;/span&gt;: sub eax, &lt;span class=&#34;hljs-number&#34;&gt;0x458c0140&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x46210e&lt;/span&gt;: rol eax, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x462110&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;xor&lt;/span&gt; ebx, eax
+&lt;span class=&#34;hljs-number&#34;&gt;0x462112&lt;/span&gt;: cmc
+&lt;span class=&#34;hljs-number&#34;&gt;0x462113&lt;/span&gt;: cmp bx, sp
+&lt;span class=&#34;hljs-number&#34;&gt;0x462116&lt;/span&gt;: clc
+&lt;span class=&#34;hljs-number&#34;&gt;0x462117&lt;/span&gt;: add edi, eax
+&lt;span class=&#34;hljs-number&#34;&gt;0x462119&lt;/span&gt;: jmp &lt;span class=&#34;hljs-number&#34;&gt;0x4323ff&lt;/span&gt;
+--- [ Logic End (0x432400) ] ---
 &lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;This is the &lt;code&gt;asm&lt;/code&gt; trace produced by a Triton-based analysis script. It reconstructs the execution path of handler ID 82 using both &lt;code&gt;vmtrace.out&lt;/code&gt; and the bytes from the actual binary.&lt;/p&gt;
 &lt;p&gt;Comparing registers before and after execution for each test case yields:&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;=== &lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; bc = &lt;span class=&#34;hljs-number&#34;&gt;0x1ecbf564&lt;/span&gt;
 init EAX = &lt;span class=&#34;hljs-number&#34;&gt;0x271c9&lt;/span&gt; EBX = &lt;span class=&#34;hljs-number&#34;&gt;0x458b96&lt;/span&gt; ESI = &lt;span class=&#34;hljs-number&#34;&gt;0x47fa63&lt;/span&gt; EDI = &lt;span class=&#34;hljs-number&#34;&gt;0x4892af&lt;/span&gt;
-final EAX = &lt;span class=&#34;hljs-number&#34;&gt;0x19fe78&lt;/span&gt;
-final EBX = &lt;span class=&#34;hljs-number&#34;&gt;0xafe65f2&lt;/span&gt;
-final ECX = &lt;span class=&#34;hljs-number&#34;&gt;0x20&lt;/span&gt;
-final EDX = &lt;span class=&#34;hljs-number&#34;&gt;0x0&lt;/span&gt;
-final ESI = &lt;span class=&#34;hljs-number&#34;&gt;0x47fa68&lt;/span&gt;
-final EDI = &lt;span class=&#34;hljs-number&#34;&gt;0xb0480ee&lt;/span&gt;
-final EBP = &lt;span class=&#34;hljs-number&#34;&gt;0x19fed4&lt;/span&gt;
-final ESP = &lt;span class=&#34;hljs-number&#34;&gt;0x19fe18&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EAX = &lt;span class=&#34;hljs-number&#34;&gt;0x19fe78&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EBX = &lt;span class=&#34;hljs-number&#34;&gt;0xafe65f2&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; ECX = &lt;span class=&#34;hljs-number&#34;&gt;0x20&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EDX = &lt;span class=&#34;hljs-number&#34;&gt;0x0&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; ESI = &lt;span class=&#34;hljs-number&#34;&gt;0x47fa68&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EDI = &lt;span class=&#34;hljs-number&#34;&gt;0xb0480ee&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EBP = &lt;span class=&#34;hljs-number&#34;&gt;0x19fed4&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; ESP = &lt;span class=&#34;hljs-number&#34;&gt;0x19fe18&lt;/span&gt;
 diff EAX = &lt;span class=&#34;hljs-number&#34;&gt;0x1b8fb1&lt;/span&gt; EBX diff = &lt;span class=&#34;hljs-number&#34;&gt;0xabbee64&lt;/span&gt;
 
 === &lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; bc = &lt;span class=&#34;hljs-number&#34;&gt;0x1ec6b25f&lt;/span&gt;
 init EAX = &lt;span class=&#34;hljs-number&#34;&gt;0xfffcff9f&lt;/span&gt; EBX = &lt;span class=&#34;hljs-number&#34;&gt;0xffb934ac&lt;/span&gt; ESI = &lt;span class=&#34;hljs-number&#34;&gt;0x45cb37&lt;/span&gt; EDI = &lt;span class=&#34;hljs-number&#34;&gt;0x432085&lt;/span&gt;
-final EAX = &lt;span class=&#34;hljs-number&#34;&gt;0x19fc70&lt;/span&gt;
-final EBX = &lt;span class=&#34;hljs-number&#34;&gt;0x20ae78f3&lt;/span&gt;
-final ECX = &lt;span class=&#34;hljs-number&#34;&gt;0x20&lt;/span&gt;
-final EDX = &lt;span class=&#34;hljs-number&#34;&gt;0x422a&lt;/span&gt;
-final ESI = &lt;span class=&#34;hljs-number&#34;&gt;0x45cb3c&lt;/span&gt;
-final EDI = &lt;span class=&#34;hljs-number&#34;&gt;0xdf5a6d09&lt;/span&gt;
-final EBP = &lt;span class=&#34;hljs-number&#34;&gt;0x19fccc&lt;/span&gt;
-final ESP = &lt;span class=&#34;hljs-number&#34;&gt;0x19fc10&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EAX = &lt;span class=&#34;hljs-number&#34;&gt;0x19fc70&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EBX = &lt;span class=&#34;hljs-number&#34;&gt;0x20ae78f3&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; ECX = &lt;span class=&#34;hljs-number&#34;&gt;0x20&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EDX = &lt;span class=&#34;hljs-number&#34;&gt;0x422a&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; ESI = &lt;span class=&#34;hljs-number&#34;&gt;0x45cb3c&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EDI = &lt;span class=&#34;hljs-number&#34;&gt;0xdf5a6d09&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EBP = &lt;span class=&#34;hljs-number&#34;&gt;0x19fccc&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; ESP = &lt;span class=&#34;hljs-number&#34;&gt;0x19fc10&lt;/span&gt;
 diff EAX = &lt;span class=&#34;hljs-number&#34;&gt;0xffe503ef&lt;/span&gt; EBX diff = &lt;span class=&#34;hljs-number&#34;&gt;0xdf174c5f&lt;/span&gt;
 
 === &lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt; bc = &lt;span class=&#34;hljs-number&#34;&gt;0x1ec5393d&lt;/span&gt;
 init EAX = &lt;span class=&#34;hljs-number&#34;&gt;0xfffdab5b&lt;/span&gt; EBX = &lt;span class=&#34;hljs-number&#34;&gt;0xffbb44ce&lt;/span&gt; ESI = &lt;span class=&#34;hljs-number&#34;&gt;0x46ef99&lt;/span&gt; EDI = &lt;span class=&#34;hljs-number&#34;&gt;0x43cc41&lt;/span&gt;
-final EAX = &lt;span class=&#34;hljs-number&#34;&gt;0x19fc60&lt;/span&gt;
-final EBX = &lt;span class=&#34;hljs-number&#34;&gt;0x20ae78f3&lt;/span&gt;
-final ECX = &lt;span class=&#34;hljs-number&#34;&gt;0xdcedb11a&lt;/span&gt;
-final EDX = &lt;span class=&#34;hljs-number&#34;&gt;0x0&lt;/span&gt;
-final ESI = &lt;span class=&#34;hljs-number&#34;&gt;0x46ef9e&lt;/span&gt;
-final EDI = &lt;span class=&#34;hljs-number&#34;&gt;0xdf590927&lt;/span&gt;
-final EBP = &lt;span class=&#34;hljs-number&#34;&gt;0x19fcbc&lt;/span&gt;
-final ESP = &lt;span class=&#34;hljs-number&#34;&gt;0x19fc00&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EAX = &lt;span class=&#34;hljs-number&#34;&gt;0x19fc60&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EBX = &lt;span class=&#34;hljs-number&#34;&gt;0x20ae78f3&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; ECX = &lt;span class=&#34;hljs-number&#34;&gt;0xdcedb11a&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EDX = &lt;span class=&#34;hljs-number&#34;&gt;0x0&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; ESI = &lt;span class=&#34;hljs-number&#34;&gt;0x46ef9e&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EDI = &lt;span class=&#34;hljs-number&#34;&gt;0xdf590927&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EBP = &lt;span class=&#34;hljs-number&#34;&gt;0x19fcbc&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; ESP = &lt;span class=&#34;hljs-number&#34;&gt;0x19fc00&lt;/span&gt;
 diff EAX = &lt;span class=&#34;hljs-number&#34;&gt;0xffe4573b&lt;/span&gt; EBX diff = &lt;span class=&#34;hljs-number&#34;&gt;0xdf153c3d&lt;/span&gt;
 &lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;We can extract the following key observations:&lt;/p&gt;
@@ -519,26 +519,26 @@ So handler ID 82 consumes 5 bytes from the bytecode stream. This matches the ear
   [M] &lt;span class=&#34;hljs-number&#34;&gt;0x432085&lt;/span&gt;: movzx eax, byte ptr [esi]
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x432088&lt;/span&gt;: rol cx, &lt;span class=&#34;hljs-number&#34;&gt;0xc&lt;/span&gt;
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x43208c&lt;/span&gt;: add esi, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
-  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x432096&lt;/span&gt;: xor al, bl
+  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x432096&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;xor&lt;/span&gt; al, bl
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x43209a&lt;/span&gt;: ror cx, &lt;span class=&#34;hljs-number&#34;&gt;0xf6&lt;/span&gt;
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x43209e&lt;/span&gt;: sub al, &lt;span class=&#34;hljs-number&#34;&gt;0x3a&lt;/span&gt;
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320a0&lt;/span&gt;: ror al, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320a2&lt;/span&gt;: neg al
-  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320aa&lt;/span&gt;: not al
-  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320b1&lt;/span&gt;: and cx, si
-  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320b4&lt;/span&gt;: xor bl, al
+  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320aa&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;not&lt;/span&gt; al
+  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320b1&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;and&lt;/span&gt; cx, si
+  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320b4&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;xor&lt;/span&gt; bl, al
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320b6&lt;/span&gt;: mov ecx, dword ptr [ebp]
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320bf&lt;/span&gt;: add ebp, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320c5&lt;/span&gt;: mov dword ptr [esp + eax], ecx
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320c8&lt;/span&gt;: ror eax, &lt;span class=&#34;hljs-number&#34;&gt;0xd2&lt;/span&gt;
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320cb&lt;/span&gt;: mov eax, dword ptr [esi]
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320cd&lt;/span&gt;: add esi, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;
-  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320de&lt;/span&gt;: xor eax, ebx
+  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320de&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;xor&lt;/span&gt; eax, ebx
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320e1&lt;/span&gt;: ror eax, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
-  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320e3&lt;/span&gt;: xor eax, &lt;span class=&#34;hljs-number&#34;&gt;0x4acb3db9&lt;/span&gt;
+  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320e3&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;xor&lt;/span&gt; eax, &lt;span class=&#34;hljs-number&#34;&gt;0x4acb3db9&lt;/span&gt;
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320ee&lt;/span&gt;: sub eax, &lt;span class=&#34;hljs-number&#34;&gt;0x458c0140&lt;/span&gt;
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320f3&lt;/span&gt;: rol eax, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
-  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320f5&lt;/span&gt;: xor ebx, eax
+  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320f5&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;xor&lt;/span&gt; ebx, eax
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320fd&lt;/span&gt;: add edi, eax
 ----------------------------------------
 ...
@@ -637,11 +637,11 @@ decrypted = ~val &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0xFFFFFFFF&lt
 &lt;/ol&gt;
 &lt;p&gt;&lt;strong&gt;VM State Transition&lt;/strong&gt;&lt;/p&gt;
 &lt;p&gt;To understand devirtualization, the key is to focus on &amp;#x201C;what state the VM maintains, and how that state changes when a handler executes.&amp;#x201D; The VM state can be defined as follows:&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&#34;hljs delphi&#34;&gt;VIP: &lt;span class=&#34;hljs-keyword&#34;&gt;Virtual&lt;/span&gt; Instruction Pointer
-VSP: &lt;span class=&#34;hljs-keyword&#34;&gt;Virtual&lt;/span&gt; Stack Pointer
-VStack: values currently &lt;span class=&#34;hljs-keyword&#34;&gt;stored&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;on&lt;/span&gt; the &lt;span class=&#34;hljs-keyword&#34;&gt;virtual&lt;/span&gt; stack
-Scratch: temporary storage
-VFlags: &lt;span class=&#34;hljs-keyword&#34;&gt;virtual&lt;/span&gt; flags (playing roles similar &lt;span class=&#34;hljs-keyword&#34;&gt;to&lt;/span&gt; ZF, CF, etc.)
+&lt;pre&gt;&lt;code class=&#34;hljs sql&#34;&gt;VIP: Virtual Instruction Pointer
+VSP: Virtual Stack Pointer
+VStack: &lt;span class=&#34;hljs-keyword&#34;&gt;values&lt;/span&gt; currently &lt;span class=&#34;hljs-keyword&#34;&gt;stored&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;on&lt;/span&gt; the &lt;span class=&#34;hljs-keyword&#34;&gt;virtual&lt;/span&gt; stack
+Scratch: &lt;span class=&#34;hljs-keyword&#34;&gt;temporary&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;storage&lt;/span&gt;
+VFlags: &lt;span class=&#34;hljs-keyword&#34;&gt;virtual&lt;/span&gt; flags (playing &lt;span class=&#34;hljs-keyword&#34;&gt;roles&lt;/span&gt; similar &lt;span class=&#34;hljs-keyword&#34;&gt;to&lt;/span&gt; ZF, CF, etc.)
 &lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;No matter how heavy the obfuscation is, what ultimately matters is &amp;#x201C;how the bundle of state changes after each handler.&amp;#x201D; You can think of the VM not as a CPU, but as a collection of state-transition functions that take &lt;code&gt;VIP&lt;/code&gt;, &lt;code&gt;VStack&lt;/code&gt;, &lt;code&gt;Scratch&lt;/code&gt;, and &lt;code&gt;VFlags&lt;/code&gt; as input and produce new &lt;code&gt;VIP&lt;/code&gt;, &lt;code&gt;VStack&lt;/code&gt;, &lt;code&gt;Scratch&lt;/code&gt;, and &lt;code&gt;VFlags&lt;/code&gt; as output.&lt;/p&gt;
 &lt;p&gt;When analyzing a handler, instead of trying to understand every single instruction in the disassembly, the important part is to be able to summarize: &amp;#x201C;this handler transforms the VM state in this way.&amp;#x201D; Once you can say that, you have essentially understood that handler&amp;#x2019;s semantics.&lt;/p&gt;
@@ -664,27 +664,27 @@ VFlags: &lt;span class=&#34;hljs-keyword&#34;&gt;virtual&lt;/span&gt; flags (pla
 &lt;p&gt;&lt;img src=&#34;/2025/12/11/banda/VMPpart2/en/image3.png&#34; alt&gt;&lt;/p&gt;
 &lt;p&gt;If we check the entropy view in DiE, we can see a typical pattern for Virtualization mode. The &lt;code&gt;.text&lt;/code&gt; section is obfuscated, and the presence of &lt;code&gt;.vmp0&lt;/code&gt; indicates that VMP&amp;#x2019;s core VM bytecode lives there. Entry stub and initialization stub are packed, and the runtime VM engine is expected to reside in &lt;code&gt;.vmp0&lt;/code&gt;.&lt;/p&gt;
 &lt;p&gt;We will follow the flow &lt;code&gt;WinMain&lt;/code&gt; &amp;#x2192; &lt;code&gt;UnpackMe&lt;/code&gt; &amp;#x2192; &lt;code&gt;Run&lt;/code&gt; and carefully locate where the VMEntry actually is.&lt;/p&gt;
-&lt;h3 id=&#34;Road-to-VMEntry&#34;&gt;&lt;a href=&#34;#Road-to-VMEntry&#34; class=&#34;headerlink&#34; title=&#34;Road to VMEntry&#34;&gt;&lt;/a&gt;Road to VMEntry&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; __stdcall &lt;span class=&#34;hljs-title function_&#34;&gt;WinMain&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, &lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; nShowCmd)&lt;/span&gt;
-{
-  &lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt; (__stdcall ***v4)(HINSTANCE); &lt;span class=&#34;hljs-comment&#34;&gt;// eax&lt;/span&gt;
-  &lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt; (__stdcall ***v5)(HINSTANCE); &lt;span class=&#34;hljs-comment&#34;&gt;// ecx&lt;/span&gt;
-  &lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt; (__stdcall **v6)(HINSTANCE); &lt;span class=&#34;hljs-comment&#34;&gt;// eax&lt;/span&gt;
-  &lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; result; &lt;span class=&#34;hljs-comment&#34;&gt;// eax&lt;/span&gt;
+&lt;h3 id=&#34;Road-to-VMEntry&#34;&gt;&lt;a href=&#34;#Road-to-VMEntry&#34; class=&#34;headerlink&#34; title=&#34;Road to VMEntry&#34;&gt;&lt;/a&gt;Road to VMEntry&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; __stdcall &lt;span class=&#34;hljs-title&#34;&gt;WinMain&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; nShowCmd)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; (__stdcall ***v4)(HINSTANCE); &lt;span class=&#34;hljs-comment&#34;&gt;// eax&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; (__stdcall ***v5)(HINSTANCE); &lt;span class=&#34;hljs-comment&#34;&gt;// ecx&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; (__stdcall **v6)(HINSTANCE); &lt;span class=&#34;hljs-comment&#34;&gt;// eax&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; result; &lt;span class=&#34;hljs-comment&#34;&gt;// eax&lt;/span&gt;
 
   SetUnhandledExceptionFilter(TopLevelExceptionFilter);
-  v4 = (&lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt; (__stdcall ***)(HINSTANCE))operator new(&lt;span class=&#34;hljs-number&#34;&gt;0x48u&lt;/span&gt;);
+  v4 = (&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; (__stdcall ***)(HINSTANCE))&lt;span class=&#34;hljs-keyword&#34;&gt;operator&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt;(&lt;span class=&#34;hljs-number&#34;&gt;0x48&lt;/span&gt;u);
   v5 = v4;
   &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( v4 )
-    *v4 = (&lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt; (__stdcall **)(HINSTANCE))&amp;amp;UnpackMe::`vftable&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;;  // vtable &amp;#xC124;&amp;#xC815;&lt;/span&gt;
-&lt;span class=&#34;hljs-string&#34;&gt;  else&lt;/span&gt;
-&lt;span class=&#34;hljs-string&#34;&gt;    v5 = 0;&lt;/span&gt;
-&lt;span class=&#34;hljs-string&#34;&gt;  v6 = *v5;&lt;/span&gt;
-&lt;span class=&#34;hljs-string&#34;&gt;  UnpackMe* this = v5;&lt;/span&gt;
-&lt;span class=&#34;hljs-string&#34;&gt;  (*v6)(hInstance);   // vtable[0] &amp;#xD638;&amp;#xCD9C;&lt;/span&gt;
-&lt;span class=&#34;hljs-string&#34;&gt;  j__free(UnpackMe* this);&lt;/span&gt;
-&lt;span class=&#34;hljs-string&#34;&gt;  return result;&lt;/span&gt;
-&lt;span class=&#34;hljs-string&#34;&gt;}&lt;/span&gt;
-&lt;span class=&#34;hljs-string&#34;&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+    *v4 = (&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; (__stdcall **)(HINSTANCE))&amp;amp;UnpackMe::`vftable&lt;span class=&#34;hljs-number&#34;&gt;&amp;apos;&lt;/span&gt;;  &lt;span class=&#34;hljs-comment&#34;&gt;// vtable &amp;#xC124;&amp;#xC815;&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
+    v5 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+  v6 = *v5;
+  UnpackMe* &lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt; = v5;
+  (*v6)(hInstance);   &lt;span class=&#34;hljs-comment&#34;&gt;// vtable[0] &amp;#xD638;&amp;#xCD9C;&lt;/span&gt;
+  j__free(UnpackMe* &lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; result;
+}
+&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;A typical virtualization-based obfuscation VM can usually be broken down into the following components:&lt;/p&gt;
 &lt;ul&gt;
 &lt;li&gt;&lt;p&gt;&lt;code&gt;VM Entry&lt;/code&gt; / &lt;code&gt;VM Exit&lt;/code&gt;&lt;/p&gt;
@@ -703,9 +703,9 @@ VFlags: &lt;span class=&#34;hljs-keyword&#34;&gt;virtual&lt;/span&gt; flags (pla
 &lt;p&gt;The &lt;code&gt;WinMain()&lt;/code&gt; function itself is structurally simple. From a devirtualization perspective, note that VMP usually virtualizes only certain target functions and leaves the path leading up to those functions in normal C++ code. So here we just need to confirm that &lt;code&gt;vtable[0]&lt;/code&gt; is in fact &lt;code&gt;UnpackMe::Run&lt;/code&gt; and then move on.&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2025/12/11/banda/VMPpart2/en/image4.png&#34; alt&gt;&lt;/p&gt;
 &lt;p&gt;Following the vtable, we find that the C++ class &lt;code&gt;UnpackMe&lt;/code&gt;&amp;#x2019;s vtable lives in the &lt;code&gt;.rdata&lt;/code&gt; section. When IDA successfully reconstructs RTTI, it attaches the symbol &lt;code&gt;??_7UnpackMe@@6B@&lt;/code&gt; and automatically names the first vtable entry as &lt;code&gt;UnpackMe::Run&lt;/code&gt;. Let&amp;#x2019;s now jump into &lt;code&gt;UnpackMe::Run&lt;/code&gt;, which opens the main loop.&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; __thiscall &lt;span class=&#34;hljs-title function_&#34;&gt;UnpackMe::Run&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt; *this, HINSTANCE hInst)&lt;/span&gt;
-{
-    *((DWORD*)this + &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;) = hInst;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; __thiscall &lt;span class=&#34;hljs-title&#34;&gt;UnpackMe::Run&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; *&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;, HINSTANCE hInst)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
+    *((DWORD*)&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt; + &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;) = hInst;
 
     WNDCLASSEXW wc = {&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;};
     wc.cbSize       = &lt;span class=&#34;hljs-keyword&#34;&gt;sizeof&lt;/span&gt;(wc);
@@ -715,7 +715,7 @@ VFlags: &lt;span class=&#34;hljs-keyword&#34;&gt;virtual&lt;/span&gt; flags (pla
     wc.lpszClassName = &lt;span class=&#34;hljs-string&#34;&gt;L&amp;quot;WndClass_DevirtualizeMe&amp;quot;&lt;/span&gt;;
     RegisterClassExW(&amp;amp;wc);
 
-    ((&lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt; (__thiscall*)(&lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt;*))(*(DWORD*)this + &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;))(this);
+    ((&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; (__thiscall*)(&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt;*))(*(DWORD*)&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt; + &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;))(&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;);
     &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; ( GetMessageW(&amp;amp;Msg, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;) )
     {
         TranslateMessage(&amp;amp;Msg);
@@ -725,12 +725,12 @@ VFlags: &lt;span class=&#34;hljs-keyword&#34;&gt;virtual&lt;/span&gt; flags (pla
 &lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;From a devirtualization point of view, &lt;code&gt;Run&lt;/code&gt; acts as a kind of gatekeeper into the VM. When the user presses the P key, the program flows through this loop and eventually reaches the VMProtect entry point.&lt;/p&gt;
 &lt;p&gt;This function registers a window class, sets &lt;code&gt;lpfnWndProc = sub_40CC70&lt;/code&gt; as the global WndProc, and then repeatedly calls &lt;code&gt;DispatchMessageW&lt;/code&gt; inside the message loop. All key input (including P) goes through this message loop and eventually arrives at &lt;code&gt;WndProc&lt;/code&gt;, which then routes messages into &lt;code&gt;UnpackMe&lt;/code&gt;&amp;#x2019;s member functions.&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;LRESULT __stdcall &lt;span class=&#34;hljs-title function_&#34;&gt;WndProc&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)&lt;/span&gt;
-{
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;LRESULT __stdcall &lt;span class=&#34;hljs-title&#34;&gt;WndProc&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
     &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( dword_415F08 )
         &lt;span class=&#34;hljs-comment&#34;&gt;// vtable[1] = UnpackMe::WndProc(sub_40CB60)&lt;/span&gt;
-        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; ((&lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; (__thiscall*)(&lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt;*, HWND, UINT, WPARAM, LPARAM))
-                (*(DWORD*)UnpackMe* this + &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;))(
+        &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; ((&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; (__thiscall*)(&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt;*, HWND, UINT, WPARAM, LPARAM))
+                (*(DWORD*)UnpackMe* &lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt; + &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;))(
                     dword_415F08, hWnd, Msg, wParam, lParam);
     &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;
         &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; DefWindowProcW(hWnd, Msg, wParam, lParam);
@@ -738,12 +738,12 @@ VFlags: &lt;span class=&#34;hljs-keyword&#34;&gt;virtual&lt;/span&gt; flags (pla
 &lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;The important point here is that the OS has no idea that a C++ class named &lt;code&gt;UnpackMe&lt;/code&gt; even exists, nor how many instances there are. The OS only knows that for windows of class &lt;code&gt;WndClass_DevirtualizeMe&lt;/code&gt;, the WndProc is &lt;code&gt;sub_40CC70&lt;/code&gt;, and that function internally forwards messages into &lt;code&gt;UnpackMe::WndProc&lt;/code&gt;.&lt;/p&gt;
 &lt;p&gt;In other words, from a devirtualization perspective, all keyboard messages eventually end up in &lt;code&gt;UnpackMe::WndProc&lt;/code&gt;. Therefore we only need to see how this &lt;code&gt;WndProc()&lt;/code&gt; handles &lt;code&gt;WM_KEYDOWN&lt;/code&gt;.&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; __thiscall &lt;span class=&#34;hljs-title function_&#34;&gt;UnpackMe::WndProc&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt; *this,&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;                                 HWND hWnd,&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;                                 UINT Msg,&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;                                 WPARAM wParam,&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;                                 LPARAM lParam)&lt;/span&gt;
-{
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; __thiscall &lt;span class=&#34;hljs-title&#34;&gt;UnpackMe::WndProc&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; *&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                 HWND hWnd,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                 UINT Msg,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                 WPARAM wParam,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                 LPARAM lParam)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
     &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( Msg &amp;gt; &lt;span class=&#34;hljs-number&#34;&gt;0x14&lt;/span&gt; )
     {
         &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( Msg &amp;lt;= &lt;span class=&#34;hljs-number&#34;&gt;0x111&lt;/span&gt; )
@@ -752,9 +752,9 @@ VFlags: &lt;span class=&#34;hljs-keyword&#34;&gt;virtual&lt;/span&gt; flags (pla
             {
             &lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x100&lt;/span&gt;:  &lt;span class=&#34;hljs-comment&#34;&gt;// WM_KEYDOWN&lt;/span&gt;
                 &lt;span class=&#34;hljs-comment&#34;&gt;// vtable[6] = OnKeyDown&lt;/span&gt;
-                &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; ((&lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; (__thiscall*)(&lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt;*, HWND, WPARAM, LPARAM))
-                        (*(DWORD*)this + &lt;span class=&#34;hljs-number&#34;&gt;24&lt;/span&gt;))(
-                            this, hWnd, wParam, lParam);
+                &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; ((&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; (__thiscall*)(&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt;*, HWND, WPARAM, LPARAM))
+                        (*(DWORD*)&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt; + &lt;span class=&#34;hljs-number&#34;&gt;24&lt;/span&gt;))(
+                            &lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;, hWnd, wParam, lParam);
 
             &lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0x111&lt;/span&gt;:  &lt;span class=&#34;hljs-comment&#34;&gt;// WM_COMMAND&lt;/span&gt;
                 ...
@@ -765,11 +765,11 @@ VFlags: &lt;span class=&#34;hljs-keyword&#34;&gt;virtual&lt;/span&gt; flags (pla
 }
 &lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;When &lt;code&gt;WM_KEYDOWN&lt;/code&gt; arrives, this function forwards control to &lt;code&gt;OnKeyDown&lt;/code&gt;, which is mapped to &lt;code&gt;vtable[6]&lt;/code&gt;. Up to this point we are still just in the message routing layer, and no VMProtect virtualized code has appeared yet. But we do not have to be disappointed&amp;#x2014;things are about to get more interesting.&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; __thiscall &lt;span class=&#34;hljs-title function_&#34;&gt;UnpackMe::OnKeyDown&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; this,&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;                                   HWND hWnd,&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;                                   WPARAM wParam,&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;                                   LPARAM lParam)&lt;/span&gt;
-{
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; __thiscall &lt;span class=&#34;hljs-title&#34;&gt;UnpackMe::OnKeyDown&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                   HWND hWnd,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                   WPARAM wParam,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                   LPARAM lParam)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;/span&gt;{
     &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( wParam == &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;P&amp;apos;&lt;/span&gt; )
         proc();
     &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
@@ -910,7 +910,7 @@ ID82_003: IP=&lt;span class=&#34;hljs-number&#34;&gt;0x004323ff&lt;/span&gt; EAX
 &lt;h3 id=&#34;Splitting-the-VM-only-trace-by-ID-82-execution-segments&#34;&gt;&lt;a href=&#34;#Splitting-the-VM-only-trace-by-ID-82-execution-segments&#34; class=&#34;headerlink&#34; title=&#34;Splitting the VM-only trace by ID 82 execution segments&#34;&gt;&lt;/a&gt;Splitting the VM-only trace by ID 82 execution segments&lt;/h3&gt;&lt;p&gt;With these logs in hand, we can now start restoring the meaning of individual VM handlers.&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;total ins: &lt;span class=&#34;hljs-number&#34;&gt;58414&lt;/span&gt;
 ID82 entries: &lt;span class=&#34;hljs-number&#34;&gt;107&lt;/span&gt;
-ID82 &lt;span class=&#34;hljs-title function_&#34;&gt;segments&lt;/span&gt; &lt;span class=&#34;hljs-params&#34;&gt;(with glue)&lt;/span&gt;: 106
+&lt;span class=&#34;hljs-function&#34;&gt;ID82 &lt;span class=&#34;hljs-title&#34;&gt;segments&lt;/span&gt; &lt;span class=&#34;hljs-params&#34;&gt;(with glue)&lt;/span&gt;: 106&lt;/span&gt;
 written id82_segments.json
 &lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;To do that, I wrote a script that takes &lt;code&gt;vmtrace.out&lt;/code&gt;, locates each occurrence of ID 82, and slices the trace into segments corresponding to &amp;#x201C;one execution of ID 82, including its glue code.&amp;#x201D; Each such segment is then written into a JSON file. Earlier we counted 107 entries for ID 82; the script extracted 106 segments into the JSON.&lt;/p&gt;
@@ -991,109 +991,109 @@ indices: [&lt;span class=&#34;hljs-number&#34;&gt;22&lt;/span&gt;, &lt;span clas
 &lt;p&gt;But this is still not yet the end. To fully understand the mathematical transformation encoded by this handler, we need to load this code into Triton, feed it the initial register state and bytecode values we collected earlier, and perform symbolic execution.&lt;/p&gt;
 &lt;h3 id=&#34;Tracking-state-changes&#34;&gt;&lt;a href=&#34;#Tracking-state-changes&#34; class=&#34;headerlink&#34; title=&#34;Tracking state changes&#34;&gt;&lt;/a&gt;Tracking state changes&lt;/h3&gt;&lt;p&gt;Using Triton to execute the ID 82 path and compare the registers before and after, we obtain a trace like the following:&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;0x4442f2&lt;/span&gt;: shr dh, cl
-&lt;span class=&#34;hljs-number&#34;&gt;0x43641a&lt;/span&gt;: not bp
+&lt;span class=&#34;hljs-number&#34;&gt;0x43641a&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;not&lt;/span&gt; bp
 
---- [ Logic &lt;span class=&#34;hljs-title function_&#34;&gt;Start&lt;/span&gt; &lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-number&#34;&gt;0x41F637&lt;/span&gt;)&lt;/span&gt; ] ---
-0x41f638: movsx edi, di
-0x41f63c: lahf
-0x41f63d: bts ebp, esi
-0x41f641: cmp bh, 0xb4
-0x41f645: shr bp, 0xa6
-0x41f649: sub ebx, edx
-0x41f64b: test esi, ebp
-0x41f64e: xchg ah, bh
-0x41f650: sub ax, bx
-0x41f653: movsx ebx, bp
-0x41f656: mov eax, 0
-0x41f65b: not si
-0x41f65e: xadd ebp, esi
-0x41f662: mov esi, dword ptr [esp + 0x28]
-0x41f666: add esi, 0x55106798
-0x41f66c: neg esi
-0x41f66e: rol edi, 0x70
-0x41f671: add esi, 0x69733a52
-0x41f677: btr ebp, 0xc0
-0x41f67b: rol esi, 1
-0x41f67d: sbb ebx, 0x37516d2d
-0x41f683: not esi
-0x41f685: clc
-0x41f686: cmp eax, esp
-0x41f688: xor ebp, esp
-0x41f68a: add esi, eax
-0x41f68c: setns al
-0x41f68f: mov ebp, esp
-0x41f691: sub bx, sp
-0x41f694: rol ax, cl
-0x41f697: dec di
-0x41f69a: sub esp, 0xc0
-0x41f6a0: jmp 0x453e79
-0x453e79: mov ebx, esi
-0x453e7b: bt eax, esp
-0x453e7e: btc ax, 0x47
-0x453e83: btr eax, edx
-0x453e86: mov eax, 0
-0x453e8b: jmp 0x4620dd
-0x4620dd: sub ebx, eax
-0x4620df: shld eax, eax, 0xe3
-0x4620e3: sub eax, edi
-0x4620e5: stc
-0x4620e6: lea edi, [0x4620e6]
-0x4620ec: mov eax, dword ptr [esi]
-0x4620ee: cmc
-0x4620ef: test cl, 0x19
-0x4620f2: lea esi, [esi + 4]
-0x4620f8: cmc
-0x4620f9: test ebx, 0x76f532e4
-0x4620ff: xor eax, ebx
-0x462101: ror eax, 1
-0x462103: stc
-0x462104: xor eax, 0x4acb3db9
-0x462109: sub eax, 0x458c0140
-0x46210e: rol eax, 1
-0x462110: xor ebx, eax
-0x462112: cmc
-0x462113: cmp bx, sp
-0x462116: clc
-0x462117: add edi, eax
-0x462119: jmp 0x4323ff
---- [ Logic &lt;span class=&#34;hljs-title function_&#34;&gt;End&lt;/span&gt; &lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-number&#34;&gt;0x432400&lt;/span&gt;)&lt;/span&gt; ] ---
+--- [ Logic Start (0x41F637) ] ---
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f638&lt;/span&gt;: movsx edi, di
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f63c&lt;/span&gt;: lahf
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f63d&lt;/span&gt;: bts ebp, esi
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f641&lt;/span&gt;: cmp bh, &lt;span class=&#34;hljs-number&#34;&gt;0xb4&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f645&lt;/span&gt;: shr bp, &lt;span class=&#34;hljs-number&#34;&gt;0xa6&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f649&lt;/span&gt;: sub ebx, edx
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f64b&lt;/span&gt;: test esi, ebp
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f64e&lt;/span&gt;: xchg ah, bh
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f650&lt;/span&gt;: sub ax, bx
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f653&lt;/span&gt;: movsx ebx, bp
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f656&lt;/span&gt;: mov eax, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f65b&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;not&lt;/span&gt; si
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f65e&lt;/span&gt;: xadd ebp, esi
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f662&lt;/span&gt;: mov esi, dword ptr [esp + &lt;span class=&#34;hljs-number&#34;&gt;0x28&lt;/span&gt;]
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f666&lt;/span&gt;: add esi, &lt;span class=&#34;hljs-number&#34;&gt;0x55106798&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f66c&lt;/span&gt;: neg esi
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f66e&lt;/span&gt;: rol edi, &lt;span class=&#34;hljs-number&#34;&gt;0x70&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f671&lt;/span&gt;: add esi, &lt;span class=&#34;hljs-number&#34;&gt;0x69733a52&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f677&lt;/span&gt;: btr ebp, &lt;span class=&#34;hljs-number&#34;&gt;0xc0&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f67b&lt;/span&gt;: rol esi, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f67d&lt;/span&gt;: sbb ebx, &lt;span class=&#34;hljs-number&#34;&gt;0x37516d2d&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f683&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;not&lt;/span&gt; esi
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f685&lt;/span&gt;: clc
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f686&lt;/span&gt;: cmp eax, esp
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f688&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;xor&lt;/span&gt; ebp, esp
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f68a&lt;/span&gt;: add esi, eax
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f68c&lt;/span&gt;: setns al
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f68f&lt;/span&gt;: mov ebp, esp
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f691&lt;/span&gt;: sub bx, sp
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f694&lt;/span&gt;: rol ax, cl
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f697&lt;/span&gt;: dec di
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f69a&lt;/span&gt;: sub esp, &lt;span class=&#34;hljs-number&#34;&gt;0xc0&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x41f6a0&lt;/span&gt;: jmp &lt;span class=&#34;hljs-number&#34;&gt;0x453e79&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x453e79&lt;/span&gt;: mov ebx, esi
+&lt;span class=&#34;hljs-number&#34;&gt;0x453e7b&lt;/span&gt;: bt eax, esp
+&lt;span class=&#34;hljs-number&#34;&gt;0x453e7e&lt;/span&gt;: btc ax, &lt;span class=&#34;hljs-number&#34;&gt;0x47&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x453e83&lt;/span&gt;: btr eax, edx
+&lt;span class=&#34;hljs-number&#34;&gt;0x453e86&lt;/span&gt;: mov eax, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x453e8b&lt;/span&gt;: jmp &lt;span class=&#34;hljs-number&#34;&gt;0x4620dd&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x4620dd&lt;/span&gt;: sub ebx, eax
+&lt;span class=&#34;hljs-number&#34;&gt;0x4620df&lt;/span&gt;: shld eax, eax, &lt;span class=&#34;hljs-number&#34;&gt;0xe3&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x4620e3&lt;/span&gt;: sub eax, edi
+&lt;span class=&#34;hljs-number&#34;&gt;0x4620e5&lt;/span&gt;: stc
+&lt;span class=&#34;hljs-number&#34;&gt;0x4620e6&lt;/span&gt;: lea edi, [&lt;span class=&#34;hljs-number&#34;&gt;0x4620e6&lt;/span&gt;]
+&lt;span class=&#34;hljs-number&#34;&gt;0x4620ec&lt;/span&gt;: mov eax, dword ptr [esi]
+&lt;span class=&#34;hljs-number&#34;&gt;0x4620ee&lt;/span&gt;: cmc
+&lt;span class=&#34;hljs-number&#34;&gt;0x4620ef&lt;/span&gt;: test cl, &lt;span class=&#34;hljs-number&#34;&gt;0x19&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x4620f2&lt;/span&gt;: lea esi, [esi + &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;]
+&lt;span class=&#34;hljs-number&#34;&gt;0x4620f8&lt;/span&gt;: cmc
+&lt;span class=&#34;hljs-number&#34;&gt;0x4620f9&lt;/span&gt;: test ebx, &lt;span class=&#34;hljs-number&#34;&gt;0x76f532e4&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x4620ff&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;xor&lt;/span&gt; eax, ebx
+&lt;span class=&#34;hljs-number&#34;&gt;0x462101&lt;/span&gt;: ror eax, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x462103&lt;/span&gt;: stc
+&lt;span class=&#34;hljs-number&#34;&gt;0x462104&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;xor&lt;/span&gt; eax, &lt;span class=&#34;hljs-number&#34;&gt;0x4acb3db9&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x462109&lt;/span&gt;: sub eax, &lt;span class=&#34;hljs-number&#34;&gt;0x458c0140&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x46210e&lt;/span&gt;: rol eax, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0x462110&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;xor&lt;/span&gt; ebx, eax
+&lt;span class=&#34;hljs-number&#34;&gt;0x462112&lt;/span&gt;: cmc
+&lt;span class=&#34;hljs-number&#34;&gt;0x462113&lt;/span&gt;: cmp bx, sp
+&lt;span class=&#34;hljs-number&#34;&gt;0x462116&lt;/span&gt;: clc
+&lt;span class=&#34;hljs-number&#34;&gt;0x462117&lt;/span&gt;: add edi, eax
+&lt;span class=&#34;hljs-number&#34;&gt;0x462119&lt;/span&gt;: jmp &lt;span class=&#34;hljs-number&#34;&gt;0x4323ff&lt;/span&gt;
+--- [ Logic End (0x432400) ] ---
 &lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;This is the &lt;code&gt;asm&lt;/code&gt; trace produced by a Triton-based analysis script. It reconstructs the execution path of handler ID 82 using both &lt;code&gt;vmtrace.out&lt;/code&gt; and the bytes from the actual binary.&lt;/p&gt;
 &lt;p&gt;Comparing registers before and after execution for each test case yields:&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;=== &lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; bc = &lt;span class=&#34;hljs-number&#34;&gt;0x1ecbf564&lt;/span&gt;
 init EAX = &lt;span class=&#34;hljs-number&#34;&gt;0x271c9&lt;/span&gt; EBX = &lt;span class=&#34;hljs-number&#34;&gt;0x458b96&lt;/span&gt; ESI = &lt;span class=&#34;hljs-number&#34;&gt;0x47fa63&lt;/span&gt; EDI = &lt;span class=&#34;hljs-number&#34;&gt;0x4892af&lt;/span&gt;
-final EAX = &lt;span class=&#34;hljs-number&#34;&gt;0x19fe78&lt;/span&gt;
-final EBX = &lt;span class=&#34;hljs-number&#34;&gt;0xafe65f2&lt;/span&gt;
-final ECX = &lt;span class=&#34;hljs-number&#34;&gt;0x20&lt;/span&gt;
-final EDX = &lt;span class=&#34;hljs-number&#34;&gt;0x0&lt;/span&gt;
-final ESI = &lt;span class=&#34;hljs-number&#34;&gt;0x47fa68&lt;/span&gt;
-final EDI = &lt;span class=&#34;hljs-number&#34;&gt;0xb0480ee&lt;/span&gt;
-final EBP = &lt;span class=&#34;hljs-number&#34;&gt;0x19fed4&lt;/span&gt;
-final ESP = &lt;span class=&#34;hljs-number&#34;&gt;0x19fe18&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EAX = &lt;span class=&#34;hljs-number&#34;&gt;0x19fe78&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EBX = &lt;span class=&#34;hljs-number&#34;&gt;0xafe65f2&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; ECX = &lt;span class=&#34;hljs-number&#34;&gt;0x20&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EDX = &lt;span class=&#34;hljs-number&#34;&gt;0x0&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; ESI = &lt;span class=&#34;hljs-number&#34;&gt;0x47fa68&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EDI = &lt;span class=&#34;hljs-number&#34;&gt;0xb0480ee&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EBP = &lt;span class=&#34;hljs-number&#34;&gt;0x19fed4&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; ESP = &lt;span class=&#34;hljs-number&#34;&gt;0x19fe18&lt;/span&gt;
 diff EAX = &lt;span class=&#34;hljs-number&#34;&gt;0x1b8fb1&lt;/span&gt; EBX diff = &lt;span class=&#34;hljs-number&#34;&gt;0xabbee64&lt;/span&gt;
 
 === &lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; bc = &lt;span class=&#34;hljs-number&#34;&gt;0x1ec6b25f&lt;/span&gt;
 init EAX = &lt;span class=&#34;hljs-number&#34;&gt;0xfffcff9f&lt;/span&gt; EBX = &lt;span class=&#34;hljs-number&#34;&gt;0xffb934ac&lt;/span&gt; ESI = &lt;span class=&#34;hljs-number&#34;&gt;0x45cb37&lt;/span&gt; EDI = &lt;span class=&#34;hljs-number&#34;&gt;0x432085&lt;/span&gt;
-final EAX = &lt;span class=&#34;hljs-number&#34;&gt;0x19fc70&lt;/span&gt;
-final EBX = &lt;span class=&#34;hljs-number&#34;&gt;0x20ae78f3&lt;/span&gt;
-final ECX = &lt;span class=&#34;hljs-number&#34;&gt;0x20&lt;/span&gt;
-final EDX = &lt;span class=&#34;hljs-number&#34;&gt;0x422a&lt;/span&gt;
-final ESI = &lt;span class=&#34;hljs-number&#34;&gt;0x45cb3c&lt;/span&gt;
-final EDI = &lt;span class=&#34;hljs-number&#34;&gt;0xdf5a6d09&lt;/span&gt;
-final EBP = &lt;span class=&#34;hljs-number&#34;&gt;0x19fccc&lt;/span&gt;
-final ESP = &lt;span class=&#34;hljs-number&#34;&gt;0x19fc10&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EAX = &lt;span class=&#34;hljs-number&#34;&gt;0x19fc70&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EBX = &lt;span class=&#34;hljs-number&#34;&gt;0x20ae78f3&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; ECX = &lt;span class=&#34;hljs-number&#34;&gt;0x20&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EDX = &lt;span class=&#34;hljs-number&#34;&gt;0x422a&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; ESI = &lt;span class=&#34;hljs-number&#34;&gt;0x45cb3c&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EDI = &lt;span class=&#34;hljs-number&#34;&gt;0xdf5a6d09&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EBP = &lt;span class=&#34;hljs-number&#34;&gt;0x19fccc&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; ESP = &lt;span class=&#34;hljs-number&#34;&gt;0x19fc10&lt;/span&gt;
 diff EAX = &lt;span class=&#34;hljs-number&#34;&gt;0xffe503ef&lt;/span&gt; EBX diff = &lt;span class=&#34;hljs-number&#34;&gt;0xdf174c5f&lt;/span&gt;
 
 === &lt;span class=&#34;hljs-keyword&#34;&gt;case&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt; bc = &lt;span class=&#34;hljs-number&#34;&gt;0x1ec5393d&lt;/span&gt;
 init EAX = &lt;span class=&#34;hljs-number&#34;&gt;0xfffdab5b&lt;/span&gt; EBX = &lt;span class=&#34;hljs-number&#34;&gt;0xffbb44ce&lt;/span&gt; ESI = &lt;span class=&#34;hljs-number&#34;&gt;0x46ef99&lt;/span&gt; EDI = &lt;span class=&#34;hljs-number&#34;&gt;0x43cc41&lt;/span&gt;
-final EAX = &lt;span class=&#34;hljs-number&#34;&gt;0x19fc60&lt;/span&gt;
-final EBX = &lt;span class=&#34;hljs-number&#34;&gt;0x20ae78f3&lt;/span&gt;
-final ECX = &lt;span class=&#34;hljs-number&#34;&gt;0xdcedb11a&lt;/span&gt;
-final EDX = &lt;span class=&#34;hljs-number&#34;&gt;0x0&lt;/span&gt;
-final ESI = &lt;span class=&#34;hljs-number&#34;&gt;0x46ef9e&lt;/span&gt;
-final EDI = &lt;span class=&#34;hljs-number&#34;&gt;0xdf590927&lt;/span&gt;
-final EBP = &lt;span class=&#34;hljs-number&#34;&gt;0x19fcbc&lt;/span&gt;
-final ESP = &lt;span class=&#34;hljs-number&#34;&gt;0x19fc00&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EAX = &lt;span class=&#34;hljs-number&#34;&gt;0x19fc60&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EBX = &lt;span class=&#34;hljs-number&#34;&gt;0x20ae78f3&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; ECX = &lt;span class=&#34;hljs-number&#34;&gt;0xdcedb11a&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EDX = &lt;span class=&#34;hljs-number&#34;&gt;0x0&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; ESI = &lt;span class=&#34;hljs-number&#34;&gt;0x46ef9e&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EDI = &lt;span class=&#34;hljs-number&#34;&gt;0xdf590927&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EBP = &lt;span class=&#34;hljs-number&#34;&gt;0x19fcbc&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; ESP = &lt;span class=&#34;hljs-number&#34;&gt;0x19fc00&lt;/span&gt;
 diff EAX = &lt;span class=&#34;hljs-number&#34;&gt;0xffe4573b&lt;/span&gt; EBX diff = &lt;span class=&#34;hljs-number&#34;&gt;0xdf153c3d&lt;/span&gt;
 &lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;We can extract the following key observations:&lt;/p&gt;
@@ -1129,26 +1129,26 @@ So handler ID 82 consumes 5 bytes from the bytecode stream. This matches the ear
   [M] &lt;span class=&#34;hljs-number&#34;&gt;0x432085&lt;/span&gt;: movzx eax, byte ptr [esi]
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x432088&lt;/span&gt;: rol cx, &lt;span class=&#34;hljs-number&#34;&gt;0xc&lt;/span&gt;
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x43208c&lt;/span&gt;: add esi, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
-  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x432096&lt;/span&gt;: xor al, bl
+  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x432096&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;xor&lt;/span&gt; al, bl
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x43209a&lt;/span&gt;: ror cx, &lt;span class=&#34;hljs-number&#34;&gt;0xf6&lt;/span&gt;
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x43209e&lt;/span&gt;: sub al, &lt;span class=&#34;hljs-number&#34;&gt;0x3a&lt;/span&gt;
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320a0&lt;/span&gt;: ror al, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320a2&lt;/span&gt;: neg al
-  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320aa&lt;/span&gt;: not al
-  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320b1&lt;/span&gt;: and cx, si
-  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320b4&lt;/span&gt;: xor bl, al
+  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320aa&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;not&lt;/span&gt; al
+  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320b1&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;and&lt;/span&gt; cx, si
+  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320b4&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;xor&lt;/span&gt; bl, al
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320b6&lt;/span&gt;: mov ecx, dword ptr [ebp]
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320bf&lt;/span&gt;: add ebp, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320c5&lt;/span&gt;: mov dword ptr [esp + eax], ecx
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320c8&lt;/span&gt;: ror eax, &lt;span class=&#34;hljs-number&#34;&gt;0xd2&lt;/span&gt;
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320cb&lt;/span&gt;: mov eax, dword ptr [esi]
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320cd&lt;/span&gt;: add esi, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;
-  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320de&lt;/span&gt;: xor eax, ebx
+  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320de&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;xor&lt;/span&gt; eax, ebx
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320e1&lt;/span&gt;: ror eax, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
-  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320e3&lt;/span&gt;: xor eax, &lt;span class=&#34;hljs-number&#34;&gt;0x4acb3db9&lt;/span&gt;
+  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320e3&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;xor&lt;/span&gt; eax, &lt;span class=&#34;hljs-number&#34;&gt;0x4acb3db9&lt;/span&gt;
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320ee&lt;/span&gt;: sub eax, &lt;span class=&#34;hljs-number&#34;&gt;0x458c0140&lt;/span&gt;
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320f3&lt;/span&gt;: rol eax, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
-  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320f5&lt;/span&gt;: xor ebx, eax
+  [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320f5&lt;/span&gt;: &lt;span class=&#34;hljs-keyword&#34;&gt;xor&lt;/span&gt; ebx, eax
   [!] &lt;span class=&#34;hljs-number&#34;&gt;0x4320fd&lt;/span&gt;: add edi, eax
 ----------------------------------------
 ...
@@ -1466,11 +1466,11 @@ decrypted = ~val &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0xFFFFFFFF&lt
 </ol>
 <p><strong>VM State Transition</strong></p>
 <p>To understand devirtualization, the key is to focus on &#x201C;what state the VM maintains, and how that state changes when a handler executes.&#x201D; The VM state can be defined as follows:</p>
-<pre><code class="hljs delphi">VIP: <span class="hljs-keyword">Virtual</span> Instruction Pointer
-VSP: <span class="hljs-keyword">Virtual</span> Stack Pointer
-VStack: values currently <span class="hljs-keyword">stored</span> <span class="hljs-keyword">on</span> the <span class="hljs-keyword">virtual</span> stack
-Scratch: temporary storage
-VFlags: <span class="hljs-keyword">virtual</span> flags (playing roles similar <span class="hljs-keyword">to</span> ZF, CF, etc.)
+<pre><code class="hljs sql">VIP: Virtual Instruction Pointer
+VSP: Virtual Stack Pointer
+VStack: <span class="hljs-keyword">values</span> currently <span class="hljs-keyword">stored</span> <span class="hljs-keyword">on</span> the <span class="hljs-keyword">virtual</span> stack
+Scratch: <span class="hljs-keyword">temporary</span> <span class="hljs-keyword">storage</span>
+VFlags: <span class="hljs-keyword">virtual</span> flags (playing <span class="hljs-keyword">roles</span> similar <span class="hljs-keyword">to</span> ZF, CF, etc.)
 </code></pre>
 <p>No matter how heavy the obfuscation is, what ultimately matters is &#x201C;how the bundle of state changes after each handler.&#x201D; You can think of the VM not as a CPU, but as a collection of state-transition functions that take <code>VIP</code>, <code>VStack</code>, <code>Scratch</code>, and <code>VFlags</code> as input and produce new <code>VIP</code>, <code>VStack</code>, <code>Scratch</code>, and <code>VFlags</code> as output.</p>
 <p>When analyzing a handler, instead of trying to understand every single instruction in the disassembly, the important part is to be able to summarize: &#x201C;this handler transforms the VM state in this way.&#x201D; Once you can say that, you have essentially understood that handler&#x2019;s semantics.</p>
@@ -1493,27 +1493,27 @@ VFlags: <span class="hljs-keyword">virtual</span> flags (playing roles similar <
 <p><img src="/2025/12/11/banda/VMPpart2/en/image3.png" srcset="/img/loading.gif" alt></p>
 <p>If we check the entropy view in DiE, we can see a typical pattern for Virtualization mode. The <code>.text</code> section is obfuscated, and the presence of <code>.vmp0</code> indicates that VMP&#x2019;s core VM bytecode lives there. Entry stub and initialization stub are packed, and the runtime VM engine is expected to reside in <code>.vmp0</code>.</p>
 <p>We will follow the flow <code>WinMain</code> &#x2192; <code>UnpackMe</code> &#x2192; <code>Run</code> and carefully locate where the VMEntry actually is.</p>
-<h3 id="Road-to-VMEntry"><a href="#Road-to-VMEntry" class="headerlink" title="Road to VMEntry"></a>Road to VMEntry</h3><pre><code class="hljs c"><span class="hljs-type">int</span> __stdcall <span class="hljs-title function_">WinMain</span><span class="hljs-params">(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, <span class="hljs-type">int</span> nShowCmd)</span>
-{
-  <span class="hljs-type">void</span> (__stdcall ***v4)(HINSTANCE); <span class="hljs-comment">// eax</span>
-  <span class="hljs-type">void</span> (__stdcall ***v5)(HINSTANCE); <span class="hljs-comment">// ecx</span>
-  <span class="hljs-type">void</span> (__stdcall **v6)(HINSTANCE); <span class="hljs-comment">// eax</span>
-  <span class="hljs-type">int</span> result; <span class="hljs-comment">// eax</span>
+<h3 id="Road-to-VMEntry"><a href="#Road-to-VMEntry" class="headerlink" title="Road to VMEntry"></a>Road to VMEntry</h3><pre><code class="hljs c"><span class="hljs-function"><span class="hljs-keyword">int</span> __stdcall <span class="hljs-title">WinMain</span><span class="hljs-params">(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, <span class="hljs-keyword">int</span> nShowCmd)</span></span>
+<span class="hljs-function"></span>{
+  <span class="hljs-keyword">void</span> (__stdcall ***v4)(HINSTANCE); <span class="hljs-comment">// eax</span>
+  <span class="hljs-keyword">void</span> (__stdcall ***v5)(HINSTANCE); <span class="hljs-comment">// ecx</span>
+  <span class="hljs-keyword">void</span> (__stdcall **v6)(HINSTANCE); <span class="hljs-comment">// eax</span>
+  <span class="hljs-keyword">int</span> result; <span class="hljs-comment">// eax</span>
 
   SetUnhandledExceptionFilter(TopLevelExceptionFilter);
-  v4 = (<span class="hljs-type">void</span> (__stdcall ***)(HINSTANCE))operator new(<span class="hljs-number">0x48u</span>);
+  v4 = (<span class="hljs-keyword">void</span> (__stdcall ***)(HINSTANCE))<span class="hljs-keyword">operator</span> <span class="hljs-keyword">new</span>(<span class="hljs-number">0x48</span>u);
   v5 = v4;
   <span class="hljs-keyword">if</span> ( v4 )
-    *v4 = (<span class="hljs-type">void</span> (__stdcall **)(HINSTANCE))&amp;UnpackMe::`vftable<span class="hljs-string">&apos;;  // vtable &#xC124;&#xC815;</span>
-<span class="hljs-string">  else</span>
-<span class="hljs-string">    v5 = 0;</span>
-<span class="hljs-string">  v6 = *v5;</span>
-<span class="hljs-string">  UnpackMe* this = v5;</span>
-<span class="hljs-string">  (*v6)(hInstance);   // vtable[0] &#xD638;&#xCD9C;</span>
-<span class="hljs-string">  j__free(UnpackMe* this);</span>
-<span class="hljs-string">  return result;</span>
-<span class="hljs-string">}</span>
-<span class="hljs-string"></span></code></pre>
+    *v4 = (<span class="hljs-keyword">void</span> (__stdcall **)(HINSTANCE))&amp;UnpackMe::`vftable<span class="hljs-number">&apos;</span>;  <span class="hljs-comment">// vtable &#xC124;&#xC815;</span>
+  <span class="hljs-keyword">else</span>
+    v5 = <span class="hljs-number">0</span>;
+  v6 = *v5;
+  UnpackMe* <span class="hljs-keyword">this</span> = v5;
+  (*v6)(hInstance);   <span class="hljs-comment">// vtable[0] &#xD638;&#xCD9C;</span>
+  j__free(UnpackMe* <span class="hljs-keyword">this</span>);
+  <span class="hljs-keyword">return</span> result;
+}
+</code></pre>
 <p>A typical virtualization-based obfuscation VM can usually be broken down into the following components:</p>
 <ul>
 <li><p><code>VM Entry</code> / <code>VM Exit</code></p>
@@ -1532,9 +1532,9 @@ VFlags: <span class="hljs-keyword">virtual</span> flags (playing roles similar <
 <p>The <code>WinMain()</code> function itself is structurally simple. From a devirtualization perspective, note that VMP usually virtualizes only certain target functions and leaves the path leading up to those functions in normal C++ code. So here we just need to confirm that <code>vtable[0]</code> is in fact <code>UnpackMe::Run</code> and then move on.</p>
 <p><img src="/2025/12/11/banda/VMPpart2/en/image4.png" srcset="/img/loading.gif" alt></p>
 <p>Following the vtable, we find that the C++ class <code>UnpackMe</code>&#x2019;s vtable lives in the <code>.rdata</code> section. When IDA successfully reconstructs RTTI, it attaches the symbol <code>??_7UnpackMe@@6B@</code> and automatically names the first vtable entry as <code>UnpackMe::Run</code>. Let&#x2019;s now jump into <code>UnpackMe::Run</code>, which opens the main loop.</p>
-<pre><code class="hljs c"><span class="hljs-type">int</span> __thiscall <span class="hljs-title function_">UnpackMe::Run</span><span class="hljs-params">(<span class="hljs-type">void</span> *this, HINSTANCE hInst)</span>
-{
-    *((DWORD*)this + <span class="hljs-number">1</span>) = hInst;
+<pre><code class="hljs c"><span class="hljs-function"><span class="hljs-keyword">int</span> __thiscall <span class="hljs-title">UnpackMe::Run</span><span class="hljs-params">(<span class="hljs-keyword">void</span> *<span class="hljs-keyword">this</span>, HINSTANCE hInst)</span></span>
+<span class="hljs-function"></span>{
+    *((DWORD*)<span class="hljs-keyword">this</span> + <span class="hljs-number">1</span>) = hInst;
 
     WNDCLASSEXW wc = {<span class="hljs-number">0</span>};
     wc.cbSize       = <span class="hljs-keyword">sizeof</span>(wc);
@@ -1544,7 +1544,7 @@ VFlags: <span class="hljs-keyword">virtual</span> flags (playing roles similar <
     wc.lpszClassName = <span class="hljs-string">L&quot;WndClass_DevirtualizeMe&quot;</span>;
     RegisterClassExW(&amp;wc);
 
-    ((<span class="hljs-type">void</span> (__thiscall*)(<span class="hljs-type">void</span>*))(*(DWORD*)this + <span class="hljs-number">8</span>))(this);
+    ((<span class="hljs-keyword">void</span> (__thiscall*)(<span class="hljs-keyword">void</span>*))(*(DWORD*)<span class="hljs-keyword">this</span> + <span class="hljs-number">8</span>))(<span class="hljs-keyword">this</span>);
     <span class="hljs-keyword">while</span> ( GetMessageW(&amp;Msg, <span class="hljs-number">0</span>, <span class="hljs-number">0</span>, <span class="hljs-number">0</span>) )
     {
         TranslateMessage(&amp;Msg);
@@ -1554,12 +1554,12 @@ VFlags: <span class="hljs-keyword">virtual</span> flags (playing roles similar <
 </code></pre>
 <p>From a devirtualization point of view, <code>Run</code> acts as a kind of gatekeeper into the VM. When the user presses the P key, the program flows through this loop and eventually reaches the VMProtect entry point.</p>
 <p>This function registers a window class, sets <code>lpfnWndProc = sub_40CC70</code> as the global WndProc, and then repeatedly calls <code>DispatchMessageW</code> inside the message loop. All key input (including P) goes through this message loop and eventually arrives at <code>WndProc</code>, which then routes messages into <code>UnpackMe</code>&#x2019;s member functions.</p>
-<pre><code class="hljs c">LRESULT __stdcall <span class="hljs-title function_">WndProc</span><span class="hljs-params">(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)</span>
-{
+<pre><code class="hljs c"><span class="hljs-function">LRESULT __stdcall <span class="hljs-title">WndProc</span><span class="hljs-params">(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)</span></span>
+<span class="hljs-function"></span>{
     <span class="hljs-keyword">if</span> ( dword_415F08 )
         <span class="hljs-comment">// vtable[1] = UnpackMe::WndProc(sub_40CB60)</span>
-        <span class="hljs-keyword">return</span> ((<span class="hljs-type">int</span> (__thiscall*)(<span class="hljs-type">void</span>*, HWND, UINT, WPARAM, LPARAM))
-                (*(DWORD*)UnpackMe* this + <span class="hljs-number">4</span>))(
+        <span class="hljs-keyword">return</span> ((<span class="hljs-keyword">int</span> (__thiscall*)(<span class="hljs-keyword">void</span>*, HWND, UINT, WPARAM, LPARAM))
+                (*(DWORD*)UnpackMe* <span class="hljs-keyword">this</span> + <span class="hljs-number">4</span>))(
                     dword_415F08, hWnd, Msg, wParam, lParam);
     <span class="hljs-keyword">else</span>
         <span class="hljs-keyword">return</span> DefWindowProcW(hWnd, Msg, wParam, lParam);
@@ -1567,12 +1567,12 @@ VFlags: <span class="hljs-keyword">virtual</span> flags (playing roles similar <
 </code></pre>
 <p>The important point here is that the OS has no idea that a C++ class named <code>UnpackMe</code> even exists, nor how many instances there are. The OS only knows that for windows of class <code>WndClass_DevirtualizeMe</code>, the WndProc is <code>sub_40CC70</code>, and that function internally forwards messages into <code>UnpackMe::WndProc</code>.</p>
 <p>In other words, from a devirtualization perspective, all keyboard messages eventually end up in <code>UnpackMe::WndProc</code>. Therefore we only need to see how this <code>WndProc()</code> handles <code>WM_KEYDOWN</code>.</p>
-<pre><code class="hljs c"><span class="hljs-type">int</span> __thiscall <span class="hljs-title function_">UnpackMe::WndProc</span><span class="hljs-params">(<span class="hljs-type">void</span> *this,</span>
-<span class="hljs-params">                                 HWND hWnd,</span>
-<span class="hljs-params">                                 UINT Msg,</span>
-<span class="hljs-params">                                 WPARAM wParam,</span>
-<span class="hljs-params">                                 LPARAM lParam)</span>
-{
+<pre><code class="hljs c"><span class="hljs-function"><span class="hljs-keyword">int</span> __thiscall <span class="hljs-title">UnpackMe::WndProc</span><span class="hljs-params">(<span class="hljs-keyword">void</span> *<span class="hljs-keyword">this</span>,</span></span>
+<span class="hljs-function"><span class="hljs-params">                                 HWND hWnd,</span></span>
+<span class="hljs-function"><span class="hljs-params">                                 UINT Msg,</span></span>
+<span class="hljs-function"><span class="hljs-params">                                 WPARAM wParam,</span></span>
+<span class="hljs-function"><span class="hljs-params">                                 LPARAM lParam)</span></span>
+<span class="hljs-function"></span>{
     <span class="hljs-keyword">if</span> ( Msg &gt; <span class="hljs-number">0x14</span> )
     {
         <span class="hljs-keyword">if</span> ( Msg &lt;= <span class="hljs-number">0x111</span> )
@@ -1581,9 +1581,9 @@ VFlags: <span class="hljs-keyword">virtual</span> flags (playing roles similar <
             {
             <span class="hljs-keyword">case</span> <span class="hljs-number">0x100</span>:  <span class="hljs-comment">// WM_KEYDOWN</span>
                 <span class="hljs-comment">// vtable[6] = OnKeyDown</span>
-                <span class="hljs-keyword">return</span> ((<span class="hljs-type">int</span> (__thiscall*)(<span class="hljs-type">void</span>*, HWND, WPARAM, LPARAM))
-                        (*(DWORD*)this + <span class="hljs-number">24</span>))(
-                            this, hWnd, wParam, lParam);
+                <span class="hljs-keyword">return</span> ((<span class="hljs-keyword">int</span> (__thiscall*)(<span class="hljs-keyword">void</span>*, HWND, WPARAM, LPARAM))
+                        (*(DWORD*)<span class="hljs-keyword">this</span> + <span class="hljs-number">24</span>))(
+                            <span class="hljs-keyword">this</span>, hWnd, wParam, lParam);
 
             <span class="hljs-keyword">case</span> <span class="hljs-number">0x111</span>:  <span class="hljs-comment">// WM_COMMAND</span>
                 ...
@@ -1594,11 +1594,11 @@ VFlags: <span class="hljs-keyword">virtual</span> flags (playing roles similar <
 }
 </code></pre>
 <p>When <code>WM_KEYDOWN</code> arrives, this function forwards control to <code>OnKeyDown</code>, which is mapped to <code>vtable[6]</code>. Up to this point we are still just in the message routing layer, and no VMProtect virtualized code has appeared yet. But we do not have to be disappointed&#x2014;things are about to get more interesting.</p>
-<pre><code class="hljs c"><span class="hljs-type">int</span> __thiscall <span class="hljs-title function_">UnpackMe::OnKeyDown</span><span class="hljs-params">(<span class="hljs-type">int</span> this,</span>
-<span class="hljs-params">                                   HWND hWnd,</span>
-<span class="hljs-params">                                   WPARAM wParam,</span>
-<span class="hljs-params">                                   LPARAM lParam)</span>
-{
+<pre><code class="hljs c"><span class="hljs-function"><span class="hljs-keyword">int</span> __thiscall <span class="hljs-title">UnpackMe::OnKeyDown</span><span class="hljs-params">(<span class="hljs-keyword">int</span> <span class="hljs-keyword">this</span>,</span></span>
+<span class="hljs-function"><span class="hljs-params">                                   HWND hWnd,</span></span>
+<span class="hljs-function"><span class="hljs-params">                                   WPARAM wParam,</span></span>
+<span class="hljs-function"><span class="hljs-params">                                   LPARAM lParam)</span></span>
+<span class="hljs-function"></span>{
     <span class="hljs-keyword">if</span> ( wParam == <span class="hljs-string">&apos;P&apos;</span> )
         proc();
     <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
@@ -1739,7 +1739,7 @@ ID82_003: IP=<span class="hljs-number">0x004323ff</span> EAX=<span class="hljs-n
 <h3 id="Splitting-the-VM-only-trace-by-ID-82-execution-segments"><a href="#Splitting-the-VM-only-trace-by-ID-82-execution-segments" class="headerlink" title="Splitting the VM-only trace by ID 82 execution segments"></a>Splitting the VM-only trace by ID 82 execution segments</h3><p>With these logs in hand, we can now start restoring the meaning of individual VM handlers.</p>
 <pre><code class="hljs c">total ins: <span class="hljs-number">58414</span>
 ID82 entries: <span class="hljs-number">107</span>
-ID82 <span class="hljs-title function_">segments</span> <span class="hljs-params">(with glue)</span>: 106
+<span class="hljs-function">ID82 <span class="hljs-title">segments</span> <span class="hljs-params">(with glue)</span>: 106</span>
 written id82_segments.json
 </code></pre>
 <p>To do that, I wrote a script that takes <code>vmtrace.out</code>, locates each occurrence of ID 82, and slices the trace into segments corresponding to &#x201C;one execution of ID 82, including its glue code.&#x201D; Each such segment is then written into a JSON file. Earlier we counted 107 entries for ID 82; the script extracted 106 segments into the JSON.</p>
@@ -1820,109 +1820,109 @@ indices: [<span class="hljs-number">22</span>, <span class="hljs-number">65</spa
 <p>But this is still not yet the end. To fully understand the mathematical transformation encoded by this handler, we need to load this code into Triton, feed it the initial register state and bytecode values we collected earlier, and perform symbolic execution.</p>
 <h3 id="Tracking-state-changes"><a href="#Tracking-state-changes" class="headerlink" title="Tracking state changes"></a>Tracking state changes</h3><p>Using Triton to execute the ID 82 path and compare the registers before and after, we obtain a trace like the following:</p>
 <pre><code class="hljs c"><span class="hljs-number">0x4442f2</span>: shr dh, cl
-<span class="hljs-number">0x43641a</span>: not bp
+<span class="hljs-number">0x43641a</span>: <span class="hljs-keyword">not</span> bp
 
---- [ Logic <span class="hljs-title function_">Start</span> <span class="hljs-params">(<span class="hljs-number">0x41F637</span>)</span> ] ---
-0x41f638: movsx edi, di
-0x41f63c: lahf
-0x41f63d: bts ebp, esi
-0x41f641: cmp bh, 0xb4
-0x41f645: shr bp, 0xa6
-0x41f649: sub ebx, edx
-0x41f64b: test esi, ebp
-0x41f64e: xchg ah, bh
-0x41f650: sub ax, bx
-0x41f653: movsx ebx, bp
-0x41f656: mov eax, 0
-0x41f65b: not si
-0x41f65e: xadd ebp, esi
-0x41f662: mov esi, dword ptr [esp + 0x28]
-0x41f666: add esi, 0x55106798
-0x41f66c: neg esi
-0x41f66e: rol edi, 0x70
-0x41f671: add esi, 0x69733a52
-0x41f677: btr ebp, 0xc0
-0x41f67b: rol esi, 1
-0x41f67d: sbb ebx, 0x37516d2d
-0x41f683: not esi
-0x41f685: clc
-0x41f686: cmp eax, esp
-0x41f688: xor ebp, esp
-0x41f68a: add esi, eax
-0x41f68c: setns al
-0x41f68f: mov ebp, esp
-0x41f691: sub bx, sp
-0x41f694: rol ax, cl
-0x41f697: dec di
-0x41f69a: sub esp, 0xc0
-0x41f6a0: jmp 0x453e79
-0x453e79: mov ebx, esi
-0x453e7b: bt eax, esp
-0x453e7e: btc ax, 0x47
-0x453e83: btr eax, edx
-0x453e86: mov eax, 0
-0x453e8b: jmp 0x4620dd
-0x4620dd: sub ebx, eax
-0x4620df: shld eax, eax, 0xe3
-0x4620e3: sub eax, edi
-0x4620e5: stc
-0x4620e6: lea edi, [0x4620e6]
-0x4620ec: mov eax, dword ptr [esi]
-0x4620ee: cmc
-0x4620ef: test cl, 0x19
-0x4620f2: lea esi, [esi + 4]
-0x4620f8: cmc
-0x4620f9: test ebx, 0x76f532e4
-0x4620ff: xor eax, ebx
-0x462101: ror eax, 1
-0x462103: stc
-0x462104: xor eax, 0x4acb3db9
-0x462109: sub eax, 0x458c0140
-0x46210e: rol eax, 1
-0x462110: xor ebx, eax
-0x462112: cmc
-0x462113: cmp bx, sp
-0x462116: clc
-0x462117: add edi, eax
-0x462119: jmp 0x4323ff
---- [ Logic <span class="hljs-title function_">End</span> <span class="hljs-params">(<span class="hljs-number">0x432400</span>)</span> ] ---
+--- [ Logic Start (0x41F637) ] ---
+<span class="hljs-number">0x41f638</span>: movsx edi, di
+<span class="hljs-number">0x41f63c</span>: lahf
+<span class="hljs-number">0x41f63d</span>: bts ebp, esi
+<span class="hljs-number">0x41f641</span>: cmp bh, <span class="hljs-number">0xb4</span>
+<span class="hljs-number">0x41f645</span>: shr bp, <span class="hljs-number">0xa6</span>
+<span class="hljs-number">0x41f649</span>: sub ebx, edx
+<span class="hljs-number">0x41f64b</span>: test esi, ebp
+<span class="hljs-number">0x41f64e</span>: xchg ah, bh
+<span class="hljs-number">0x41f650</span>: sub ax, bx
+<span class="hljs-number">0x41f653</span>: movsx ebx, bp
+<span class="hljs-number">0x41f656</span>: mov eax, <span class="hljs-number">0</span>
+<span class="hljs-number">0x41f65b</span>: <span class="hljs-keyword">not</span> si
+<span class="hljs-number">0x41f65e</span>: xadd ebp, esi
+<span class="hljs-number">0x41f662</span>: mov esi, dword ptr [esp + <span class="hljs-number">0x28</span>]
+<span class="hljs-number">0x41f666</span>: add esi, <span class="hljs-number">0x55106798</span>
+<span class="hljs-number">0x41f66c</span>: neg esi
+<span class="hljs-number">0x41f66e</span>: rol edi, <span class="hljs-number">0x70</span>
+<span class="hljs-number">0x41f671</span>: add esi, <span class="hljs-number">0x69733a52</span>
+<span class="hljs-number">0x41f677</span>: btr ebp, <span class="hljs-number">0xc0</span>
+<span class="hljs-number">0x41f67b</span>: rol esi, <span class="hljs-number">1</span>
+<span class="hljs-number">0x41f67d</span>: sbb ebx, <span class="hljs-number">0x37516d2d</span>
+<span class="hljs-number">0x41f683</span>: <span class="hljs-keyword">not</span> esi
+<span class="hljs-number">0x41f685</span>: clc
+<span class="hljs-number">0x41f686</span>: cmp eax, esp
+<span class="hljs-number">0x41f688</span>: <span class="hljs-keyword">xor</span> ebp, esp
+<span class="hljs-number">0x41f68a</span>: add esi, eax
+<span class="hljs-number">0x41f68c</span>: setns al
+<span class="hljs-number">0x41f68f</span>: mov ebp, esp
+<span class="hljs-number">0x41f691</span>: sub bx, sp
+<span class="hljs-number">0x41f694</span>: rol ax, cl
+<span class="hljs-number">0x41f697</span>: dec di
+<span class="hljs-number">0x41f69a</span>: sub esp, <span class="hljs-number">0xc0</span>
+<span class="hljs-number">0x41f6a0</span>: jmp <span class="hljs-number">0x453e79</span>
+<span class="hljs-number">0x453e79</span>: mov ebx, esi
+<span class="hljs-number">0x453e7b</span>: bt eax, esp
+<span class="hljs-number">0x453e7e</span>: btc ax, <span class="hljs-number">0x47</span>
+<span class="hljs-number">0x453e83</span>: btr eax, edx
+<span class="hljs-number">0x453e86</span>: mov eax, <span class="hljs-number">0</span>
+<span class="hljs-number">0x453e8b</span>: jmp <span class="hljs-number">0x4620dd</span>
+<span class="hljs-number">0x4620dd</span>: sub ebx, eax
+<span class="hljs-number">0x4620df</span>: shld eax, eax, <span class="hljs-number">0xe3</span>
+<span class="hljs-number">0x4620e3</span>: sub eax, edi
+<span class="hljs-number">0x4620e5</span>: stc
+<span class="hljs-number">0x4620e6</span>: lea edi, [<span class="hljs-number">0x4620e6</span>]
+<span class="hljs-number">0x4620ec</span>: mov eax, dword ptr [esi]
+<span class="hljs-number">0x4620ee</span>: cmc
+<span class="hljs-number">0x4620ef</span>: test cl, <span class="hljs-number">0x19</span>
+<span class="hljs-number">0x4620f2</span>: lea esi, [esi + <span class="hljs-number">4</span>]
+<span class="hljs-number">0x4620f8</span>: cmc
+<span class="hljs-number">0x4620f9</span>: test ebx, <span class="hljs-number">0x76f532e4</span>
+<span class="hljs-number">0x4620ff</span>: <span class="hljs-keyword">xor</span> eax, ebx
+<span class="hljs-number">0x462101</span>: ror eax, <span class="hljs-number">1</span>
+<span class="hljs-number">0x462103</span>: stc
+<span class="hljs-number">0x462104</span>: <span class="hljs-keyword">xor</span> eax, <span class="hljs-number">0x4acb3db9</span>
+<span class="hljs-number">0x462109</span>: sub eax, <span class="hljs-number">0x458c0140</span>
+<span class="hljs-number">0x46210e</span>: rol eax, <span class="hljs-number">1</span>
+<span class="hljs-number">0x462110</span>: <span class="hljs-keyword">xor</span> ebx, eax
+<span class="hljs-number">0x462112</span>: cmc
+<span class="hljs-number">0x462113</span>: cmp bx, sp
+<span class="hljs-number">0x462116</span>: clc
+<span class="hljs-number">0x462117</span>: add edi, eax
+<span class="hljs-number">0x462119</span>: jmp <span class="hljs-number">0x4323ff</span>
+--- [ Logic End (0x432400) ] ---
 </code></pre>
 <p>This is the <code>asm</code> trace produced by a Triton-based analysis script. It reconstructs the execution path of handler ID 82 using both <code>vmtrace.out</code> and the bytes from the actual binary.</p>
 <p>Comparing registers before and after execution for each test case yields:</p>
 <pre><code class="hljs c">=== <span class="hljs-keyword">case</span> <span class="hljs-number">1</span> bc = <span class="hljs-number">0x1ecbf564</span>
 init EAX = <span class="hljs-number">0x271c9</span> EBX = <span class="hljs-number">0x458b96</span> ESI = <span class="hljs-number">0x47fa63</span> EDI = <span class="hljs-number">0x4892af</span>
-final EAX = <span class="hljs-number">0x19fe78</span>
-final EBX = <span class="hljs-number">0xafe65f2</span>
-final ECX = <span class="hljs-number">0x20</span>
-final EDX = <span class="hljs-number">0x0</span>
-final ESI = <span class="hljs-number">0x47fa68</span>
-final EDI = <span class="hljs-number">0xb0480ee</span>
-final EBP = <span class="hljs-number">0x19fed4</span>
-final ESP = <span class="hljs-number">0x19fe18</span>
+<span class="hljs-keyword">final</span> EAX = <span class="hljs-number">0x19fe78</span>
+<span class="hljs-keyword">final</span> EBX = <span class="hljs-number">0xafe65f2</span>
+<span class="hljs-keyword">final</span> ECX = <span class="hljs-number">0x20</span>
+<span class="hljs-keyword">final</span> EDX = <span class="hljs-number">0x0</span>
+<span class="hljs-keyword">final</span> ESI = <span class="hljs-number">0x47fa68</span>
+<span class="hljs-keyword">final</span> EDI = <span class="hljs-number">0xb0480ee</span>
+<span class="hljs-keyword">final</span> EBP = <span class="hljs-number">0x19fed4</span>
+<span class="hljs-keyword">final</span> ESP = <span class="hljs-number">0x19fe18</span>
 diff EAX = <span class="hljs-number">0x1b8fb1</span> EBX diff = <span class="hljs-number">0xabbee64</span>
 
 === <span class="hljs-keyword">case</span> <span class="hljs-number">2</span> bc = <span class="hljs-number">0x1ec6b25f</span>
 init EAX = <span class="hljs-number">0xfffcff9f</span> EBX = <span class="hljs-number">0xffb934ac</span> ESI = <span class="hljs-number">0x45cb37</span> EDI = <span class="hljs-number">0x432085</span>
-final EAX = <span class="hljs-number">0x19fc70</span>
-final EBX = <span class="hljs-number">0x20ae78f3</span>
-final ECX = <span class="hljs-number">0x20</span>
-final EDX = <span class="hljs-number">0x422a</span>
-final ESI = <span class="hljs-number">0x45cb3c</span>
-final EDI = <span class="hljs-number">0xdf5a6d09</span>
-final EBP = <span class="hljs-number">0x19fccc</span>
-final ESP = <span class="hljs-number">0x19fc10</span>
+<span class="hljs-keyword">final</span> EAX = <span class="hljs-number">0x19fc70</span>
+<span class="hljs-keyword">final</span> EBX = <span class="hljs-number">0x20ae78f3</span>
+<span class="hljs-keyword">final</span> ECX = <span class="hljs-number">0x20</span>
+<span class="hljs-keyword">final</span> EDX = <span class="hljs-number">0x422a</span>
+<span class="hljs-keyword">final</span> ESI = <span class="hljs-number">0x45cb3c</span>
+<span class="hljs-keyword">final</span> EDI = <span class="hljs-number">0xdf5a6d09</span>
+<span class="hljs-keyword">final</span> EBP = <span class="hljs-number">0x19fccc</span>
+<span class="hljs-keyword">final</span> ESP = <span class="hljs-number">0x19fc10</span>
 diff EAX = <span class="hljs-number">0xffe503ef</span> EBX diff = <span class="hljs-number">0xdf174c5f</span>
 
 === <span class="hljs-keyword">case</span> <span class="hljs-number">3</span> bc = <span class="hljs-number">0x1ec5393d</span>
 init EAX = <span class="hljs-number">0xfffdab5b</span> EBX = <span class="hljs-number">0xffbb44ce</span> ESI = <span class="hljs-number">0x46ef99</span> EDI = <span class="hljs-number">0x43cc41</span>
-final EAX = <span class="hljs-number">0x19fc60</span>
-final EBX = <span class="hljs-number">0x20ae78f3</span>
-final ECX = <span class="hljs-number">0xdcedb11a</span>
-final EDX = <span class="hljs-number">0x0</span>
-final ESI = <span class="hljs-number">0x46ef9e</span>
-final EDI = <span class="hljs-number">0xdf590927</span>
-final EBP = <span class="hljs-number">0x19fcbc</span>
-final ESP = <span class="hljs-number">0x19fc00</span>
+<span class="hljs-keyword">final</span> EAX = <span class="hljs-number">0x19fc60</span>
+<span class="hljs-keyword">final</span> EBX = <span class="hljs-number">0x20ae78f3</span>
+<span class="hljs-keyword">final</span> ECX = <span class="hljs-number">0xdcedb11a</span>
+<span class="hljs-keyword">final</span> EDX = <span class="hljs-number">0x0</span>
+<span class="hljs-keyword">final</span> ESI = <span class="hljs-number">0x46ef9e</span>
+<span class="hljs-keyword">final</span> EDI = <span class="hljs-number">0xdf590927</span>
+<span class="hljs-keyword">final</span> EBP = <span class="hljs-number">0x19fcbc</span>
+<span class="hljs-keyword">final</span> ESP = <span class="hljs-number">0x19fc00</span>
 diff EAX = <span class="hljs-number">0xffe4573b</span> EBX diff = <span class="hljs-number">0xdf153c3d</span>
 </code></pre>
 <p>We can extract the following key observations:</p>
@@ -1958,26 +1958,26 @@ So handler ID 82 consumes 5 bytes from the bytecode stream. This matches the ear
   [M] <span class="hljs-number">0x432085</span>: movzx eax, byte ptr [esi]
   [!] <span class="hljs-number">0x432088</span>: rol cx, <span class="hljs-number">0xc</span>
   [!] <span class="hljs-number">0x43208c</span>: add esi, <span class="hljs-number">1</span>
-  [!] <span class="hljs-number">0x432096</span>: xor al, bl
+  [!] <span class="hljs-number">0x432096</span>: <span class="hljs-keyword">xor</span> al, bl
   [!] <span class="hljs-number">0x43209a</span>: ror cx, <span class="hljs-number">0xf6</span>
   [!] <span class="hljs-number">0x43209e</span>: sub al, <span class="hljs-number">0x3a</span>
   [!] <span class="hljs-number">0x4320a0</span>: ror al, <span class="hljs-number">1</span>
   [!] <span class="hljs-number">0x4320a2</span>: neg al
-  [!] <span class="hljs-number">0x4320aa</span>: not al
-  [!] <span class="hljs-number">0x4320b1</span>: and cx, si
-  [!] <span class="hljs-number">0x4320b4</span>: xor bl, al
+  [!] <span class="hljs-number">0x4320aa</span>: <span class="hljs-keyword">not</span> al
+  [!] <span class="hljs-number">0x4320b1</span>: <span class="hljs-keyword">and</span> cx, si
+  [!] <span class="hljs-number">0x4320b4</span>: <span class="hljs-keyword">xor</span> bl, al
   [!] <span class="hljs-number">0x4320b6</span>: mov ecx, dword ptr [ebp]
   [!] <span class="hljs-number">0x4320bf</span>: add ebp, <span class="hljs-number">4</span>
   [!] <span class="hljs-number">0x4320c5</span>: mov dword ptr [esp + eax], ecx
   [!] <span class="hljs-number">0x4320c8</span>: ror eax, <span class="hljs-number">0xd2</span>
   [!] <span class="hljs-number">0x4320cb</span>: mov eax, dword ptr [esi]
   [!] <span class="hljs-number">0x4320cd</span>: add esi, <span class="hljs-number">4</span>
-  [!] <span class="hljs-number">0x4320de</span>: xor eax, ebx
+  [!] <span class="hljs-number">0x4320de</span>: <span class="hljs-keyword">xor</span> eax, ebx
   [!] <span class="hljs-number">0x4320e1</span>: ror eax, <span class="hljs-number">1</span>
-  [!] <span class="hljs-number">0x4320e3</span>: xor eax, <span class="hljs-number">0x4acb3db9</span>
+  [!] <span class="hljs-number">0x4320e3</span>: <span class="hljs-keyword">xor</span> eax, <span class="hljs-number">0x4acb3db9</span>
   [!] <span class="hljs-number">0x4320ee</span>: sub eax, <span class="hljs-number">0x458c0140</span>
   [!] <span class="hljs-number">0x4320f3</span>: rol eax, <span class="hljs-number">1</span>
-  [!] <span class="hljs-number">0x4320f5</span>: xor ebx, eax
+  [!] <span class="hljs-number">0x4320f5</span>: <span class="hljs-keyword">xor</span> ebx, eax
   [!] <span class="hljs-number">0x4320fd</span>: add edi, eax
 ----------------------------------------
 ...
@@ -2118,9 +2118,9 @@ decrypted = ~val &amp; <span class="hljs-number">0xFFFFFFFF</span>
                 <article class="post-prev col-6">
                   
                   
-                  <a href="/2025/12/13/bekim/2025-12-13/">
+                  <a href="/2025/12/11/banda/VMPpart2/ko/">
                     <i class="iconfont icon-arrowleft"></i>
-                    <span class="hidden-mobile">[하루한줄] CVE-2025-65108: md-to-pdf의 Front matter 취약점을 통한 RCE</span>
+                    <span class="hidden-mobile">[Research] VMProtect Devirtualization: Part 2 (KR)</span>
                     <span class="visible-mobile">Previous</span>
                   </a>
                   
@@ -2128,8 +2128,8 @@ decrypted = ~val &amp; <span class="hljs-number">0xFFFFFFFF</span>
                 <article class="post-next col-6">
                   
                   
-                  <a href="/2025/12/11/banda/VMPpart2/ko/">
-                    <span class="hidden-mobile">[Research] VMProtect Devirtualization: Part 2 (KR)</span>
+                  <a href="/2025/12/10/millet/cve-2025-55182/">
+                    <span class="hidden-mobile">[하루한줄] CVE-2025-55182: React Server Component의 Flight Protocol 입력 검증 미흡으로 인한 RCE 취약점</span>
                     <span class="visible-mobile">Next</span>
                     <i class="iconfont icon-arrowright"></i>
                   </a>

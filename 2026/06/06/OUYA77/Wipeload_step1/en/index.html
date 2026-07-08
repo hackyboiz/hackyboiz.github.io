@@ -163,7 +163,7 @@
 &lt;p&gt;During &lt;code&gt;ForceClose()&lt;/code&gt;, Chrome iterates over every active IndexedDB connection stored in &lt;code&gt;connections_&lt;/code&gt; and closes them one by one. The interesting behavior occurs when the final connection is closed. As soon as the last connection is removed, the pending &lt;code&gt;Open(v2)&lt;/code&gt; request is processed, which initiates a version-upgrade transaction. This operation creates a new upgrade connection and inserts it back into the &lt;code&gt;connections_&lt;/code&gt; array.&lt;/p&gt;
 &lt;p&gt;The problem is that the original close loop is already in the process of terminating. As a result, the newly inserted connection is never properly cleaned up.&lt;/p&gt;
 &lt;p&gt;Consequently, the following condition inside &lt;code&gt;Close()&lt;/code&gt; no longer evaluates to true:&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;connections_.&lt;span class=&#34;hljs-built_in&#34;&gt;empty&lt;/span&gt;() &amp;amp;&amp;amp; !active_request_&lt;/code&gt;&lt;/pre&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;connections_.empty() &amp;amp;&amp;amp; !active_request_&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Since this condition fails, the call to &lt;code&gt;factory_-&amp;gt;ReleaseDatabase()&lt;/code&gt; is skipped. The database entry therefore remains registered inside &lt;code&gt;database_map_&lt;/code&gt;, even though the object should eventually be released.&lt;/p&gt;
 &lt;p&gt;Later, when &lt;code&gt;AbortTransactionsForDatabase()&lt;/code&gt; aborts the version-change transaction, the reference count of the corresponding &lt;code&gt;IndexedDBDatabase&lt;/code&gt; object drops to zero and the object is destroyed. However, because the cleanup of &lt;code&gt;database_map_&lt;/code&gt; was skipped earlier, the map still contains a pointer to the freed object. In other words, &lt;code&gt;database_map_&lt;/code&gt; now holds a dangling pointer.&lt;/p&gt;
 &lt;p&gt;Once that stale pointer is accessed again, the exploit gains a classic &lt;strong&gt;Use-After-Free (UAF)&lt;/strong&gt; condition.&lt;/p&gt;
@@ -295,9 +295,9 @@
 &lt;/ul&gt;
 &lt;h3 id=&#34;Step-4-AAF-Arbitrary-Address-Free-Primitive&#34;&gt;&lt;a href=&#34;#Step-4-AAF-Arbitrary-Address-Free-Primitive&#34; class=&#34;headerlink&#34; title=&#34;Step 4. AAF(Arbitrary Address Free) Primitive&#34;&gt;&lt;/a&gt;Step 4. AAF(Arbitrary Address Free) Primitive&lt;/h3&gt;&lt;p&gt;As discussed earlier, &lt;code&gt;pending_requests&lt;/code&gt; is implemented using a circular deque. Because of its design, when the deque needs to expand, it does not simply grow into adjacent memory. Instead, it allocates a new backing buffer, copies the existing contents, and frees the old buffer. This behavior becomes extremely useful when combined with our fake object.&lt;/p&gt;
 &lt;p&gt;After setting &lt;code&gt;active_request_&lt;/code&gt; to a non-null value, we configure &lt;code&gt;pending_requests&lt;/code&gt; as follows:&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&#34;hljs mipsasm&#34;&gt;pending_requests
-- &lt;span class=&#34;hljs-keyword&#34;&gt;buffer_ &lt;/span&gt;  = leaked_heap_addr_   &amp;lt;- &lt;span class=&#34;hljs-keyword&#34;&gt;address &lt;/span&gt;to &lt;span class=&#34;hljs-keyword&#34;&gt;be &lt;/span&gt;freed
-- capacity_ = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-keyword&#34;&gt;begin_=end_ &lt;/span&gt;= &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;  (empty, expansion-ready)&lt;/code&gt;&lt;/pre&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs routeros&#34;&gt;pending_requests
+- buffer_   = leaked_heap_addr_   &amp;lt;-&lt;span class=&#34;hljs-built_in&#34;&gt; address &lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;to&lt;/span&gt; be freed
+- capacity_ = 1, &lt;span class=&#34;hljs-attribute&#34;&gt;begin_&lt;/span&gt;=end_ = 0  (empty, expansion-ready)&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;In this state, any operation that forces the deque to expand will eventually free the address stored in &lt;code&gt;buffer_&lt;/code&gt;.&lt;/p&gt;
 &lt;p&gt;In other words, if we can fully control the contents of &lt;code&gt;pending_requests&lt;/code&gt;, we gain the ability to free an arbitrary address. This gives us an &lt;strong&gt;Arbitrary Address Free (AAF)&lt;/strong&gt; primitive.&lt;/p&gt;
 &lt;p&gt;To trigger it, we first reclaim the slot that was previously used during the heap leak stage. Calling &lt;code&gt;DeleteDatabase(&amp;quot;db_reuse&amp;quot;, force_close=true)&lt;/code&gt; causes the corresponding &lt;code&gt;key_path&lt;/code&gt; strings to be released, returning the 0x170-byte slot to the free list once again. Whereas Step 3 used this slot for leaking heap addresses, we now reuse it to construct an AAF payload.&lt;/p&gt;
@@ -336,12 +336,12 @@ slot state clear
     user_va = slot[&lt;span class=&#34;hljs-number&#34;&gt;15&lt;/span&gt;]
     mdl     = a1[&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; * (&lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt; * idx + &lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;)]
     
-    &lt;span class=&#34;hljs-built_in&#34;&gt;MmUnmapLockedPages&lt;/span&gt;(user_va, mdl)
-    &lt;span class=&#34;hljs-built_in&#34;&gt;IoFreeMdl&lt;/span&gt;(mdl)
+    MmUnmapLockedPages(user_va, mdl)
+    IoFreeMdl(mdl)
 &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;:
     mdl = slot[&lt;span class=&#34;hljs-number&#34;&gt;17&lt;/span&gt;]
     &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; mdl:
-        &lt;span class=&#34;hljs-built_in&#34;&gt;IoFreeMdl&lt;/span&gt;(mdl)&lt;/code&gt;&lt;/pre&gt;
+        IoFreeMdl(mdl)&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Register/unregister designs are particularly prone to this class of issue because multiple threads may end up referencing the same MDL pointer. In the pattern I analyzed, the unregister routine looked up the mapped virtual address and MDL pointer that had previously been stored during registration. The sequence &lt;code&gt;slot lookup&lt;/code&gt; &amp;#x2192; &lt;code&gt;slot clear&lt;/code&gt; &amp;#x2192; &lt;code&gt;MmUnmapLockedPages()&lt;/code&gt; &amp;#x2192; &lt;code&gt;IoFreeMdl()&lt;/code&gt; was performed without sufficient synchronization.&lt;/p&gt;
 &lt;p&gt;As a result, two threads could race through the unregister path and free the same MDL object twice, leading to a double-free condition.&lt;/p&gt;
 &lt;p&gt;&lt;strong&gt;Windows 22H2 kernel driver exploit primitive&lt;/strong&gt;&lt;/p&gt;
@@ -527,7 +527,7 @@ slot state clear
 &lt;p&gt;During &lt;code&gt;ForceClose()&lt;/code&gt;, Chrome iterates over every active IndexedDB connection stored in &lt;code&gt;connections_&lt;/code&gt; and closes them one by one. The interesting behavior occurs when the final connection is closed. As soon as the last connection is removed, the pending &lt;code&gt;Open(v2)&lt;/code&gt; request is processed, which initiates a version-upgrade transaction. This operation creates a new upgrade connection and inserts it back into the &lt;code&gt;connections_&lt;/code&gt; array.&lt;/p&gt;
 &lt;p&gt;The problem is that the original close loop is already in the process of terminating. As a result, the newly inserted connection is never properly cleaned up.&lt;/p&gt;
 &lt;p&gt;Consequently, the following condition inside &lt;code&gt;Close()&lt;/code&gt; no longer evaluates to true:&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;connections_.&lt;span class=&#34;hljs-built_in&#34;&gt;empty&lt;/span&gt;() &amp;amp;&amp;amp; !active_request_&lt;/code&gt;&lt;/pre&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;connections_.empty() &amp;amp;&amp;amp; !active_request_&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Since this condition fails, the call to &lt;code&gt;factory_-&amp;gt;ReleaseDatabase()&lt;/code&gt; is skipped. The database entry therefore remains registered inside &lt;code&gt;database_map_&lt;/code&gt;, even though the object should eventually be released.&lt;/p&gt;
 &lt;p&gt;Later, when &lt;code&gt;AbortTransactionsForDatabase()&lt;/code&gt; aborts the version-change transaction, the reference count of the corresponding &lt;code&gt;IndexedDBDatabase&lt;/code&gt; object drops to zero and the object is destroyed. However, because the cleanup of &lt;code&gt;database_map_&lt;/code&gt; was skipped earlier, the map still contains a pointer to the freed object. In other words, &lt;code&gt;database_map_&lt;/code&gt; now holds a dangling pointer.&lt;/p&gt;
 &lt;p&gt;Once that stale pointer is accessed again, the exploit gains a classic &lt;strong&gt;Use-After-Free (UAF)&lt;/strong&gt; condition.&lt;/p&gt;
@@ -659,9 +659,9 @@ slot state clear
 &lt;/ul&gt;
 &lt;h3 id=&#34;Step-4-AAF-Arbitrary-Address-Free-Primitive&#34;&gt;&lt;a href=&#34;#Step-4-AAF-Arbitrary-Address-Free-Primitive&#34; class=&#34;headerlink&#34; title=&#34;Step 4. AAF(Arbitrary Address Free) Primitive&#34;&gt;&lt;/a&gt;Step 4. AAF(Arbitrary Address Free) Primitive&lt;/h3&gt;&lt;p&gt;As discussed earlier, &lt;code&gt;pending_requests&lt;/code&gt; is implemented using a circular deque. Because of its design, when the deque needs to expand, it does not simply grow into adjacent memory. Instead, it allocates a new backing buffer, copies the existing contents, and frees the old buffer. This behavior becomes extremely useful when combined with our fake object.&lt;/p&gt;
 &lt;p&gt;After setting &lt;code&gt;active_request_&lt;/code&gt; to a non-null value, we configure &lt;code&gt;pending_requests&lt;/code&gt; as follows:&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&#34;hljs mipsasm&#34;&gt;pending_requests
-- &lt;span class=&#34;hljs-keyword&#34;&gt;buffer_ &lt;/span&gt;  = leaked_heap_addr_   &amp;lt;- &lt;span class=&#34;hljs-keyword&#34;&gt;address &lt;/span&gt;to &lt;span class=&#34;hljs-keyword&#34;&gt;be &lt;/span&gt;freed
-- capacity_ = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-keyword&#34;&gt;begin_=end_ &lt;/span&gt;= &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;  (empty, expansion-ready)&lt;/code&gt;&lt;/pre&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs routeros&#34;&gt;pending_requests
+- buffer_   = leaked_heap_addr_   &amp;lt;-&lt;span class=&#34;hljs-built_in&#34;&gt; address &lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;to&lt;/span&gt; be freed
+- capacity_ = 1, &lt;span class=&#34;hljs-attribute&#34;&gt;begin_&lt;/span&gt;=end_ = 0  (empty, expansion-ready)&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;In this state, any operation that forces the deque to expand will eventually free the address stored in &lt;code&gt;buffer_&lt;/code&gt;.&lt;/p&gt;
 &lt;p&gt;In other words, if we can fully control the contents of &lt;code&gt;pending_requests&lt;/code&gt;, we gain the ability to free an arbitrary address. This gives us an &lt;strong&gt;Arbitrary Address Free (AAF)&lt;/strong&gt; primitive.&lt;/p&gt;
 &lt;p&gt;To trigger it, we first reclaim the slot that was previously used during the heap leak stage. Calling &lt;code&gt;DeleteDatabase(&amp;quot;db_reuse&amp;quot;, force_close=true)&lt;/code&gt; causes the corresponding &lt;code&gt;key_path&lt;/code&gt; strings to be released, returning the 0x170-byte slot to the free list once again. Whereas Step 3 used this slot for leaking heap addresses, we now reuse it to construct an AAF payload.&lt;/p&gt;
@@ -700,12 +700,12 @@ slot state clear
     user_va = slot[&lt;span class=&#34;hljs-number&#34;&gt;15&lt;/span&gt;]
     mdl     = a1[&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; * (&lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt; * idx + &lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;)]
     
-    &lt;span class=&#34;hljs-built_in&#34;&gt;MmUnmapLockedPages&lt;/span&gt;(user_va, mdl)
-    &lt;span class=&#34;hljs-built_in&#34;&gt;IoFreeMdl&lt;/span&gt;(mdl)
+    MmUnmapLockedPages(user_va, mdl)
+    IoFreeMdl(mdl)
 &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt;:
     mdl = slot[&lt;span class=&#34;hljs-number&#34;&gt;17&lt;/span&gt;]
     &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; mdl:
-        &lt;span class=&#34;hljs-built_in&#34;&gt;IoFreeMdl&lt;/span&gt;(mdl)&lt;/code&gt;&lt;/pre&gt;
+        IoFreeMdl(mdl)&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Register/unregister designs are particularly prone to this class of issue because multiple threads may end up referencing the same MDL pointer. In the pattern I analyzed, the unregister routine looked up the mapped virtual address and MDL pointer that had previously been stored during registration. The sequence &lt;code&gt;slot lookup&lt;/code&gt; &amp;#x2192; &lt;code&gt;slot clear&lt;/code&gt; &amp;#x2192; &lt;code&gt;MmUnmapLockedPages()&lt;/code&gt; &amp;#x2192; &lt;code&gt;IoFreeMdl()&lt;/code&gt; was performed without sufficient synchronization.&lt;/p&gt;
 &lt;p&gt;As a result, two threads could race through the unregister path and free the same MDL object twice, leading to a double-free condition.&lt;/p&gt;
 &lt;p&gt;&lt;strong&gt;Windows 22H2 kernel driver exploit primitive&lt;/strong&gt;&lt;/p&gt;
@@ -1110,7 +1110,7 @@ slot state clear
 <p>During <code>ForceClose()</code>, Chrome iterates over every active IndexedDB connection stored in <code>connections_</code> and closes them one by one. The interesting behavior occurs when the final connection is closed. As soon as the last connection is removed, the pending <code>Open(v2)</code> request is processed, which initiates a version-upgrade transaction. This operation creates a new upgrade connection and inserts it back into the <code>connections_</code> array.</p>
 <p>The problem is that the original close loop is already in the process of terminating. As a result, the newly inserted connection is never properly cleaned up.</p>
 <p>Consequently, the following condition inside <code>Close()</code> no longer evaluates to true:</p>
-<pre><code class="hljs cpp">connections_.<span class="hljs-built_in">empty</span>() &amp;&amp; !active_request_</code></pre>
+<pre><code class="hljs cpp">connections_.empty() &amp;&amp; !active_request_</code></pre>
 <p>Since this condition fails, the call to <code>factory_-&gt;ReleaseDatabase()</code> is skipped. The database entry therefore remains registered inside <code>database_map_</code>, even though the object should eventually be released.</p>
 <p>Later, when <code>AbortTransactionsForDatabase()</code> aborts the version-change transaction, the reference count of the corresponding <code>IndexedDBDatabase</code> object drops to zero and the object is destroyed. However, because the cleanup of <code>database_map_</code> was skipped earlier, the map still contains a pointer to the freed object. In other words, <code>database_map_</code> now holds a dangling pointer.</p>
 <p>Once that stale pointer is accessed again, the exploit gains a classic <strong>Use-After-Free (UAF)</strong> condition.</p>
@@ -1242,9 +1242,9 @@ slot state clear
 </ul>
 <h3 id="Step-4-AAF-Arbitrary-Address-Free-Primitive"><a href="#Step-4-AAF-Arbitrary-Address-Free-Primitive" class="headerlink" title="Step 4. AAF(Arbitrary Address Free) Primitive"></a>Step 4. AAF(Arbitrary Address Free) Primitive</h3><p>As discussed earlier, <code>pending_requests</code> is implemented using a circular deque. Because of its design, when the deque needs to expand, it does not simply grow into adjacent memory. Instead, it allocates a new backing buffer, copies the existing contents, and frees the old buffer. This behavior becomes extremely useful when combined with our fake object.</p>
 <p>After setting <code>active_request_</code> to a non-null value, we configure <code>pending_requests</code> as follows:</p>
-<pre><code class="hljs mipsasm">pending_requests
-- <span class="hljs-keyword">buffer_ </span>  = leaked_heap_addr_   &lt;- <span class="hljs-keyword">address </span>to <span class="hljs-keyword">be </span>freed
-- capacity_ = <span class="hljs-number">1</span>, <span class="hljs-keyword">begin_=end_ </span>= <span class="hljs-number">0</span>  (empty, expansion-ready)</code></pre>
+<pre><code class="hljs routeros">pending_requests
+- buffer_   = leaked_heap_addr_   &lt;-<span class="hljs-built_in"> address </span><span class="hljs-keyword">to</span> be freed
+- capacity_ = 1, <span class="hljs-attribute">begin_</span>=end_ = 0  (empty, expansion-ready)</code></pre>
 <p>In this state, any operation that forces the deque to expand will eventually free the address stored in <code>buffer_</code>.</p>
 <p>In other words, if we can fully control the contents of <code>pending_requests</code>, we gain the ability to free an arbitrary address. This gives us an <strong>Arbitrary Address Free (AAF)</strong> primitive.</p>
 <p>To trigger it, we first reclaim the slot that was previously used during the heap leak stage. Calling <code>DeleteDatabase(&quot;db_reuse&quot;, force_close=true)</code> causes the corresponding <code>key_path</code> strings to be released, returning the 0x170-byte slot to the free list once again. Whereas Step 3 used this slot for leaking heap addresses, we now reuse it to construct an AAF payload.</p>
@@ -1283,12 +1283,12 @@ slot state clear
     user_va = slot[<span class="hljs-number">15</span>]
     mdl     = a1[<span class="hljs-number">2</span> * (<span class="hljs-number">3</span> * idx + <span class="hljs-number">9</span>)]
     
-    <span class="hljs-built_in">MmUnmapLockedPages</span>(user_va, mdl)
-    <span class="hljs-built_in">IoFreeMdl</span>(mdl)
+    MmUnmapLockedPages(user_va, mdl)
+    IoFreeMdl(mdl)
 <span class="hljs-keyword">else</span>:
     mdl = slot[<span class="hljs-number">17</span>]
     <span class="hljs-keyword">if</span> mdl:
-        <span class="hljs-built_in">IoFreeMdl</span>(mdl)</code></pre>
+        IoFreeMdl(mdl)</code></pre>
 <p>Register/unregister designs are particularly prone to this class of issue because multiple threads may end up referencing the same MDL pointer. In the pattern I analyzed, the unregister routine looked up the mapped virtual address and MDL pointer that had previously been stored during registration. The sequence <code>slot lookup</code> &#x2192; <code>slot clear</code> &#x2192; <code>MmUnmapLockedPages()</code> &#x2192; <code>IoFreeMdl()</code> was performed without sufficient synchronization.</p>
 <p>As a result, two threads could race through the unregister path and free the same MDL object twice, leading to a double-free condition.</p>
 <p><strong>Windows 22H2 kernel driver exploit primitive</strong></p>
@@ -1332,13 +1332,13 @@ slot state clear
                 <div class="post-meta">
                   <i class="iconfont icon-tags"></i>
                   
-                  <a class="hover-with-bg" href="/tags/Chrome/">Chrome</a>
-                  
-                  <a class="hover-with-bg" href="/tags/Chromium/">Chromium</a>
-                  
                   <a class="hover-with-bg" href="/tags/OUYA77/">OUYA77</a>
                   
                   <a class="hover-with-bg" href="/tags/Sandbox-Escape/">Sandbox Escape</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Chrome/">Chrome</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Chromium/">Chromium</a>
                   
                   <a class="hover-with-bg" href="/tags/pwnable/">pwnable</a>
                   

