@@ -1,0 +1,1158 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;Hello! I&amp;#x2019;m clalxk.&lt;/p&gt;
+&lt;p&gt;It&amp;#x2019;s been a busy year-end (two schools&amp;#x2026;), so I&amp;#x2019;m back with a paper review&amp;#x2026; haha.&lt;/p&gt;
+&lt;p&gt;In this post, I&amp;#x2019;ll review a paper that detects &lt;strong&gt;Fake Base Stations (FBS)&lt;/strong&gt;&amp;#x2014;a threat that remains very realistic in cellular networks&amp;#x2014;and the &lt;strong&gt;Multi-Step Attacks (MSA)&lt;/strong&gt; that are launched using them as a foothold, &lt;strong&gt;from the User Equipment (UE) side&lt;/strong&gt;. This paper was presented at &lt;strong&gt;USENIX Security 2025A&lt;/strong&gt; (&lt;a href=&#34;https://www.usenix.org/system/files/usenixsecurity25-mubasshir.pdf&#34;&gt;link&lt;/a&gt;).&lt;/p&gt;
+&lt;p&gt;The paper proposes &lt;strong&gt;FBSDetector&lt;/strong&gt;, an ML-based detection framework, and describes an ML-based detection solution that leverages &lt;strong&gt;Layer-3 network traces&lt;/strong&gt; on the UE (User Equipment) to respond to the severe security threats posed by FBS and multi-step attacks (MSA). Based on the first large-scale, high-quality &lt;strong&gt;FBSAD&lt;/strong&gt; and &lt;strong&gt;MSAD&lt;/strong&gt; datasets built to reflect realistic scenarios via POWDER, the solution integrates &lt;strong&gt;stateful LSTM with attention&lt;/strong&gt; for FBS detection and &lt;strong&gt;graph learning&lt;/strong&gt; for MSA recognition. FBSDetector achieves &lt;strong&gt;96% accuracy&lt;/strong&gt; with a &lt;strong&gt;2.96% false positive rate&lt;/strong&gt; for FBS, and &lt;strong&gt;86% accuracy&lt;/strong&gt; with a &lt;strong&gt;3.28% false positive rate&lt;/strong&gt; for MSA, and was deployed as a mobile app and validated in real-world settings with low overhead.&lt;/p&gt;
+&lt;h1 id=&#34;Background&#34;&gt;&lt;a href=&#34;#Background&#34; class=&#34;headerlink&#34; title=&#34;Background&#34;&gt;&lt;/a&gt;Background&lt;/h1&gt;&lt;p&gt;Among cellular network attacks, the reason FBS (illegal/rogue base stations) are scary is simple. By &lt;strong&gt;pretending to be a legitimate base station (impersonation)&lt;/strong&gt;, an attacker can lure the UE, and then mix in various attacks (DoS, downgrade, location tracking, etc.) so that they look like normal &amp;#x201C;protocol procedures.&amp;#x201D;&lt;/p&gt;
+&lt;p&gt;The threat posed by FBS is not new and has existed for a long time, but it is still widely used by attackers around the world.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Standard/spec-level defenses are slow&lt;/strong&gt;: It takes a long time for a new defense to be incorporated into standards and propagate to chipsets/devices/networks.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;There are already too many vulnerable devices worldwide&lt;/strong&gt;: Replacing them is not realistic.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Limitations of existing detection&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Heuristic/signature-based approaches are weak against adaptive attackers (slightly tweaking fields or changing the order&amp;#x2026;?).&lt;/li&gt;
+&lt;li&gt;Crowdsourcing/external hardware dependence is hard to deploy at scale or is costly.&lt;/li&gt;
+&lt;li&gt;Approaches that only look at lower layers (physical/wireless) struggle to cover sophisticated FBS and MSA.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The paper goes one step further and emphasizes that it&amp;#x2019;s hard to conclude &amp;#x201C;it&amp;#x2019;s safe because it&amp;#x2019;s 5G.&amp;#x201D; While IMSIs were used unencrypted in 4G, there is still room for FBS to be used for attacks in 5G, and recently proposed certificate/signature-based defenses introduce not only &lt;strong&gt;overhead&lt;/strong&gt; and &lt;strong&gt;spec changes&lt;/strong&gt;, but also &lt;strong&gt;key-sharing issues in roaming environments&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;It also argues that while Google/Apple have adopted new approaches to neutralize FBS, outside that scope, knowledgeable attackers with equipment can still operate&amp;#x2014;so &lt;strong&gt;detection itself&lt;/strong&gt; is necessary.&lt;/p&gt;
+&lt;p&gt;Therefore, this paper heads toward: &amp;#x201C;Then, using only the &lt;strong&gt;Layer-3 traces (NAS/RRC)&lt;/strong&gt; that the UE already sees, let&amp;#x2019;s catch this on-device at low cost.&amp;#x201D;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;NAS: control-plane protocol between UE &amp;#x2194; core (EPC)&lt;/p&gt;
+&lt;p&gt;RRC: control-plane protocol between UE &amp;#x2194; base station (eNodeB)&lt;/p&gt;
+&lt;p&gt;MSA: an attack that uses FBS as a foothold and chains multiple procedures/messages to achieve an end goal (DoS/tracking/downgrade, etc.)&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;hr&gt;
+&lt;h1 id=&#34;Methodology&#34;&gt;&lt;a href=&#34;#Methodology&#34; class=&#34;headerlink&#34; title=&#34;Methodology&#34;&gt;&lt;/a&gt;Methodology&lt;/h1&gt;&lt;h2 id=&#34;0-System-Overview&#34;&gt;&lt;a href=&#34;#0-System-Overview&#34; class=&#34;headerlink&#34; title=&#34;0. System Overview&#34;&gt;&lt;/a&gt;0. System Overview&lt;/h2&gt;&lt;p&gt;The overall flow is: &amp;#x201C;(1) build the dataset &amp;#x2192; (2) two-stage FBS detection &amp;#x2192; (3) graph-based MSA recognition &amp;#x2192; (4) fuse NAS/RRC predictions &amp;#x2192; (5) deploy as an app.&amp;#x201D;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/21/clalxk/fbs_paper_review_en/figure2_fbsdetector_architecture.png&#34; alt=&#34;Figure 2: FBSDetector overall architecture&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Figure 2: FBSDetector overall architecture&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;Figure 2: Overview of FBSDetector, including dataset construction / ML framework / deployment&lt;/em&gt;&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;1-Threat-Model-amp-Scope&#34;&gt;&lt;a href=&#34;#1-Threat-Model-amp-Scope&#34; class=&#34;headerlink&#34; title=&#34;1. Threat Model &amp;amp; Scope&#34;&gt;&lt;/a&gt;1. Threat Model &amp;amp; Scope&lt;/h2&gt;&lt;p&gt;The attacker model assumed in the paper can be summarized as follows.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Impersonate a legitimate BS and &lt;strong&gt;induce UE reselection with a stronger signal&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Learn/imitate&lt;/strong&gt; legitimate values by eavesdropping on public channels&lt;/li&gt;
+&lt;li&gt;Not at the level of breaking crypto itself or physically tampering with the SIM/core/BS equipment&lt;/li&gt;
+&lt;li&gt;But can try to evade detection via &lt;strong&gt;rapid parameter changes&lt;/strong&gt;, &lt;strong&gt;transmit power control&lt;/strong&gt;, &lt;strong&gt;obfuscation&lt;/strong&gt;, etc.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The deployment scope focuses on &lt;strong&gt;4G (LTE)&lt;/strong&gt;. The reasons are (1) 4G is still widely deployed in practice, and (2) the experimental infrastructure (POWDER) needed to build the dataset supports 4G experiments well.&lt;/p&gt;
+&lt;p&gt;The paper&amp;#x2019;s &amp;#x201C;design challenges&amp;#x201D; can be summarized into the following five items.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Dataset availability/quality (C1)&lt;/strong&gt;: It is hard to obtain realistic data that includes legitimate BS/FBS/MSA.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;FBS detection from packet traces (C2)&lt;/strong&gt;: The same message can be benign/malicious depending on context.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;MSA recognition (C3)&lt;/strong&gt;: Multi-step patterns are complex and evolve.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;NAS/RRC prediction fusion (C4)&lt;/strong&gt;: How to combine layer-specific models into a single decision.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Real-time detection (C5)&lt;/strong&gt;: Must enable fast capture/processing/inference on-device.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;2-TAU-Reject-FBS-based-MSA&#34;&gt;&lt;a href=&#34;#2-TAU-Reject-FBS-based-MSA&#34; class=&#34;headerlink&#34; title=&#34;2. TAU Reject (FBS-based MSA)&#34;&gt;&lt;/a&gt;2. TAU Reject (FBS-based MSA)&lt;/h2&gt;&lt;p&gt;One representative attack described in the paper is &lt;strong&gt;TAU Reject&lt;/strong&gt;. It may look like a &amp;#x201C;procedure message,&amp;#x201D; but in practice it can drive the UE into an &lt;strong&gt;out-of-service&lt;/strong&gt; state or trigger downgrades, etc.&lt;/p&gt;
+&lt;p&gt;The key points are:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The FBS lures the UE using a &lt;strong&gt;strong signal&lt;/strong&gt; and &lt;strong&gt;reselection priority&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;To make the UE appear to have detected a new TA, the FBS operates with a &lt;strong&gt;different TAC&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;When the UE requests a TAU, the FBS sends a &lt;strong&gt;TrackingAreaUpdateReject&lt;/strong&gt; to achieve the goal.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/21/clalxk/fbs_paper_review_en/figure1_tau_reject_attack.png&#34; alt=&#34;Figure 1: TAU Reject attack flow&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Figure 1: TAU Reject attack flow&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;Figure 1: TAU Reject flow (lure UE to FBS &amp;#x2192; inject Reject during TAU procedure &amp;#x2192; impact connectivity/service)&lt;/em&gt;&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;3-Dataset-FBSAD-MSAD-POWDER-based&#34;&gt;&lt;a href=&#34;#3-Dataset-FBSAD-MSAD-POWDER-based&#34; class=&#34;headerlink&#34; title=&#34;3. Dataset: FBSAD / MSAD (POWDER-based)&#34;&gt;&lt;/a&gt;3. Dataset: FBSAD / MSAD (POWDER-based)&lt;/h2&gt;&lt;p&gt;One strength of this paper is that it &lt;strong&gt;constructs the dataset to be close to real-world conditions&lt;/strong&gt;. Because running FBS experiments in public places is illegal, the paper builds the dataset on the POWDER testbed based on &lt;strong&gt;real over-the-air (OTA) packets&lt;/strong&gt;.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;FBSAD&lt;/strong&gt;: for FBS detection&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;MSAD&lt;/strong&gt;: for recognizing 21 MSAs&lt;/li&gt;
+&lt;li&gt;Total 9.2GB (raw), including mobility and attacker capability levels (0&amp;#x2013;4)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The attacker capability levels are also quite detailed.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Level 0&lt;/strong&gt;: &amp;#x201C;Simple operation with high signal strength&amp;#x201D;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Level 1&lt;/strong&gt;: &amp;#x201C;Signal strength tuned to be ideal for inducing handover/reselection&amp;#x201D;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Level 2&lt;/strong&gt;: Replicate legitimate BS parameters (cell ID, MCC/MNC, TAC, PCI, RF parameters, SSB/TA, etc.)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Level 3&lt;/strong&gt;: Perform common MSAs based on Level 2&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Level 4&lt;/strong&gt;: Adaptive reconfiguration for evasion, such as &lt;strong&gt;field changes / time-order changes&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;3-1-Data-generation-What-did-they-do-on-POWDER&#34;&gt;&lt;a href=&#34;#3-1-Data-generation-What-did-they-do-on-POWDER&#34; class=&#34;headerlink&#34; title=&#34;3-1. Data generation (What did they do on POWDER?)&#34;&gt;&lt;/a&gt;3-1. Data generation (What did they do on POWDER?)&lt;/h3&gt;&lt;p&gt;On POWDER, the paper constructs a cellular network that integrates legitimate BS/FBS and MSA, and collects traces by &lt;strong&gt;capturing packets at all cellular network components&lt;/strong&gt;. It also clearly explains why mobility (UE moving and handovers occurring) is included in the dataset: without it, &lt;strong&gt;normal handovers could be misclassified as malicious&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;From an implementation standpoint, they use &lt;strong&gt;Open5GS&lt;/strong&gt; for the core network, and both &lt;strong&gt;srsRAN&lt;/strong&gt; and &lt;strong&gt;OpenAirInterface (OAI)&lt;/strong&gt; for the UE/BS stack to reduce bias toward a specific implementation.&lt;/p&gt;
+&lt;h3 id=&#34;3-2-Preprocessing-protocol-filtering-amp-features&#34;&gt;&lt;a href=&#34;#3-2-Preprocessing-protocol-filtering-amp-features&#34; class=&#34;headerlink&#34; title=&#34;3-2. Preprocessing (protocol filtering &amp;amp; features)&#34;&gt;&lt;/a&gt;3-2. Preprocessing (protocol filtering &amp;amp; features)&lt;/h3&gt;&lt;p&gt;Since each packet in the trace contains multiple protocol layers, the paper performs &lt;strong&gt;protocol filtering to keep only NAS/RRC&lt;/strong&gt;, and then extracts relevant field values.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;NAS layer&lt;/strong&gt;: 119 fields&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;RRC layer&lt;/strong&gt;: 183 fields&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;These fields are used as input features for model training.&lt;/p&gt;
+&lt;h3 id=&#34;3-3-Labeling-benign-malicious-and-attack-types&#34;&gt;&lt;a href=&#34;#3-3-Labeling-benign-malicious-and-attack-types&#34; class=&#34;headerlink&#34; title=&#34;3-3. Labeling (benign/malicious, and attack types)&#34;&gt;&lt;/a&gt;3-3. Labeling (benign/malicious, and attack types)&lt;/h3&gt;&lt;p&gt;Labeling is done based on &amp;#x201C;why was this packet generated?&amp;#x201D;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;FBSAD (binary label)&lt;/strong&gt;: 0 for benign packets, 1 for packets generated by the FBS&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;MSAD (multi-class label)&lt;/strong&gt;: 0 for benign packets, and packets generated by attack (&lt;code&gt;attack_j&lt;/code&gt;) are labeled as &lt;code&gt;LA[attack_j]&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Because there are fewer NAS packets, they manually labeled them by inspecting each packet (the paper says it was a one-time effort of about ~2 hours). For RRC packets, they detect the attack interval from NAS traces and then batch-label them with an automated script based on that interval.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;4-FBS-detection-two-stage-packet-&amp;#x2192;-trace&#34;&gt;&lt;a href=&#34;#4-FBS-detection-two-stage-packet-&amp;#x2192;-trace&#34; class=&#34;headerlink&#34; title=&#34;4. FBS detection: two-stage (packet &amp;#x2192; trace)&#34;&gt;&lt;/a&gt;4. FBS detection: two-stage (packet &amp;#x2192; trace)&lt;/h2&gt;&lt;p&gt;A nice intuition in the paper is reflecting the idea that rather than a packet itself being malicious, often it&amp;#x2019;s the &lt;strong&gt;context in which the packet appears (preceding/following context / sequence)&lt;/strong&gt; that is malicious.&lt;/p&gt;
+&lt;p&gt;So FBS detection proceeds in two stages.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Packet-level classification&lt;/strong&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;ul&gt;
+&lt;li&gt;Classify each packet as benign/suspicious&lt;/li&gt;
+&lt;li&gt;Predict using a combined &lt;strong&gt;Stateful LSTM + Attention&lt;/strong&gt; structure in parallel&lt;/li&gt;
+&lt;/ul&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Trace-level classification&lt;/strong&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;ul&gt;
+&lt;li&gt;Decide &amp;#x201C;is this trace an FBS session?&amp;#x201D; based on packet sequence order/patterns&lt;/li&gt;
+&lt;li&gt;Avoid a naive heuristic where a single malicious packet flags the entire trace&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;To add a bit more detail: for packet-level modeling, &lt;strong&gt;stateful LSTM&lt;/strong&gt; preserves long-term dependencies by maintaining state across batches, and &lt;strong&gt;attention&lt;/strong&gt; learns to place higher weight on decisive parts of the sequence. The two outputs are extracted in parallel and combined (concat/merge), then the final class is predicted through dense layers.&lt;/p&gt;
+&lt;p&gt;In particular, the analysis showing performance changes depending on sequence length was interesting (and it&amp;#x2019;s also a part people often struggle with when tuning models).&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/21/clalxk/fbs_paper_review_en/figure6_sequence_length.png&#34; alt=&#34;Figure 6: Sequence length distribution and performance&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Figure 6: Sequence length distribution and performance&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;Figure 6: Trend that performance improves around sequence lengths 9&amp;#x2013;15 for NAS and 80&amp;#x2013;120 for RRC&lt;/em&gt;&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;5-MSA-recognition-learning-&amp;#x201C;patterns&amp;#x201D;-with-graphs&#34;&gt;&lt;a href=&#34;#5-MSA-recognition-learning-&amp;#x201C;patterns&amp;#x201D;-with-graphs&#34; class=&#34;headerlink&#34; title=&#34;5. MSA recognition: learning &amp;#x201C;patterns&amp;#x201D; with graphs&#34;&gt;&lt;/a&gt;5. MSA recognition: learning &amp;#x201C;patterns&amp;#x201D; with graphs&lt;/h2&gt;&lt;p&gt;MSA is not just &amp;#x201C;a few messages&amp;#x201D;; it is closer to a &lt;strong&gt;pattern of chained procedures&lt;/strong&gt;. The paper represents this as a graph.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Nodes: unique values of message types (e.g., NAS: &lt;code&gt;nas_eps_nas_msg_emm_type_value&lt;/code&gt;, RRC: &lt;code&gt;lterrc_c1_showname&lt;/code&gt;)&lt;/li&gt;
+&lt;li&gt;Edges: transitions to the next message (directed), and labels for whether the transition is benign/attack&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Among the evaluated graph models, &lt;strong&gt;GraphSAGE&lt;/strong&gt; performed best, so they use it.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/21/clalxk/fbs_paper_review_en/figure3_graph_msa_detection.png&#34; alt=&#34;Figure 3: Example graph representation for MSA detection&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Figure 3: Example graph representation for MSA detection&lt;/p&gt;
+&lt;p&gt;Figure 3 shows that attacks such as TAU Reject appear as &amp;#x201C;path patterns,&amp;#x201D; and the system learns these patterns to recognize MSA. For the &amp;#x201C;what if the attack evolves?&amp;#x201D; problem, the paper proposes a direction that leverages ideas like &lt;strong&gt;maximum common subgraphs&lt;/strong&gt;, using the intuition that it&amp;#x2019;s often not a completely new path, but partially overlapping.&lt;/p&gt;
+&lt;p&gt;The paper also explains this more formally. If a packet-derived graph is represented as (G=(V,E)), known attacks appear as specific paths (P(G)) in the graph, and evolved/reconfigured attacks may appear as different paths (P&amp;#x2019;(G)). However, due to vulnerability/procedure characteristics, it is likely that these paths are not completely disjoint and may partially overlap. The intuition is to leverage this &amp;#x201C;overlap&amp;#x201D; to detect unknown attacks.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;6-NAS-RRC-prediction-fusion-weight-based-fusion&#34;&gt;&lt;a href=&#34;#6-NAS-RRC-prediction-fusion-weight-based-fusion&#34; class=&#34;headerlink&#34; title=&#34;6. NAS/RRC prediction fusion (weight-based fusion)&#34;&gt;&lt;/a&gt;6. NAS/RRC prediction fusion (weight-based fusion)&lt;/h2&gt;&lt;p&gt;Because NAS and RRC have different characteristics, the models are trained separately and then their predictions are fused at the end using a &lt;strong&gt;weight-based&lt;/strong&gt; method. (The paper mentions Dempster&amp;#x2013;Shafer theory and explains it as assigning higher weight to the more reliable side.)&lt;/p&gt;
+&lt;p&gt;Experimentally, fusing NAS+RRC predictions improved performance by about &lt;strong&gt;1&amp;#x2013;2%&lt;/strong&gt;.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;7-Deployment-distributing-as-a-mobile-app&#34;&gt;&lt;a href=&#34;#7-Deployment-distributing-as-a-mobile-app&#34; class=&#34;headerlink&#34; title=&#34;7. Deployment: distributing as a mobile app&#34;&gt;&lt;/a&gt;7. Deployment: distributing as a mobile app&lt;/h2&gt;&lt;p&gt;Rather than stopping at experiments, they deployed it as an app and measured overhead.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;MobileInsight&lt;/strong&gt;: baseband trace parsing&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;TensorFlow Lite&lt;/strong&gt;: on-device inference&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Flutter&lt;/strong&gt;: app UI&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;They also mention practical barriers such as rooting requirements. Additionally, assuming real deployment, they anticipate an operational model where models are periodically retrained to reflect new attacks and quickly deployed via app updates. Since NAS/RRC traces can be sensitive, they also note that data collection should be enabled based on user consent.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h1 id=&#34;Performance-Analysis&#34;&gt;&lt;a href=&#34;#Performance-Analysis&#34; class=&#34;headerlink&#34; title=&#34;Performance Analysis&#34;&gt;&lt;/a&gt;Performance Analysis&lt;/h1&gt;&lt;p&gt;To summarize the key results first:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;FBS detection&lt;/strong&gt;: 96% accuracy, 2.96% FPR&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;MSA recognition (21 types)&lt;/strong&gt;: 86% accuracy, 3.28% FPR&lt;/li&gt;
+&lt;li&gt;1&amp;#x2013;2% improvement from NAS/RRC fusion&lt;/li&gt;
+&lt;li&gt;Reported &lt;strong&gt;86%&lt;/strong&gt; zero-shot detection accuracy for &lt;strong&gt;overshadowing attacks&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The following figure is the core of the overhead analysis.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/21/clalxk/fbs_paper_review_en/figure4_overhead_analysis.png&#34; alt=&#34;Figure 4: Overhead analysis&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Figure 4: Overhead analysis&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;Figure 4: Time/power/memory usage increases linearly with packet count, but with a small slope, suggesting practical usability&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;The paper also presents quantitative numbers: on average it runs at about &lt;strong&gt;835KB memory&lt;/strong&gt; and &lt;strong&gt;&amp;lt;2mW power&lt;/strong&gt;, which is relatively low compared to prior approaches (~4mW).&lt;/p&gt;
+&lt;p&gt;They also show that certain attack types contribute more heavily to false positives in MSA (cases that are almost indistinguishable from benign behavior from the UE&amp;#x2019;s perspective), and provide an analysis figure.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/21/clalxk/fbs_paper_review_en/figure5_fp_analysis.png&#34; alt=&#34;Figure 5: False positive analysis for MSA detection&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Figure 5: False positive analysis for MSA detection&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;Figure 5: Certain attack types contribute heavily to FP &amp;#x2192; the root cause is that they &amp;#x201C;look the same as benign behavior from the UE&amp;#x2019;s perspective&amp;#x201D;&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;They also performed fairly rigorous app validation in a controlled lab environment.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/21/clalxk/fbs_paper_review_en/figure8_lab_setup.png&#34; alt=&#34;Figure 8: Controlled lab environment setup&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Figure 8: Controlled lab environment setup&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;Figure 8: Controlled experiments with USRP B210, a laptop (core), and a smartphone (app)&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;The experimental scenarios include a lab 4G network with their own SIM, commercial SIMs (e.g., Google Fi), distance changes, and limited mobility. In the 24-hour stress test, they executed 21 attacks 5 times each, for a total of 105 attacks. In the long-term test, they ran the app for 7 days under various usage patterns and observed environments where packets accumulate.&lt;/p&gt;
+&lt;p&gt;They also ran comparative experiments against existing app-based detection solutions (AIMSICD, SnoopSnitch). In the same controlled environment, those two solutions did not detect the FBS, but FBSDetector did (as described in the paper).&lt;/p&gt;
+&lt;hr&gt;
+&lt;h1 id=&#34;Conclusion&#34;&gt;&lt;a href=&#34;#Conclusion&#34; class=&#34;headerlink&#34; title=&#34;Conclusion&#34;&gt;&lt;/a&gt;Conclusion&lt;/h1&gt;&lt;p&gt;In one sentence, FBSDetector can be seen as a &amp;#x201C;UE-side detection framework&amp;#x201D; with the following direction.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Using only Layer-3 (NAS/RRC) traces&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;On the UE (device)&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;Performing &lt;strong&gt;FBS detection + MSA recognition&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;As a practical framework with relatively low overhead&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;In other words, FBSDetector is an ML-based FBS/MSA detection system that uses Layer-3 network traces. It builds large-scale realistic datasets (FBSAD, MSAD) and achieves high detection accuracy with low overhead by using advanced ML models such as Stateful LSTM with Attention and Graph Learning. The paper states that future work will port FBSDetector to 5G networks, support detection of overshadow attacks, and focus on integrating FBS detection and attack defense mechanisms in ORAN environments. I&amp;#x2019;m looking forward to seeing how it expands both the porting process to 5G and the detectable scope.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h1 id=&#34;Closing-thoughts&#34;&gt;&lt;a href=&#34;#Closing-thoughts&#34; class=&#34;headerlink&#34; title=&#34;Closing thoughts&#34;&gt;&lt;/a&gt;Closing thoughts&lt;/h1&gt;&lt;p&gt;Personally, beyond FBS detection itself, I found the attempt to &lt;strong&gt;model MSA as graphs and learn them as patterns&lt;/strong&gt; especially interesting.&lt;/p&gt;
+&lt;p&gt;Of course, the limitations are also clear.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Rooting/permissions/device constraints (especially on iOS) remain major barriers to deployment.&lt;/li&gt;
+&lt;li&gt;Attacks that &amp;#x201C;look identical to normal behavior&amp;#x201D; from the UE&amp;#x2019;s perspective are inherently difficult (FP/FN).&lt;/li&gt;
+&lt;li&gt;Expanding to 5G/other environments brings back the experimental infrastructure and dataset problems.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;One particularly impressive part (in the translated version) was how realistically the paper discusses &amp;#x201C;what FP/FN mean.&amp;#x201D; Since FBS itself is not a frequent event, even a small FP rate can significantly degrade usability in real deployment. With that in mind, the paper leaves room to interpret that at the current stage, it may be especially useful in security-first environments or for sensitive user groups rather than the general public.&lt;/p&gt;
+&lt;p&gt;Still, it was a very interesting read. If I find another interesting paper on cellular networks, I&amp;#x2019;ll be back with another review~~&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] “Gotta Detect &#39;Em All: Fake Base Station and Multi-Step Attack Detection in Cellular Networks” Paper Review (EN) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;Hello! I&amp;#x2019;m clalxk.&lt;/p&gt;
+&lt;p&gt;It&amp;#x2019;s been a busy year-end (two schools&amp;#x2026;), so I&amp;#x2019;m back with a paper review&amp;#x2026; haha.&lt;/p&gt;
+&lt;p&gt;In this post, I&amp;#x2019;ll review a paper that detects &lt;strong&gt;Fake Base Stations (FBS)&lt;/strong&gt;&amp;#x2014;a threat that remains very realistic in cellular networks&amp;#x2014;and the &lt;strong&gt;Multi-Step Attacks (MSA)&lt;/strong&gt; that are launched using them as a foothold, &lt;strong&gt;from the User Equipment (UE) side&lt;/strong&gt;. This paper was presented at &lt;strong&gt;USENIX Security 2025A&lt;/strong&gt; (&lt;a href=&#34;https://www.usenix.org/system/files/usenixsecurity25-mubasshir.pdf&#34;&gt;link&lt;/a&gt;).&lt;/p&gt;
+&lt;p&gt;The paper proposes &lt;strong&gt;FBSDetector&lt;/strong&gt;, an ML-based detection framework, and describes an ML-based detection solution that leverages &lt;strong&gt;Layer-3 network traces&lt;/strong&gt; on the UE (User Equipment) to respond to the severe security threats posed by FBS and multi-step attacks (MSA). Based on the first large-scale, high-quality &lt;strong&gt;FBSAD&lt;/strong&gt; and &lt;strong&gt;MSAD&lt;/strong&gt; datasets built to reflect realistic scenarios via POWDER, the solution integrates &lt;strong&gt;stateful LSTM with attention&lt;/strong&gt; for FBS detection and &lt;strong&gt;graph learning&lt;/strong&gt; for MSA recognition. FBSDetector achieves &lt;strong&gt;96% accuracy&lt;/strong&gt; with a &lt;strong&gt;2.96% false positive rate&lt;/strong&gt; for FBS, and &lt;strong&gt;86% accuracy&lt;/strong&gt; with a &lt;strong&gt;3.28% false positive rate&lt;/strong&gt; for MSA, and was deployed as a mobile app and validated in real-world settings with low overhead.&lt;/p&gt;
+&lt;h1 id=&#34;Background&#34;&gt;&lt;a href=&#34;#Background&#34; class=&#34;headerlink&#34; title=&#34;Background&#34;&gt;&lt;/a&gt;Background&lt;/h1&gt;&lt;p&gt;Among cellular network attacks, the reason FBS (illegal/rogue base stations) are scary is simple. By &lt;strong&gt;pretending to be a legitimate base station (impersonation)&lt;/strong&gt;, an attacker can lure the UE, and then mix in various attacks (DoS, downgrade, location tracking, etc.) so that they look like normal &amp;#x201C;protocol procedures.&amp;#x201D;&lt;/p&gt;
+&lt;p&gt;The threat posed by FBS is not new and has existed for a long time, but it is still widely used by attackers around the world.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Standard/spec-level defenses are slow&lt;/strong&gt;: It takes a long time for a new defense to be incorporated into standards and propagate to chipsets/devices/networks.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;There are already too many vulnerable devices worldwide&lt;/strong&gt;: Replacing them is not realistic.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Limitations of existing detection&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Heuristic/signature-based approaches are weak against adaptive attackers (slightly tweaking fields or changing the order&amp;#x2026;?).&lt;/li&gt;
+&lt;li&gt;Crowdsourcing/external hardware dependence is hard to deploy at scale or is costly.&lt;/li&gt;
+&lt;li&gt;Approaches that only look at lower layers (physical/wireless) struggle to cover sophisticated FBS and MSA.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The paper goes one step further and emphasizes that it&amp;#x2019;s hard to conclude &amp;#x201C;it&amp;#x2019;s safe because it&amp;#x2019;s 5G.&amp;#x201D; While IMSIs were used unencrypted in 4G, there is still room for FBS to be used for attacks in 5G, and recently proposed certificate/signature-based defenses introduce not only &lt;strong&gt;overhead&lt;/strong&gt; and &lt;strong&gt;spec changes&lt;/strong&gt;, but also &lt;strong&gt;key-sharing issues in roaming environments&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;It also argues that while Google/Apple have adopted new approaches to neutralize FBS, outside that scope, knowledgeable attackers with equipment can still operate&amp;#x2014;so &lt;strong&gt;detection itself&lt;/strong&gt; is necessary.&lt;/p&gt;
+&lt;p&gt;Therefore, this paper heads toward: &amp;#x201C;Then, using only the &lt;strong&gt;Layer-3 traces (NAS/RRC)&lt;/strong&gt; that the UE already sees, let&amp;#x2019;s catch this on-device at low cost.&amp;#x201D;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;NAS: control-plane protocol between UE &amp;#x2194; core (EPC)&lt;/p&gt;
+&lt;p&gt;RRC: control-plane protocol between UE &amp;#x2194; base station (eNodeB)&lt;/p&gt;
+&lt;p&gt;MSA: an attack that uses FBS as a foothold and chains multiple procedures/messages to achieve an end goal (DoS/tracking/downgrade, etc.)&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;hr&gt;
+&lt;h1 id=&#34;Methodology&#34;&gt;&lt;a href=&#34;#Methodology&#34; class=&#34;headerlink&#34; title=&#34;Methodology&#34;&gt;&lt;/a&gt;Methodology&lt;/h1&gt;&lt;h2 id=&#34;0-System-Overview&#34;&gt;&lt;a href=&#34;#0-System-Overview&#34; class=&#34;headerlink&#34; title=&#34;0. System Overview&#34;&gt;&lt;/a&gt;0. System Overview&lt;/h2&gt;&lt;p&gt;The overall flow is: &amp;#x201C;(1) build the dataset &amp;#x2192; (2) two-stage FBS detection &amp;#x2192; (3) graph-based MSA recognition &amp;#x2192; (4) fuse NAS/RRC predictions &amp;#x2192; (5) deploy as an app.&amp;#x201D;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/21/clalxk/fbs_paper_review_en/figure2_fbsdetector_architecture.png&#34; alt=&#34;Figure 2: FBSDetector overall architecture&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Figure 2: FBSDetector overall architecture&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;Figure 2: Overview of FBSDetector, including dataset construction / ML framework / deployment&lt;/em&gt;&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;1-Threat-Model-amp-Scope&#34;&gt;&lt;a href=&#34;#1-Threat-Model-amp-Scope&#34; class=&#34;headerlink&#34; title=&#34;1. Threat Model &amp;amp; Scope&#34;&gt;&lt;/a&gt;1. Threat Model &amp;amp; Scope&lt;/h2&gt;&lt;p&gt;The attacker model assumed in the paper can be summarized as follows.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Impersonate a legitimate BS and &lt;strong&gt;induce UE reselection with a stronger signal&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Learn/imitate&lt;/strong&gt; legitimate values by eavesdropping on public channels&lt;/li&gt;
+&lt;li&gt;Not at the level of breaking crypto itself or physically tampering with the SIM/core/BS equipment&lt;/li&gt;
+&lt;li&gt;But can try to evade detection via &lt;strong&gt;rapid parameter changes&lt;/strong&gt;, &lt;strong&gt;transmit power control&lt;/strong&gt;, &lt;strong&gt;obfuscation&lt;/strong&gt;, etc.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The deployment scope focuses on &lt;strong&gt;4G (LTE)&lt;/strong&gt;. The reasons are (1) 4G is still widely deployed in practice, and (2) the experimental infrastructure (POWDER) needed to build the dataset supports 4G experiments well.&lt;/p&gt;
+&lt;p&gt;The paper&amp;#x2019;s &amp;#x201C;design challenges&amp;#x201D; can be summarized into the following five items.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Dataset availability/quality (C1)&lt;/strong&gt;: It is hard to obtain realistic data that includes legitimate BS/FBS/MSA.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;FBS detection from packet traces (C2)&lt;/strong&gt;: The same message can be benign/malicious depending on context.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;MSA recognition (C3)&lt;/strong&gt;: Multi-step patterns are complex and evolve.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;NAS/RRC prediction fusion (C4)&lt;/strong&gt;: How to combine layer-specific models into a single decision.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Real-time detection (C5)&lt;/strong&gt;: Must enable fast capture/processing/inference on-device.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;2-TAU-Reject-FBS-based-MSA&#34;&gt;&lt;a href=&#34;#2-TAU-Reject-FBS-based-MSA&#34; class=&#34;headerlink&#34; title=&#34;2. TAU Reject (FBS-based MSA)&#34;&gt;&lt;/a&gt;2. TAU Reject (FBS-based MSA)&lt;/h2&gt;&lt;p&gt;One representative attack described in the paper is &lt;strong&gt;TAU Reject&lt;/strong&gt;. It may look like a &amp;#x201C;procedure message,&amp;#x201D; but in practice it can drive the UE into an &lt;strong&gt;out-of-service&lt;/strong&gt; state or trigger downgrades, etc.&lt;/p&gt;
+&lt;p&gt;The key points are:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The FBS lures the UE using a &lt;strong&gt;strong signal&lt;/strong&gt; and &lt;strong&gt;reselection priority&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;To make the UE appear to have detected a new TA, the FBS operates with a &lt;strong&gt;different TAC&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;When the UE requests a TAU, the FBS sends a &lt;strong&gt;TrackingAreaUpdateReject&lt;/strong&gt; to achieve the goal.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/21/clalxk/fbs_paper_review_en/figure1_tau_reject_attack.png&#34; alt=&#34;Figure 1: TAU Reject attack flow&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Figure 1: TAU Reject attack flow&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;Figure 1: TAU Reject flow (lure UE to FBS &amp;#x2192; inject Reject during TAU procedure &amp;#x2192; impact connectivity/service)&lt;/em&gt;&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;3-Dataset-FBSAD-MSAD-POWDER-based&#34;&gt;&lt;a href=&#34;#3-Dataset-FBSAD-MSAD-POWDER-based&#34; class=&#34;headerlink&#34; title=&#34;3. Dataset: FBSAD / MSAD (POWDER-based)&#34;&gt;&lt;/a&gt;3. Dataset: FBSAD / MSAD (POWDER-based)&lt;/h2&gt;&lt;p&gt;One strength of this paper is that it &lt;strong&gt;constructs the dataset to be close to real-world conditions&lt;/strong&gt;. Because running FBS experiments in public places is illegal, the paper builds the dataset on the POWDER testbed based on &lt;strong&gt;real over-the-air (OTA) packets&lt;/strong&gt;.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;FBSAD&lt;/strong&gt;: for FBS detection&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;MSAD&lt;/strong&gt;: for recognizing 21 MSAs&lt;/li&gt;
+&lt;li&gt;Total 9.2GB (raw), including mobility and attacker capability levels (0&amp;#x2013;4)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The attacker capability levels are also quite detailed.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Level 0&lt;/strong&gt;: &amp;#x201C;Simple operation with high signal strength&amp;#x201D;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Level 1&lt;/strong&gt;: &amp;#x201C;Signal strength tuned to be ideal for inducing handover/reselection&amp;#x201D;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Level 2&lt;/strong&gt;: Replicate legitimate BS parameters (cell ID, MCC/MNC, TAC, PCI, RF parameters, SSB/TA, etc.)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Level 3&lt;/strong&gt;: Perform common MSAs based on Level 2&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Level 4&lt;/strong&gt;: Adaptive reconfiguration for evasion, such as &lt;strong&gt;field changes / time-order changes&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;3-1-Data-generation-What-did-they-do-on-POWDER&#34;&gt;&lt;a href=&#34;#3-1-Data-generation-What-did-they-do-on-POWDER&#34; class=&#34;headerlink&#34; title=&#34;3-1. Data generation (What did they do on POWDER?)&#34;&gt;&lt;/a&gt;3-1. Data generation (What did they do on POWDER?)&lt;/h3&gt;&lt;p&gt;On POWDER, the paper constructs a cellular network that integrates legitimate BS/FBS and MSA, and collects traces by &lt;strong&gt;capturing packets at all cellular network components&lt;/strong&gt;. It also clearly explains why mobility (UE moving and handovers occurring) is included in the dataset: without it, &lt;strong&gt;normal handovers could be misclassified as malicious&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;From an implementation standpoint, they use &lt;strong&gt;Open5GS&lt;/strong&gt; for the core network, and both &lt;strong&gt;srsRAN&lt;/strong&gt; and &lt;strong&gt;OpenAirInterface (OAI)&lt;/strong&gt; for the UE/BS stack to reduce bias toward a specific implementation.&lt;/p&gt;
+&lt;h3 id=&#34;3-2-Preprocessing-protocol-filtering-amp-features&#34;&gt;&lt;a href=&#34;#3-2-Preprocessing-protocol-filtering-amp-features&#34; class=&#34;headerlink&#34; title=&#34;3-2. Preprocessing (protocol filtering &amp;amp; features)&#34;&gt;&lt;/a&gt;3-2. Preprocessing (protocol filtering &amp;amp; features)&lt;/h3&gt;&lt;p&gt;Since each packet in the trace contains multiple protocol layers, the paper performs &lt;strong&gt;protocol filtering to keep only NAS/RRC&lt;/strong&gt;, and then extracts relevant field values.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;NAS layer&lt;/strong&gt;: 119 fields&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;RRC layer&lt;/strong&gt;: 183 fields&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;These fields are used as input features for model training.&lt;/p&gt;
+&lt;h3 id=&#34;3-3-Labeling-benign-malicious-and-attack-types&#34;&gt;&lt;a href=&#34;#3-3-Labeling-benign-malicious-and-attack-types&#34; class=&#34;headerlink&#34; title=&#34;3-3. Labeling (benign/malicious, and attack types)&#34;&gt;&lt;/a&gt;3-3. Labeling (benign/malicious, and attack types)&lt;/h3&gt;&lt;p&gt;Labeling is done based on &amp;#x201C;why was this packet generated?&amp;#x201D;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;FBSAD (binary label)&lt;/strong&gt;: 0 for benign packets, 1 for packets generated by the FBS&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;MSAD (multi-class label)&lt;/strong&gt;: 0 for benign packets, and packets generated by attack (&lt;code&gt;attack_j&lt;/code&gt;) are labeled as &lt;code&gt;LA[attack_j]&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Because there are fewer NAS packets, they manually labeled them by inspecting each packet (the paper says it was a one-time effort of about ~2 hours). For RRC packets, they detect the attack interval from NAS traces and then batch-label them with an automated script based on that interval.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;4-FBS-detection-two-stage-packet-&amp;#x2192;-trace&#34;&gt;&lt;a href=&#34;#4-FBS-detection-two-stage-packet-&amp;#x2192;-trace&#34; class=&#34;headerlink&#34; title=&#34;4. FBS detection: two-stage (packet &amp;#x2192; trace)&#34;&gt;&lt;/a&gt;4. FBS detection: two-stage (packet &amp;#x2192; trace)&lt;/h2&gt;&lt;p&gt;A nice intuition in the paper is reflecting the idea that rather than a packet itself being malicious, often it&amp;#x2019;s the &lt;strong&gt;context in which the packet appears (preceding/following context / sequence)&lt;/strong&gt; that is malicious.&lt;/p&gt;
+&lt;p&gt;So FBS detection proceeds in two stages.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Packet-level classification&lt;/strong&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;ul&gt;
+&lt;li&gt;Classify each packet as benign/suspicious&lt;/li&gt;
+&lt;li&gt;Predict using a combined &lt;strong&gt;Stateful LSTM + Attention&lt;/strong&gt; structure in parallel&lt;/li&gt;
+&lt;/ul&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Trace-level classification&lt;/strong&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;ul&gt;
+&lt;li&gt;Decide &amp;#x201C;is this trace an FBS session?&amp;#x201D; based on packet sequence order/patterns&lt;/li&gt;
+&lt;li&gt;Avoid a naive heuristic where a single malicious packet flags the entire trace&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;To add a bit more detail: for packet-level modeling, &lt;strong&gt;stateful LSTM&lt;/strong&gt; preserves long-term dependencies by maintaining state across batches, and &lt;strong&gt;attention&lt;/strong&gt; learns to place higher weight on decisive parts of the sequence. The two outputs are extracted in parallel and combined (concat/merge), then the final class is predicted through dense layers.&lt;/p&gt;
+&lt;p&gt;In particular, the analysis showing performance changes depending on sequence length was interesting (and it&amp;#x2019;s also a part people often struggle with when tuning models).&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/21/clalxk/fbs_paper_review_en/figure6_sequence_length.png&#34; alt=&#34;Figure 6: Sequence length distribution and performance&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Figure 6: Sequence length distribution and performance&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;Figure 6: Trend that performance improves around sequence lengths 9&amp;#x2013;15 for NAS and 80&amp;#x2013;120 for RRC&lt;/em&gt;&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;5-MSA-recognition-learning-&amp;#x201C;patterns&amp;#x201D;-with-graphs&#34;&gt;&lt;a href=&#34;#5-MSA-recognition-learning-&amp;#x201C;patterns&amp;#x201D;-with-graphs&#34; class=&#34;headerlink&#34; title=&#34;5. MSA recognition: learning &amp;#x201C;patterns&amp;#x201D; with graphs&#34;&gt;&lt;/a&gt;5. MSA recognition: learning &amp;#x201C;patterns&amp;#x201D; with graphs&lt;/h2&gt;&lt;p&gt;MSA is not just &amp;#x201C;a few messages&amp;#x201D;; it is closer to a &lt;strong&gt;pattern of chained procedures&lt;/strong&gt;. The paper represents this as a graph.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Nodes: unique values of message types (e.g., NAS: &lt;code&gt;nas_eps_nas_msg_emm_type_value&lt;/code&gt;, RRC: &lt;code&gt;lterrc_c1_showname&lt;/code&gt;)&lt;/li&gt;
+&lt;li&gt;Edges: transitions to the next message (directed), and labels for whether the transition is benign/attack&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Among the evaluated graph models, &lt;strong&gt;GraphSAGE&lt;/strong&gt; performed best, so they use it.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/21/clalxk/fbs_paper_review_en/figure3_graph_msa_detection.png&#34; alt=&#34;Figure 3: Example graph representation for MSA detection&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Figure 3: Example graph representation for MSA detection&lt;/p&gt;
+&lt;p&gt;Figure 3 shows that attacks such as TAU Reject appear as &amp;#x201C;path patterns,&amp;#x201D; and the system learns these patterns to recognize MSA. For the &amp;#x201C;what if the attack evolves?&amp;#x201D; problem, the paper proposes a direction that leverages ideas like &lt;strong&gt;maximum common subgraphs&lt;/strong&gt;, using the intuition that it&amp;#x2019;s often not a completely new path, but partially overlapping.&lt;/p&gt;
+&lt;p&gt;The paper also explains this more formally. If a packet-derived graph is represented as (G=(V,E)), known attacks appear as specific paths (P(G)) in the graph, and evolved/reconfigured attacks may appear as different paths (P&amp;#x2019;(G)). However, due to vulnerability/procedure characteristics, it is likely that these paths are not completely disjoint and may partially overlap. The intuition is to leverage this &amp;#x201C;overlap&amp;#x201D; to detect unknown attacks.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;6-NAS-RRC-prediction-fusion-weight-based-fusion&#34;&gt;&lt;a href=&#34;#6-NAS-RRC-prediction-fusion-weight-based-fusion&#34; class=&#34;headerlink&#34; title=&#34;6. NAS/RRC prediction fusion (weight-based fusion)&#34;&gt;&lt;/a&gt;6. NAS/RRC prediction fusion (weight-based fusion)&lt;/h2&gt;&lt;p&gt;Because NAS and RRC have different characteristics, the models are trained separately and then their predictions are fused at the end using a &lt;strong&gt;weight-based&lt;/strong&gt; method. (The paper mentions Dempster&amp;#x2013;Shafer theory and explains it as assigning higher weight to the more reliable side.)&lt;/p&gt;
+&lt;p&gt;Experimentally, fusing NAS+RRC predictions improved performance by about &lt;strong&gt;1&amp;#x2013;2%&lt;/strong&gt;.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;7-Deployment-distributing-as-a-mobile-app&#34;&gt;&lt;a href=&#34;#7-Deployment-distributing-as-a-mobile-app&#34; class=&#34;headerlink&#34; title=&#34;7. Deployment: distributing as a mobile app&#34;&gt;&lt;/a&gt;7. Deployment: distributing as a mobile app&lt;/h2&gt;&lt;p&gt;Rather than stopping at experiments, they deployed it as an app and measured overhead.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;MobileInsight&lt;/strong&gt;: baseband trace parsing&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;TensorFlow Lite&lt;/strong&gt;: on-device inference&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Flutter&lt;/strong&gt;: app UI&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;They also mention practical barriers such as rooting requirements. Additionally, assuming real deployment, they anticipate an operational model where models are periodically retrained to reflect new attacks and quickly deployed via app updates. Since NAS/RRC traces can be sensitive, they also note that data collection should be enabled based on user consent.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h1 id=&#34;Performance-Analysis&#34;&gt;&lt;a href=&#34;#Performance-Analysis&#34; class=&#34;headerlink&#34; title=&#34;Performance Analysis&#34;&gt;&lt;/a&gt;Performance Analysis&lt;/h1&gt;&lt;p&gt;To summarize the key results first:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;FBS detection&lt;/strong&gt;: 96% accuracy, 2.96% FPR&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;MSA recognition (21 types)&lt;/strong&gt;: 86% accuracy, 3.28% FPR&lt;/li&gt;
+&lt;li&gt;1&amp;#x2013;2% improvement from NAS/RRC fusion&lt;/li&gt;
+&lt;li&gt;Reported &lt;strong&gt;86%&lt;/strong&gt; zero-shot detection accuracy for &lt;strong&gt;overshadowing attacks&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The following figure is the core of the overhead analysis.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/21/clalxk/fbs_paper_review_en/figure4_overhead_analysis.png&#34; alt=&#34;Figure 4: Overhead analysis&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Figure 4: Overhead analysis&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;Figure 4: Time/power/memory usage increases linearly with packet count, but with a small slope, suggesting practical usability&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;The paper also presents quantitative numbers: on average it runs at about &lt;strong&gt;835KB memory&lt;/strong&gt; and &lt;strong&gt;&amp;lt;2mW power&lt;/strong&gt;, which is relatively low compared to prior approaches (~4mW).&lt;/p&gt;
+&lt;p&gt;They also show that certain attack types contribute more heavily to false positives in MSA (cases that are almost indistinguishable from benign behavior from the UE&amp;#x2019;s perspective), and provide an analysis figure.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/21/clalxk/fbs_paper_review_en/figure5_fp_analysis.png&#34; alt=&#34;Figure 5: False positive analysis for MSA detection&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Figure 5: False positive analysis for MSA detection&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;Figure 5: Certain attack types contribute heavily to FP &amp;#x2192; the root cause is that they &amp;#x201C;look the same as benign behavior from the UE&amp;#x2019;s perspective&amp;#x201D;&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;They also performed fairly rigorous app validation in a controlled lab environment.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/12/21/clalxk/fbs_paper_review_en/figure8_lab_setup.png&#34; alt=&#34;Figure 8: Controlled lab environment setup&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Figure 8: Controlled lab environment setup&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;Figure 8: Controlled experiments with USRP B210, a laptop (core), and a smartphone (app)&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;The experimental scenarios include a lab 4G network with their own SIM, commercial SIMs (e.g., Google Fi), distance changes, and limited mobility. In the 24-hour stress test, they executed 21 attacks 5 times each, for a total of 105 attacks. In the long-term test, they ran the app for 7 days under various usage patterns and observed environments where packets accumulate.&lt;/p&gt;
+&lt;p&gt;They also ran comparative experiments against existing app-based detection solutions (AIMSICD, SnoopSnitch). In the same controlled environment, those two solutions did not detect the FBS, but FBSDetector did (as described in the paper).&lt;/p&gt;
+&lt;hr&gt;
+&lt;h1 id=&#34;Conclusion&#34;&gt;&lt;a href=&#34;#Conclusion&#34; class=&#34;headerlink&#34; title=&#34;Conclusion&#34;&gt;&lt;/a&gt;Conclusion&lt;/h1&gt;&lt;p&gt;In one sentence, FBSDetector can be seen as a &amp;#x201C;UE-side detection framework&amp;#x201D; with the following direction.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Using only Layer-3 (NAS/RRC) traces&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;On the UE (device)&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;Performing &lt;strong&gt;FBS detection + MSA recognition&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;As a practical framework with relatively low overhead&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;In other words, FBSDetector is an ML-based FBS/MSA detection system that uses Layer-3 network traces. It builds large-scale realistic datasets (FBSAD, MSAD) and achieves high detection accuracy with low overhead by using advanced ML models such as Stateful LSTM with Attention and Graph Learning. The paper states that future work will port FBSDetector to 5G networks, support detection of overshadow attacks, and focus on integrating FBS detection and attack defense mechanisms in ORAN environments. I&amp;#x2019;m looking forward to seeing how it expands both the porting process to 5G and the detectable scope.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h1 id=&#34;Closing-thoughts&#34;&gt;&lt;a href=&#34;#Closing-thoughts&#34; class=&#34;headerlink&#34; title=&#34;Closing thoughts&#34;&gt;&lt;/a&gt;Closing thoughts&lt;/h1&gt;&lt;p&gt;Personally, beyond FBS detection itself, I found the attempt to &lt;strong&gt;model MSA as graphs and learn them as patterns&lt;/strong&gt; especially interesting.&lt;/p&gt;
+&lt;p&gt;Of course, the limitations are also clear.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Rooting/permissions/device constraints (especially on iOS) remain major barriers to deployment.&lt;/li&gt;
+&lt;li&gt;Attacks that &amp;#x201C;look identical to normal behavior&amp;#x201D; from the UE&amp;#x2019;s perspective are inherently difficult (FP/FN).&lt;/li&gt;
+&lt;li&gt;Expanding to 5G/other environments brings back the experimental infrastructure and dataset problems.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;One particularly impressive part (in the translated version) was how realistically the paper discusses &amp;#x201C;what FP/FN mean.&amp;#x201D; Since FBS itself is not a frequent event, even a small FP rate can significantly degrade usability in real deployment. With that in mind, the paper leaves room to interpret that at the current stage, it may be especially useful in security-first environments or for sensitive user groups rather than the general public.&lt;/p&gt;
+&lt;p&gt;Still, it was a very interesting read. If I find another interesting paper on cellular networks, I&amp;#x2019;ll be back with another review~~&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/12/21/clalxk/fbs_paper_review_en/fbs.jpg">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/12/21/clalxk/fbs_paper_review_en/">
+
+  <title>[Research] “Gotta Detect &#39;Em All: Fake Base Station and Multi-Step Attack Detection in Cellular Networks” Paper Review (EN) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-12-21 17:00" pubdate>
+      2025년 12월 21일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      2.5k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      49
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] “Gotta Detect &#39;Em All: Fake Base Station and Multi-Step Attack Detection in Cellular Networks” Paper Review (EN)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p>Hello! I&#x2019;m clalxk.</p>
+<p>It&#x2019;s been a busy year-end (two schools&#x2026;), so I&#x2019;m back with a paper review&#x2026; haha.</p>
+<p>In this post, I&#x2019;ll review a paper that detects <strong>Fake Base Stations (FBS)</strong>&#x2014;a threat that remains very realistic in cellular networks&#x2014;and the <strong>Multi-Step Attacks (MSA)</strong> that are launched using them as a foothold, <strong>from the User Equipment (UE) side</strong>. This paper was presented at <strong>USENIX Security 2025A</strong> (<a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.usenix.org/system/files/usenixsecurity25-mubasshir.pdf">link</a>).</p>
+<p>The paper proposes <strong>FBSDetector</strong>, an ML-based detection framework, and describes an ML-based detection solution that leverages <strong>Layer-3 network traces</strong> on the UE (User Equipment) to respond to the severe security threats posed by FBS and multi-step attacks (MSA). Based on the first large-scale, high-quality <strong>FBSAD</strong> and <strong>MSAD</strong> datasets built to reflect realistic scenarios via POWDER, the solution integrates <strong>stateful LSTM with attention</strong> for FBS detection and <strong>graph learning</strong> for MSA recognition. FBSDetector achieves <strong>96% accuracy</strong> with a <strong>2.96% false positive rate</strong> for FBS, and <strong>86% accuracy</strong> with a <strong>3.28% false positive rate</strong> for MSA, and was deployed as a mobile app and validated in real-world settings with low overhead.</p>
+<h1 id="Background"><a href="#Background" class="headerlink" title="Background"></a>Background</h1><p>Among cellular network attacks, the reason FBS (illegal/rogue base stations) are scary is simple. By <strong>pretending to be a legitimate base station (impersonation)</strong>, an attacker can lure the UE, and then mix in various attacks (DoS, downgrade, location tracking, etc.) so that they look like normal &#x201C;protocol procedures.&#x201D;</p>
+<p>The threat posed by FBS is not new and has existed for a long time, but it is still widely used by attackers around the world.</p>
+<ul>
+<li><strong>Standard/spec-level defenses are slow</strong>: It takes a long time for a new defense to be incorporated into standards and propagate to chipsets/devices/networks.</li>
+<li><strong>There are already too many vulnerable devices worldwide</strong>: Replacing them is not realistic.</li>
+<li><strong>Limitations of existing detection</strong><ul>
+<li>Heuristic/signature-based approaches are weak against adaptive attackers (slightly tweaking fields or changing the order&#x2026;?).</li>
+<li>Crowdsourcing/external hardware dependence is hard to deploy at scale or is costly.</li>
+<li>Approaches that only look at lower layers (physical/wireless) struggle to cover sophisticated FBS and MSA.</li>
+</ul>
+</li>
+</ul>
+<p>The paper goes one step further and emphasizes that it&#x2019;s hard to conclude &#x201C;it&#x2019;s safe because it&#x2019;s 5G.&#x201D; While IMSIs were used unencrypted in 4G, there is still room for FBS to be used for attacks in 5G, and recently proposed certificate/signature-based defenses introduce not only <strong>overhead</strong> and <strong>spec changes</strong>, but also <strong>key-sharing issues in roaming environments</strong>.</p>
+<p>It also argues that while Google/Apple have adopted new approaches to neutralize FBS, outside that scope, knowledgeable attackers with equipment can still operate&#x2014;so <strong>detection itself</strong> is necessary.</p>
+<p>Therefore, this paper heads toward: &#x201C;Then, using only the <strong>Layer-3 traces (NAS/RRC)</strong> that the UE already sees, let&#x2019;s catch this on-device at low cost.&#x201D;</p>
+<blockquote>
+<p>NAS: control-plane protocol between UE &#x2194; core (EPC)</p>
+<p>RRC: control-plane protocol between UE &#x2194; base station (eNodeB)</p>
+<p>MSA: an attack that uses FBS as a foothold and chains multiple procedures/messages to achieve an end goal (DoS/tracking/downgrade, etc.)</p>
+</blockquote>
+<hr>
+<h1 id="Methodology"><a href="#Methodology" class="headerlink" title="Methodology"></a>Methodology</h1><h2 id="0-System-Overview"><a href="#0-System-Overview" class="headerlink" title="0. System Overview"></a>0. System Overview</h2><p>The overall flow is: &#x201C;(1) build the dataset &#x2192; (2) two-stage FBS detection &#x2192; (3) graph-based MSA recognition &#x2192; (4) fuse NAS/RRC predictions &#x2192; (5) deploy as an app.&#x201D;</p>
+<p><img src="/2025/12/21/clalxk/fbs_paper_review_en/figure2_fbsdetector_architecture.png" srcset="/img/loading.gif" alt="Figure 2: FBSDetector overall architecture"></p>
+<p>Figure 2: FBSDetector overall architecture</p>
+<p><em>Figure 2: Overview of FBSDetector, including dataset construction / ML framework / deployment</em></p>
+<hr>
+<h2 id="1-Threat-Model-amp-Scope"><a href="#1-Threat-Model-amp-Scope" class="headerlink" title="1. Threat Model &amp; Scope"></a>1. Threat Model &amp; Scope</h2><p>The attacker model assumed in the paper can be summarized as follows.</p>
+<ul>
+<li>Impersonate a legitimate BS and <strong>induce UE reselection with a stronger signal</strong></li>
+<li><strong>Learn/imitate</strong> legitimate values by eavesdropping on public channels</li>
+<li>Not at the level of breaking crypto itself or physically tampering with the SIM/core/BS equipment</li>
+<li>But can try to evade detection via <strong>rapid parameter changes</strong>, <strong>transmit power control</strong>, <strong>obfuscation</strong>, etc.</li>
+</ul>
+<p>The deployment scope focuses on <strong>4G (LTE)</strong>. The reasons are (1) 4G is still widely deployed in practice, and (2) the experimental infrastructure (POWDER) needed to build the dataset supports 4G experiments well.</p>
+<p>The paper&#x2019;s &#x201C;design challenges&#x201D; can be summarized into the following five items.</p>
+<ul>
+<li><strong>Dataset availability/quality (C1)</strong>: It is hard to obtain realistic data that includes legitimate BS/FBS/MSA.</li>
+<li><strong>FBS detection from packet traces (C2)</strong>: The same message can be benign/malicious depending on context.</li>
+<li><strong>MSA recognition (C3)</strong>: Multi-step patterns are complex and evolve.</li>
+<li><strong>NAS/RRC prediction fusion (C4)</strong>: How to combine layer-specific models into a single decision.</li>
+<li><strong>Real-time detection (C5)</strong>: Must enable fast capture/processing/inference on-device.</li>
+</ul>
+<hr>
+<h2 id="2-TAU-Reject-FBS-based-MSA"><a href="#2-TAU-Reject-FBS-based-MSA" class="headerlink" title="2. TAU Reject (FBS-based MSA)"></a>2. TAU Reject (FBS-based MSA)</h2><p>One representative attack described in the paper is <strong>TAU Reject</strong>. It may look like a &#x201C;procedure message,&#x201D; but in practice it can drive the UE into an <strong>out-of-service</strong> state or trigger downgrades, etc.</p>
+<p>The key points are:</p>
+<ul>
+<li>The FBS lures the UE using a <strong>strong signal</strong> and <strong>reselection priority</strong>.</li>
+<li>To make the UE appear to have detected a new TA, the FBS operates with a <strong>different TAC</strong>.</li>
+<li>When the UE requests a TAU, the FBS sends a <strong>TrackingAreaUpdateReject</strong> to achieve the goal.</li>
+</ul>
+<p><img src="/2025/12/21/clalxk/fbs_paper_review_en/figure1_tau_reject_attack.png" srcset="/img/loading.gif" alt="Figure 1: TAU Reject attack flow"></p>
+<p>Figure 1: TAU Reject attack flow</p>
+<p><em>Figure 1: TAU Reject flow (lure UE to FBS &#x2192; inject Reject during TAU procedure &#x2192; impact connectivity/service)</em></p>
+<hr>
+<h2 id="3-Dataset-FBSAD-MSAD-POWDER-based"><a href="#3-Dataset-FBSAD-MSAD-POWDER-based" class="headerlink" title="3. Dataset: FBSAD / MSAD (POWDER-based)"></a>3. Dataset: FBSAD / MSAD (POWDER-based)</h2><p>One strength of this paper is that it <strong>constructs the dataset to be close to real-world conditions</strong>. Because running FBS experiments in public places is illegal, the paper builds the dataset on the POWDER testbed based on <strong>real over-the-air (OTA) packets</strong>.</p>
+<ul>
+<li><strong>FBSAD</strong>: for FBS detection</li>
+<li><strong>MSAD</strong>: for recognizing 21 MSAs</li>
+<li>Total 9.2GB (raw), including mobility and attacker capability levels (0&#x2013;4)</li>
+</ul>
+<p>The attacker capability levels are also quite detailed.</p>
+<ul>
+<li><strong>Level 0</strong>: &#x201C;Simple operation with high signal strength&#x201D;</li>
+<li><strong>Level 1</strong>: &#x201C;Signal strength tuned to be ideal for inducing handover/reselection&#x201D;</li>
+<li><strong>Level 2</strong>: Replicate legitimate BS parameters (cell ID, MCC/MNC, TAC, PCI, RF parameters, SSB/TA, etc.)</li>
+<li><strong>Level 3</strong>: Perform common MSAs based on Level 2</li>
+<li><strong>Level 4</strong>: Adaptive reconfiguration for evasion, such as <strong>field changes / time-order changes</strong></li>
+</ul>
+<h3 id="3-1-Data-generation-What-did-they-do-on-POWDER"><a href="#3-1-Data-generation-What-did-they-do-on-POWDER" class="headerlink" title="3-1. Data generation (What did they do on POWDER?)"></a>3-1. Data generation (What did they do on POWDER?)</h3><p>On POWDER, the paper constructs a cellular network that integrates legitimate BS/FBS and MSA, and collects traces by <strong>capturing packets at all cellular network components</strong>. It also clearly explains why mobility (UE moving and handovers occurring) is included in the dataset: without it, <strong>normal handovers could be misclassified as malicious</strong>.</p>
+<p>From an implementation standpoint, they use <strong>Open5GS</strong> for the core network, and both <strong>srsRAN</strong> and <strong>OpenAirInterface (OAI)</strong> for the UE/BS stack to reduce bias toward a specific implementation.</p>
+<h3 id="3-2-Preprocessing-protocol-filtering-amp-features"><a href="#3-2-Preprocessing-protocol-filtering-amp-features" class="headerlink" title="3-2. Preprocessing (protocol filtering &amp; features)"></a>3-2. Preprocessing (protocol filtering &amp; features)</h3><p>Since each packet in the trace contains multiple protocol layers, the paper performs <strong>protocol filtering to keep only NAS/RRC</strong>, and then extracts relevant field values.</p>
+<ul>
+<li><strong>NAS layer</strong>: 119 fields</li>
+<li><strong>RRC layer</strong>: 183 fields</li>
+</ul>
+<p>These fields are used as input features for model training.</p>
+<h3 id="3-3-Labeling-benign-malicious-and-attack-types"><a href="#3-3-Labeling-benign-malicious-and-attack-types" class="headerlink" title="3-3. Labeling (benign/malicious, and attack types)"></a>3-3. Labeling (benign/malicious, and attack types)</h3><p>Labeling is done based on &#x201C;why was this packet generated?&#x201D;</p>
+<ul>
+<li><strong>FBSAD (binary label)</strong>: 0 for benign packets, 1 for packets generated by the FBS</li>
+<li><strong>MSAD (multi-class label)</strong>: 0 for benign packets, and packets generated by attack (<code>attack_j</code>) are labeled as <code>LA[attack_j]</code></li>
+</ul>
+<p>Because there are fewer NAS packets, they manually labeled them by inspecting each packet (the paper says it was a one-time effort of about ~2 hours). For RRC packets, they detect the attack interval from NAS traces and then batch-label them with an automated script based on that interval.</p>
+<hr>
+<h2 id="4-FBS-detection-two-stage-packet-&#x2192;-trace"><a href="#4-FBS-detection-two-stage-packet-&#x2192;-trace" class="headerlink" title="4. FBS detection: two-stage (packet &#x2192; trace)"></a>4. FBS detection: two-stage (packet &#x2192; trace)</h2><p>A nice intuition in the paper is reflecting the idea that rather than a packet itself being malicious, often it&#x2019;s the <strong>context in which the packet appears (preceding/following context / sequence)</strong> that is malicious.</p>
+<p>So FBS detection proceeds in two stages.</p>
+<ol>
+<li><strong>Packet-level classification</strong></li>
+</ol>
+<ul>
+<li>Classify each packet as benign/suspicious</li>
+<li>Predict using a combined <strong>Stateful LSTM + Attention</strong> structure in parallel</li>
+</ul>
+<ol>
+<li><strong>Trace-level classification</strong></li>
+</ol>
+<ul>
+<li>Decide &#x201C;is this trace an FBS session?&#x201D; based on packet sequence order/patterns</li>
+<li>Avoid a naive heuristic where a single malicious packet flags the entire trace</li>
+</ul>
+<p>To add a bit more detail: for packet-level modeling, <strong>stateful LSTM</strong> preserves long-term dependencies by maintaining state across batches, and <strong>attention</strong> learns to place higher weight on decisive parts of the sequence. The two outputs are extracted in parallel and combined (concat/merge), then the final class is predicted through dense layers.</p>
+<p>In particular, the analysis showing performance changes depending on sequence length was interesting (and it&#x2019;s also a part people often struggle with when tuning models).</p>
+<p><img src="/2025/12/21/clalxk/fbs_paper_review_en/figure6_sequence_length.png" srcset="/img/loading.gif" alt="Figure 6: Sequence length distribution and performance"></p>
+<p>Figure 6: Sequence length distribution and performance</p>
+<p><em>Figure 6: Trend that performance improves around sequence lengths 9&#x2013;15 for NAS and 80&#x2013;120 for RRC</em></p>
+<hr>
+<h2 id="5-MSA-recognition-learning-&#x201C;patterns&#x201D;-with-graphs"><a href="#5-MSA-recognition-learning-&#x201C;patterns&#x201D;-with-graphs" class="headerlink" title="5. MSA recognition: learning &#x201C;patterns&#x201D; with graphs"></a>5. MSA recognition: learning &#x201C;patterns&#x201D; with graphs</h2><p>MSA is not just &#x201C;a few messages&#x201D;; it is closer to a <strong>pattern of chained procedures</strong>. The paper represents this as a graph.</p>
+<ul>
+<li>Nodes: unique values of message types (e.g., NAS: <code>nas_eps_nas_msg_emm_type_value</code>, RRC: <code>lterrc_c1_showname</code>)</li>
+<li>Edges: transitions to the next message (directed), and labels for whether the transition is benign/attack</li>
+</ul>
+<p>Among the evaluated graph models, <strong>GraphSAGE</strong> performed best, so they use it.</p>
+<p><img src="/2025/12/21/clalxk/fbs_paper_review_en/figure3_graph_msa_detection.png" srcset="/img/loading.gif" alt="Figure 3: Example graph representation for MSA detection"></p>
+<p>Figure 3: Example graph representation for MSA detection</p>
+<p>Figure 3 shows that attacks such as TAU Reject appear as &#x201C;path patterns,&#x201D; and the system learns these patterns to recognize MSA. For the &#x201C;what if the attack evolves?&#x201D; problem, the paper proposes a direction that leverages ideas like <strong>maximum common subgraphs</strong>, using the intuition that it&#x2019;s often not a completely new path, but partially overlapping.</p>
+<p>The paper also explains this more formally. If a packet-derived graph is represented as (G=(V,E)), known attacks appear as specific paths (P(G)) in the graph, and evolved/reconfigured attacks may appear as different paths (P&#x2019;(G)). However, due to vulnerability/procedure characteristics, it is likely that these paths are not completely disjoint and may partially overlap. The intuition is to leverage this &#x201C;overlap&#x201D; to detect unknown attacks.</p>
+<hr>
+<h2 id="6-NAS-RRC-prediction-fusion-weight-based-fusion"><a href="#6-NAS-RRC-prediction-fusion-weight-based-fusion" class="headerlink" title="6. NAS/RRC prediction fusion (weight-based fusion)"></a>6. NAS/RRC prediction fusion (weight-based fusion)</h2><p>Because NAS and RRC have different characteristics, the models are trained separately and then their predictions are fused at the end using a <strong>weight-based</strong> method. (The paper mentions Dempster&#x2013;Shafer theory and explains it as assigning higher weight to the more reliable side.)</p>
+<p>Experimentally, fusing NAS+RRC predictions improved performance by about <strong>1&#x2013;2%</strong>.</p>
+<hr>
+<h2 id="7-Deployment-distributing-as-a-mobile-app"><a href="#7-Deployment-distributing-as-a-mobile-app" class="headerlink" title="7. Deployment: distributing as a mobile app"></a>7. Deployment: distributing as a mobile app</h2><p>Rather than stopping at experiments, they deployed it as an app and measured overhead.</p>
+<ul>
+<li><strong>MobileInsight</strong>: baseband trace parsing</li>
+<li><strong>TensorFlow Lite</strong>: on-device inference</li>
+<li><strong>Flutter</strong>: app UI</li>
+</ul>
+<p>They also mention practical barriers such as rooting requirements. Additionally, assuming real deployment, they anticipate an operational model where models are periodically retrained to reflect new attacks and quickly deployed via app updates. Since NAS/RRC traces can be sensitive, they also note that data collection should be enabled based on user consent.</p>
+<hr>
+<h1 id="Performance-Analysis"><a href="#Performance-Analysis" class="headerlink" title="Performance Analysis"></a>Performance Analysis</h1><p>To summarize the key results first:</p>
+<ul>
+<li><strong>FBS detection</strong>: 96% accuracy, 2.96% FPR</li>
+<li><strong>MSA recognition (21 types)</strong>: 86% accuracy, 3.28% FPR</li>
+<li>1&#x2013;2% improvement from NAS/RRC fusion</li>
+<li>Reported <strong>86%</strong> zero-shot detection accuracy for <strong>overshadowing attacks</strong></li>
+</ul>
+<p>The following figure is the core of the overhead analysis.</p>
+<p><img src="/2025/12/21/clalxk/fbs_paper_review_en/figure4_overhead_analysis.png" srcset="/img/loading.gif" alt="Figure 4: Overhead analysis"></p>
+<p>Figure 4: Overhead analysis</p>
+<p><em>Figure 4: Time/power/memory usage increases linearly with packet count, but with a small slope, suggesting practical usability</em></p>
+<p>The paper also presents quantitative numbers: on average it runs at about <strong>835KB memory</strong> and <strong>&lt;2mW power</strong>, which is relatively low compared to prior approaches (~4mW).</p>
+<p>They also show that certain attack types contribute more heavily to false positives in MSA (cases that are almost indistinguishable from benign behavior from the UE&#x2019;s perspective), and provide an analysis figure.</p>
+<p><img src="/2025/12/21/clalxk/fbs_paper_review_en/figure5_fp_analysis.png" srcset="/img/loading.gif" alt="Figure 5: False positive analysis for MSA detection"></p>
+<p>Figure 5: False positive analysis for MSA detection</p>
+<p><em>Figure 5: Certain attack types contribute heavily to FP &#x2192; the root cause is that they &#x201C;look the same as benign behavior from the UE&#x2019;s perspective&#x201D;</em></p>
+<p>They also performed fairly rigorous app validation in a controlled lab environment.</p>
+<p><img src="/2025/12/21/clalxk/fbs_paper_review_en/figure8_lab_setup.png" srcset="/img/loading.gif" alt="Figure 8: Controlled lab environment setup"></p>
+<p>Figure 8: Controlled lab environment setup</p>
+<p><em>Figure 8: Controlled experiments with USRP B210, a laptop (core), and a smartphone (app)</em></p>
+<p>The experimental scenarios include a lab 4G network with their own SIM, commercial SIMs (e.g., Google Fi), distance changes, and limited mobility. In the 24-hour stress test, they executed 21 attacks 5 times each, for a total of 105 attacks. In the long-term test, they ran the app for 7 days under various usage patterns and observed environments where packets accumulate.</p>
+<p>They also ran comparative experiments against existing app-based detection solutions (AIMSICD, SnoopSnitch). In the same controlled environment, those two solutions did not detect the FBS, but FBSDetector did (as described in the paper).</p>
+<hr>
+<h1 id="Conclusion"><a href="#Conclusion" class="headerlink" title="Conclusion"></a>Conclusion</h1><p>In one sentence, FBSDetector can be seen as a &#x201C;UE-side detection framework&#x201D; with the following direction.</p>
+<ul>
+<li><strong>Using only Layer-3 (NAS/RRC) traces</strong></li>
+<li><strong>On the UE (device)</strong></li>
+<li>Performing <strong>FBS detection + MSA recognition</strong></li>
+<li>As a practical framework with relatively low overhead</li>
+</ul>
+<p>In other words, FBSDetector is an ML-based FBS/MSA detection system that uses Layer-3 network traces. It builds large-scale realistic datasets (FBSAD, MSAD) and achieves high detection accuracy with low overhead by using advanced ML models such as Stateful LSTM with Attention and Graph Learning. The paper states that future work will port FBSDetector to 5G networks, support detection of overshadow attacks, and focus on integrating FBS detection and attack defense mechanisms in ORAN environments. I&#x2019;m looking forward to seeing how it expands both the porting process to 5G and the detectable scope.</p>
+<hr>
+<h1 id="Closing-thoughts"><a href="#Closing-thoughts" class="headerlink" title="Closing thoughts"></a>Closing thoughts</h1><p>Personally, beyond FBS detection itself, I found the attempt to <strong>model MSA as graphs and learn them as patterns</strong> especially interesting.</p>
+<p>Of course, the limitations are also clear.</p>
+<ul>
+<li>Rooting/permissions/device constraints (especially on iOS) remain major barriers to deployment.</li>
+<li>Attacks that &#x201C;look identical to normal behavior&#x201D; from the UE&#x2019;s perspective are inherently difficult (FP/FN).</li>
+<li>Expanding to 5G/other environments brings back the experimental infrastructure and dataset problems.</li>
+</ul>
+<p>One particularly impressive part (in the translated version) was how realistically the paper discusses &#x201C;what FP/FN mean.&#x201D; Since FBS itself is not a frequent event, even a small FP rate can significantly degrade usability in real deployment. With that in mind, the paper leaves room to interpret that at the current stage, it may be especially useful in security-first environments or for sensitive user groups rather than the general public.</p>
+<p>Still, it was a very interesting read. If I find another interesting paper on cellular networks, I&#x2019;ll be back with another review~~</p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/clalxk/">clalxk</a>
+                  
+                  <a class="hover-with-bg" href="/tags/FBS/">FBS</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Paper/">Paper</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_clalxk.jpg" srcset="/img/loading.gif" alt="clalxk">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">clalxk</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/clalxk">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/12/24/gongjae/CVE-2025-66516/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2025-66516: Apache Tika의 XFA 처리 과정에서 발생하는 XXE 기반 파일 유출 및 SSRF 취약점</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/12/21/clalxk/fbs_paper_review_kr/">
+                    <span class="hidden-mobile">[Research] “Gotta Detect 'Em All: Fake Base Station and Multi-Step Attack Detection in Cellular Networks” Paper Review (KR)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/12/21/clalxk/fbs_paper_review_en/';
+        this.page.identifier = '/2025/12/21/clalxk/fbs_paper_review_en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] “Gotta Detect 'Em All: Fake Base Station and Multi-Step Attack Detection in Cellular Networks” Paper Review (EN)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>

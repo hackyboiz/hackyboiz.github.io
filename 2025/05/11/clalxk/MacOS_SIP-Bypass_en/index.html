@@ -1,0 +1,1230 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2025/01/19/clalxk/MacOS_TCC-Bypass_en/&#34;&gt;macOS: Part0 - TCC Bypass&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;macOS: Part1 - SIP Bypass &amp;#x2190; Now!&lt;/p&gt;
+&lt;p&gt;Hello, I&amp;#x2019;m clalxk! After covering TCC Bypass, I&amp;#x2019;ve summarized SIP Bypass. Moving forward, I plan to study vulnerabilities that mainly occur on macOS, so stay tuned for Part 2!&lt;/p&gt;
+&lt;p&gt;In this post, I&amp;#x2019;ll introduce the concept of SIP and explain the overall flow of a vulnerability through a SIP Bypass example. I&amp;#x2019;ll also explain what Entitlement is and the role it plays in this process, among other things.&lt;/p&gt;
+&lt;h2 id=&#34;System-Integrity-Protection-SIP&#34;&gt;&lt;a href=&#34;#System-Integrity-Protection-SIP&#34; class=&#34;headerlink&#34; title=&#34;System Integrity Protection (SIP)&#34;&gt;&lt;/a&gt;&lt;strong&gt;System Integrity Protection (SIP)&lt;/strong&gt;&lt;/h2&gt;&lt;p&gt;SIP is a core security feature of macOS that prevents even root users from modifying or deleting critical system files. It protects the system by using Apple&amp;#x2019;s sandboxing technology, securing the entire platform from root access (conceptually similar to how SELinux protects the system).&lt;/p&gt;
+&lt;p&gt;By exploiting this vulnerability, an attacker can bypass SIP, access system-protected directories, and perform various malicious actions, such as installing rootkits, bypassing TCC, and creating persistent malware. SIP-enabled systems are sometimes referred to as &lt;strong&gt;rootless&lt;/strong&gt; because even if an attacker gains root privileges, these privileges are limited, and system files and directories cannot be modified.&lt;/p&gt;
+&lt;h3 id=&#34;Relationship-Between-SIP-and-Entitlements&#34;&gt;&lt;a href=&#34;#Relationship-Between-SIP-and-Entitlements&#34; class=&#34;headerlink&#34; title=&#34;Relationship Between SIP and Entitlements&#34;&gt;&lt;/a&gt;&lt;strong&gt;Relationship Between SIP and Entitlements&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;SIP protects the following paths:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;/System, /bin, /sbin, and /usr (with some exceptions)&lt;/li&gt;
+&lt;li&gt;The system kernel and core frameworks&lt;/li&gt;
+&lt;li&gt;Files that contain attributes set by SIP&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;em&gt;To fully disable SIP, settings must be changed from Recovery Mode&amp;#x2014;this is not possible in a normal runtime environment.&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;However, because processes like system updates require access to SIP-protected directories, Apple introduced specific permissions that are exempt from SIP restrictions. &lt;/p&gt;
+&lt;p&gt;These are:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;com.apple.rootless.install: Allows bypassing SIP filesystem checks&lt;/li&gt;
+&lt;li&gt;com.apple.rootless.install.heritable: Inherits com.apple.rootless.install in child processes&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Granting specific permissions to files or processes is called assigning an &amp;#x201C;&lt;a href=&#34;https://developer.apple.com/documentation/bundleresources/entitlements&#34;&gt;&lt;strong&gt;Entitlement&lt;/strong&gt;&lt;/a&gt;.&amp;#x201D;&lt;br&gt;Entitlements cannot be legally forged, as they are embedded during the app signing process. Apple extensively uses entitlements in macOS to enhance system security by granting internal privileges to highly specific processes.&lt;/p&gt;
+&lt;p&gt;In particular, the com.apple.rootless.install.heritable entitlement allows not only the designated process but also its child processes to inherit com.apple.rootless.install, thereby bypassing SIP filesystem protections.&lt;/p&gt;
+&lt;p&gt;We&amp;#x2019;ll look at an example of how this entitlement was bypassed shortly!&lt;/p&gt;
+&lt;h3 id=&#34;Where-SIP-Settings-Are-Stored&#34;&gt;&lt;a href=&#34;#Where-SIP-Settings-Are-Stored&#34; class=&#34;headerlink&#34; title=&#34;Where SIP Settings Are Stored&#34;&gt;&lt;/a&gt;Where SIP Settings Are Stored&lt;/h3&gt;&lt;p&gt;SIP&amp;#x2019;s activation status and detailed permissions are stored as &lt;strong&gt;bitflags&lt;/strong&gt;.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;On Intel Macs, these settings are saved in the csr-active-config variable in NVRAM.&lt;/li&gt;
+&lt;li&gt;On Apple Silicon (ARM) Macs, they are configured by reading the lp-sip0 value from the Device Tree during boot.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;In other words, the method of accessing SIP settings varies depending on the platform.&lt;/p&gt;
+&lt;p&gt;These bitflags are defined in the &lt;strong&gt;csr.h&lt;/strong&gt; header file in the &lt;strong&gt;XNU kernel source code&lt;/strong&gt;.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;em&gt;XNU is the kernel for macOS and iOS, and is an open-source&amp;#x2013;based operating system kernel developed by Apple.&lt;/em&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h3 id=&#34;List-of-SIP-Bitflags&#34;&gt;&lt;a href=&#34;#List-of-SIP-Bitflags&#34; class=&#34;headerlink&#34; title=&#34;List of SIP Bitflags&#34;&gt;&lt;/a&gt;List of SIP Bitflags&lt;/h3&gt;&lt;p&gt;The table below shows the major flags used to control specific SIP functionalities, as defined in the XNU source code.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;&lt;strong&gt;Bit Name (in XNU code)&lt;/strong&gt;&lt;/th&gt;
+&lt;th&gt;&lt;strong&gt;Description&lt;/strong&gt;&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;CSR_ALLOW_UNTRUSTED_KEXTS&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Allows loading of unsigned kernel extensions (KEXTs)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;CSR_ALLOW_UNRESTRICTED_FS&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Grants unrestricted access to protected filesystem paths&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;CSR_ALLOW_TASK_FOR_PID&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Allows access to task ports for specific PIDs (used for debugging)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;CSR_ALLOW_KERNEL_DEBUGGER&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Enables kernel debugging&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;CSR_ALLOW_UNRESTRICTED_DTRACE&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Allows unrestricted use of DTrace (a debugging and tracing tool)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;CSR_ALLOW_UNRESTRICTED_NVRAM&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Lifts read/write restrictions on NVRAM variables&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;CSR_ALLOW_UNAUTHENTICATED_ROOT&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Allows booting from unsigned APFS root snapshots&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;These flags can be enabled in special cases, such as for debugging or security research, but in a standard environment, all of them are disabled (set to 0) by default.&lt;/p&gt;
+&lt;p&gt;If you want to check the current SIP status on your macOS system, you can use the following command:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;$ csrutil status
+
+System Integrity Protection status: enabled.&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;enabled&lt;/strong&gt;: SIP is enabled and the default protections are in place.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;disabled&lt;/strong&gt;: SIP is disabled.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;On Intel-based Macs, since SIP settings are stored in NVRAM variables, you can use the following command:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;$ nvram csr-active-config
+
+csr-active-config  w%00%00%00&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This value is a &lt;strong&gt;hexadecimal bitflag&lt;/strong&gt; that indicates which SIP features are disabled. For example, a value of 0x77 means that multiple SIP protections have been turned off.&lt;/p&gt;
+&lt;p&gt;On Apple Silicon Macs, SIP settings are read from the Device Tree (lp-sip0), so the above command will not return this information.&lt;/p&gt;
+&lt;h2 id=&#34;SIP-Bypass-Example&#34;&gt;&lt;a href=&#34;#SIP-Bypass-Example&#34; class=&#34;headerlink&#34; title=&#34;SIP Bypass Example&#34;&gt;&lt;/a&gt;SIP Bypass Example&lt;/h2&gt;&lt;p&gt;Let&amp;#x2019;s analyze the drop_sip binary, which uses the com.apple.rootless.install.heritable entitlement, to see how it bypasses SIP.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;DeviceProcessEvents
+| &lt;span class=&#34;hljs-built_in&#34;&gt;where&lt;/span&gt; FileName =~ &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;drop_sip&amp;quot;&lt;/span&gt;
+| project InitiatingProcessFileName, ProcessCommandLine, SHA256&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;drop_sip is a binary &lt;strong&gt;signed directly by Apple&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/05/11/clalxk/MacOS_SIP-Bypass_en/image1.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;This binary is a signed executable that is &lt;strong&gt;natively located at&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;/System/Library/PrivateFrameworks/SystemMigrationUtils.framework/Resources/Tools/drop_sip.&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;The binary &lt;strong&gt;uses csops() to configure SIP-related flags and spawn child processes&lt;/strong&gt; with those settings.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/05/11/clalxk/MacOS_SIP-Bypass_en/image2.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Through the &lt;code&gt;csops&lt;/code&gt; system call, the &lt;code&gt;p_csflags&lt;/code&gt; member is modified, effectively enabling or configuring SIP behavior.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/05/11/clalxk/MacOS_SIP-Bypass_en/image3.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The parent process was &lt;code&gt;systemmigrationd&lt;/code&gt;, which &lt;strong&gt;inherited the SIP bypass permission through&lt;/strong&gt; &lt;code&gt;com.apple.rootless.install.heritable&lt;/code&gt; and passed it down to its child processes. As a result, drop_sip and its child processes were executed in an environment where SIP protections could be bypassed.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;DeviceProcessEvents
+| &lt;span class=&#34;hljs-built_in&#34;&gt;where&lt;/span&gt; InitiatingProcessFileName =~ &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;systemmigrationd&amp;quot;&lt;/span&gt;
+| summarize Hits=count(), Cmdline=any(ProcessCommandLine) by FileName&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Using the query above, we tracked the child processes of systemmigrationd.&lt;/p&gt;
+&lt;p&gt;During this investigation, we discovered that &lt;strong&gt;the Bash and Perl interpreters&lt;/strong&gt; (/bin/bash and /usr/bin/perl) were being executed as child processes.&lt;br&gt;This was a significant clue, because &lt;strong&gt;interpreters can be exploited for code injection via environment variable manipulation&lt;/strong&gt;.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;&lt;strong&gt;FileName&lt;/strong&gt;&lt;/th&gt;
+&lt;th&gt;&lt;strong&gt;Hits&lt;/strong&gt;&lt;/th&gt;
+&lt;th&gt;&lt;strong&gt;Cmdline&lt;/strong&gt;&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;bash&lt;/td&gt;
+&lt;td&gt;498&lt;/td&gt;
+&lt;td&gt;/bin/bash /System/Library/&amp;#x2026;/firstbootDirectoryServer&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;perl&lt;/td&gt;
+&lt;td&gt;171&lt;/td&gt;
+&lt;td&gt;/usr/bin/perl /usr/libexec/migrateLocalKDC &amp;#x2026;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;By exploiting environment variables like BASH_ENV for Bash or PERL5OPT for Perl, an attacker can execute arbitrary shell scripts in child processes.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/05/11/clalxk/MacOS_SIP-Bypass_en/img_BASH_ENV.jpg&#34; alt=&#34;image.png&#34;&gt;&lt;br&gt;SIP Bypass Example Using BASH_ENV&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/05/11/clalxk/MacOS_SIP-Bypass_en/img_PERL5OPT_ENV.jpg&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;SIP Bypass Example Using PERL5OPT&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;launchctl setenv PERL5OPT &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;-Mwarnings;system(&amp;quot;/private/tmp/migraine.sh&amp;quot;)&amp;apos;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;When such commands are executed, the script injected by the attacker (e.g., /private/tmp/migraine.sh) is run within a SIP-protected environment during Perl&amp;#x2019;s startup.&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;The SIP bypass vulnerability introduced earlier uses child processes of the &lt;code&gt;systemmigrationd&lt;/code&gt; daemon as the attack entry point.&lt;br&gt;However, there&amp;#x2019;s a catch &amp;#x2014; &lt;strong&gt;this daemon is only active when a migration is actually triggered&lt;/strong&gt;. Since typical migrations only occur &lt;strong&gt;after the user is fully logged out&lt;/strong&gt;, it becomes &lt;strong&gt;difficult for a remote attacker to manipulate or automate this process in real-time&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s analyze the full migration flow to identify a &lt;strong&gt;bypass point that can be automated&lt;/strong&gt;.&lt;/p&gt;
+&lt;h3 id=&#34;Summary-of-the-Full-Migration-Flow&#34;&gt;&lt;a href=&#34;#Summary-of-the-Full-Migration-Flow&#34; class=&#34;headerlink&#34; title=&#34;Summary of the Full Migration Flow&#34;&gt;&lt;/a&gt;Summary of the Full Migration Flow&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/05/11/clalxk/MacOS_SIP-Bypass_en/flow.jpg&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Migration Assistant&lt;/strong&gt;&lt;br&gt;This is the primary application that launches the migration wizard.&lt;br&gt;&amp;#x2192; It triggers user logout and internally calls the &lt;code&gt;SACLOStartLogoutWithOptions&lt;/code&gt; method.&lt;br&gt;&amp;#x2192; This app has the &lt;code&gt;com.apple.private.mbsystemadministration&lt;/code&gt; entitlement.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;MBSystemAdministration&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Acts as a &lt;strong&gt;proxy&lt;/strong&gt; for Migration Assistant, forwarding requests to the &lt;strong&gt;Setup Assistant&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;It runs as the &lt;code&gt;_mbsetupuser&lt;/code&gt;, enabling GUI interaction.&lt;/li&gt;
+&lt;li&gt;Communication occurs via XPC, and requests are &lt;strong&gt;rejected&lt;/strong&gt; if the appropriate entitlement is missing.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Setup Assistant&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Executes the actual migration logic and communicates with &lt;code&gt;systemmigrationd&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;Requires the &lt;code&gt;com.apple.private.systemmigration.daemonclient&lt;/code&gt; entitlement.&lt;/li&gt;
+&lt;li&gt;Requests are sent via &lt;strong&gt;XPC&lt;/strong&gt;.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;systemmigrationd&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Receives migration requests and processes them using the &lt;strong&gt;SystemMigration.framework&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;Creates a migration request file in &lt;code&gt;/Library/SystemMigration/Queue&lt;/code&gt; and transitions it to an &lt;strong&gt;&amp;#x201C;In-Flight&amp;#x201D;&lt;/strong&gt;state for processing.&lt;/li&gt;
+&lt;li&gt;During this process, &lt;strong&gt;Bash or Perl scripts may be executed&lt;/strong&gt; &amp;#x2014; &lt;strong&gt;this is the point where an attacker can inject environment variable&amp;#x2013;based payloads&lt;/strong&gt;.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;As we&amp;#x2019;ve seen, during the migration process, &lt;code&gt;systemmigrationd&lt;/code&gt; receives XPC requests internally through the &lt;code&gt;SystemMigrationDaemon&lt;/code&gt; object provided by &lt;code&gt;SystemMigration.framework&lt;/code&gt; .&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/05/11/clalxk/MacOS_SIP-Bypass_en/image4.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;rax = [SystemMigrationDaemon sharedDaemon];
+[rax startListeningForConnections];&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The daemon receives client requests through its own framework and executes migration scripts (such as Bash or Perl) accordingly.&lt;/p&gt;
+&lt;h3 id=&#34;Attempt-to-Patch-Migration-Assistant&#34;&gt;&lt;a href=&#34;#Attempt-to-Patch-Migration-Assistant&#34; class=&#34;headerlink&#34; title=&#34;Attempt to Patch Migration Assistant&#34;&gt;&lt;/a&gt;Attempt to Patch Migration Assistant&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/05/11/clalxk/MacOS_SIP-Bypass_en/image5.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;To automate the SIP bypass, Microsoft attempted to remove the function &lt;code&gt;SACLOStartLogoutWithOptions()&lt;/code&gt;, which is responsible for triggering user logout during the migration process.&lt;/p&gt;
+&lt;p&gt;The idea was that bypassing this function might allow migration to proceed &lt;strong&gt;without requiring the user to log out&lt;/strong&gt;. However, the attempt failed for three key reasons:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Code Signing Failure&lt;/strong&gt;&lt;br&gt;macOS enforces strict validation of system binary code signatures.&lt;br&gt;As soon as a binary is modified, its signature becomes invalid, and the system blocks its execution.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;PAC (Pointer Authentication Code) Validation Failure&lt;/strong&gt;&lt;br&gt;On modern Apple Silicon (macOS arm64e), &lt;strong&gt;PAC is enabled by default&lt;/strong&gt;. Unsigned or tampered binaries &lt;strong&gt;fail PAC verification and cannot be executed&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Loss of Entitlements&lt;/strong&gt;&lt;br&gt;The Migration Assistant binary requires the &lt;code&gt;com.apple.private.mbsystemadministration&lt;/code&gt; entitlement in order to &lt;strong&gt;communicate with MBSystemAdministration via XPC&lt;/strong&gt;.&lt;br&gt;However, during extraction, modification, and repackaging, this entitlement is &lt;strong&gt;lost&lt;/strong&gt;, resulting in communication failure.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;As a result, simply removing the logout logic or modifying the Migration Assistant binary was &lt;strong&gt;not a viable solution&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;Instead, based on the insights gained from this attempt, an alternative bypass was explored: directly launching the Setup Assistant and automating the process using AppleScript and environment variable&amp;#x2013;based payload injection.&lt;/p&gt;
+&lt;p&gt;This approach enables an attacker to &lt;strong&gt;trigger&lt;/strong&gt; &lt;code&gt;systemmigrationd&lt;/code&gt; &lt;strong&gt;and inject payloads at the point where Bash/Perl scripts are executed&amp;#x2014;without requiring user logout or interaction&lt;/strong&gt;.&lt;/p&gt;
+&lt;h2 id=&#34;Apple&amp;#x2019;s-Response&#34;&gt;&lt;a href=&#34;#Apple&amp;#x2019;s-Response&#34; class=&#34;headerlink&#34; title=&#34;Apple&amp;#x2019;s Response&#34;&gt;&lt;/a&gt;Apple&amp;#x2019;s Response&lt;/h2&gt;&lt;p&gt;Upon identifying the above vulnerability, Apple implemented two key mitigations:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Blocked environment variable inheritance in launchd&lt;/strong&gt;&lt;br&gt;Previously, an attacker could use the launchctl setenv command to set environment variables such as BASH_ENVor PERL5OPT, which would then be inherited by systemmigrationd child processes, allowing malicious code execution.&lt;br&gt;Apple mitigated this by &lt;strong&gt;modifying launchd to ignore these environment variables entirely&lt;/strong&gt;, effectively blocking this attack vector.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;launchctl setenv WHATEVER blah
+&lt;span class=&#34;hljs-comment&#34;&gt;# error:&lt;/span&gt;
+Could not &lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt; environment: 150: Operation not permitted &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; System Integrity Protection is engaged
+&lt;/code&gt;&lt;/pre&gt;
+&lt;ol&gt;
+&lt;li&gt;Removed SIP bypass capabilities from within drop_sip&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h2 id=&#34;In-Conclusion&#34;&gt;&lt;a href=&#34;#In-Conclusion&#34; class=&#34;headerlink&#34; title=&#34;In Conclusion&#34;&gt;&lt;/a&gt;&lt;strong&gt;In Conclusion&lt;/strong&gt;&lt;/h2&gt;&lt;p&gt;In this post, we explored a wide range of topics &amp;#x2014; from the concept of SIP to entitlements, bypass techniques, practical exploitation, and Apple&amp;#x2019;s patch response.&lt;/p&gt;
+&lt;p&gt;In the next research post, we&amp;#x2019;ll return with a deep dive into &lt;strong&gt;Sandbox Escape&lt;/strong&gt;. Stay tuned!&lt;/p&gt;
+&lt;h3 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h3&gt;&lt;p&gt;&lt;a href=&#34;https://powerofcommunity.net/poc2024/Csaba%20Fitzl,%20Apple%20Disk-O%20Party.pdf&#34;&gt;https://powerofcommunity.net/poc2024/Csaba%20Fitzl,%20Apple%20Disk-O%20Party.pdf&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/LearningKijo/SecurityResearcher-Note/blob/main/SecurityResearcher-Note-Folder/Day14-macOS-SIP-Bypass-Insights.md&#34;&gt;https://github.com/LearningKijo/SecurityResearcher-Note/blob/main/SecurityResearcher-Note-Folder/Day14-macOS-SIP-Bypass-Insights.md&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.youtube.com/watch?v=zxZesAN-TEk&#34;&gt;https://www.youtube.com/watch?v=zxZesAN-TEk&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.offsec.com/blog/macos-kernel-debugging-with-sip/&#34;&gt;https://www.offsec.com/blog/macos-kernel-debugging-with-sip/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://objective-see.org/blog/blog_0x14.html&#34;&gt;https://objective-see.org/blog/blog_0x14.html&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.microsoft.com/en-us/security/blog/2023/05/30/new-macos-vulnerability-migraine-could-bypass-system-integrity-protection/&#34;&gt;https://www.microsoft.com/en-us/security/blog/2023/05/30/new-macos-vulnerability-migraine-could-bypass-system-integrity-protection/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://media.defcon.org/DEF%20CON%2031/DEF%20CON%2031%20presentations/Jonathan%20Bar%20Or%20Michael%20Pearse%20Anurag%20Bohra%20-%20Getting%20a%20Migraine%20-%20uncovering%20a%20unique%20SIP%20bypass%20on%20macOS.pdf&#34;&gt;https://media.defcon.org/DEF%20CON%2031/DEF%20CON%2031%20presentations/Jonathan%20Bar%20Or%20Michael%20Pearse%20Anurag%20Bohra%20-%20Getting%20a%20Migraine%20-%20uncovering%20a%20unique%20SIP%20bypass%20on%20macOS.pdf&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] macOS: Part1 - SIP Bypass (en) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2025/01/19/clalxk/MacOS_TCC-Bypass_en/&#34;&gt;macOS: Part0 - TCC Bypass&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;macOS: Part1 - SIP Bypass &amp;#x2190; Now!&lt;/p&gt;
+&lt;p&gt;Hello, I&amp;#x2019;m clalxk! After covering TCC Bypass, I&amp;#x2019;ve summarized SIP Bypass. Moving forward, I plan to study vulnerabilities that mainly occur on macOS, so stay tuned for Part 2!&lt;/p&gt;
+&lt;p&gt;In this post, I&amp;#x2019;ll introduce the concept of SIP and explain the overall flow of a vulnerability through a SIP Bypass example. I&amp;#x2019;ll also explain what Entitlement is and the role it plays in this process, among other things.&lt;/p&gt;
+&lt;h2 id=&#34;System-Integrity-Protection-SIP&#34;&gt;&lt;a href=&#34;#System-Integrity-Protection-SIP&#34; class=&#34;headerlink&#34; title=&#34;System Integrity Protection (SIP)&#34;&gt;&lt;/a&gt;&lt;strong&gt;System Integrity Protection (SIP)&lt;/strong&gt;&lt;/h2&gt;&lt;p&gt;SIP is a core security feature of macOS that prevents even root users from modifying or deleting critical system files. It protects the system by using Apple&amp;#x2019;s sandboxing technology, securing the entire platform from root access (conceptually similar to how SELinux protects the system).&lt;/p&gt;
+&lt;p&gt;By exploiting this vulnerability, an attacker can bypass SIP, access system-protected directories, and perform various malicious actions, such as installing rootkits, bypassing TCC, and creating persistent malware. SIP-enabled systems are sometimes referred to as &lt;strong&gt;rootless&lt;/strong&gt; because even if an attacker gains root privileges, these privileges are limited, and system files and directories cannot be modified.&lt;/p&gt;
+&lt;h3 id=&#34;Relationship-Between-SIP-and-Entitlements&#34;&gt;&lt;a href=&#34;#Relationship-Between-SIP-and-Entitlements&#34; class=&#34;headerlink&#34; title=&#34;Relationship Between SIP and Entitlements&#34;&gt;&lt;/a&gt;&lt;strong&gt;Relationship Between SIP and Entitlements&lt;/strong&gt;&lt;/h3&gt;&lt;p&gt;SIP protects the following paths:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;/System, /bin, /sbin, and /usr (with some exceptions)&lt;/li&gt;
+&lt;li&gt;The system kernel and core frameworks&lt;/li&gt;
+&lt;li&gt;Files that contain attributes set by SIP&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;em&gt;To fully disable SIP, settings must be changed from Recovery Mode&amp;#x2014;this is not possible in a normal runtime environment.&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;However, because processes like system updates require access to SIP-protected directories, Apple introduced specific permissions that are exempt from SIP restrictions. &lt;/p&gt;
+&lt;p&gt;These are:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;com.apple.rootless.install: Allows bypassing SIP filesystem checks&lt;/li&gt;
+&lt;li&gt;com.apple.rootless.install.heritable: Inherits com.apple.rootless.install in child processes&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Granting specific permissions to files or processes is called assigning an &amp;#x201C;&lt;a href=&#34;https://developer.apple.com/documentation/bundleresources/entitlements&#34;&gt;&lt;strong&gt;Entitlement&lt;/strong&gt;&lt;/a&gt;.&amp;#x201D;&lt;br&gt;Entitlements cannot be legally forged, as they are embedded during the app signing process. Apple extensively uses entitlements in macOS to enhance system security by granting internal privileges to highly specific processes.&lt;/p&gt;
+&lt;p&gt;In particular, the com.apple.rootless.install.heritable entitlement allows not only the designated process but also its child processes to inherit com.apple.rootless.install, thereby bypassing SIP filesystem protections.&lt;/p&gt;
+&lt;p&gt;We&amp;#x2019;ll look at an example of how this entitlement was bypassed shortly!&lt;/p&gt;
+&lt;h3 id=&#34;Where-SIP-Settings-Are-Stored&#34;&gt;&lt;a href=&#34;#Where-SIP-Settings-Are-Stored&#34; class=&#34;headerlink&#34; title=&#34;Where SIP Settings Are Stored&#34;&gt;&lt;/a&gt;Where SIP Settings Are Stored&lt;/h3&gt;&lt;p&gt;SIP&amp;#x2019;s activation status and detailed permissions are stored as &lt;strong&gt;bitflags&lt;/strong&gt;.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;On Intel Macs, these settings are saved in the csr-active-config variable in NVRAM.&lt;/li&gt;
+&lt;li&gt;On Apple Silicon (ARM) Macs, they are configured by reading the lp-sip0 value from the Device Tree during boot.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;In other words, the method of accessing SIP settings varies depending on the platform.&lt;/p&gt;
+&lt;p&gt;These bitflags are defined in the &lt;strong&gt;csr.h&lt;/strong&gt; header file in the &lt;strong&gt;XNU kernel source code&lt;/strong&gt;.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;em&gt;XNU is the kernel for macOS and iOS, and is an open-source&amp;#x2013;based operating system kernel developed by Apple.&lt;/em&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h3 id=&#34;List-of-SIP-Bitflags&#34;&gt;&lt;a href=&#34;#List-of-SIP-Bitflags&#34; class=&#34;headerlink&#34; title=&#34;List of SIP Bitflags&#34;&gt;&lt;/a&gt;List of SIP Bitflags&lt;/h3&gt;&lt;p&gt;The table below shows the major flags used to control specific SIP functionalities, as defined in the XNU source code.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;&lt;strong&gt;Bit Name (in XNU code)&lt;/strong&gt;&lt;/th&gt;
+&lt;th&gt;&lt;strong&gt;Description&lt;/strong&gt;&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;CSR_ALLOW_UNTRUSTED_KEXTS&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Allows loading of unsigned kernel extensions (KEXTs)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;CSR_ALLOW_UNRESTRICTED_FS&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Grants unrestricted access to protected filesystem paths&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;CSR_ALLOW_TASK_FOR_PID&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Allows access to task ports for specific PIDs (used for debugging)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;CSR_ALLOW_KERNEL_DEBUGGER&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Enables kernel debugging&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;CSR_ALLOW_UNRESTRICTED_DTRACE&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Allows unrestricted use of DTrace (a debugging and tracing tool)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;CSR_ALLOW_UNRESTRICTED_NVRAM&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Lifts read/write restrictions on NVRAM variables&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;CSR_ALLOW_UNAUTHENTICATED_ROOT&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Allows booting from unsigned APFS root snapshots&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;These flags can be enabled in special cases, such as for debugging or security research, but in a standard environment, all of them are disabled (set to 0) by default.&lt;/p&gt;
+&lt;p&gt;If you want to check the current SIP status on your macOS system, you can use the following command:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;$ csrutil status
+
+System Integrity Protection status: enabled.&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;enabled&lt;/strong&gt;: SIP is enabled and the default protections are in place.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;disabled&lt;/strong&gt;: SIP is disabled.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;On Intel-based Macs, since SIP settings are stored in NVRAM variables, you can use the following command:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;$ nvram csr-active-config
+
+csr-active-config  w%00%00%00&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This value is a &lt;strong&gt;hexadecimal bitflag&lt;/strong&gt; that indicates which SIP features are disabled. For example, a value of 0x77 means that multiple SIP protections have been turned off.&lt;/p&gt;
+&lt;p&gt;On Apple Silicon Macs, SIP settings are read from the Device Tree (lp-sip0), so the above command will not return this information.&lt;/p&gt;
+&lt;h2 id=&#34;SIP-Bypass-Example&#34;&gt;&lt;a href=&#34;#SIP-Bypass-Example&#34; class=&#34;headerlink&#34; title=&#34;SIP Bypass Example&#34;&gt;&lt;/a&gt;SIP Bypass Example&lt;/h2&gt;&lt;p&gt;Let&amp;#x2019;s analyze the drop_sip binary, which uses the com.apple.rootless.install.heritable entitlement, to see how it bypasses SIP.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;DeviceProcessEvents
+| &lt;span class=&#34;hljs-built_in&#34;&gt;where&lt;/span&gt; FileName =~ &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;drop_sip&amp;quot;&lt;/span&gt;
+| project InitiatingProcessFileName, ProcessCommandLine, SHA256&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;drop_sip is a binary &lt;strong&gt;signed directly by Apple&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/05/11/clalxk/MacOS_SIP-Bypass_en/image1.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;This binary is a signed executable that is &lt;strong&gt;natively located at&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;/System/Library/PrivateFrameworks/SystemMigrationUtils.framework/Resources/Tools/drop_sip.&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;The binary &lt;strong&gt;uses csops() to configure SIP-related flags and spawn child processes&lt;/strong&gt; with those settings.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/05/11/clalxk/MacOS_SIP-Bypass_en/image2.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Through the &lt;code&gt;csops&lt;/code&gt; system call, the &lt;code&gt;p_csflags&lt;/code&gt; member is modified, effectively enabling or configuring SIP behavior.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/05/11/clalxk/MacOS_SIP-Bypass_en/image3.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The parent process was &lt;code&gt;systemmigrationd&lt;/code&gt;, which &lt;strong&gt;inherited the SIP bypass permission through&lt;/strong&gt; &lt;code&gt;com.apple.rootless.install.heritable&lt;/code&gt; and passed it down to its child processes. As a result, drop_sip and its child processes were executed in an environment where SIP protections could be bypassed.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;DeviceProcessEvents
+| &lt;span class=&#34;hljs-built_in&#34;&gt;where&lt;/span&gt; InitiatingProcessFileName =~ &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;systemmigrationd&amp;quot;&lt;/span&gt;
+| summarize Hits=count(), Cmdline=any(ProcessCommandLine) by FileName&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Using the query above, we tracked the child processes of systemmigrationd.&lt;/p&gt;
+&lt;p&gt;During this investigation, we discovered that &lt;strong&gt;the Bash and Perl interpreters&lt;/strong&gt; (/bin/bash and /usr/bin/perl) were being executed as child processes.&lt;br&gt;This was a significant clue, because &lt;strong&gt;interpreters can be exploited for code injection via environment variable manipulation&lt;/strong&gt;.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;&lt;strong&gt;FileName&lt;/strong&gt;&lt;/th&gt;
+&lt;th&gt;&lt;strong&gt;Hits&lt;/strong&gt;&lt;/th&gt;
+&lt;th&gt;&lt;strong&gt;Cmdline&lt;/strong&gt;&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;bash&lt;/td&gt;
+&lt;td&gt;498&lt;/td&gt;
+&lt;td&gt;/bin/bash /System/Library/&amp;#x2026;/firstbootDirectoryServer&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;perl&lt;/td&gt;
+&lt;td&gt;171&lt;/td&gt;
+&lt;td&gt;/usr/bin/perl /usr/libexec/migrateLocalKDC &amp;#x2026;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;By exploiting environment variables like BASH_ENV for Bash or PERL5OPT for Perl, an attacker can execute arbitrary shell scripts in child processes.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/05/11/clalxk/MacOS_SIP-Bypass_en/img_BASH_ENV.jpg&#34; alt=&#34;image.png&#34;&gt;&lt;br&gt;SIP Bypass Example Using BASH_ENV&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/05/11/clalxk/MacOS_SIP-Bypass_en/img_PERL5OPT_ENV.jpg&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;SIP Bypass Example Using PERL5OPT&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;launchctl setenv PERL5OPT &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;-Mwarnings;system(&amp;quot;/private/tmp/migraine.sh&amp;quot;)&amp;apos;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;When such commands are executed, the script injected by the attacker (e.g., /private/tmp/migraine.sh) is run within a SIP-protected environment during Perl&amp;#x2019;s startup.&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;The SIP bypass vulnerability introduced earlier uses child processes of the &lt;code&gt;systemmigrationd&lt;/code&gt; daemon as the attack entry point.&lt;br&gt;However, there&amp;#x2019;s a catch &amp;#x2014; &lt;strong&gt;this daemon is only active when a migration is actually triggered&lt;/strong&gt;. Since typical migrations only occur &lt;strong&gt;after the user is fully logged out&lt;/strong&gt;, it becomes &lt;strong&gt;difficult for a remote attacker to manipulate or automate this process in real-time&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s analyze the full migration flow to identify a &lt;strong&gt;bypass point that can be automated&lt;/strong&gt;.&lt;/p&gt;
+&lt;h3 id=&#34;Summary-of-the-Full-Migration-Flow&#34;&gt;&lt;a href=&#34;#Summary-of-the-Full-Migration-Flow&#34; class=&#34;headerlink&#34; title=&#34;Summary of the Full Migration Flow&#34;&gt;&lt;/a&gt;Summary of the Full Migration Flow&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/05/11/clalxk/MacOS_SIP-Bypass_en/flow.jpg&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Migration Assistant&lt;/strong&gt;&lt;br&gt;This is the primary application that launches the migration wizard.&lt;br&gt;&amp;#x2192; It triggers user logout and internally calls the &lt;code&gt;SACLOStartLogoutWithOptions&lt;/code&gt; method.&lt;br&gt;&amp;#x2192; This app has the &lt;code&gt;com.apple.private.mbsystemadministration&lt;/code&gt; entitlement.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;MBSystemAdministration&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Acts as a &lt;strong&gt;proxy&lt;/strong&gt; for Migration Assistant, forwarding requests to the &lt;strong&gt;Setup Assistant&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;It runs as the &lt;code&gt;_mbsetupuser&lt;/code&gt;, enabling GUI interaction.&lt;/li&gt;
+&lt;li&gt;Communication occurs via XPC, and requests are &lt;strong&gt;rejected&lt;/strong&gt; if the appropriate entitlement is missing.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Setup Assistant&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Executes the actual migration logic and communicates with &lt;code&gt;systemmigrationd&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;Requires the &lt;code&gt;com.apple.private.systemmigration.daemonclient&lt;/code&gt; entitlement.&lt;/li&gt;
+&lt;li&gt;Requests are sent via &lt;strong&gt;XPC&lt;/strong&gt;.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;systemmigrationd&lt;/strong&gt;&lt;ul&gt;
+&lt;li&gt;Receives migration requests and processes them using the &lt;strong&gt;SystemMigration.framework&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;Creates a migration request file in &lt;code&gt;/Library/SystemMigration/Queue&lt;/code&gt; and transitions it to an &lt;strong&gt;&amp;#x201C;In-Flight&amp;#x201D;&lt;/strong&gt;state for processing.&lt;/li&gt;
+&lt;li&gt;During this process, &lt;strong&gt;Bash or Perl scripts may be executed&lt;/strong&gt; &amp;#x2014; &lt;strong&gt;this is the point where an attacker can inject environment variable&amp;#x2013;based payloads&lt;/strong&gt;.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;As we&amp;#x2019;ve seen, during the migration process, &lt;code&gt;systemmigrationd&lt;/code&gt; receives XPC requests internally through the &lt;code&gt;SystemMigrationDaemon&lt;/code&gt; object provided by &lt;code&gt;SystemMigration.framework&lt;/code&gt; .&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2025/05/11/clalxk/MacOS_SIP-Bypass_en/image4.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;rax = [SystemMigrationDaemon sharedDaemon];
+[rax startListeningForConnections];&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The daemon receives client requests through its own framework and executes migration scripts (such as Bash or Perl) accordingly.&lt;/p&gt;
+&lt;h3 id=&#34;Attempt-to-Patch-Migration-Assistant&#34;&gt;&lt;a href=&#34;#Attempt-to-Patch-Migration-Assistant&#34; class=&#34;headerlink&#34; title=&#34;Attempt to Patch Migration Assistant&#34;&gt;&lt;/a&gt;Attempt to Patch Migration Assistant&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/05/11/clalxk/MacOS_SIP-Bypass_en/image5.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;To automate the SIP bypass, Microsoft attempted to remove the function &lt;code&gt;SACLOStartLogoutWithOptions()&lt;/code&gt;, which is responsible for triggering user logout during the migration process.&lt;/p&gt;
+&lt;p&gt;The idea was that bypassing this function might allow migration to proceed &lt;strong&gt;without requiring the user to log out&lt;/strong&gt;. However, the attempt failed for three key reasons:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Code Signing Failure&lt;/strong&gt;&lt;br&gt;macOS enforces strict validation of system binary code signatures.&lt;br&gt;As soon as a binary is modified, its signature becomes invalid, and the system blocks its execution.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;PAC (Pointer Authentication Code) Validation Failure&lt;/strong&gt;&lt;br&gt;On modern Apple Silicon (macOS arm64e), &lt;strong&gt;PAC is enabled by default&lt;/strong&gt;. Unsigned or tampered binaries &lt;strong&gt;fail PAC verification and cannot be executed&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Loss of Entitlements&lt;/strong&gt;&lt;br&gt;The Migration Assistant binary requires the &lt;code&gt;com.apple.private.mbsystemadministration&lt;/code&gt; entitlement in order to &lt;strong&gt;communicate with MBSystemAdministration via XPC&lt;/strong&gt;.&lt;br&gt;However, during extraction, modification, and repackaging, this entitlement is &lt;strong&gt;lost&lt;/strong&gt;, resulting in communication failure.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;As a result, simply removing the logout logic or modifying the Migration Assistant binary was &lt;strong&gt;not a viable solution&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;Instead, based on the insights gained from this attempt, an alternative bypass was explored: directly launching the Setup Assistant and automating the process using AppleScript and environment variable&amp;#x2013;based payload injection.&lt;/p&gt;
+&lt;p&gt;This approach enables an attacker to &lt;strong&gt;trigger&lt;/strong&gt; &lt;code&gt;systemmigrationd&lt;/code&gt; &lt;strong&gt;and inject payloads at the point where Bash/Perl scripts are executed&amp;#x2014;without requiring user logout or interaction&lt;/strong&gt;.&lt;/p&gt;
+&lt;h2 id=&#34;Apple&amp;#x2019;s-Response&#34;&gt;&lt;a href=&#34;#Apple&amp;#x2019;s-Response&#34; class=&#34;headerlink&#34; title=&#34;Apple&amp;#x2019;s Response&#34;&gt;&lt;/a&gt;Apple&amp;#x2019;s Response&lt;/h2&gt;&lt;p&gt;Upon identifying the above vulnerability, Apple implemented two key mitigations:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Blocked environment variable inheritance in launchd&lt;/strong&gt;&lt;br&gt;Previously, an attacker could use the launchctl setenv command to set environment variables such as BASH_ENVor PERL5OPT, which would then be inherited by systemmigrationd child processes, allowing malicious code execution.&lt;br&gt;Apple mitigated this by &lt;strong&gt;modifying launchd to ignore these environment variables entirely&lt;/strong&gt;, effectively blocking this attack vector.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;launchctl setenv WHATEVER blah
+&lt;span class=&#34;hljs-comment&#34;&gt;# error:&lt;/span&gt;
+Could not &lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt; environment: 150: Operation not permitted &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; System Integrity Protection is engaged
+&lt;/code&gt;&lt;/pre&gt;
+&lt;ol&gt;
+&lt;li&gt;Removed SIP bypass capabilities from within drop_sip&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h2 id=&#34;In-Conclusion&#34;&gt;&lt;a href=&#34;#In-Conclusion&#34; class=&#34;headerlink&#34; title=&#34;In Conclusion&#34;&gt;&lt;/a&gt;&lt;strong&gt;In Conclusion&lt;/strong&gt;&lt;/h2&gt;&lt;p&gt;In this post, we explored a wide range of topics &amp;#x2014; from the concept of SIP to entitlements, bypass techniques, practical exploitation, and Apple&amp;#x2019;s patch response.&lt;/p&gt;
+&lt;p&gt;In the next research post, we&amp;#x2019;ll return with a deep dive into &lt;strong&gt;Sandbox Escape&lt;/strong&gt;. Stay tuned!&lt;/p&gt;
+&lt;h3 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h3&gt;&lt;p&gt;&lt;a href=&#34;https://powerofcommunity.net/poc2024/Csaba%20Fitzl,%20Apple%20Disk-O%20Party.pdf&#34;&gt;https://powerofcommunity.net/poc2024/Csaba%20Fitzl,%20Apple%20Disk-O%20Party.pdf&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/LearningKijo/SecurityResearcher-Note/blob/main/SecurityResearcher-Note-Folder/Day14-macOS-SIP-Bypass-Insights.md&#34;&gt;https://github.com/LearningKijo/SecurityResearcher-Note/blob/main/SecurityResearcher-Note-Folder/Day14-macOS-SIP-Bypass-Insights.md&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.youtube.com/watch?v=zxZesAN-TEk&#34;&gt;https://www.youtube.com/watch?v=zxZesAN-TEk&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.offsec.com/blog/macos-kernel-debugging-with-sip/&#34;&gt;https://www.offsec.com/blog/macos-kernel-debugging-with-sip/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://objective-see.org/blog/blog_0x14.html&#34;&gt;https://objective-see.org/blog/blog_0x14.html&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.microsoft.com/en-us/security/blog/2023/05/30/new-macos-vulnerability-migraine-could-bypass-system-integrity-protection/&#34;&gt;https://www.microsoft.com/en-us/security/blog/2023/05/30/new-macos-vulnerability-migraine-could-bypass-system-integrity-protection/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://media.defcon.org/DEF%20CON%2031/DEF%20CON%2031%20presentations/Jonathan%20Bar%20Or%20Michael%20Pearse%20Anurag%20Bohra%20-%20Getting%20a%20Migraine%20-%20uncovering%20a%20unique%20SIP%20bypass%20on%20macOS.pdf&#34;&gt;https://media.defcon.org/DEF%20CON%2031/DEF%20CON%2031%20presentations/Jonathan%20Bar%20Or%20Michael%20Pearse%20Anurag%20Bohra%20-%20Getting%20a%20Migraine%20-%20uncovering%20a%20unique%20SIP%20bypass%20on%20macOS.pdf&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/05/11/clalxk/MacOS_SIP-Bypass_en/SIP.jpeg">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/05/11/clalxk/macos_sip-bypass_en/">
+
+  <title>[Research] macOS: Part1 - SIP Bypass (en) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-05-11 17:00" pubdate>
+      2025년 5월 11일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      1.8k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      35
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] macOS: Part1 - SIP Bypass (en)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p><a href="https://hackyboiz.github.io/2025/01/19/clalxk/MacOS_TCC-Bypass_en/">macOS: Part0 - TCC Bypass</a></p>
+<p>macOS: Part1 - SIP Bypass &#x2190; Now!</p>
+<p>Hello, I&#x2019;m clalxk! After covering TCC Bypass, I&#x2019;ve summarized SIP Bypass. Moving forward, I plan to study vulnerabilities that mainly occur on macOS, so stay tuned for Part 2!</p>
+<p>In this post, I&#x2019;ll introduce the concept of SIP and explain the overall flow of a vulnerability through a SIP Bypass example. I&#x2019;ll also explain what Entitlement is and the role it plays in this process, among other things.</p>
+<h2 id="System-Integrity-Protection-SIP"><a href="#System-Integrity-Protection-SIP" class="headerlink" title="System Integrity Protection (SIP)"></a><strong>System Integrity Protection (SIP)</strong></h2><p>SIP is a core security feature of macOS that prevents even root users from modifying or deleting critical system files. It protects the system by using Apple&#x2019;s sandboxing technology, securing the entire platform from root access (conceptually similar to how SELinux protects the system).</p>
+<p>By exploiting this vulnerability, an attacker can bypass SIP, access system-protected directories, and perform various malicious actions, such as installing rootkits, bypassing TCC, and creating persistent malware. SIP-enabled systems are sometimes referred to as <strong>rootless</strong> because even if an attacker gains root privileges, these privileges are limited, and system files and directories cannot be modified.</p>
+<h3 id="Relationship-Between-SIP-and-Entitlements"><a href="#Relationship-Between-SIP-and-Entitlements" class="headerlink" title="Relationship Between SIP and Entitlements"></a><strong>Relationship Between SIP and Entitlements</strong></h3><p>SIP protects the following paths:</p>
+<ul>
+<li>/System, /bin, /sbin, and /usr (with some exceptions)</li>
+<li>The system kernel and core frameworks</li>
+<li>Files that contain attributes set by SIP</li>
+</ul>
+<p><em>To fully disable SIP, settings must be changed from Recovery Mode&#x2014;this is not possible in a normal runtime environment.</em></p>
+<p>However, because processes like system updates require access to SIP-protected directories, Apple introduced specific permissions that are exempt from SIP restrictions. </p>
+<p>These are:</p>
+<ul>
+<li>com.apple.rootless.install: Allows bypassing SIP filesystem checks</li>
+<li>com.apple.rootless.install.heritable: Inherits com.apple.rootless.install in child processes</li>
+</ul>
+<p>Granting specific permissions to files or processes is called assigning an &#x201C;<a target="_blank" rel="external nofollow noopener noreferrer" href="https://developer.apple.com/documentation/bundleresources/entitlements"><strong>Entitlement</strong></a>.&#x201D;<br>Entitlements cannot be legally forged, as they are embedded during the app signing process. Apple extensively uses entitlements in macOS to enhance system security by granting internal privileges to highly specific processes.</p>
+<p>In particular, the com.apple.rootless.install.heritable entitlement allows not only the designated process but also its child processes to inherit com.apple.rootless.install, thereby bypassing SIP filesystem protections.</p>
+<p>We&#x2019;ll look at an example of how this entitlement was bypassed shortly!</p>
+<h3 id="Where-SIP-Settings-Are-Stored"><a href="#Where-SIP-Settings-Are-Stored" class="headerlink" title="Where SIP Settings Are Stored"></a>Where SIP Settings Are Stored</h3><p>SIP&#x2019;s activation status and detailed permissions are stored as <strong>bitflags</strong>.</p>
+<ul>
+<li>On Intel Macs, these settings are saved in the csr-active-config variable in NVRAM.</li>
+<li>On Apple Silicon (ARM) Macs, they are configured by reading the lp-sip0 value from the Device Tree during boot.</li>
+</ul>
+<p>In other words, the method of accessing SIP settings varies depending on the platform.</p>
+<p>These bitflags are defined in the <strong>csr.h</strong> header file in the <strong>XNU kernel source code</strong>.</p>
+<blockquote>
+<p><em>XNU is the kernel for macOS and iOS, and is an open-source&#x2013;based operating system kernel developed by Apple.</em></p>
+</blockquote>
+<h3 id="List-of-SIP-Bitflags"><a href="#List-of-SIP-Bitflags" class="headerlink" title="List of SIP Bitflags"></a>List of SIP Bitflags</h3><p>The table below shows the major flags used to control specific SIP functionalities, as defined in the XNU source code.</p>
+<div class="table-container">
+<table>
+<thead>
+<tr>
+<th><strong>Bit Name (in XNU code)</strong></th>
+<th><strong>Description</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CSR_ALLOW_UNTRUSTED_KEXTS</code></td>
+<td>Allows loading of unsigned kernel extensions (KEXTs)</td>
+</tr>
+<tr>
+<td><code>CSR_ALLOW_UNRESTRICTED_FS</code></td>
+<td>Grants unrestricted access to protected filesystem paths</td>
+</tr>
+<tr>
+<td><code>CSR_ALLOW_TASK_FOR_PID</code></td>
+<td>Allows access to task ports for specific PIDs (used for debugging)</td>
+</tr>
+<tr>
+<td><code>CSR_ALLOW_KERNEL_DEBUGGER</code></td>
+<td>Enables kernel debugging</td>
+</tr>
+<tr>
+<td><code>CSR_ALLOW_UNRESTRICTED_DTRACE</code></td>
+<td>Allows unrestricted use of DTrace (a debugging and tracing tool)</td>
+</tr>
+<tr>
+<td><code>CSR_ALLOW_UNRESTRICTED_NVRAM</code></td>
+<td>Lifts read/write restrictions on NVRAM variables</td>
+</tr>
+<tr>
+<td><code>CSR_ALLOW_UNAUTHENTICATED_ROOT</code></td>
+<td>Allows booting from unsigned APFS root snapshots</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>These flags can be enabled in special cases, such as for debugging or security research, but in a standard environment, all of them are disabled (set to 0) by default.</p>
+<p>If you want to check the current SIP status on your macOS system, you can use the following command:</p>
+<pre><code class="hljs bash">$ csrutil status
+
+System Integrity Protection status: enabled.</code></pre>
+<ul>
+<li><strong>enabled</strong>: SIP is enabled and the default protections are in place.</li>
+<li><strong>disabled</strong>: SIP is disabled.</li>
+</ul>
+<p>On Intel-based Macs, since SIP settings are stored in NVRAM variables, you can use the following command:</p>
+<pre><code class="hljs bash">$ nvram csr-active-config
+
+csr-active-config  w%00%00%00</code></pre>
+<p>This value is a <strong>hexadecimal bitflag</strong> that indicates which SIP features are disabled. For example, a value of 0x77 means that multiple SIP protections have been turned off.</p>
+<p>On Apple Silicon Macs, SIP settings are read from the Device Tree (lp-sip0), so the above command will not return this information.</p>
+<h2 id="SIP-Bypass-Example"><a href="#SIP-Bypass-Example" class="headerlink" title="SIP Bypass Example"></a>SIP Bypass Example</h2><p>Let&#x2019;s analyze the drop_sip binary, which uses the com.apple.rootless.install.heritable entitlement, to see how it bypasses SIP.</p>
+<pre><code class="hljs bash">DeviceProcessEvents
+| <span class="hljs-built_in">where</span> FileName =~ <span class="hljs-string">&quot;drop_sip&quot;</span>
+| project InitiatingProcessFileName, ProcessCommandLine, SHA256</code></pre>
+<p>drop_sip is a binary <strong>signed directly by Apple</strong>.</p>
+<p><img src="/2025/05/11/clalxk/MacOS_SIP-Bypass_en/image1.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>This binary is a signed executable that is <strong>natively located at</strong></p>
+<p><code>/System/Library/PrivateFrameworks/SystemMigrationUtils.framework/Resources/Tools/drop_sip.</code></p>
+<p>The binary <strong>uses csops() to configure SIP-related flags and spawn child processes</strong> with those settings.</p>
+<p><img src="/2025/05/11/clalxk/MacOS_SIP-Bypass_en/image2.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Through the <code>csops</code> system call, the <code>p_csflags</code> member is modified, effectively enabling or configuring SIP behavior.</p>
+<p><img src="/2025/05/11/clalxk/MacOS_SIP-Bypass_en/image3.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>The parent process was <code>systemmigrationd</code>, which <strong>inherited the SIP bypass permission through</strong> <code>com.apple.rootless.install.heritable</code> and passed it down to its child processes. As a result, drop_sip and its child processes were executed in an environment where SIP protections could be bypassed.</p>
+<pre><code class="hljs bash">DeviceProcessEvents
+| <span class="hljs-built_in">where</span> InitiatingProcessFileName =~ <span class="hljs-string">&quot;systemmigrationd&quot;</span>
+| summarize Hits=count(), Cmdline=any(ProcessCommandLine) by FileName</code></pre>
+<p>Using the query above, we tracked the child processes of systemmigrationd.</p>
+<p>During this investigation, we discovered that <strong>the Bash and Perl interpreters</strong> (/bin/bash and /usr/bin/perl) were being executed as child processes.<br>This was a significant clue, because <strong>interpreters can be exploited for code injection via environment variable manipulation</strong>.</p>
+<div class="table-container">
+<table>
+<thead>
+<tr>
+<th><strong>FileName</strong></th>
+<th><strong>Hits</strong></th>
+<th><strong>Cmdline</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>bash</td>
+<td>498</td>
+<td>/bin/bash /System/Library/&#x2026;/firstbootDirectoryServer</td>
+</tr>
+<tr>
+<td>perl</td>
+<td>171</td>
+<td>/usr/bin/perl /usr/libexec/migrateLocalKDC &#x2026;</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>By exploiting environment variables like BASH_ENV for Bash or PERL5OPT for Perl, an attacker can execute arbitrary shell scripts in child processes.</p>
+<p><img src="/2025/05/11/clalxk/MacOS_SIP-Bypass_en/img_BASH_ENV.jpg" srcset="/img/loading.gif" alt="image.png"><br>SIP Bypass Example Using BASH_ENV</p>
+<p><img src="/2025/05/11/clalxk/MacOS_SIP-Bypass_en/img_PERL5OPT_ENV.jpg" srcset="/img/loading.gif" alt="image.png"></p>
+<p>SIP Bypass Example Using PERL5OPT</p>
+<pre><code class="hljs bash">launchctl setenv PERL5OPT <span class="hljs-string">&apos;-Mwarnings;system(&quot;/private/tmp/migraine.sh&quot;)&apos;</span></code></pre>
+<p>When such commands are executed, the script injected by the attacker (e.g., /private/tmp/migraine.sh) is run within a SIP-protected environment during Perl&#x2019;s startup.</p>
+<hr>
+<p>The SIP bypass vulnerability introduced earlier uses child processes of the <code>systemmigrationd</code> daemon as the attack entry point.<br>However, there&#x2019;s a catch &#x2014; <strong>this daemon is only active when a migration is actually triggered</strong>. Since typical migrations only occur <strong>after the user is fully logged out</strong>, it becomes <strong>difficult for a remote attacker to manipulate or automate this process in real-time</strong>.</p>
+<p>Let&#x2019;s analyze the full migration flow to identify a <strong>bypass point that can be automated</strong>.</p>
+<h3 id="Summary-of-the-Full-Migration-Flow"><a href="#Summary-of-the-Full-Migration-Flow" class="headerlink" title="Summary of the Full Migration Flow"></a>Summary of the Full Migration Flow</h3><p><img src="/2025/05/11/clalxk/MacOS_SIP-Bypass_en/flow.jpg" srcset="/img/loading.gif" alt="image.png"></p>
+<ol>
+<li><strong>Migration Assistant</strong><br>This is the primary application that launches the migration wizard.<br>&#x2192; It triggers user logout and internally calls the <code>SACLOStartLogoutWithOptions</code> method.<br>&#x2192; This app has the <code>com.apple.private.mbsystemadministration</code> entitlement.</li>
+<li><strong>MBSystemAdministration</strong><ul>
+<li>Acts as a <strong>proxy</strong> for Migration Assistant, forwarding requests to the <strong>Setup Assistant</strong>.</li>
+<li>It runs as the <code>_mbsetupuser</code>, enabling GUI interaction.</li>
+<li>Communication occurs via XPC, and requests are <strong>rejected</strong> if the appropriate entitlement is missing.</li>
+</ul>
+</li>
+<li><strong>Setup Assistant</strong><ul>
+<li>Executes the actual migration logic and communicates with <code>systemmigrationd</code>.</li>
+<li>Requires the <code>com.apple.private.systemmigration.daemonclient</code> entitlement.</li>
+<li>Requests are sent via <strong>XPC</strong>.</li>
+</ul>
+</li>
+<li><strong>systemmigrationd</strong><ul>
+<li>Receives migration requests and processes them using the <strong>SystemMigration.framework</strong>.</li>
+<li>Creates a migration request file in <code>/Library/SystemMigration/Queue</code> and transitions it to an <strong>&#x201C;In-Flight&#x201D;</strong>state for processing.</li>
+<li>During this process, <strong>Bash or Perl scripts may be executed</strong> &#x2014; <strong>this is the point where an attacker can inject environment variable&#x2013;based payloads</strong>.</li>
+</ul>
+</li>
+</ol>
+<p>As we&#x2019;ve seen, during the migration process, <code>systemmigrationd</code> receives XPC requests internally through the <code>SystemMigrationDaemon</code> object provided by <code>SystemMigration.framework</code> .</p>
+<p><img src="/2025/05/11/clalxk/MacOS_SIP-Bypass_en/image4.png" srcset="/img/loading.gif" alt="image.png"></p>
+<pre><code class="hljs bash">rax = [SystemMigrationDaemon sharedDaemon];
+[rax startListeningForConnections];</code></pre>
+<p>The daemon receives client requests through its own framework and executes migration scripts (such as Bash or Perl) accordingly.</p>
+<h3 id="Attempt-to-Patch-Migration-Assistant"><a href="#Attempt-to-Patch-Migration-Assistant" class="headerlink" title="Attempt to Patch Migration Assistant"></a>Attempt to Patch Migration Assistant</h3><p><img src="/2025/05/11/clalxk/MacOS_SIP-Bypass_en/image5.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>To automate the SIP bypass, Microsoft attempted to remove the function <code>SACLOStartLogoutWithOptions()</code>, which is responsible for triggering user logout during the migration process.</p>
+<p>The idea was that bypassing this function might allow migration to proceed <strong>without requiring the user to log out</strong>. However, the attempt failed for three key reasons:</p>
+<ol>
+<li><strong>Code Signing Failure</strong><br>macOS enforces strict validation of system binary code signatures.<br>As soon as a binary is modified, its signature becomes invalid, and the system blocks its execution.</li>
+<li><strong>PAC (Pointer Authentication Code) Validation Failure</strong><br>On modern Apple Silicon (macOS arm64e), <strong>PAC is enabled by default</strong>. Unsigned or tampered binaries <strong>fail PAC verification and cannot be executed</strong>.</li>
+<li><strong>Loss of Entitlements</strong><br>The Migration Assistant binary requires the <code>com.apple.private.mbsystemadministration</code> entitlement in order to <strong>communicate with MBSystemAdministration via XPC</strong>.<br>However, during extraction, modification, and repackaging, this entitlement is <strong>lost</strong>, resulting in communication failure.</li>
+</ol>
+<p>As a result, simply removing the logout logic or modifying the Migration Assistant binary was <strong>not a viable solution</strong>.</p>
+<p>Instead, based on the insights gained from this attempt, an alternative bypass was explored: directly launching the Setup Assistant and automating the process using AppleScript and environment variable&#x2013;based payload injection.</p>
+<p>This approach enables an attacker to <strong>trigger</strong> <code>systemmigrationd</code> <strong>and inject payloads at the point where Bash/Perl scripts are executed&#x2014;without requiring user logout or interaction</strong>.</p>
+<h2 id="Apple&#x2019;s-Response"><a href="#Apple&#x2019;s-Response" class="headerlink" title="Apple&#x2019;s Response"></a>Apple&#x2019;s Response</h2><p>Upon identifying the above vulnerability, Apple implemented two key mitigations:</p>
+<ol>
+<li><strong>Blocked environment variable inheritance in launchd</strong><br>Previously, an attacker could use the launchctl setenv command to set environment variables such as BASH_ENVor PERL5OPT, which would then be inherited by systemmigrationd child processes, allowing malicious code execution.<br>Apple mitigated this by <strong>modifying launchd to ignore these environment variables entirely</strong>, effectively blocking this attack vector.</li>
+</ol>
+<pre><code class="hljs bash">launchctl setenv WHATEVER blah
+<span class="hljs-comment"># error:</span>
+Could not <span class="hljs-built_in">set</span> environment: 150: Operation not permitted <span class="hljs-keyword">while</span> System Integrity Protection is engaged
+</code></pre>
+<ol>
+<li>Removed SIP bypass capabilities from within drop_sip</li>
+</ol>
+<h2 id="In-Conclusion"><a href="#In-Conclusion" class="headerlink" title="In Conclusion"></a><strong>In Conclusion</strong></h2><p>In this post, we explored a wide range of topics &#x2014; from the concept of SIP to entitlements, bypass techniques, practical exploitation, and Apple&#x2019;s patch response.</p>
+<p>In the next research post, we&#x2019;ll return with a deep dive into <strong>Sandbox Escape</strong>. Stay tuned!</p>
+<h3 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a>Reference</h3><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://powerofcommunity.net/poc2024/Csaba%20Fitzl,%20Apple%20Disk-O%20Party.pdf">https://powerofcommunity.net/poc2024/Csaba%20Fitzl,%20Apple%20Disk-O%20Party.pdf</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/LearningKijo/SecurityResearcher-Note/blob/main/SecurityResearcher-Note-Folder/Day14-macOS-SIP-Bypass-Insights.md">https://github.com/LearningKijo/SecurityResearcher-Note/blob/main/SecurityResearcher-Note-Folder/Day14-macOS-SIP-Bypass-Insights.md</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.youtube.com/watch?v=zxZesAN-TEk">https://www.youtube.com/watch?v=zxZesAN-TEk</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.offsec.com/blog/macos-kernel-debugging-with-sip/">https://www.offsec.com/blog/macos-kernel-debugging-with-sip/</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://objective-see.org/blog/blog_0x14.html">https://objective-see.org/blog/blog_0x14.html</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.microsoft.com/en-us/security/blog/2023/05/30/new-macos-vulnerability-migraine-could-bypass-system-integrity-protection/">https://www.microsoft.com/en-us/security/blog/2023/05/30/new-macos-vulnerability-migraine-could-bypass-system-integrity-protection/</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://media.defcon.org/DEF%20CON%2031/DEF%20CON%2031%20presentations/Jonathan%20Bar%20Or%20Michael%20Pearse%20Anurag%20Bohra%20-%20Getting%20a%20Migraine%20-%20uncovering%20a%20unique%20SIP%20bypass%20on%20macOS.pdf">https://media.defcon.org/DEF%20CON%2031/DEF%20CON%2031%20presentations/Jonathan%20Bar%20Or%20Michael%20Pearse%20Anurag%20Bohra%20-%20Getting%20a%20Migraine%20-%20uncovering%20a%20unique%20SIP%20bypass%20on%20macOS.pdf</a></p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/clalxk/">clalxk</a>
+                  
+                  <a class="hover-with-bg" href="/tags/MacOS/">MacOS</a>
+                  
+                  <a class="hover-with-bg" href="/tags/TCC-Bypass/">TCC Bypass</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_clalxk.jpg" srcset="/img/loading.gif" alt="clalxk">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">clalxk</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/clalxk">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/05/12/ogu123/NamedPipe/EN/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[Research] Windows Named Pipe (EN)</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/05/11/clalxk/MacOS_SIP-Bypass_ko/">
+                    <span class="hidden-mobile">[Research] macOS: Part1 - SIP Bypass (ko)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/05/11/clalxk/MacOS_SIP-Bypass_en/';
+        this.page.identifier = '/2025/05/11/clalxk/MacOS_SIP-Bypass_en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] macOS: Part1 - SIP Bypass (en)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>

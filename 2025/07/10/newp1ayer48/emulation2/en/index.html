@@ -1,0 +1,1079 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;Hello! I&amp;#x2019;m newp1ayer48, the one in charge of the low-level at Hackyboiz! &amp;#x1F938;&amp;#x1F3FB;&amp;#x200D;&amp;#x2642;&amp;#xFE0F;&lt;/p&gt;
+&lt;p&gt;After a long time, I&amp;#x2019;ve safely(?) returned with &lt;strong&gt;Firmware Emulation with FirmAE Part 2&lt;/strong&gt;!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image001.jpg&#34; alt=&#34;image001.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;FirmAE is a convenient tool that automates firmware emulation! Emulating and dynamically analyzing firmware is a great way to find vulnerabilities! For emulation basics and FirmAE installation, please refer to the previous article, &lt;a href=&#34;https://hackyboiz.github.io/2025/05/08/newp1ayer48/emulation1/ko/&#34;&gt;Firmware Emulation with FirmAE Part 1&lt;/a&gt;.&lt;br&gt;Continuing from the last post, this article will cover FirmAE&amp;#x2019;s structure, execution, and how to resolve IP issues should they arise. &amp;#x1F64C;&amp;#x1F3FB;&lt;/p&gt;
+&lt;h2 id=&#34;1-FirmAE-Structure&#34;&gt;&lt;a href=&#34;#1-FirmAE-Structure&#34; class=&#34;headerlink&#34; title=&#34;1. FirmAE Structure&#34;&gt;&lt;/a&gt;1. FirmAE Structure&lt;/h2&gt;&lt;p&gt;The main directories and files of FirmAE are structured as follows.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Directories &amp;amp; Files&lt;/th&gt;
+&lt;th&gt;Explanation&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;FirmAE/analyses/&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;This is the location where files and logs related to the &lt;code&gt;analyses&lt;/code&gt; mode of &lt;code&gt;run.sh&lt;/code&gt; are stored.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;FirmAE/firmwares/&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;This is where you place the firmware (&lt;code&gt;.bin&lt;/code&gt;) for analysis.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;FirmAE/images/&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;This is where the OS images for emulation are located.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;FirmAE/scratch/&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;For each emulation run, a subdirectory is created with an IID (Image ID), which stores all intermediate outputs and results for that specific run, including the extracted file system, kernel, generated disk image, and logs. The subdirectory is created in the format &lt;code&gt;FirmAE/scratch/{IID}&lt;/code&gt;.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;FirmAE/scripts/&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;This is where the various sub-scripts called by the main scripts are located.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;FirmAE/scripts/makeNetwork.py&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;It is responsible for dynamically analyzing the firmware&amp;#x2019;s network behavior, and then generating the final QEMU execution script &lt;code&gt;FirmAE/scratch/{IID}/run.sh&lt;/code&gt; passing the relevant network settings to it.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;FirmAE/sources/scraper/firmware/spiders/&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;This is the directory where files corresponding to the &lt;code&gt;&amp;lt;brand&amp;gt;&lt;/code&gt; argument, required for executing &lt;code&gt;run.sh&lt;/code&gt;, are located. If this name is not found or if the brand name is to be extracted automatically, the process is handled by the &lt;code&gt;get_brand()&lt;/code&gt; function in &lt;code&gt;scripts/util.py&lt;/code&gt;.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;FirmAE/run.sh&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;This is the main execution script, and it supports five modes by default.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;The 5 modes of &lt;code&gt;FirmAE/run.sh&lt;/code&gt; are as follows.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;&lt;code&gt;-c&lt;/code&gt;(check)&lt;/th&gt;
+&lt;th&gt;This is the mode for checking network/web connectivity. It is common practice to run this check before starting the emulation.&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;-r&lt;/code&gt;(run)&lt;/td&gt;
+&lt;td&gt;This is the mode for running the emulation.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;-d&lt;/code&gt;(debug)&lt;/td&gt;
+&lt;td&gt;You can emulate the firmware in debug mode.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;-b&lt;/code&gt;(boot debug mode)&lt;/td&gt;
+&lt;td&gt;This is a mode that allows for debugging at the kernel-level, starting right from the boot process.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;-a&lt;/code&gt;(analyze)&lt;/td&gt;
+&lt;td&gt;This is the vulnerability analysis mode. It runs predefined attacks targeting web services to find potential vulnerabilities. The analysis results can be found in &lt;code&gt;analyses/&lt;/code&gt; and &lt;code&gt;scratch/{IID}/result&lt;/code&gt;.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;&lt;img src=&#34;image002.jpg&#34; alt=&#34;image002.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;There are many other files, of course&amp;#x2026; &amp;#x1F62E; but since there&amp;#x2019;s a limit to what we can cover, I&amp;#x2019;ve only introduced the ones I deemed important.&lt;br&gt;Among these, the most important files and folders you&amp;#x2019;ll frequently interact with can be summarized below.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;scripts/makeNetwork.py&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;run.sh&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;scratch/&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;While other files also play a role, you can think of FirmAE&amp;#x2019;s main workflow like this: &lt;code&gt;run.sh&lt;/code&gt; is executed with reference to the settings in &lt;code&gt;scripts/makeNetwork.py&lt;/code&gt;, and the corresponding emulation images and files are generated in the &lt;code&gt;scratch/&lt;/code&gt; directory.&lt;br&gt;All logs generated during the emulation process exist within &lt;code&gt;scratch/&lt;/code&gt;, so you can also check the log information to diagnose any problems that occur after execution! &amp;#x1F50D;&lt;/p&gt;
+&lt;h2 id=&#34;2-FirmAE-Execution-and-the-FirmAE-Debugger&#34;&gt;&lt;a href=&#34;#2-FirmAE-Execution-and-the-FirmAE-Debugger&#34; class=&#34;headerlink&#34; title=&#34;2. FirmAE Execution and the FirmAE Debugger&#34;&gt;&lt;/a&gt;2. FirmAE Execution and the FirmAE Debugger&lt;/h2&gt;&lt;p&gt;Once you&amp;#x2019;ve completed the network and emulation check with the &lt;code&gt;-c Check&lt;/code&gt; option, it&amp;#x2019;s time to run the emulation.&lt;br&gt;You can use various options for emulation depending on your needs and purpose. If you&amp;#x2019;re unsure, it&amp;#x2019;s best to use the &lt;code&gt;-d&lt;/code&gt; option to perform debugging in debug mode.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image003.png&#34; alt=&#34;image003.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;If the emulation works correctly, you&amp;#x2019;ll see the FirmAE Debugger screen as above! &amp;#x1F389; Now let&amp;#x2019;s look at the features of the FirmAE Debugger while the emulation is running. There are five main functions.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;connect to socat&lt;strong&gt;:&lt;/strong&gt; This provides access through a python &lt;code&gt;socat&lt;/code&gt;. Even if you don&amp;#x2019;t use this first function, if the &lt;code&gt;netcat&lt;/code&gt; connection is successful, you can access the virtual device&amp;#x2019;s web page using the generated address and port! &amp;#x1F310;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;connect to shell&lt;strong&gt;:&lt;/strong&gt; This function allows you to connect to and control the emulated virtual device via a shell!&lt;br&gt;You can use Linux commands defined in the firmware, such as &lt;code&gt;busybox&lt;/code&gt;. This enables dynamic analysis and testing within the device. &amp;#x1F9EA;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image004.png&#34; alt=&#34;image004.png&#34;&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;tcpdump&lt;strong&gt;:&lt;/strong&gt; You can analyze the created virtual network interface with &lt;code&gt;tcpdump&lt;/code&gt;. &amp;#x2709;&amp;#xFE0F; The command shown cannot be modified, so analysis is only possible on the generated interface.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image005.png&#34; alt=&#34;image005.png&#34;&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;run gdbserver&lt;strong&gt;:&lt;/strong&gt; This opens a gdb server inside the virtual device to provide dynamic analysis.&lt;br&gt;Some preparation is needed to use this feature. Since embedded device firmware mostly uses RISC architectures like ARM or MIPS, standard gdb often fails to recognize the transmitted and received data. &amp;#x26A0;&amp;#xFE0F; Therefore, you must connect to the gdb server through &lt;code&gt;gdb-multiarch&lt;/code&gt;.&lt;/p&gt;
+  &lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;sudo apt-get install gdb-multiarch
+gdb-multiarch
+
+&lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt; sysroot
+&lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt; follow-fork-mode child
+&lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt; solib-search-path PATH
+target remote IP:PORT&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;  After installation, run &lt;code&gt;gdb-multiarch&lt;/code&gt; and apply a few settings as shown above. You can register the firmware &lt;code&gt;lib&lt;/code&gt; address, previously extracted using binwalk, as the &lt;code&gt;PATH&lt;/code&gt;. &amp;#x1F4D6;&lt;br&gt;  You can confirm the connection is successful by connecting to the gdb server targeting the example firmware process PID. If you apply this to a web service process like &lt;code&gt;httpd&lt;/code&gt;, you can debug the functions of that web page.&lt;/p&gt;
+&lt;p&gt;  &lt;img src=&#34;image006.png&#34; alt=&#34;image006.png&#34;&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;file transfer&lt;strong&gt;:&lt;/strong&gt; You can transfer files from your local machine to the virtual device.&lt;br&gt;The path where the transferred file is saved is located within the &lt;code&gt;firmadyne/&lt;/code&gt; directory created inside the firmware. The reason for this is defined in &lt;code&gt;file_transfer()&lt;/code&gt; within &lt;code&gt;FirmAE/debug.py&lt;/code&gt;. Since you can transfer files to the virtual device, you can push in programs like a reverse shell or transfer configuration files like &lt;code&gt;xinetd.conf&lt;/code&gt; or &lt;code&gt;sshd_config&lt;/code&gt;. &amp;#x2708;&amp;#xFE0F; If necessary, you can also transfer exploit code and related files for testing.&lt;/p&gt;
+&lt;p&gt;  &lt;img src=&#34;image007.png&#34; alt=&#34;image007.png&#34;&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;3-How-to-Solve-IP-and-Network-Problems&#34;&gt;&lt;a href=&#34;#3-How-to-Solve-IP-and-Network-Problems&#34; class=&#34;headerlink&#34; title=&#34;3. How to Solve IP and Network Problems&#34;&gt;&lt;/a&gt;3. How to Solve IP and Network Problems&lt;/h2&gt;&lt;p&gt;FirmAE sets up the network and runs the emulation based on the IP address configured in the device firmware. However, for various reasons&amp;#x2014;such as the IP not being set in the firmware or the device only allowing &lt;code&gt;localhost&lt;/code&gt; access&amp;#x2014;the FirmAE emulation often fails to work. &amp;#x1F62D;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image008.jpg&#34; alt=&#34;image008.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;This problem has several causes and solutions. Here, I&amp;#x2019;ll introduce how to solve it by modifying &lt;code&gt;scripts/makeNetwork.py&lt;/code&gt;.&lt;br&gt;When the default network configuration (bridge mode) fails, FirmAE has a feature to automatically switch to an alternative network method (QEMU user mode) to continue the emulation. &amp;#x1F6B8; When this automatic switch occurs, the access environment is configured as &lt;code&gt;localhost&lt;/code&gt;. Since the firmware in the picture below is such a case, you can see that the access environment is configured as &lt;code&gt;localhost&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image009.png&#34; alt=&#34;image009.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;This happens where the network bridge settings for QEMU emulation are adjusted via the &lt;code&gt;QEMU_NET_OPTS&lt;/code&gt; variable in &lt;code&gt;scratch/{IID}/run.sh&lt;/code&gt;.&lt;br&gt;As explained earlier in the FirmAE structure section, the &lt;code&gt;scratch/{IID}&lt;/code&gt; folder and its files are created by &lt;code&gt;scripts/makeNetwork.py&lt;/code&gt;, which also handles network settings. Therefore, by modifying this Python script, you can force the emulation to always open with &lt;code&gt;localhost&lt;/code&gt;. &amp;#x1F513;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;Modifying scripts/makeNetwork.py&lt;/p&gt;
+  &lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;cp scripts/makeNetwork.py scripts/makeNetwork.py.bak&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;  First, back up the original file.&lt;/p&gt;
+  &lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;isUserNetwork = any(isDhcpIp(ip) &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; ip &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; ips)
+&lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; open(SCRATCHDIR + &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/&amp;quot;&lt;/span&gt; + str(iid) + &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/isDhcp&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;w&amp;quot;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; out:&lt;/code&gt;&lt;/pre&gt;
+  &lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# isUserNetwork = any(isDhcpIp(ip) for ip in ips)&lt;/span&gt;
+isUserNetwork = &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; open(SCRATCHDIR + &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/&amp;quot;&lt;/span&gt; + str(iid) + &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/isDhcp&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;w&amp;quot;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; out:&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;  Modify the IP setting part from the first code block to the second.&lt;/p&gt;
+  &lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;portfwd = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;hostfwd=tcp::80-:80,hostfwd=tcp::443-:443,&amp;quot;&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (proto, ip, port) &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; ports:&lt;/code&gt;&lt;/pre&gt;
+  &lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;portfwd = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;hostfwd=tcp::8888-:80,&amp;quot;&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt;# portfwd = &amp;quot;hostfwd=tcp::80-:80,hostfwd=tcp::443-:443,&amp;quot;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (proto, ip, port) &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; ports:&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;  Also, modify the port setting part from the first code block to the second.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image010.png&#34; alt=&#34;image010.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;After modifying the file and running it, you can see that the IP changes to &lt;code&gt;localhost&lt;/code&gt;! &amp;#x1F44D;&amp;#x1F3FB;&lt;/p&gt;
+&lt;p&gt;This method might not be a fundamental solution, as it only changes the network settings. If it still doesn&amp;#x2019;t work, it&amp;#x2019;s best to analyze the firmware directly to match the network settings precisely. As mentioned before, all logs from the emulation process are in &lt;code&gt;scratch/{IID}/&lt;/code&gt;, so analyzing the logs is another good way to solve problems.&lt;br&gt;Emulating directly through QEMU is also recommended! As those who have used it know, FirmAE is really slow&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image011.png&#34; alt=&#34;image011.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Although FirmAE is slow, it is definitely a useful tool if you use it well! I hope this article has been of some help to your firmware emulation efforts! &amp;#x1F64F;&amp;#x1F3FB;&lt;br&gt;I&amp;#x2019;ll be back with another embedded topic next time! Thank you! &amp;#x1F44B;&amp;#x1F3FB;&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] Firmware Emulation with FirmAE Part 2 (en) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;Hello! I&amp;#x2019;m newp1ayer48, the one in charge of the low-level at Hackyboiz! &amp;#x1F938;&amp;#x1F3FB;&amp;#x200D;&amp;#x2642;&amp;#xFE0F;&lt;/p&gt;
+&lt;p&gt;After a long time, I&amp;#x2019;ve safely(?) returned with &lt;strong&gt;Firmware Emulation with FirmAE Part 2&lt;/strong&gt;!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image001.jpg&#34; alt=&#34;image001.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;FirmAE is a convenient tool that automates firmware emulation! Emulating and dynamically analyzing firmware is a great way to find vulnerabilities! For emulation basics and FirmAE installation, please refer to the previous article, &lt;a href=&#34;https://hackyboiz.github.io/2025/05/08/newp1ayer48/emulation1/ko/&#34;&gt;Firmware Emulation with FirmAE Part 1&lt;/a&gt;.&lt;br&gt;Continuing from the last post, this article will cover FirmAE&amp;#x2019;s structure, execution, and how to resolve IP issues should they arise. &amp;#x1F64C;&amp;#x1F3FB;&lt;/p&gt;
+&lt;h2 id=&#34;1-FirmAE-Structure&#34;&gt;&lt;a href=&#34;#1-FirmAE-Structure&#34; class=&#34;headerlink&#34; title=&#34;1. FirmAE Structure&#34;&gt;&lt;/a&gt;1. FirmAE Structure&lt;/h2&gt;&lt;p&gt;The main directories and files of FirmAE are structured as follows.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Directories &amp;amp; Files&lt;/th&gt;
+&lt;th&gt;Explanation&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;FirmAE/analyses/&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;This is the location where files and logs related to the &lt;code&gt;analyses&lt;/code&gt; mode of &lt;code&gt;run.sh&lt;/code&gt; are stored.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;FirmAE/firmwares/&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;This is where you place the firmware (&lt;code&gt;.bin&lt;/code&gt;) for analysis.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;FirmAE/images/&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;This is where the OS images for emulation are located.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;FirmAE/scratch/&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;For each emulation run, a subdirectory is created with an IID (Image ID), which stores all intermediate outputs and results for that specific run, including the extracted file system, kernel, generated disk image, and logs. The subdirectory is created in the format &lt;code&gt;FirmAE/scratch/{IID}&lt;/code&gt;.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;FirmAE/scripts/&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;This is where the various sub-scripts called by the main scripts are located.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;FirmAE/scripts/makeNetwork.py&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;It is responsible for dynamically analyzing the firmware&amp;#x2019;s network behavior, and then generating the final QEMU execution script &lt;code&gt;FirmAE/scratch/{IID}/run.sh&lt;/code&gt; passing the relevant network settings to it.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;FirmAE/sources/scraper/firmware/spiders/&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;This is the directory where files corresponding to the &lt;code&gt;&amp;lt;brand&amp;gt;&lt;/code&gt; argument, required for executing &lt;code&gt;run.sh&lt;/code&gt;, are located. If this name is not found or if the brand name is to be extracted automatically, the process is handled by the &lt;code&gt;get_brand()&lt;/code&gt; function in &lt;code&gt;scripts/util.py&lt;/code&gt;.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;FirmAE/run.sh&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;This is the main execution script, and it supports five modes by default.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;The 5 modes of &lt;code&gt;FirmAE/run.sh&lt;/code&gt; are as follows.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;&lt;code&gt;-c&lt;/code&gt;(check)&lt;/th&gt;
+&lt;th&gt;This is the mode for checking network/web connectivity. It is common practice to run this check before starting the emulation.&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;-r&lt;/code&gt;(run)&lt;/td&gt;
+&lt;td&gt;This is the mode for running the emulation.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;-d&lt;/code&gt;(debug)&lt;/td&gt;
+&lt;td&gt;You can emulate the firmware in debug mode.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;-b&lt;/code&gt;(boot debug mode)&lt;/td&gt;
+&lt;td&gt;This is a mode that allows for debugging at the kernel-level, starting right from the boot process.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;-a&lt;/code&gt;(analyze)&lt;/td&gt;
+&lt;td&gt;This is the vulnerability analysis mode. It runs predefined attacks targeting web services to find potential vulnerabilities. The analysis results can be found in &lt;code&gt;analyses/&lt;/code&gt; and &lt;code&gt;scratch/{IID}/result&lt;/code&gt;.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;&lt;img src=&#34;image002.jpg&#34; alt=&#34;image002.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;There are many other files, of course&amp;#x2026; &amp;#x1F62E; but since there&amp;#x2019;s a limit to what we can cover, I&amp;#x2019;ve only introduced the ones I deemed important.&lt;br&gt;Among these, the most important files and folders you&amp;#x2019;ll frequently interact with can be summarized below.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;scripts/makeNetwork.py&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;run.sh&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;scratch/&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;While other files also play a role, you can think of FirmAE&amp;#x2019;s main workflow like this: &lt;code&gt;run.sh&lt;/code&gt; is executed with reference to the settings in &lt;code&gt;scripts/makeNetwork.py&lt;/code&gt;, and the corresponding emulation images and files are generated in the &lt;code&gt;scratch/&lt;/code&gt; directory.&lt;br&gt;All logs generated during the emulation process exist within &lt;code&gt;scratch/&lt;/code&gt;, so you can also check the log information to diagnose any problems that occur after execution! &amp;#x1F50D;&lt;/p&gt;
+&lt;h2 id=&#34;2-FirmAE-Execution-and-the-FirmAE-Debugger&#34;&gt;&lt;a href=&#34;#2-FirmAE-Execution-and-the-FirmAE-Debugger&#34; class=&#34;headerlink&#34; title=&#34;2. FirmAE Execution and the FirmAE Debugger&#34;&gt;&lt;/a&gt;2. FirmAE Execution and the FirmAE Debugger&lt;/h2&gt;&lt;p&gt;Once you&amp;#x2019;ve completed the network and emulation check with the &lt;code&gt;-c Check&lt;/code&gt; option, it&amp;#x2019;s time to run the emulation.&lt;br&gt;You can use various options for emulation depending on your needs and purpose. If you&amp;#x2019;re unsure, it&amp;#x2019;s best to use the &lt;code&gt;-d&lt;/code&gt; option to perform debugging in debug mode.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image003.png&#34; alt=&#34;image003.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;If the emulation works correctly, you&amp;#x2019;ll see the FirmAE Debugger screen as above! &amp;#x1F389; Now let&amp;#x2019;s look at the features of the FirmAE Debugger while the emulation is running. There are five main functions.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;connect to socat&lt;strong&gt;:&lt;/strong&gt; This provides access through a python &lt;code&gt;socat&lt;/code&gt;. Even if you don&amp;#x2019;t use this first function, if the &lt;code&gt;netcat&lt;/code&gt; connection is successful, you can access the virtual device&amp;#x2019;s web page using the generated address and port! &amp;#x1F310;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;connect to shell&lt;strong&gt;:&lt;/strong&gt; This function allows you to connect to and control the emulated virtual device via a shell!&lt;br&gt;You can use Linux commands defined in the firmware, such as &lt;code&gt;busybox&lt;/code&gt;. This enables dynamic analysis and testing within the device. &amp;#x1F9EA;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image004.png&#34; alt=&#34;image004.png&#34;&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;tcpdump&lt;strong&gt;:&lt;/strong&gt; You can analyze the created virtual network interface with &lt;code&gt;tcpdump&lt;/code&gt;. &amp;#x2709;&amp;#xFE0F; The command shown cannot be modified, so analysis is only possible on the generated interface.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image005.png&#34; alt=&#34;image005.png&#34;&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;run gdbserver&lt;strong&gt;:&lt;/strong&gt; This opens a gdb server inside the virtual device to provide dynamic analysis.&lt;br&gt;Some preparation is needed to use this feature. Since embedded device firmware mostly uses RISC architectures like ARM or MIPS, standard gdb often fails to recognize the transmitted and received data. &amp;#x26A0;&amp;#xFE0F; Therefore, you must connect to the gdb server through &lt;code&gt;gdb-multiarch&lt;/code&gt;.&lt;/p&gt;
+  &lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;sudo apt-get install gdb-multiarch
+gdb-multiarch
+
+&lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt; sysroot
+&lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt; follow-fork-mode child
+&lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt; solib-search-path PATH
+target remote IP:PORT&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;  After installation, run &lt;code&gt;gdb-multiarch&lt;/code&gt; and apply a few settings as shown above. You can register the firmware &lt;code&gt;lib&lt;/code&gt; address, previously extracted using binwalk, as the &lt;code&gt;PATH&lt;/code&gt;. &amp;#x1F4D6;&lt;br&gt;  You can confirm the connection is successful by connecting to the gdb server targeting the example firmware process PID. If you apply this to a web service process like &lt;code&gt;httpd&lt;/code&gt;, you can debug the functions of that web page.&lt;/p&gt;
+&lt;p&gt;  &lt;img src=&#34;image006.png&#34; alt=&#34;image006.png&#34;&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;file transfer&lt;strong&gt;:&lt;/strong&gt; You can transfer files from your local machine to the virtual device.&lt;br&gt;The path where the transferred file is saved is located within the &lt;code&gt;firmadyne/&lt;/code&gt; directory created inside the firmware. The reason for this is defined in &lt;code&gt;file_transfer()&lt;/code&gt; within &lt;code&gt;FirmAE/debug.py&lt;/code&gt;. Since you can transfer files to the virtual device, you can push in programs like a reverse shell or transfer configuration files like &lt;code&gt;xinetd.conf&lt;/code&gt; or &lt;code&gt;sshd_config&lt;/code&gt;. &amp;#x2708;&amp;#xFE0F; If necessary, you can also transfer exploit code and related files for testing.&lt;/p&gt;
+&lt;p&gt;  &lt;img src=&#34;image007.png&#34; alt=&#34;image007.png&#34;&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;3-How-to-Solve-IP-and-Network-Problems&#34;&gt;&lt;a href=&#34;#3-How-to-Solve-IP-and-Network-Problems&#34; class=&#34;headerlink&#34; title=&#34;3. How to Solve IP and Network Problems&#34;&gt;&lt;/a&gt;3. How to Solve IP and Network Problems&lt;/h2&gt;&lt;p&gt;FirmAE sets up the network and runs the emulation based on the IP address configured in the device firmware. However, for various reasons&amp;#x2014;such as the IP not being set in the firmware or the device only allowing &lt;code&gt;localhost&lt;/code&gt; access&amp;#x2014;the FirmAE emulation often fails to work. &amp;#x1F62D;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image008.jpg&#34; alt=&#34;image008.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;This problem has several causes and solutions. Here, I&amp;#x2019;ll introduce how to solve it by modifying &lt;code&gt;scripts/makeNetwork.py&lt;/code&gt;.&lt;br&gt;When the default network configuration (bridge mode) fails, FirmAE has a feature to automatically switch to an alternative network method (QEMU user mode) to continue the emulation. &amp;#x1F6B8; When this automatic switch occurs, the access environment is configured as &lt;code&gt;localhost&lt;/code&gt;. Since the firmware in the picture below is such a case, you can see that the access environment is configured as &lt;code&gt;localhost&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image009.png&#34; alt=&#34;image009.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;This happens where the network bridge settings for QEMU emulation are adjusted via the &lt;code&gt;QEMU_NET_OPTS&lt;/code&gt; variable in &lt;code&gt;scratch/{IID}/run.sh&lt;/code&gt;.&lt;br&gt;As explained earlier in the FirmAE structure section, the &lt;code&gt;scratch/{IID}&lt;/code&gt; folder and its files are created by &lt;code&gt;scripts/makeNetwork.py&lt;/code&gt;, which also handles network settings. Therefore, by modifying this Python script, you can force the emulation to always open with &lt;code&gt;localhost&lt;/code&gt;. &amp;#x1F513;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;p&gt;Modifying scripts/makeNetwork.py&lt;/p&gt;
+  &lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;cp scripts/makeNetwork.py scripts/makeNetwork.py.bak&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;  First, back up the original file.&lt;/p&gt;
+  &lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;isUserNetwork = any(isDhcpIp(ip) &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; ip &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; ips)
+&lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; open(SCRATCHDIR + &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/&amp;quot;&lt;/span&gt; + str(iid) + &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/isDhcp&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;w&amp;quot;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; out:&lt;/code&gt;&lt;/pre&gt;
+  &lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# isUserNetwork = any(isDhcpIp(ip) for ip in ips)&lt;/span&gt;
+isUserNetwork = &lt;span class=&#34;hljs-literal&#34;&gt;True&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;with&lt;/span&gt; open(SCRATCHDIR + &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/&amp;quot;&lt;/span&gt; + str(iid) + &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;/isDhcp&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;w&amp;quot;&lt;/span&gt;) &lt;span class=&#34;hljs-keyword&#34;&gt;as&lt;/span&gt; out:&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;  Modify the IP setting part from the first code block to the second.&lt;/p&gt;
+  &lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;portfwd = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;hostfwd=tcp::80-:80,hostfwd=tcp::443-:443,&amp;quot;&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (proto, ip, port) &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; ports:&lt;/code&gt;&lt;/pre&gt;
+  &lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;portfwd = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;hostfwd=tcp::8888-:80,&amp;quot;&lt;/span&gt;
+&lt;span class=&#34;hljs-comment&#34;&gt;# portfwd = &amp;quot;hostfwd=tcp::80-:80,hostfwd=tcp::443-:443,&amp;quot;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (proto, ip, port) &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; ports:&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;  Also, modify the port setting part from the first code block to the second.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;image010.png&#34; alt=&#34;image010.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;After modifying the file and running it, you can see that the IP changes to &lt;code&gt;localhost&lt;/code&gt;! &amp;#x1F44D;&amp;#x1F3FB;&lt;/p&gt;
+&lt;p&gt;This method might not be a fundamental solution, as it only changes the network settings. If it still doesn&amp;#x2019;t work, it&amp;#x2019;s best to analyze the firmware directly to match the network settings precisely. As mentioned before, all logs from the emulation process are in &lt;code&gt;scratch/{IID}/&lt;/code&gt;, so analyzing the logs is another good way to solve problems.&lt;br&gt;Emulating directly through QEMU is also recommended! As those who have used it know, FirmAE is really slow&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image011.png&#34; alt=&#34;image011.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Although FirmAE is slow, it is definitely a useful tool if you use it well! I hope this article has been of some help to your firmware emulation efforts! &amp;#x1F64F;&amp;#x1F3FB;&lt;br&gt;I&amp;#x2019;ll be back with another embedded topic next time! Thank you! &amp;#x1F44B;&amp;#x1F3FB;&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/07/10/newp1ayer48/emulation2/en/image001.jpg">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/07/10/newp1ayer48/emulation2/en/">
+
+  <title>[Research] Firmware Emulation with FirmAE Part 2 (en) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-07-10 22:00" pubdate>
+      2025년 7월 10일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      1.5k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      29
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] Firmware Emulation with FirmAE Part 2 (en)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p>Hello! I&#x2019;m newp1ayer48, the one in charge of the low-level at Hackyboiz! &#x1F938;&#x1F3FB;&#x200D;&#x2642;&#xFE0F;</p>
+<p>After a long time, I&#x2019;ve safely(?) returned with <strong>Firmware Emulation with FirmAE Part 2</strong>!</p>
+<p><img src="image001.jpg" srcset="/img/loading.gif" alt="image001.jpg"></p>
+<p>FirmAE is a convenient tool that automates firmware emulation! Emulating and dynamically analyzing firmware is a great way to find vulnerabilities! For emulation basics and FirmAE installation, please refer to the previous article, <a href="https://hackyboiz.github.io/2025/05/08/newp1ayer48/emulation1/ko/">Firmware Emulation with FirmAE Part 1</a>.<br>Continuing from the last post, this article will cover FirmAE&#x2019;s structure, execution, and how to resolve IP issues should they arise. &#x1F64C;&#x1F3FB;</p>
+<h2 id="1-FirmAE-Structure"><a href="#1-FirmAE-Structure" class="headerlink" title="1. FirmAE Structure"></a>1. FirmAE Structure</h2><p>The main directories and files of FirmAE are structured as follows.</p>
+<div class="table-container">
+<table>
+<thead>
+<tr>
+<th>Directories &amp; Files</th>
+<th>Explanation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>FirmAE/analyses/</code></td>
+<td>This is the location where files and logs related to the <code>analyses</code> mode of <code>run.sh</code> are stored.</td>
+</tr>
+<tr>
+<td><code>FirmAE/firmwares/</code></td>
+<td>This is where you place the firmware (<code>.bin</code>) for analysis.</td>
+</tr>
+<tr>
+<td><code>FirmAE/images/</code></td>
+<td>This is where the OS images for emulation are located.</td>
+</tr>
+<tr>
+<td><code>FirmAE/scratch/</code></td>
+<td>For each emulation run, a subdirectory is created with an IID (Image ID), which stores all intermediate outputs and results for that specific run, including the extracted file system, kernel, generated disk image, and logs. The subdirectory is created in the format <code>FirmAE/scratch/{IID}</code>.</td>
+</tr>
+<tr>
+<td><code>FirmAE/scripts/</code></td>
+<td>This is where the various sub-scripts called by the main scripts are located.</td>
+</tr>
+<tr>
+<td><code>FirmAE/scripts/makeNetwork.py</code></td>
+<td>It is responsible for dynamically analyzing the firmware&#x2019;s network behavior, and then generating the final QEMU execution script <code>FirmAE/scratch/{IID}/run.sh</code> passing the relevant network settings to it.</td>
+</tr>
+<tr>
+<td><code>FirmAE/sources/scraper/firmware/spiders/</code></td>
+<td>This is the directory where files corresponding to the <code>&lt;brand&gt;</code> argument, required for executing <code>run.sh</code>, are located. If this name is not found or if the brand name is to be extracted automatically, the process is handled by the <code>get_brand()</code> function in <code>scripts/util.py</code>.</td>
+</tr>
+<tr>
+<td><code>FirmAE/run.sh</code></td>
+<td>This is the main execution script, and it supports five modes by default.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The 5 modes of <code>FirmAE/run.sh</code> are as follows.</p>
+<div class="table-container">
+<table>
+<thead>
+<tr>
+<th><code>-c</code>(check)</th>
+<th>This is the mode for checking network/web connectivity. It is common practice to run this check before starting the emulation.</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-r</code>(run)</td>
+<td>This is the mode for running the emulation.</td>
+</tr>
+<tr>
+<td><code>-d</code>(debug)</td>
+<td>You can emulate the firmware in debug mode.</td>
+</tr>
+<tr>
+<td><code>-b</code>(boot debug mode)</td>
+<td>This is a mode that allows for debugging at the kernel-level, starting right from the boot process.</td>
+</tr>
+<tr>
+<td><code>-a</code>(analyze)</td>
+<td>This is the vulnerability analysis mode. It runs predefined attacks targeting web services to find potential vulnerabilities. The analysis results can be found in <code>analyses/</code> and <code>scratch/{IID}/result</code>.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><img src="image002.jpg" srcset="/img/loading.gif" alt="image002.jpg"></p>
+<p>There are many other files, of course&#x2026; &#x1F62E; but since there&#x2019;s a limit to what we can cover, I&#x2019;ve only introduced the ones I deemed important.<br>Among these, the most important files and folders you&#x2019;ll frequently interact with can be summarized below.</p>
+<ul>
+<li><code>scripts/makeNetwork.py</code></li>
+<li><code>run.sh</code></li>
+<li><code>scratch/</code></li>
+</ul>
+<p>While other files also play a role, you can think of FirmAE&#x2019;s main workflow like this: <code>run.sh</code> is executed with reference to the settings in <code>scripts/makeNetwork.py</code>, and the corresponding emulation images and files are generated in the <code>scratch/</code> directory.<br>All logs generated during the emulation process exist within <code>scratch/</code>, so you can also check the log information to diagnose any problems that occur after execution! &#x1F50D;</p>
+<h2 id="2-FirmAE-Execution-and-the-FirmAE-Debugger"><a href="#2-FirmAE-Execution-and-the-FirmAE-Debugger" class="headerlink" title="2. FirmAE Execution and the FirmAE Debugger"></a>2. FirmAE Execution and the FirmAE Debugger</h2><p>Once you&#x2019;ve completed the network and emulation check with the <code>-c Check</code> option, it&#x2019;s time to run the emulation.<br>You can use various options for emulation depending on your needs and purpose. If you&#x2019;re unsure, it&#x2019;s best to use the <code>-d</code> option to perform debugging in debug mode.</p>
+<p><img src="image003.png" srcset="/img/loading.gif" alt="image003.png"></p>
+<p>If the emulation works correctly, you&#x2019;ll see the FirmAE Debugger screen as above! &#x1F389; Now let&#x2019;s look at the features of the FirmAE Debugger while the emulation is running. There are five main functions.</p>
+<ul>
+<li><p>connect to socat<strong>:</strong> This provides access through a python <code>socat</code>. Even if you don&#x2019;t use this first function, if the <code>netcat</code> connection is successful, you can access the virtual device&#x2019;s web page using the generated address and port! &#x1F310;</p>
+</li>
+<li><p>connect to shell<strong>:</strong> This function allows you to connect to and control the emulated virtual device via a shell!<br>You can use Linux commands defined in the firmware, such as <code>busybox</code>. This enables dynamic analysis and testing within the device. &#x1F9EA;</p>
+</li>
+</ul>
+<p><img src="image004.png" srcset="/img/loading.gif" alt="image004.png"></p>
+<ul>
+<li>tcpdump<strong>:</strong> You can analyze the created virtual network interface with <code>tcpdump</code>. &#x2709;&#xFE0F; The command shown cannot be modified, so analysis is only possible on the generated interface.</li>
+</ul>
+<p><img src="image005.png" srcset="/img/loading.gif" alt="image005.png"></p>
+<ul>
+<li><p>run gdbserver<strong>:</strong> This opens a gdb server inside the virtual device to provide dynamic analysis.<br>Some preparation is needed to use this feature. Since embedded device firmware mostly uses RISC architectures like ARM or MIPS, standard gdb often fails to recognize the transmitted and received data. &#x26A0;&#xFE0F; Therefore, you must connect to the gdb server through <code>gdb-multiarch</code>.</p>
+  <pre><code class="hljs bash">sudo apt-get install gdb-multiarch
+gdb-multiarch
+
+<span class="hljs-built_in">set</span> sysroot
+<span class="hljs-built_in">set</span> follow-fork-mode child
+<span class="hljs-built_in">set</span> solib-search-path PATH
+target remote IP:PORT</code></pre>
+<p>  After installation, run <code>gdb-multiarch</code> and apply a few settings as shown above. You can register the firmware <code>lib</code> address, previously extracted using binwalk, as the <code>PATH</code>. &#x1F4D6;<br>  You can confirm the connection is successful by connecting to the gdb server targeting the example firmware process PID. If you apply this to a web service process like <code>httpd</code>, you can debug the functions of that web page.</p>
+<p>  <img src="image006.png" srcset="/img/loading.gif" alt="image006.png"></p>
+</li>
+<li><p>file transfer<strong>:</strong> You can transfer files from your local machine to the virtual device.<br>The path where the transferred file is saved is located within the <code>firmadyne/</code> directory created inside the firmware. The reason for this is defined in <code>file_transfer()</code> within <code>FirmAE/debug.py</code>. Since you can transfer files to the virtual device, you can push in programs like a reverse shell or transfer configuration files like <code>xinetd.conf</code> or <code>sshd_config</code>. &#x2708;&#xFE0F; If necessary, you can also transfer exploit code and related files for testing.</p>
+<p>  <img src="image007.png" srcset="/img/loading.gif" alt="image007.png"></p>
+</li>
+</ul>
+<h2 id="3-How-to-Solve-IP-and-Network-Problems"><a href="#3-How-to-Solve-IP-and-Network-Problems" class="headerlink" title="3. How to Solve IP and Network Problems"></a>3. How to Solve IP and Network Problems</h2><p>FirmAE sets up the network and runs the emulation based on the IP address configured in the device firmware. However, for various reasons&#x2014;such as the IP not being set in the firmware or the device only allowing <code>localhost</code> access&#x2014;the FirmAE emulation often fails to work. &#x1F62D;</p>
+<p><img src="image008.jpg" srcset="/img/loading.gif" alt="image008.jpg"></p>
+<p>This problem has several causes and solutions. Here, I&#x2019;ll introduce how to solve it by modifying <code>scripts/makeNetwork.py</code>.<br>When the default network configuration (bridge mode) fails, FirmAE has a feature to automatically switch to an alternative network method (QEMU user mode) to continue the emulation. &#x1F6B8; When this automatic switch occurs, the access environment is configured as <code>localhost</code>. Since the firmware in the picture below is such a case, you can see that the access environment is configured as <code>localhost</code>.</p>
+<p><img src="image009.png" srcset="/img/loading.gif" alt="image009.png"></p>
+<p>This happens where the network bridge settings for QEMU emulation are adjusted via the <code>QEMU_NET_OPTS</code> variable in <code>scratch/{IID}/run.sh</code>.<br>As explained earlier in the FirmAE structure section, the <code>scratch/{IID}</code> folder and its files are created by <code>scripts/makeNetwork.py</code>, which also handles network settings. Therefore, by modifying this Python script, you can force the emulation to always open with <code>localhost</code>. &#x1F513;</p>
+<ul>
+<li><p>Modifying scripts/makeNetwork.py</p>
+  <pre><code class="hljs bash">cp scripts/makeNetwork.py scripts/makeNetwork.py.bak</code></pre>
+<p>  First, back up the original file.</p>
+  <pre><code class="hljs python">isUserNetwork = any(isDhcpIp(ip) <span class="hljs-keyword">for</span> ip <span class="hljs-keyword">in</span> ips)
+<span class="hljs-keyword">with</span> open(SCRATCHDIR + <span class="hljs-string">&quot;/&quot;</span> + str(iid) + <span class="hljs-string">&quot;/isDhcp&quot;</span>, <span class="hljs-string">&quot;w&quot;</span>) <span class="hljs-keyword">as</span> out:</code></pre>
+  <pre><code class="hljs python"><span class="hljs-comment"># isUserNetwork = any(isDhcpIp(ip) for ip in ips)</span>
+isUserNetwork = <span class="hljs-literal">True</span>
+<span class="hljs-keyword">with</span> open(SCRATCHDIR + <span class="hljs-string">&quot;/&quot;</span> + str(iid) + <span class="hljs-string">&quot;/isDhcp&quot;</span>, <span class="hljs-string">&quot;w&quot;</span>) <span class="hljs-keyword">as</span> out:</code></pre>
+<p>  Modify the IP setting part from the first code block to the second.</p>
+  <pre><code class="hljs python">portfwd = <span class="hljs-string">&quot;hostfwd=tcp::80-:80,hostfwd=tcp::443-:443,&quot;</span>
+<span class="hljs-keyword">for</span> (proto, ip, port) <span class="hljs-keyword">in</span> ports:</code></pre>
+  <pre><code class="hljs python">portfwd = <span class="hljs-string">&quot;hostfwd=tcp::8888-:80,&quot;</span>
+<span class="hljs-comment"># portfwd = &quot;hostfwd=tcp::80-:80,hostfwd=tcp::443-:443,&quot;</span>
+
+<span class="hljs-keyword">for</span> (proto, ip, port) <span class="hljs-keyword">in</span> ports:</code></pre>
+<p>  Also, modify the port setting part from the first code block to the second.</p>
+</li>
+</ul>
+<p><img src="image010.png" srcset="/img/loading.gif" alt="image010.png"></p>
+<p>After modifying the file and running it, you can see that the IP changes to <code>localhost</code>! &#x1F44D;&#x1F3FB;</p>
+<p>This method might not be a fundamental solution, as it only changes the network settings. If it still doesn&#x2019;t work, it&#x2019;s best to analyze the firmware directly to match the network settings precisely. As mentioned before, all logs from the emulation process are in <code>scratch/{IID}/</code>, so analyzing the logs is another good way to solve problems.<br>Emulating directly through QEMU is also recommended! As those who have used it know, FirmAE is really slow&#x2026;</p>
+<p><img src="image011.png" srcset="/img/loading.gif" alt="image011.png"></p>
+<p>Although FirmAE is slow, it is definitely a useful tool if you use it well! I hope this article has been of some help to your firmware emulation efforts! &#x1F64F;&#x1F3FB;<br>I&#x2019;ll be back with another embedded topic next time! Thank you! &#x1F44B;&#x1F3FB;</p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/firmware/">firmware</a>
+                  
+                  <a class="hover-with-bg" href="/tags/newp1ayer48/">newp1ayer48</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Embedded/">Embedded</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Emulation/">Emulation</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_newp1ayer48.jpg" srcset="/img/loading.gif" alt="newp1ayer48">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">newp1ayer48</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/newp1ayer48">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/07/12/poosic/cve-2025-32463/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2025-32463 : sudo의 chroot를 이용한 Local Privilege Escalation</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/07/10/newp1ayer48/emulation2/ko/">
+                    <span class="hidden-mobile">[Research] Firmware Emulation with FirmAE Part 2 (ko)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/07/10/newp1ayer48/emulation2/en/';
+        this.page.identifier = '/2025/07/10/newp1ayer48/emulation2/en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] Firmware Emulation with FirmAE Part 2 (en)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>

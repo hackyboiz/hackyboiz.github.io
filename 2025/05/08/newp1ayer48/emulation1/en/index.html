@@ -1,0 +1,851 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;Hello! I&amp;#x2019;m newp1ayer48, the one in charge of the low-level at Hackyboiz! &amp;#x1F938;&amp;#x1F3FB;&amp;#x200D;&amp;#x2642;&amp;#xFE0F;&lt;/p&gt;
+&lt;p&gt;In the previous post, I said I&amp;#x2019;d return to debugging port connections, but due to budget constraints, I&amp;#x2019;m back with a different topic! (E&lt;del&gt;mbedded hacking is all about pay-to-win&amp;#x2026;&lt;/del&gt;&amp;#x1F4B8;)&lt;/p&gt;
+&lt;p&gt;Once you&amp;#x2019;ve acquired the firmware and examined the file system, it&amp;#x2019;s time to dive into the fun part&amp;#x2014;analyzing it for vulnerabilities.&lt;/p&gt;
+&lt;p&gt;But&amp;#x2026; relying solely on static analysis to find vulnerabilities is hardly an ideal situation. Even in pwnable challenges we use GDB, so how long are we just going to stare at IDA? &amp;#x1F620;&lt;/p&gt;
+&lt;p&gt;That&amp;#x2019;s why humans have always found a way. The answer is emulation!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image01.jpg&#34; alt=&#34;image01.jpg&#34;&gt;&lt;/p&gt;
+&lt;h2 id=&#34;1-Simulation-vs-Emulation&#34;&gt;&lt;a href=&#34;#1-Simulation-vs-Emulation&#34; class=&#34;headerlink&#34; title=&#34;1. Simulation vs Emulation&#34;&gt;&lt;/a&gt;1. Simulation vs Emulation&lt;/h2&gt;&lt;p&gt;Since the processes of building simulations and emulations can be quite similar, it&amp;#x2019;s easy to confuse the two. But the biggest difference lies in their goals.&lt;/p&gt;
+&lt;p&gt;The main purpose of &lt;strong&gt;simulation&lt;/strong&gt; is to test whether a program or system behaves correctly in a certain environment or scenario, often as a form of rehearsal. Rather than fully replicating the entire environment, simulations may only implement the minimum necessary parts and skip detailed functions. Sometimes, real hardware is used in the setup.&lt;/p&gt;
+&lt;p&gt;To put it simply, think of simulator games! These often don&amp;#x2019;t replicate every feature perfectly, but their main purpose is to provide an experience or allow practice. &amp;#x1F579;&amp;#xFE0F;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image02.webp&#34; alt=&#34;image02.webp&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Emulation&lt;/strong&gt;, on the other hand, focuses on running a program or system in a different environment. Since the original hardware setup may be unavailable, it&amp;#x2019;s important to mimic the hardware in software. The goal is often to make every function work as it would on the real system, so most emulations aim to replicate everything in detail.&lt;/p&gt;
+&lt;p&gt;You can think of emulation like Nintendo or Android emulators! Their main purpose is to let you run games or apps in a PC environment, so they&amp;#x2019;re designed to support all the functions of those systems. &amp;#x1F4F1;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image03.png&#34; alt=&#34;image03.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;To summarize, the image below (not shown here) illustrates the key difference well.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image04.jpg&#34; alt=&#34;image04.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Back to embedded hacking&amp;#x2014;our main goal is to perform &lt;strong&gt;dynamic analysis&lt;/strong&gt; of the firmware we&amp;#x2019;ve obtained. Embedded devices rely heavily on various sensors and hardware, so if the required hardware dependencies aren&amp;#x2019;t met, they often won&amp;#x2019;t function. Also, embedded systems typically use RISC architectures like ARM or MIPS, which means we have to emulate them in environments different from our typical CISC-based analysis systems. And since we want to dynamically analyze all the device&amp;#x2019;s functions, nearly every feature must be executable. &amp;#x1F477;&amp;#x1F3FB;&lt;/p&gt;
+&lt;p&gt;Therefore, we need to view the firmware from an emulation perspective and build the appropriate environment. The prevalence of articles in embedded hacking that involve firmware emulation supports this approach!&lt;/p&gt;
+&lt;h2 id=&#34;2-Firmware-Analysis&#34;&gt;&lt;a href=&#34;#2-Firmware-Analysis&#34; class=&#34;headerlink&#34; title=&#34;2. Firmware Analysis&#34;&gt;&lt;/a&gt;2. Firmware Analysis&lt;/h2&gt;&lt;p&gt;To emulate firmware, the first step is to analyze the environment in which it was built and is supposed to run. &amp;#x261D;&amp;#x1F3FB;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image05.jpg&#34; alt=&#34;image05.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;With &lt;code&gt;binwalk&lt;/code&gt;, you can extract several key pieces of information from firmware:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Architecture&lt;/li&gt;
+&lt;li&gt;Kernel&lt;/li&gt;
+&lt;li&gt;Root File System&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Using binwalk, you can discover the architecture and kernel details of a sample firmware.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;binwalk firmware.bin&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;image06.png&#34; alt=&#34;image06.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;-A&lt;/code&gt; option provides more detailed architecture info. &amp;#x1F50D;&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;-e&lt;/code&gt; option extracts files from the identified sections.&lt;/p&gt;
+&lt;p&gt;The files extracted by binwalk often have numeric names, which correspond to the different regions of the firmware. By checking the addresses listed by binwalk, you can identify what each file is.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;binwalk -e firmware.bin
+binwalk -A kernel&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;image07.png&#34; alt=&#34;image07.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Embedded systems commonly use RISC architectures like ARM and MIPS. However, even within these, naming can differ depending on the endianness. &amp;#x1F95A;&lt;/p&gt;
+&lt;p&gt;For example, &lt;code&gt;mips&lt;/code&gt; typically uses big-endian, while &lt;code&gt;mipsel&lt;/code&gt; uses little-endian. Binwalk usually detects and displays the architecture correctly, so just keep an eye on that.&lt;/p&gt;
+&lt;h2 id=&#34;3-QEMU&#34;&gt;&lt;a href=&#34;#3-QEMU&#34; class=&#34;headerlink&#34; title=&#34;3. QEMU&#34;&gt;&lt;/a&gt;3. QEMU&lt;/h2&gt;&lt;p&gt;Once you&amp;#x2019;ve identified the firmware&amp;#x2019;s details, it&amp;#x2019;s time to emulate it. Firmware can be run on a QEMU virtual machine. &amp;#x1F4A8;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image08.jpg&#34; alt=&#34;image08.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;QEMU is a virtualization tool frequently used to quickly set up emulation environments. You can specify kernel, image files, and other options. It&amp;#x2019;s installable via &lt;code&gt;apt&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;In the case of router firmware, there often aren&amp;#x2019;t many extra hardware or sensor dependencies beyond the firmware itself. So, if the kernel and image are configured correctly, the firmware can be run right away.&lt;/p&gt;
+&lt;p&gt;You can download architecture-specific files via the links provided (not shown here). &amp;#x1F4BE;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://people.debian.org/~aurel32/qemu/&#34;&gt;https://people.debian.org/~aurel32/qemu/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;If you manually match the necessary files and set up the network, you&amp;#x2019;ll be able to access the router&amp;#x2019;s interface like below and use most of the functionality present in the root file system. &amp;#x1F310;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image09.jpg&#34; alt=&#34;image09.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;source: Bach`s Blog&lt;/p&gt;
+&lt;h2 id=&#34;4-FirmAE&#34;&gt;&lt;a href=&#34;#4-FirmAE&#34; class=&#34;headerlink&#34; title=&#34;4. FirmAE&#34;&gt;&lt;/a&gt;4. FirmAE&lt;/h2&gt;&lt;p&gt;QEMU requires manual setup for networking and file configurations, which can be cumbersome.&lt;/p&gt;
+&lt;p&gt;But once again, humans found a way! There&amp;#x2019;s a tool that simplifies emulation&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;And that tool is the main subject of this post: &lt;strong&gt;FirmAE&lt;/strong&gt;! &amp;#x1F941;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/pr0v3rbs/FirmAE&#34;&gt;https://github.com/pr0v3rbs/FirmAE&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image10.png&#34; alt=&#34;image10.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;FirmAE is a firmware emulation automation tool developed by KAIST SysSec Lab. The research team created it to simplify the emulation of router and IP camera firmware images. It&amp;#x2019;s built on QEMU and Binwalk. &amp;#x1F528;&lt;/p&gt;
+&lt;p&gt;You can install and run it via GitHub.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# download&lt;/span&gt;
+sudo apt-get install -y bc fdisk qemu qemu-system-mips64 python3-psycopg2
+git &lt;span class=&#34;hljs-built_in&#34;&gt;clone&lt;/span&gt; --recursive https://github.com/pr0v3rbs/FirmAE
+&lt;span class=&#34;hljs-built_in&#34;&gt;cd&lt;/span&gt; ./FirmAE
+./download.sh
+./install.sh
+./init.sh
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# firmware in FirmAE/firmwares &lt;/span&gt;
+sudo ./run.sh -c VENDOR ./firmwares/
+sudo ./run.sh -d VENDOR ./firmwares/&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;When you emulate a sample router firmware using FirmAE, you can access the router&amp;#x2019;s web page just like before! The emulation process can take a fair bit of time, so be patient&amp;#x2014;it typically takes around 20&amp;#x2013;30 minutes (!). &amp;#x2615;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image11.png&#34; alt=&#34;image11.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;However, as indicated in the options, FirmAE was developed based on models from well-known router and IP camera manufacturers tested by the research team. As a result, it may not work well with less common devices or other embedded/IoT products. It also offers &lt;code&gt;gdbserver&lt;/code&gt; functionality, but this often doesn&amp;#x2019;t work reliably either. &amp;#x1F972;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image12.jpg&#34; alt=&#34;image12.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;In &lt;strong&gt;Part 2&lt;/strong&gt;, I&amp;#x2019;ll explore FirmAE&amp;#x2019;s internal structure and how it works, and show how to emulate firmware in different environments and use the various features it provides effectively! &amp;#x1F919;&amp;#x1F3FB;&lt;/p&gt;
+&lt;p&gt;Thanks for reading!&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] Firmware Emulation with FirmAE Part 1 (en) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;Hello! I&amp;#x2019;m newp1ayer48, the one in charge of the low-level at Hackyboiz! &amp;#x1F938;&amp;#x1F3FB;&amp;#x200D;&amp;#x2642;&amp;#xFE0F;&lt;/p&gt;
+&lt;p&gt;In the previous post, I said I&amp;#x2019;d return to debugging port connections, but due to budget constraints, I&amp;#x2019;m back with a different topic! (E&lt;del&gt;mbedded hacking is all about pay-to-win&amp;#x2026;&lt;/del&gt;&amp;#x1F4B8;)&lt;/p&gt;
+&lt;p&gt;Once you&amp;#x2019;ve acquired the firmware and examined the file system, it&amp;#x2019;s time to dive into the fun part&amp;#x2014;analyzing it for vulnerabilities.&lt;/p&gt;
+&lt;p&gt;But&amp;#x2026; relying solely on static analysis to find vulnerabilities is hardly an ideal situation. Even in pwnable challenges we use GDB, so how long are we just going to stare at IDA? &amp;#x1F620;&lt;/p&gt;
+&lt;p&gt;That&amp;#x2019;s why humans have always found a way. The answer is emulation!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image01.jpg&#34; alt=&#34;image01.jpg&#34;&gt;&lt;/p&gt;
+&lt;h2 id=&#34;1-Simulation-vs-Emulation&#34;&gt;&lt;a href=&#34;#1-Simulation-vs-Emulation&#34; class=&#34;headerlink&#34; title=&#34;1. Simulation vs Emulation&#34;&gt;&lt;/a&gt;1. Simulation vs Emulation&lt;/h2&gt;&lt;p&gt;Since the processes of building simulations and emulations can be quite similar, it&amp;#x2019;s easy to confuse the two. But the biggest difference lies in their goals.&lt;/p&gt;
+&lt;p&gt;The main purpose of &lt;strong&gt;simulation&lt;/strong&gt; is to test whether a program or system behaves correctly in a certain environment or scenario, often as a form of rehearsal. Rather than fully replicating the entire environment, simulations may only implement the minimum necessary parts and skip detailed functions. Sometimes, real hardware is used in the setup.&lt;/p&gt;
+&lt;p&gt;To put it simply, think of simulator games! These often don&amp;#x2019;t replicate every feature perfectly, but their main purpose is to provide an experience or allow practice. &amp;#x1F579;&amp;#xFE0F;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image02.webp&#34; alt=&#34;image02.webp&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Emulation&lt;/strong&gt;, on the other hand, focuses on running a program or system in a different environment. Since the original hardware setup may be unavailable, it&amp;#x2019;s important to mimic the hardware in software. The goal is often to make every function work as it would on the real system, so most emulations aim to replicate everything in detail.&lt;/p&gt;
+&lt;p&gt;You can think of emulation like Nintendo or Android emulators! Their main purpose is to let you run games or apps in a PC environment, so they&amp;#x2019;re designed to support all the functions of those systems. &amp;#x1F4F1;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image03.png&#34; alt=&#34;image03.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;To summarize, the image below (not shown here) illustrates the key difference well.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image04.jpg&#34; alt=&#34;image04.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Back to embedded hacking&amp;#x2014;our main goal is to perform &lt;strong&gt;dynamic analysis&lt;/strong&gt; of the firmware we&amp;#x2019;ve obtained. Embedded devices rely heavily on various sensors and hardware, so if the required hardware dependencies aren&amp;#x2019;t met, they often won&amp;#x2019;t function. Also, embedded systems typically use RISC architectures like ARM or MIPS, which means we have to emulate them in environments different from our typical CISC-based analysis systems. And since we want to dynamically analyze all the device&amp;#x2019;s functions, nearly every feature must be executable. &amp;#x1F477;&amp;#x1F3FB;&lt;/p&gt;
+&lt;p&gt;Therefore, we need to view the firmware from an emulation perspective and build the appropriate environment. The prevalence of articles in embedded hacking that involve firmware emulation supports this approach!&lt;/p&gt;
+&lt;h2 id=&#34;2-Firmware-Analysis&#34;&gt;&lt;a href=&#34;#2-Firmware-Analysis&#34; class=&#34;headerlink&#34; title=&#34;2. Firmware Analysis&#34;&gt;&lt;/a&gt;2. Firmware Analysis&lt;/h2&gt;&lt;p&gt;To emulate firmware, the first step is to analyze the environment in which it was built and is supposed to run. &amp;#x261D;&amp;#x1F3FB;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image05.jpg&#34; alt=&#34;image05.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;With &lt;code&gt;binwalk&lt;/code&gt;, you can extract several key pieces of information from firmware:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Architecture&lt;/li&gt;
+&lt;li&gt;Kernel&lt;/li&gt;
+&lt;li&gt;Root File System&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Using binwalk, you can discover the architecture and kernel details of a sample firmware.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;binwalk firmware.bin&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;image06.png&#34; alt=&#34;image06.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;-A&lt;/code&gt; option provides more detailed architecture info. &amp;#x1F50D;&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;-e&lt;/code&gt; option extracts files from the identified sections.&lt;/p&gt;
+&lt;p&gt;The files extracted by binwalk often have numeric names, which correspond to the different regions of the firmware. By checking the addresses listed by binwalk, you can identify what each file is.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;binwalk -e firmware.bin
+binwalk -A kernel&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;image07.png&#34; alt=&#34;image07.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Embedded systems commonly use RISC architectures like ARM and MIPS. However, even within these, naming can differ depending on the endianness. &amp;#x1F95A;&lt;/p&gt;
+&lt;p&gt;For example, &lt;code&gt;mips&lt;/code&gt; typically uses big-endian, while &lt;code&gt;mipsel&lt;/code&gt; uses little-endian. Binwalk usually detects and displays the architecture correctly, so just keep an eye on that.&lt;/p&gt;
+&lt;h2 id=&#34;3-QEMU&#34;&gt;&lt;a href=&#34;#3-QEMU&#34; class=&#34;headerlink&#34; title=&#34;3. QEMU&#34;&gt;&lt;/a&gt;3. QEMU&lt;/h2&gt;&lt;p&gt;Once you&amp;#x2019;ve identified the firmware&amp;#x2019;s details, it&amp;#x2019;s time to emulate it. Firmware can be run on a QEMU virtual machine. &amp;#x1F4A8;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image08.jpg&#34; alt=&#34;image08.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;QEMU is a virtualization tool frequently used to quickly set up emulation environments. You can specify kernel, image files, and other options. It&amp;#x2019;s installable via &lt;code&gt;apt&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;In the case of router firmware, there often aren&amp;#x2019;t many extra hardware or sensor dependencies beyond the firmware itself. So, if the kernel and image are configured correctly, the firmware can be run right away.&lt;/p&gt;
+&lt;p&gt;You can download architecture-specific files via the links provided (not shown here). &amp;#x1F4BE;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://people.debian.org/~aurel32/qemu/&#34;&gt;https://people.debian.org/~aurel32/qemu/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;If you manually match the necessary files and set up the network, you&amp;#x2019;ll be able to access the router&amp;#x2019;s interface like below and use most of the functionality present in the root file system. &amp;#x1F310;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image09.jpg&#34; alt=&#34;image09.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;source: Bach`s Blog&lt;/p&gt;
+&lt;h2 id=&#34;4-FirmAE&#34;&gt;&lt;a href=&#34;#4-FirmAE&#34; class=&#34;headerlink&#34; title=&#34;4. FirmAE&#34;&gt;&lt;/a&gt;4. FirmAE&lt;/h2&gt;&lt;p&gt;QEMU requires manual setup for networking and file configurations, which can be cumbersome.&lt;/p&gt;
+&lt;p&gt;But once again, humans found a way! There&amp;#x2019;s a tool that simplifies emulation&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;And that tool is the main subject of this post: &lt;strong&gt;FirmAE&lt;/strong&gt;! &amp;#x1F941;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://github.com/pr0v3rbs/FirmAE&#34;&gt;https://github.com/pr0v3rbs/FirmAE&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image10.png&#34; alt=&#34;image10.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;FirmAE is a firmware emulation automation tool developed by KAIST SysSec Lab. The research team created it to simplify the emulation of router and IP camera firmware images. It&amp;#x2019;s built on QEMU and Binwalk. &amp;#x1F528;&lt;/p&gt;
+&lt;p&gt;You can install and run it via GitHub.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# download&lt;/span&gt;
+sudo apt-get install -y bc fdisk qemu qemu-system-mips64 python3-psycopg2
+git &lt;span class=&#34;hljs-built_in&#34;&gt;clone&lt;/span&gt; --recursive https://github.com/pr0v3rbs/FirmAE
+&lt;span class=&#34;hljs-built_in&#34;&gt;cd&lt;/span&gt; ./FirmAE
+./download.sh
+./install.sh
+./init.sh
+
+&lt;span class=&#34;hljs-comment&#34;&gt;# firmware in FirmAE/firmwares &lt;/span&gt;
+sudo ./run.sh -c VENDOR ./firmwares/
+sudo ./run.sh -d VENDOR ./firmwares/&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;When you emulate a sample router firmware using FirmAE, you can access the router&amp;#x2019;s web page just like before! The emulation process can take a fair bit of time, so be patient&amp;#x2014;it typically takes around 20&amp;#x2013;30 minutes (!). &amp;#x2615;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image11.png&#34; alt=&#34;image11.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;However, as indicated in the options, FirmAE was developed based on models from well-known router and IP camera manufacturers tested by the research team. As a result, it may not work well with less common devices or other embedded/IoT products. It also offers &lt;code&gt;gdbserver&lt;/code&gt; functionality, but this often doesn&amp;#x2019;t work reliably either. &amp;#x1F972;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image12.jpg&#34; alt=&#34;image12.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;In &lt;strong&gt;Part 2&lt;/strong&gt;, I&amp;#x2019;ll explore FirmAE&amp;#x2019;s internal structure and how it works, and show how to emulate firmware in different environments and use the various features it provides effectively! &amp;#x1F919;&amp;#x1F3FB;&lt;/p&gt;
+&lt;p&gt;Thanks for reading!&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/05/08/newp1ayer48/emulation1/ko/image01.jpg">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/05/08/newp1ayer48/emulation1/en/">
+
+  <title>[Research] Firmware Emulation with FirmAE Part 1 (en) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-05-08 23:00" pubdate>
+      2025년 5월 8일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      1.1k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      21
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] Firmware Emulation with FirmAE Part 1 (en)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p>Hello! I&#x2019;m newp1ayer48, the one in charge of the low-level at Hackyboiz! &#x1F938;&#x1F3FB;&#x200D;&#x2642;&#xFE0F;</p>
+<p>In the previous post, I said I&#x2019;d return to debugging port connections, but due to budget constraints, I&#x2019;m back with a different topic! (E<del>mbedded hacking is all about pay-to-win&#x2026;</del>&#x1F4B8;)</p>
+<p>Once you&#x2019;ve acquired the firmware and examined the file system, it&#x2019;s time to dive into the fun part&#x2014;analyzing it for vulnerabilities.</p>
+<p>But&#x2026; relying solely on static analysis to find vulnerabilities is hardly an ideal situation. Even in pwnable challenges we use GDB, so how long are we just going to stare at IDA? &#x1F620;</p>
+<p>That&#x2019;s why humans have always found a way. The answer is emulation!</p>
+<p><img src="image01.jpg" srcset="/img/loading.gif" alt="image01.jpg"></p>
+<h2 id="1-Simulation-vs-Emulation"><a href="#1-Simulation-vs-Emulation" class="headerlink" title="1. Simulation vs Emulation"></a>1. Simulation vs Emulation</h2><p>Since the processes of building simulations and emulations can be quite similar, it&#x2019;s easy to confuse the two. But the biggest difference lies in their goals.</p>
+<p>The main purpose of <strong>simulation</strong> is to test whether a program or system behaves correctly in a certain environment or scenario, often as a form of rehearsal. Rather than fully replicating the entire environment, simulations may only implement the minimum necessary parts and skip detailed functions. Sometimes, real hardware is used in the setup.</p>
+<p>To put it simply, think of simulator games! These often don&#x2019;t replicate every feature perfectly, but their main purpose is to provide an experience or allow practice. &#x1F579;&#xFE0F;</p>
+<p><img src="image02.webp" srcset="/img/loading.gif" alt="image02.webp"></p>
+<p><strong>Emulation</strong>, on the other hand, focuses on running a program or system in a different environment. Since the original hardware setup may be unavailable, it&#x2019;s important to mimic the hardware in software. The goal is often to make every function work as it would on the real system, so most emulations aim to replicate everything in detail.</p>
+<p>You can think of emulation like Nintendo or Android emulators! Their main purpose is to let you run games or apps in a PC environment, so they&#x2019;re designed to support all the functions of those systems. &#x1F4F1;</p>
+<p><img src="image03.png" srcset="/img/loading.gif" alt="image03.png"></p>
+<p>To summarize, the image below (not shown here) illustrates the key difference well.</p>
+<p><img src="image04.jpg" srcset="/img/loading.gif" alt="image04.jpg"></p>
+<p>Back to embedded hacking&#x2014;our main goal is to perform <strong>dynamic analysis</strong> of the firmware we&#x2019;ve obtained. Embedded devices rely heavily on various sensors and hardware, so if the required hardware dependencies aren&#x2019;t met, they often won&#x2019;t function. Also, embedded systems typically use RISC architectures like ARM or MIPS, which means we have to emulate them in environments different from our typical CISC-based analysis systems. And since we want to dynamically analyze all the device&#x2019;s functions, nearly every feature must be executable. &#x1F477;&#x1F3FB;</p>
+<p>Therefore, we need to view the firmware from an emulation perspective and build the appropriate environment. The prevalence of articles in embedded hacking that involve firmware emulation supports this approach!</p>
+<h2 id="2-Firmware-Analysis"><a href="#2-Firmware-Analysis" class="headerlink" title="2. Firmware Analysis"></a>2. Firmware Analysis</h2><p>To emulate firmware, the first step is to analyze the environment in which it was built and is supposed to run. &#x261D;&#x1F3FB;</p>
+<p><img src="image05.jpg" srcset="/img/loading.gif" alt="image05.jpg"></p>
+<p>With <code>binwalk</code>, you can extract several key pieces of information from firmware:</p>
+<ul>
+<li>Architecture</li>
+<li>Kernel</li>
+<li>Root File System</li>
+</ul>
+<p>Using binwalk, you can discover the architecture and kernel details of a sample firmware.</p>
+<pre><code class="hljs bash">binwalk firmware.bin</code></pre>
+<p><img src="image06.png" srcset="/img/loading.gif" alt="image06.png"></p>
+<p>The <code>-A</code> option provides more detailed architecture info. &#x1F50D;</p>
+<p>The <code>-e</code> option extracts files from the identified sections.</p>
+<p>The files extracted by binwalk often have numeric names, which correspond to the different regions of the firmware. By checking the addresses listed by binwalk, you can identify what each file is.</p>
+<pre><code class="hljs bash">binwalk -e firmware.bin
+binwalk -A kernel</code></pre>
+<p><img src="image07.png" srcset="/img/loading.gif" alt="image07.png"></p>
+<p>Embedded systems commonly use RISC architectures like ARM and MIPS. However, even within these, naming can differ depending on the endianness. &#x1F95A;</p>
+<p>For example, <code>mips</code> typically uses big-endian, while <code>mipsel</code> uses little-endian. Binwalk usually detects and displays the architecture correctly, so just keep an eye on that.</p>
+<h2 id="3-QEMU"><a href="#3-QEMU" class="headerlink" title="3. QEMU"></a>3. QEMU</h2><p>Once you&#x2019;ve identified the firmware&#x2019;s details, it&#x2019;s time to emulate it. Firmware can be run on a QEMU virtual machine. &#x1F4A8;</p>
+<p><img src="image08.jpg" srcset="/img/loading.gif" alt="image08.jpg"></p>
+<p>QEMU is a virtualization tool frequently used to quickly set up emulation environments. You can specify kernel, image files, and other options. It&#x2019;s installable via <code>apt</code>.</p>
+<p>In the case of router firmware, there often aren&#x2019;t many extra hardware or sensor dependencies beyond the firmware itself. So, if the kernel and image are configured correctly, the firmware can be run right away.</p>
+<p>You can download architecture-specific files via the links provided (not shown here). &#x1F4BE;</p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://people.debian.org/~aurel32/qemu/">https://people.debian.org/~aurel32/qemu/</a></p>
+<p>If you manually match the necessary files and set up the network, you&#x2019;ll be able to access the router&#x2019;s interface like below and use most of the functionality present in the root file system. &#x1F310;</p>
+<p><img src="image09.jpg" srcset="/img/loading.gif" alt="image09.jpg"></p>
+<p>source: Bach`s Blog</p>
+<h2 id="4-FirmAE"><a href="#4-FirmAE" class="headerlink" title="4. FirmAE"></a>4. FirmAE</h2><p>QEMU requires manual setup for networking and file configurations, which can be cumbersome.</p>
+<p>But once again, humans found a way! There&#x2019;s a tool that simplifies emulation&#x2026;</p>
+<p>And that tool is the main subject of this post: <strong>FirmAE</strong>! &#x1F941;</p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/pr0v3rbs/FirmAE">https://github.com/pr0v3rbs/FirmAE</a></p>
+<p><img src="image10.png" srcset="/img/loading.gif" alt="image10.png"></p>
+<p>FirmAE is a firmware emulation automation tool developed by KAIST SysSec Lab. The research team created it to simplify the emulation of router and IP camera firmware images. It&#x2019;s built on QEMU and Binwalk. &#x1F528;</p>
+<p>You can install and run it via GitHub.</p>
+<pre><code class="hljs bash"><span class="hljs-comment"># download</span>
+sudo apt-get install -y bc fdisk qemu qemu-system-mips64 python3-psycopg2
+git <span class="hljs-built_in">clone</span> --recursive https://github.com/pr0v3rbs/FirmAE
+<span class="hljs-built_in">cd</span> ./FirmAE
+./download.sh
+./install.sh
+./init.sh
+
+<span class="hljs-comment"># firmware in FirmAE/firmwares </span>
+sudo ./run.sh -c VENDOR ./firmwares/
+sudo ./run.sh -d VENDOR ./firmwares/</code></pre>
+<p>When you emulate a sample router firmware using FirmAE, you can access the router&#x2019;s web page just like before! The emulation process can take a fair bit of time, so be patient&#x2014;it typically takes around 20&#x2013;30 minutes (!). &#x2615;</p>
+<p><img src="image11.png" srcset="/img/loading.gif" alt="image11.png"></p>
+<p>However, as indicated in the options, FirmAE was developed based on models from well-known router and IP camera manufacturers tested by the research team. As a result, it may not work well with less common devices or other embedded/IoT products. It also offers <code>gdbserver</code> functionality, but this often doesn&#x2019;t work reliably either. &#x1F972;</p>
+<p><img src="image12.jpg" srcset="/img/loading.gif" alt="image12.jpg"></p>
+<p>In <strong>Part 2</strong>, I&#x2019;ll explore FirmAE&#x2019;s internal structure and how it works, and show how to emulate firmware in different environments and use the various features it provides effectively! &#x1F919;&#x1F3FB;</p>
+<p>Thanks for reading!</p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/firmware/">firmware</a>
+                  
+                  <a class="hover-with-bg" href="/tags/newp1ayer48/">newp1ayer48</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Embedded/">Embedded</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Emulation/">Emulation</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_newp1ayer48.jpg" srcset="/img/loading.gif" alt="newp1ayer48">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">newp1ayer48</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/newp1ayer48">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/05/10/mungsul/2025-05-10/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2025-34028: Commvault Path Traversal 통한 Remote Code Execution 취약점</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/05/08/newp1ayer48/emulation1/ko/">
+                    <span class="hidden-mobile">[Research] Firmware Emulation with FirmAE Part 1 (ko)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/05/08/newp1ayer48/emulation1/en/';
+        this.page.identifier = '/2025/05/08/newp1ayer48/emulation1/en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] Firmware Emulation with FirmAE Part 1 (en)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>

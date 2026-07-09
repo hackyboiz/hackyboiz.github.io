@@ -1,0 +1,1277 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;&lt;img src=&#34;01_main.jpg&#34; alt=&#34;01_main.jpg&#34;&gt;&lt;/p&gt;
+&lt;h2 id=&#34;0-Introduction&#34;&gt;&lt;a href=&#34;#0-Introduction&#34; class=&#34;headerlink&#34; title=&#34;0. Introduction&#34;&gt;&lt;/a&gt;0. Introduction&lt;/h2&gt;&lt;p&gt;Hello! This is Libera, who wrote Part 3 of the recent &amp;#x201C;Windows LPE Bug Hunting Experience&amp;#x201D; series by the younger members. How is everyone doing?&lt;/p&gt;
+&lt;p&gt;I believe there are two main approaches to finding vulnerabilities. One is &amp;#x201C;auditing,&amp;#x201D; where you read the code directly to identify vulnerable sections, and the other is &amp;#x201C;fuzzing,&amp;#x201D; where you feed a fuzzer countless inputs to trigger abnormal behavior. In the previous series, I delved into kernel drivers through auditing. I launched IDA and began my analysis starting with the dispatch routine.&lt;/p&gt;
+&lt;p&gt;Now that I&amp;#x2019;ve experienced auditing, the goal of this research is to properly study the other approach: fuzzing. The idea that vulnerabilities can be found even while I&amp;#x2019;m sleeping is incredibly appealing, isn&amp;#x2019;t it? So, in this series, I&amp;#x2019;ll document the process of setting up a system to fuzz afd.sys&amp;#x2014;the Windows socket kernel driver&amp;#x2014;using a fuzzer called WTF (What the Fuzz).&lt;/p&gt;
+&lt;p&gt;In today&amp;#x2019;s Part 1, we&amp;#x2019;ll understand what WTF is and explore what&amp;#x2019;s needed to run the fuzzer. We&amp;#x2019;ll dive into afd.sys in earnest starting with the next part, so let&amp;#x2019;s focus on learning about WTF in this one!&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;1-Why-&amp;#x201C;Snapshot&amp;#x201D;-Fuzzing&#34;&gt;&lt;a href=&#34;#1-Why-&amp;#x201C;Snapshot&amp;#x201D;-Fuzzing&#34; class=&#34;headerlink&#34; title=&#34;1. Why &amp;#x201C;Snapshot&amp;#x201D; Fuzzing?&#34;&gt;&lt;/a&gt;1. Why &amp;#x201C;Snapshot&amp;#x201D; Fuzzing?&lt;/h2&gt;&lt;p&gt;When you hear the term &amp;#x201C;fuzzer,&amp;#x201D; you probably think of AFL or libFuzzer. These tools work as follows:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Run the target program&lt;/li&gt;
+&lt;li&gt;Feed it a single input (test case)&lt;/li&gt;
+&lt;li&gt;Check if it crashes&lt;/li&gt;
+&lt;li&gt;Exit the program, slightly modify the input, and repeat from step 1&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;This method involves restarting the program each time. If the program is one that simply reads and parses a file from the console, this approach is sufficient. However, the target we&amp;#x2019;re focusing on this time&amp;#x2014;afd.sys&amp;#x2014;isn&amp;#x2019;t that simple.&lt;/p&gt;
+&lt;p&gt;To reach the desired code (function) in afd.sys, you must first go through a series of preparatory steps, such as creating a socket (&lt;code&gt;socket&lt;/code&gt;), binding it to an address (&lt;code&gt;bind&lt;/code&gt;), and establishing a connection (&lt;code&gt;connect&lt;/code&gt;). What if this process has to be repeated from scratch for every test case? The fuzzer would waste time re-establishing the socket connection each time, time that should be spent actually finding bugs. Furthermore, since this is kernel code, there are limitations on restarting the program after it has terminated.&lt;/p&gt;
+&lt;p&gt;This is where snapshot fuzzing comes into play.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;What is snapshot fuzzing?&lt;br&gt;It involves taking a complete &amp;#x201C;snapshot&amp;#x201D;&amp;#x2014;like a photograph&amp;#x2014;of the target&amp;#x2019;s state (the entire memory and all CPU registers) at the exact moment it reaches the desired state. From that point on, instead of running the program from the beginning, the stored snapshot is loaded, input is injected starting from that point, the program is executed briefly, and then it is rolled back to the snapshot state.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;&lt;img src=&#34;02_Dormammu.gif&#34; alt=&#34;02_Dormammu.gif&#34;&gt;&lt;/p&gt;
+&lt;p&gt;To use an analogy, it&amp;#x2019;s similar to a &amp;#x201C;save point&amp;#x201D; in a video game. If you save right before a boss fight, even if you die to the boss, you don&amp;#x2019;t have to restart from the beginning of the stage&amp;#x2014;you can resume right where you left off, just before the boss. Snapshot fuzzing works by &amp;#x201C;saving&amp;#x201D; the input data right before it&amp;#x2019;s used, and then infinitely retrying from that point while varying only the input.&lt;/p&gt;
+&lt;p&gt;The advantages of this method are as follows:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;State control: You can start fuzzing after connections, authentication, initialization, and other processes have completed.&lt;/li&gt;
+&lt;li&gt;Deterministic execution: Execution is possible without external factors like disk or network, making it easy to reproduce crashes.&lt;/li&gt;
+&lt;li&gt;Fast recovery: Since you only need to roll back the changed pages rather than the entire memory each time, recovery is fast.&lt;/li&gt;
+&lt;li&gt;Kernel fuzzing: You can fuzz the target using the same method regardless of whether it is in user mode or kernel mode.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The last two advantages are particularly important. Since afd.sys is a kernel driver, fuzzing must be performed while the socket is connected. Snapshot fuzzing is especially useful for components like afd.sys, where the operational state can vary widely during actual execution.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;2-Why-Was-It-WTF-feat-KAFL&#34;&gt;&lt;a href=&#34;#2-Why-Was-It-WTF-feat-KAFL&#34; class=&#34;headerlink&#34; title=&#34;2. Why Was It WTF? feat. KAFL&#34;&gt;&lt;/a&gt;2. Why Was It WTF? feat. KAFL&lt;/h2&gt;&lt;p&gt;Actually, when it comes to kernel fuzzing, the most well-known tool isn&amp;#x2019;t WTF&amp;#x2014;it&amp;#x2019;s KAFL. Still, there was a practical reason why I chose WTF.&lt;/p&gt;
+&lt;p&gt;KAFL is a hardware-based coverage fuzzer designed for OS kernels. The key is that it uses a CPU feature called Intel PT (Intel Processor Trace).&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;What is Intel PT?&lt;br&gt;It&amp;#x2019;s a feature where the hardware directly records the branch flow executed by the CPU. Since it tells you where the CPU branched to without having to track it manually with software, you can collect coverage at nearly native speed.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The problem is that this approach is dependent on specific hardware and environments. KAFL requires a CPU that supports Intel PT, and it runs on a custom-developed kernel (KVM) to utilize Intel PT within a virtual machine.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;03_ItsFine.png&#34; alt=&#34;03_ItsFine.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;I didn&amp;#x2019;t want to know either&amp;#x2014;that KAFL&amp;#x2019;s custom kernel doesn&amp;#x2019;t yet support the Ultra series, the latest architecture for Intel CPUs&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;I built a computer specifically for fuzzing, but it seems KAFL doesn&amp;#x2019;t support the Ultra Core yet. After purchasing the computer and struggling to set up KAFL, I started seeing reports on GitHub and elsewhere from people using Ultra Core CPUs who were experiencing build failures. I tried several times myself, but after switching to the Nyx kernel and running it, Intel PT recognition and KVM functionality were unclear, and I got stuck right at the template build stage for launching a QEMU-Nyx-based Windows VM. &amp;#x1F62D;&lt;/p&gt;
+&lt;p&gt;So I turned my attention to WTF. Here&amp;#x2019;s why WTF was a better fit for my situation:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;It doesn&amp;#x2019;t rely on specific hardware.&lt;ul&gt;
+&lt;li&gt;WTF&amp;#x2019;s bochscpu backend emulates the CPU in software, so it measures coverage even without hardware features like Intel PT.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;It lets you start small by focusing on the target.&lt;ul&gt;
+&lt;li&gt;While KAFL is a heavy-duty infrastructure that sets up an entire VM, WTF lets you take a snapshot of just the part you want to focus on and intensively fuzz a specific path; you can also choose the backend (precise bochscpu or fast KVM) depending on the situation.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Of course, KAFL is a powerful tool in terms of speed, provided the environment is right. However, what mattered most to me was whether I could run it right away in my current environment, and the answer was WTF. Now, let&amp;#x2019;s take a closer look at what exactly WTF is.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;3-WTF-what-the-fuzz&#34;&gt;&lt;a href=&#34;#3-WTF-what-the-fuzz&#34; class=&#34;headerlink&#34; title=&#34;3. WTF, what the fuzz&#34;&gt;&lt;/a&gt;3. WTF, what the fuzz&lt;/h2&gt;&lt;p&gt;WTF is an open-source snapshot fuzzer created by Axel 0vercl0k Souchet, and it excels particularly at fuzzing Windows targets. The key point is that as long as you can capture a snapshot&amp;#x2014;whether in user mode or kernel mode&amp;#x2014;you can fuzz it.&lt;/p&gt;
+&lt;p&gt;One of the reasons &lt;a href=&#34;https://blog.thalium.re/posts/rdpegfx/&#34;&gt;WTF gained popularity was the RDPEGFX fuzzing case by the Thalium team&lt;/a&gt;. They used WTF to fuzz the graphics channel of the Microsoft RDP client and discovered an actual CVE (CVE-2022-30221). I learned a lot from this case study, and I plan to reference those lessons throughout this series. (Thank you, RDPEGFX team &amp;#x1F64F;)&lt;/p&gt;
+&lt;p&gt;So, let&amp;#x2019;s start by looking at how WTF works internally.&lt;/p&gt;
+&lt;h3 id=&#34;3-1-The-WTF-4-Step-Loop&#34;&gt;&lt;a href=&#34;#3-1-The-WTF-4-Step-Loop&#34; class=&#34;headerlink&#34; title=&#34;3.1 The WTF 4-Step Loop&#34;&gt;&lt;/a&gt;3.1 The WTF 4-Step Loop&lt;/h3&gt;&lt;p&gt;Fuzzing with WTF essentially involves an infinite loop of the following four steps.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Snapshot&lt;br&gt;Pause the target in the debugger to set it to the desired state, then save a dump of the entire physical memory and CPU state (registers) at that moment. This is a preparatory step performed exactly once before starting the fuzzing.&lt;br&gt;Of course, if you want to fuzz multiple target functions in parallel, you&amp;#x2019;ll need multiple snapshots.&lt;/li&gt;
+&lt;li&gt;Harness&lt;br&gt;You write code to specify where and how to inject test cases into the target, as well as when to halt execution. The harness&amp;#x2019;s role is to write the bytes generated by the fuzzer into a location the target can understand (the input buffer).&lt;/li&gt;
+&lt;li&gt;Execution&lt;br&gt;The target code is executed with the snapshot loaded and the input injected. During execution, coverage is tracked, crashes are detected, and changes to memory are recorded as &amp;#x201C;dirty memory.&amp;#x201D;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;blockquote&gt;
+&lt;p&gt;What is coverage?&lt;br&gt;It is a metric that determines whether &amp;#x201C;this input triggered a new code path.&amp;#x201D; Inputs that cause the same code to loop repeatedly are meaningless; the inputs we should target are those that lead to branches that have never been visited before. The fuzzer stores inputs that generate new coverage separately, then modifies them further to delve deeper and deeper into the code.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Restore&lt;br&gt;It reverts only the physical memory that was modified during execution back to its original snapshot state and resets the CPU registers. Then, it creates a new test case and proceeds to step 2. Since only the modified pages are restored&amp;#x2014;not the entire memory&amp;#x2014;this restoration process is extremely fast.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/blockquote&gt;
+&lt;h3 id=&#34;3-2-Three-Types-of-Execution-Backends&#34;&gt;&lt;a href=&#34;#3-2-Three-Types-of-Execution-Backends&#34; class=&#34;headerlink&#34; title=&#34;3.2 Three Types of Execution Backends&#34;&gt;&lt;/a&gt;3.2 Three Types of Execution Backends&lt;/h3&gt;&lt;p&gt;In execution step 3 above, WTF can choose one of three backends to actually run the target code. Each offers different levels of speed and precision.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;bochscpu: This uses software CPU emulation. While it is the slowest, it collects the RIP of every instruction, making it useful for debugging and enabling precise tracing.&lt;/li&gt;
+&lt;li&gt;WHV: A Windows hypervisor-based approach with moderate speed. Coverage is collected using Basic Block entry points.&lt;/li&gt;
+&lt;li&gt;KVM: A Linux hypervisor-based approach with the fastest speed. Coverage is collected in the same way as WHV.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;bochscpu is an emulator that mimics the CPU itself using software. It intercepts and inspects every single instruction. WTF calls a hook called &lt;code&gt;before_execution&lt;/code&gt; for every instruction to retrieve the current RIP (execution location) and add it to a set. If an address is encountered for the first time, it is recorded as new coverage. While this method of examining every instruction provides high precision, it is correspondingly slow. Therefore, it is used more for harness debugging or crash trace analysis than for large-scale fuzzing. (The reason WTF ran on my Ultra 7 without any issues, unlike KAFL, is precisely because bochscpu collects coverage using only software, without any hardware features.)&lt;/p&gt;
+&lt;p&gt;WHV and KVM are forms of hardware virtualization. Since they run the target on a real CPU, they&amp;#x2019;re fast, but they don&amp;#x2019;t allow for instruction-level inspection. Therefore, they collect coverage in a different way: by setting a breakpoint at the start of each basic block.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;What is a basic block (BB)?&lt;br&gt;It is a sequence of instructions that executes continuously without any jumps or branches; the block ends when it encounters a conditional branch.&lt;/p&gt;
+&lt;p&gt;The flow can be seen in the following assembly code example.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs nasm&#34;&gt;addbb_A:
+  mov  eax, [rcx+4]   ; &amp;#x2500;&amp;#x2510;
+  cmp  eax, 8         ;  &amp;#x2502; That concludes BB 1 (A)
+  jb   too_small      ; &amp;#x2500;&amp;#x2518; Conditional Branch &amp;#x2192; End of Block
+addbb_B:
+  mov  edx, [rcx+8]   ; &amp;#x2500;&amp;#x2510; If jb doesn&amp;apos;t work, click here (B)
+  test edx, 1         ;  &amp;#x2502;
+  jz   default_case   ; &amp;#x2500;&amp;#x2518;
+too_small:
+  xor  eax, eax       ; &amp;#x2190; Jumped in from another page &amp;#x2192; New BB
+  ret&lt;/code&gt;&lt;/pre&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;To use the hardware backend, you need a list of the starting addresses of all basic blocks in the target beforehand, which can be generated using the IDA script (&lt;code&gt;gen_coveragefile_ida.py&lt;/code&gt;). Then, when WTF initializes, it sets &lt;code&gt;int3&lt;/code&gt; (breakpoints) at those addresses. If it hits an &lt;code&gt;int3&lt;/code&gt; during fuzzing, it determines that it has reached that block for the first time, increases the coverage, and then removes that breakpoint. After all, there&amp;#x2019;s no need to revisit a location that&amp;#x2019;s already been visited.&lt;/p&gt;
+&lt;p&gt;Here&amp;#x2019;s the practical strategy: When first building the harness, run it slowly with &lt;code&gt;bochscpu&lt;/code&gt; to debug and verify that inputs are being accepted correctly and that crash detection is working. Once verification is complete, switch to &lt;code&gt;WHV&lt;/code&gt; to run the fuzzing quickly. Since I&amp;#x2019;m running on a Windows host, I couldn&amp;#x2019;t use KVM, which is a faster backend.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;4-Set-it-up-yourself-and-give-it-a-try&#34;&gt;&lt;a href=&#34;#4-Set-it-up-yourself-and-give-it-a-try&#34; class=&#34;headerlink&#34; title=&#34;4. Set it up yourself and give it a try&#34;&gt;&lt;/a&gt;4. Set it up yourself and give it a try&lt;/h2&gt;&lt;p&gt;Now that we&amp;#x2019;ve covered the basics, let&amp;#x2019;s take a look at the basic setup I&amp;#x2019;ve configured. &amp;#x201C;What do I need to put where to get WTF fuzzing to run?&amp;#x201D; That&amp;#x2019;s probably what you&amp;#x2019;re most curious about in this section. I&amp;#x2019;ll leave actual targets like afd.sys for the next section; here, I&amp;#x2019;ll just outline the file structure and workflow.&lt;/p&gt;
+&lt;p&gt;To run a fuzzing session with WTF, you ultimately need the following three components:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Harness &amp;#x2014; C++ code that defines where to inject input (built alongside the WTF main program)&lt;/li&gt;
+&lt;li&gt;Snapshot &amp;#x2014; A dump of the target&amp;#x2019;s memory and CPU state (extracted using WinDbg)&lt;/li&gt;
+&lt;li&gt;Seed corpus &amp;#x2014; A few initial inputs prepared to serve as the starting point for fuzzing&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;The snapshot, seed, and crash files must be placed in the designated subfolders under the &lt;code&gt;targets/&amp;lt;name&amp;gt;/&lt;/code&gt; folder for each target, as shown below.&lt;/p&gt;
+&lt;h3 id=&#34;4-1-What-You-Need-to-Run-Fuzzing&#34;&gt;&lt;a href=&#34;#4-1-What-You-Need-to-Run-Fuzzing&#34; class=&#34;headerlink&#34; title=&#34;4.1 What You Need to Run Fuzzing&#34;&gt;&lt;/a&gt;4.1 What You Need to Run Fuzzing&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;wtf/targets/afd/
+&amp;#x251C;&amp;#x2500;&amp;#x2500; inputs/    &amp;#x2190; Seed (Initial Input) Test Cases
+&amp;#x251C;&amp;#x2500;&amp;#x2500; outputs/   &amp;#x2190; An interesting input (minset) discovered during fuzzing
+&amp;#x251C;&amp;#x2500;&amp;#x2500; coverage/  &amp;#x2190; .cov coverage file
+&amp;#x251C;&amp;#x2500;&amp;#x2500; crashes/   &amp;#x2190; Where crashes are saved
+&amp;#x2514;&amp;#x2500;&amp;#x2500; state/     &amp;#x2190; Snapshot (The snapshot tool creates a subfolder here to store mem.dmp and regs.json)&lt;/code&gt;&lt;/pre&gt;
+&lt;h3 id=&#34;4-2-Where-Should-You-Keep-the-Harness&#34;&gt;&lt;a href=&#34;#4-2-Where-Should-You-Keep-the-Harness&#34; class=&#34;headerlink&#34; title=&#34;4.2 Where Should You Keep the Harness?&#34;&gt;&lt;/a&gt;4.2 Where Should You Keep the Harness?&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;04_confused.gif&#34; alt=&#34;04_confused.gif&#34;&gt;&lt;/p&gt;
+&lt;p&gt;WTF does not store the harness in a separate file; instead, it is included as a fuzzer module within the WTF folder and built alongside the rest of the project. Modules are created under src/wtf following the naming convention fuzzer_&lt;name&gt;.cc.&lt;/name&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;wtf/
+&amp;#x251C;&amp;#x2500;&amp;#x2500; src/
+&amp;#x2502;   &amp;#x2514;&amp;#x2500;&amp;#x2500; wtf/
+&amp;#x2502;       &amp;#x251C;&amp;#x2500;&amp;#x2500; fuzzer_afd.cc    &amp;#x2190; I&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;ll put my harness here&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&amp;#x2502;       &amp;#x251C;&amp;#x2500;&amp;#x2500; fuzzer_hevd.cc   &amp;#x2190; WTF Basic Example Module (For Reference)&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&amp;#x2502;       &amp;#x2514;&amp;#x2500;&amp;#x2500; ...&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&amp;#x251C;&amp;#x2500;&amp;#x2500; scripts/&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&amp;#x2502;   &amp;#x2514;&amp;#x2500;&amp;#x2500; gen_coveragefile_ida.py   &amp;#x2190; (For KVM/WHV) Extracting the list of basic blocks&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&amp;#x2514;&amp;#x2500;&amp;#x2500; targets/&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;    &amp;#x2514;&amp;#x2500;&amp;#x2500; afd/                 &amp;#x2190; This target&amp;apos;&lt;/span&gt;s working folder (described &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;4.3&lt;/span&gt;)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Create a file named &lt;code&gt;fuzzer_afd.cc&lt;/code&gt; inside &lt;code&gt;src/wtf/&lt;/code&gt;, and within it, register your harness as a &lt;code&gt;Target_t&lt;/code&gt; object along with its name. You&amp;#x2019;ll use the name you set here later when running the program&amp;#x2014;for example, with the &lt;code&gt;--name afd&lt;/code&gt; option&amp;#x2014;to select which harness to use for fuzzing.&lt;/p&gt;
+&lt;p&gt;Inside the harness, you&amp;#x2019;ll implement three main functions.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// src/wtf/fuzzer_afd.cc  (Just the concept)&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// 1. Setup: Install crash detection hook, define termination conditions, remove noise&lt;/span&gt;
+bool Init(&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; Options_t &amp;amp;Opts, &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; CpuState_t &amp;amp;State) { ... }
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// 2. Input Injection: Writes the byte buffer generated by the fuzzer to the target memory&lt;/span&gt;
+bool InsertTestcase(&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; uint8_t *Buffer, &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; size_t BufferSize) { ... }
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// 3. Restore: Called after every execution (WTF handles most of this automatically)&lt;/span&gt;
+bool Restore() { ... }
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// Register the above three functions under the name &amp;#x201C;afd&amp;#x201D; &amp;#x2192; Specify them with --name afd when running&lt;/span&gt;
+Target_t Afd(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;afd&amp;quot;&lt;/span&gt;, Init, InsertTestcase, Restore);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The harness must be placed in the &lt;code&gt;src/wtf/&lt;/code&gt; directory within the WTF folder; when you build it, it will be combined into a single WTF executable. In other words, if you make any changes to the harness, you must rebuild it and rerun the fuzzer.&lt;/p&gt;
+&lt;h3 id=&#34;4-3-Taking-a-Snapshot-Which-Files-Are-Used-and-What-Is-Created&#34;&gt;&lt;a href=&#34;#4-3-Taking-a-Snapshot-Which-Files-Are-Used-and-What-Is-Created&#34; class=&#34;headerlink&#34; title=&#34;4.3 Taking a Snapshot (Which Files Are Used, and What Is Created)&#34;&gt;&lt;/a&gt;4.3 Taking a Snapshot (Which Files Are Used, and What Is Created)&lt;/h3&gt;&lt;p&gt;Snapshots are captured within WinDbg. The file used for this is &lt;strong&gt;&lt;code&gt;snapshot&lt;/code&gt;&lt;/strong&gt;, a companion project of WTF. After loading it as a WinDbg extension (&lt;code&gt;snapshot.dll&lt;/code&gt;), you can dump the current state using the &lt;code&gt;!snapshot&lt;/code&gt; command.&lt;/p&gt;
+&lt;p&gt;The overall process for capturing a snapshot is as follows.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs nasm&#34;&gt;1. Launch the target on a Hyper-V VM (Windows, 1 vCPU and 4 GB of RAM recommended) and establish a kernel debugging connection.
+2. Set a breakpoint to pause the VM at the desired point. (e.g., just before a DeviceIoControl call)
+3. Load snapshot.dll into Windbg and run !snapshot. &amp;#x2192; This generates a memory and CPU state dump.&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In WinDbg, you proceed using commands like these.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// Loading the snapshot extension (built with Rust)&lt;/span&gt;
+.load C:\path\to\snapshot\target\release\snapshot.dll
+
+!snapshot C:\fuzzing\wtf\targets\afd\state   &lt;span class=&#34;hljs-comment&#34;&gt;// Save the snapshot to the &amp;#x201C;state&amp;#x201D; folder&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// If you&amp;apos;d like to check the instructions,&lt;/span&gt;
+!snapshot -h                      
+[snapshot] Usage: snapshot [OPTIONS] [STATE_PATH]
+  -k, --kind &amp;lt;KIND&amp;gt;   Snapshot Types [Default: full] [active-kernel | full]&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;One thing to note here is that if you use &lt;code&gt;!snapshot&lt;/code&gt; as shown above, it creates a folder in the &lt;code&gt;state&lt;/code&gt; directory labeled with the OS build and a timestamp, and places &lt;code&gt;json&lt;/code&gt; and &lt;code&gt;dmp&lt;/code&gt; files inside it.&lt;/p&gt;
+&lt;p&gt;When running fuzzing, you should specify &lt;code&gt;--state&lt;/code&gt; to point not to the &lt;code&gt;state/&lt;/code&gt; folder, but to the &lt;code&gt;state.1904&amp;#x2026;&lt;/code&gt; folder created within it.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;wtf/targets/afd/state/
+&amp;#x2514;&amp;#x2500;&amp;#x2500; state&lt;span class=&#34;hljs-number&#34;&gt;.19041&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;.1&lt;/span&gt;.amd64fre..._20260418_0116/   &amp;#x2190; Folder automatically created by Snapshot
+    &amp;#x251C;&amp;#x2500;&amp;#x2500; regs.json   &amp;#x2190; CPU register states (all &lt;span class=&#34;hljs-keyword&#34;&gt;of&lt;/span&gt; them, including RIP, RSP, CR3, MSR, etc.)
+    &amp;#x2514;&amp;#x2500;&amp;#x2500; mem.dmp     &amp;#x2190; Full Physical Memory Dump (Windows crash dump format)&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;regs.json&lt;/code&gt; contains the state of all CPUs at the moment the snapshot was taken. It includes information such as where to resume execution (RIP) and the location of the stack (RSP).&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;mem.dmp&lt;/code&gt; contains the entire physical memory at that moment. Because it is large, it may take several minutes to acquire.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;4-4-Building-and-Running&#34;&gt;&lt;a href=&#34;#4-4-Building-and-Running&#34; class=&#34;headerlink&#34; title=&#34;4.4 Building and Running&#34;&gt;&lt;/a&gt;4.4 Building and Running&lt;/h3&gt;&lt;p&gt;Now that the harness and snapshot are ready, you can actually run the program. Building WTF produces the &lt;code&gt;wtf&lt;/code&gt; executable, which can be used in three modes.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;code&gt;run&lt;/code&gt; &amp;#x2014; Single-input execution (for harness verification)&lt;br&gt;This is a one-time execution mode that allows you to test whether the harness is working properly and whether inputs are being injected correctly. It runs on &lt;code&gt;bochscpu&lt;/code&gt;, which is slow but precise.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;wtf.exe run --name afd --target targets\afd
+    --state targets\afd\state\&amp;lt;snap&amp;gt;
+    --input targets\afd\inputs\seed_0&lt;/code&gt;&lt;/pre&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;code&gt;master&lt;/code&gt; &amp;#x2014; Server (Master)&lt;br&gt;The actual fuzzing process involves a single &lt;code&gt;master&lt;/code&gt; managing the input queue, coverage, and crashes, while multiple &lt;code&gt;client (slave)&lt;/code&gt; instances run under its supervision. Start the &lt;code&gt;master&lt;/code&gt; first.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;wtf.exe master --name afd --target targets\afd --max_len 0x1000&lt;/code&gt;&lt;/pre&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;code&gt;fuzz&lt;/code&gt; &amp;#x2014; Client&lt;br&gt;This is the client that actually performs the fuzzing. Select the backend using &lt;code&gt;-backend&lt;/code&gt;, and launch as many instances as there are CPU cores. (On Windows, where KVM is not supported, use &lt;code&gt;bochscpu&lt;/code&gt;.)&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;wtf.exe fuzz --name afd --target targets\afd
+    --state targets\afd\state\&amp;lt;snap&amp;gt; --backend bochscpu&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;To summarize, the workflow is as follows.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;Create harness (src/wtf/fuzzer_afd.cc)
+   &amp;#x2192; Build WTF &amp;#x2192; wtf.exe
+Take a snapshot (!snapshot)  &amp;#x2192; targets/afd/state/&lt;span class=&#34;xml&#34;&gt;&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;snap&lt;/span&gt;&amp;gt;&lt;/span&gt;/ (regs.json + mem.dmp)&lt;/span&gt;
+&lt;span class=&#34;xml&#34;&gt;Prepare seeds (targets/afd/inputs/)&lt;/span&gt;
+&lt;span class=&#34;xml&#34;&gt;   &amp;#x2193;&lt;/span&gt;
+&lt;span class=&#34;xml&#34;&gt;Verify the harness with `wtf run` (bochscpu)&lt;/span&gt;
+&lt;span class=&#34;xml&#34;&gt;   &amp;#x2193;&lt;/span&gt;
+&lt;span class=&#34;xml&#34;&gt;Distributed fuzzing using one wtf master and multiple wtf fuzz nodes (bochscpu)&lt;/span&gt;
+&lt;span class=&#34;xml&#34;&gt;   &amp;#x2193;&lt;/span&gt;
+&lt;span class=&#34;xml&#34;&gt;Crashes start accumulating in the `targets/afd/crashes/` folder!&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;05_fuzz_test.png&#34; alt=&#34;05_fuzz_test.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;At this point, you&amp;#x2019;ll see the fuzzing counter increasing on a blank screen. The Master&amp;#x2019;s logs are displayed at the top, and the Client&amp;#x2019;s logs are displayed at the bottom. There are five key values we need to focus on here.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;cov: If cov does not increase, it means the system is not entering new coverage.&lt;/li&gt;
+&lt;li&gt;lastcov: This indicates that no new cov has been discovered for this duration.&lt;/li&gt;
+&lt;li&gt;exec/s: This value represents the number of executions per second. If this value suddenly drops sharply, a problem may have occurred.&lt;/li&gt;
+&lt;li&gt;crash: If this value increases, it means a crash has finally been detected.&lt;/li&gt;
+&lt;li&gt;corp: If the cov value increases but corp does not, there is a problem with corpus storage. Conversely, if only corp increases and cov does not, it indicates that duplicate entries are accumulating.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;06_last.jpg&#34; alt=&#34;05_last.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;I finally managed to get the WTF fuzzer working successfully. &lt;a href=&#34;https://github.com/0vercl0k/snapshot&#34;&gt;I wasn&amp;#x2019;t aware of &amp;#x201C;snapshot,&amp;#x201D; WTF&amp;#x2019;s companion project&lt;/a&gt;, and tried to find the files needed for taking a snapshot in the WTF repo&amp;#x2014;I hope you guys can set it up without wasting any time. &amp;#x1F602;&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;In-Conclusion&#34;&gt;&lt;a href=&#34;#In-Conclusion&#34; class=&#34;headerlink&#34; title=&#34;In Conclusion&#34;&gt;&lt;/a&gt;In Conclusion&lt;/h2&gt;&lt;p&gt;Today, we covered what snapshot fuzzing is, why we didn&amp;#x2019;t use KAFL, how WTF&amp;#x2019;s 4-stage loop and three types of backends work, and even where to place the harness, snapshot, and seed, as well as the commands used to run them.&lt;/p&gt;
+&lt;p&gt;In Part 2, we&amp;#x2019;ll dissect the IOCTL structure of afd.sys, discuss which handlers we chose and why, and cover the insightful paper on taking snapshots and how we applied its findings to Windows. I learned the hard way that misidentifying a socket state can cost you an entire day&amp;#x2026; &amp;#x1F62D;&lt;/p&gt;
+&lt;p&gt;Thank you for reading. See you in the next post!&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://github.com/0vercl0k/wtf&#34;&gt;https://github.com/0vercl0k/wtf&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://github.com/0vercl0k/snapshot&#34;&gt;https://github.com/0vercl0k/snapshot&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://doar-e.github.io/blog/2021/07/15/building-a-new-snapshot-fuzzer-fuzzing-ida/&#34;&gt;https://doar-e.github.io/blog/2021/07/15/building-a-new-snapshot-fuzzer-fuzzing-ida/&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://blog.thalium.re/posts/rdpegfx/&#34;&gt;https://blog.thalium.re/posts/rdpegfx/&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] Running at Full Capacity Even After Work! How to Become a Fuzzing Plant Manager Who Sleeps Like a Baby Part 1 (EN) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;&lt;img src=&#34;01_main.jpg&#34; alt=&#34;01_main.jpg&#34;&gt;&lt;/p&gt;
+&lt;h2 id=&#34;0-Introduction&#34;&gt;&lt;a href=&#34;#0-Introduction&#34; class=&#34;headerlink&#34; title=&#34;0. Introduction&#34;&gt;&lt;/a&gt;0. Introduction&lt;/h2&gt;&lt;p&gt;Hello! This is Libera, who wrote Part 3 of the recent &amp;#x201C;Windows LPE Bug Hunting Experience&amp;#x201D; series by the younger members. How is everyone doing?&lt;/p&gt;
+&lt;p&gt;I believe there are two main approaches to finding vulnerabilities. One is &amp;#x201C;auditing,&amp;#x201D; where you read the code directly to identify vulnerable sections, and the other is &amp;#x201C;fuzzing,&amp;#x201D; where you feed a fuzzer countless inputs to trigger abnormal behavior. In the previous series, I delved into kernel drivers through auditing. I launched IDA and began my analysis starting with the dispatch routine.&lt;/p&gt;
+&lt;p&gt;Now that I&amp;#x2019;ve experienced auditing, the goal of this research is to properly study the other approach: fuzzing. The idea that vulnerabilities can be found even while I&amp;#x2019;m sleeping is incredibly appealing, isn&amp;#x2019;t it? So, in this series, I&amp;#x2019;ll document the process of setting up a system to fuzz afd.sys&amp;#x2014;the Windows socket kernel driver&amp;#x2014;using a fuzzer called WTF (What the Fuzz).&lt;/p&gt;
+&lt;p&gt;In today&amp;#x2019;s Part 1, we&amp;#x2019;ll understand what WTF is and explore what&amp;#x2019;s needed to run the fuzzer. We&amp;#x2019;ll dive into afd.sys in earnest starting with the next part, so let&amp;#x2019;s focus on learning about WTF in this one!&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;1-Why-&amp;#x201C;Snapshot&amp;#x201D;-Fuzzing&#34;&gt;&lt;a href=&#34;#1-Why-&amp;#x201C;Snapshot&amp;#x201D;-Fuzzing&#34; class=&#34;headerlink&#34; title=&#34;1. Why &amp;#x201C;Snapshot&amp;#x201D; Fuzzing?&#34;&gt;&lt;/a&gt;1. Why &amp;#x201C;Snapshot&amp;#x201D; Fuzzing?&lt;/h2&gt;&lt;p&gt;When you hear the term &amp;#x201C;fuzzer,&amp;#x201D; you probably think of AFL or libFuzzer. These tools work as follows:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Run the target program&lt;/li&gt;
+&lt;li&gt;Feed it a single input (test case)&lt;/li&gt;
+&lt;li&gt;Check if it crashes&lt;/li&gt;
+&lt;li&gt;Exit the program, slightly modify the input, and repeat from step 1&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;This method involves restarting the program each time. If the program is one that simply reads and parses a file from the console, this approach is sufficient. However, the target we&amp;#x2019;re focusing on this time&amp;#x2014;afd.sys&amp;#x2014;isn&amp;#x2019;t that simple.&lt;/p&gt;
+&lt;p&gt;To reach the desired code (function) in afd.sys, you must first go through a series of preparatory steps, such as creating a socket (&lt;code&gt;socket&lt;/code&gt;), binding it to an address (&lt;code&gt;bind&lt;/code&gt;), and establishing a connection (&lt;code&gt;connect&lt;/code&gt;). What if this process has to be repeated from scratch for every test case? The fuzzer would waste time re-establishing the socket connection each time, time that should be spent actually finding bugs. Furthermore, since this is kernel code, there are limitations on restarting the program after it has terminated.&lt;/p&gt;
+&lt;p&gt;This is where snapshot fuzzing comes into play.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;What is snapshot fuzzing?&lt;br&gt;It involves taking a complete &amp;#x201C;snapshot&amp;#x201D;&amp;#x2014;like a photograph&amp;#x2014;of the target&amp;#x2019;s state (the entire memory and all CPU registers) at the exact moment it reaches the desired state. From that point on, instead of running the program from the beginning, the stored snapshot is loaded, input is injected starting from that point, the program is executed briefly, and then it is rolled back to the snapshot state.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;&lt;img src=&#34;02_Dormammu.gif&#34; alt=&#34;02_Dormammu.gif&#34;&gt;&lt;/p&gt;
+&lt;p&gt;To use an analogy, it&amp;#x2019;s similar to a &amp;#x201C;save point&amp;#x201D; in a video game. If you save right before a boss fight, even if you die to the boss, you don&amp;#x2019;t have to restart from the beginning of the stage&amp;#x2014;you can resume right where you left off, just before the boss. Snapshot fuzzing works by &amp;#x201C;saving&amp;#x201D; the input data right before it&amp;#x2019;s used, and then infinitely retrying from that point while varying only the input.&lt;/p&gt;
+&lt;p&gt;The advantages of this method are as follows:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;State control: You can start fuzzing after connections, authentication, initialization, and other processes have completed.&lt;/li&gt;
+&lt;li&gt;Deterministic execution: Execution is possible without external factors like disk or network, making it easy to reproduce crashes.&lt;/li&gt;
+&lt;li&gt;Fast recovery: Since you only need to roll back the changed pages rather than the entire memory each time, recovery is fast.&lt;/li&gt;
+&lt;li&gt;Kernel fuzzing: You can fuzz the target using the same method regardless of whether it is in user mode or kernel mode.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The last two advantages are particularly important. Since afd.sys is a kernel driver, fuzzing must be performed while the socket is connected. Snapshot fuzzing is especially useful for components like afd.sys, where the operational state can vary widely during actual execution.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;2-Why-Was-It-WTF-feat-KAFL&#34;&gt;&lt;a href=&#34;#2-Why-Was-It-WTF-feat-KAFL&#34; class=&#34;headerlink&#34; title=&#34;2. Why Was It WTF? feat. KAFL&#34;&gt;&lt;/a&gt;2. Why Was It WTF? feat. KAFL&lt;/h2&gt;&lt;p&gt;Actually, when it comes to kernel fuzzing, the most well-known tool isn&amp;#x2019;t WTF&amp;#x2014;it&amp;#x2019;s KAFL. Still, there was a practical reason why I chose WTF.&lt;/p&gt;
+&lt;p&gt;KAFL is a hardware-based coverage fuzzer designed for OS kernels. The key is that it uses a CPU feature called Intel PT (Intel Processor Trace).&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;What is Intel PT?&lt;br&gt;It&amp;#x2019;s a feature where the hardware directly records the branch flow executed by the CPU. Since it tells you where the CPU branched to without having to track it manually with software, you can collect coverage at nearly native speed.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The problem is that this approach is dependent on specific hardware and environments. KAFL requires a CPU that supports Intel PT, and it runs on a custom-developed kernel (KVM) to utilize Intel PT within a virtual machine.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;03_ItsFine.png&#34; alt=&#34;03_ItsFine.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;I didn&amp;#x2019;t want to know either&amp;#x2014;that KAFL&amp;#x2019;s custom kernel doesn&amp;#x2019;t yet support the Ultra series, the latest architecture for Intel CPUs&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;I built a computer specifically for fuzzing, but it seems KAFL doesn&amp;#x2019;t support the Ultra Core yet. After purchasing the computer and struggling to set up KAFL, I started seeing reports on GitHub and elsewhere from people using Ultra Core CPUs who were experiencing build failures. I tried several times myself, but after switching to the Nyx kernel and running it, Intel PT recognition and KVM functionality were unclear, and I got stuck right at the template build stage for launching a QEMU-Nyx-based Windows VM. &amp;#x1F62D;&lt;/p&gt;
+&lt;p&gt;So I turned my attention to WTF. Here&amp;#x2019;s why WTF was a better fit for my situation:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;It doesn&amp;#x2019;t rely on specific hardware.&lt;ul&gt;
+&lt;li&gt;WTF&amp;#x2019;s bochscpu backend emulates the CPU in software, so it measures coverage even without hardware features like Intel PT.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;It lets you start small by focusing on the target.&lt;ul&gt;
+&lt;li&gt;While KAFL is a heavy-duty infrastructure that sets up an entire VM, WTF lets you take a snapshot of just the part you want to focus on and intensively fuzz a specific path; you can also choose the backend (precise bochscpu or fast KVM) depending on the situation.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Of course, KAFL is a powerful tool in terms of speed, provided the environment is right. However, what mattered most to me was whether I could run it right away in my current environment, and the answer was WTF. Now, let&amp;#x2019;s take a closer look at what exactly WTF is.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;3-WTF-what-the-fuzz&#34;&gt;&lt;a href=&#34;#3-WTF-what-the-fuzz&#34; class=&#34;headerlink&#34; title=&#34;3. WTF, what the fuzz&#34;&gt;&lt;/a&gt;3. WTF, what the fuzz&lt;/h2&gt;&lt;p&gt;WTF is an open-source snapshot fuzzer created by Axel 0vercl0k Souchet, and it excels particularly at fuzzing Windows targets. The key point is that as long as you can capture a snapshot&amp;#x2014;whether in user mode or kernel mode&amp;#x2014;you can fuzz it.&lt;/p&gt;
+&lt;p&gt;One of the reasons &lt;a href=&#34;https://blog.thalium.re/posts/rdpegfx/&#34;&gt;WTF gained popularity was the RDPEGFX fuzzing case by the Thalium team&lt;/a&gt;. They used WTF to fuzz the graphics channel of the Microsoft RDP client and discovered an actual CVE (CVE-2022-30221). I learned a lot from this case study, and I plan to reference those lessons throughout this series. (Thank you, RDPEGFX team &amp;#x1F64F;)&lt;/p&gt;
+&lt;p&gt;So, let&amp;#x2019;s start by looking at how WTF works internally.&lt;/p&gt;
+&lt;h3 id=&#34;3-1-The-WTF-4-Step-Loop&#34;&gt;&lt;a href=&#34;#3-1-The-WTF-4-Step-Loop&#34; class=&#34;headerlink&#34; title=&#34;3.1 The WTF 4-Step Loop&#34;&gt;&lt;/a&gt;3.1 The WTF 4-Step Loop&lt;/h3&gt;&lt;p&gt;Fuzzing with WTF essentially involves an infinite loop of the following four steps.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Snapshot&lt;br&gt;Pause the target in the debugger to set it to the desired state, then save a dump of the entire physical memory and CPU state (registers) at that moment. This is a preparatory step performed exactly once before starting the fuzzing.&lt;br&gt;Of course, if you want to fuzz multiple target functions in parallel, you&amp;#x2019;ll need multiple snapshots.&lt;/li&gt;
+&lt;li&gt;Harness&lt;br&gt;You write code to specify where and how to inject test cases into the target, as well as when to halt execution. The harness&amp;#x2019;s role is to write the bytes generated by the fuzzer into a location the target can understand (the input buffer).&lt;/li&gt;
+&lt;li&gt;Execution&lt;br&gt;The target code is executed with the snapshot loaded and the input injected. During execution, coverage is tracked, crashes are detected, and changes to memory are recorded as &amp;#x201C;dirty memory.&amp;#x201D;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;blockquote&gt;
+&lt;p&gt;What is coverage?&lt;br&gt;It is a metric that determines whether &amp;#x201C;this input triggered a new code path.&amp;#x201D; Inputs that cause the same code to loop repeatedly are meaningless; the inputs we should target are those that lead to branches that have never been visited before. The fuzzer stores inputs that generate new coverage separately, then modifies them further to delve deeper and deeper into the code.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Restore&lt;br&gt;It reverts only the physical memory that was modified during execution back to its original snapshot state and resets the CPU registers. Then, it creates a new test case and proceeds to step 2. Since only the modified pages are restored&amp;#x2014;not the entire memory&amp;#x2014;this restoration process is extremely fast.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/blockquote&gt;
+&lt;h3 id=&#34;3-2-Three-Types-of-Execution-Backends&#34;&gt;&lt;a href=&#34;#3-2-Three-Types-of-Execution-Backends&#34; class=&#34;headerlink&#34; title=&#34;3.2 Three Types of Execution Backends&#34;&gt;&lt;/a&gt;3.2 Three Types of Execution Backends&lt;/h3&gt;&lt;p&gt;In execution step 3 above, WTF can choose one of three backends to actually run the target code. Each offers different levels of speed and precision.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;bochscpu: This uses software CPU emulation. While it is the slowest, it collects the RIP of every instruction, making it useful for debugging and enabling precise tracing.&lt;/li&gt;
+&lt;li&gt;WHV: A Windows hypervisor-based approach with moderate speed. Coverage is collected using Basic Block entry points.&lt;/li&gt;
+&lt;li&gt;KVM: A Linux hypervisor-based approach with the fastest speed. Coverage is collected in the same way as WHV.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;bochscpu is an emulator that mimics the CPU itself using software. It intercepts and inspects every single instruction. WTF calls a hook called &lt;code&gt;before_execution&lt;/code&gt; for every instruction to retrieve the current RIP (execution location) and add it to a set. If an address is encountered for the first time, it is recorded as new coverage. While this method of examining every instruction provides high precision, it is correspondingly slow. Therefore, it is used more for harness debugging or crash trace analysis than for large-scale fuzzing. (The reason WTF ran on my Ultra 7 without any issues, unlike KAFL, is precisely because bochscpu collects coverage using only software, without any hardware features.)&lt;/p&gt;
+&lt;p&gt;WHV and KVM are forms of hardware virtualization. Since they run the target on a real CPU, they&amp;#x2019;re fast, but they don&amp;#x2019;t allow for instruction-level inspection. Therefore, they collect coverage in a different way: by setting a breakpoint at the start of each basic block.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;What is a basic block (BB)?&lt;br&gt;It is a sequence of instructions that executes continuously without any jumps or branches; the block ends when it encounters a conditional branch.&lt;/p&gt;
+&lt;p&gt;The flow can be seen in the following assembly code example.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs nasm&#34;&gt;addbb_A:
+  mov  eax, [rcx+4]   ; &amp;#x2500;&amp;#x2510;
+  cmp  eax, 8         ;  &amp;#x2502; That concludes BB 1 (A)
+  jb   too_small      ; &amp;#x2500;&amp;#x2518; Conditional Branch &amp;#x2192; End of Block
+addbb_B:
+  mov  edx, [rcx+8]   ; &amp;#x2500;&amp;#x2510; If jb doesn&amp;apos;t work, click here (B)
+  test edx, 1         ;  &amp;#x2502;
+  jz   default_case   ; &amp;#x2500;&amp;#x2518;
+too_small:
+  xor  eax, eax       ; &amp;#x2190; Jumped in from another page &amp;#x2192; New BB
+  ret&lt;/code&gt;&lt;/pre&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;To use the hardware backend, you need a list of the starting addresses of all basic blocks in the target beforehand, which can be generated using the IDA script (&lt;code&gt;gen_coveragefile_ida.py&lt;/code&gt;). Then, when WTF initializes, it sets &lt;code&gt;int3&lt;/code&gt; (breakpoints) at those addresses. If it hits an &lt;code&gt;int3&lt;/code&gt; during fuzzing, it determines that it has reached that block for the first time, increases the coverage, and then removes that breakpoint. After all, there&amp;#x2019;s no need to revisit a location that&amp;#x2019;s already been visited.&lt;/p&gt;
+&lt;p&gt;Here&amp;#x2019;s the practical strategy: When first building the harness, run it slowly with &lt;code&gt;bochscpu&lt;/code&gt; to debug and verify that inputs are being accepted correctly and that crash detection is working. Once verification is complete, switch to &lt;code&gt;WHV&lt;/code&gt; to run the fuzzing quickly. Since I&amp;#x2019;m running on a Windows host, I couldn&amp;#x2019;t use KVM, which is a faster backend.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;4-Set-it-up-yourself-and-give-it-a-try&#34;&gt;&lt;a href=&#34;#4-Set-it-up-yourself-and-give-it-a-try&#34; class=&#34;headerlink&#34; title=&#34;4. Set it up yourself and give it a try&#34;&gt;&lt;/a&gt;4. Set it up yourself and give it a try&lt;/h2&gt;&lt;p&gt;Now that we&amp;#x2019;ve covered the basics, let&amp;#x2019;s take a look at the basic setup I&amp;#x2019;ve configured. &amp;#x201C;What do I need to put where to get WTF fuzzing to run?&amp;#x201D; That&amp;#x2019;s probably what you&amp;#x2019;re most curious about in this section. I&amp;#x2019;ll leave actual targets like afd.sys for the next section; here, I&amp;#x2019;ll just outline the file structure and workflow.&lt;/p&gt;
+&lt;p&gt;To run a fuzzing session with WTF, you ultimately need the following three components:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Harness &amp;#x2014; C++ code that defines where to inject input (built alongside the WTF main program)&lt;/li&gt;
+&lt;li&gt;Snapshot &amp;#x2014; A dump of the target&amp;#x2019;s memory and CPU state (extracted using WinDbg)&lt;/li&gt;
+&lt;li&gt;Seed corpus &amp;#x2014; A few initial inputs prepared to serve as the starting point for fuzzing&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;The snapshot, seed, and crash files must be placed in the designated subfolders under the &lt;code&gt;targets/&amp;lt;name&amp;gt;/&lt;/code&gt; folder for each target, as shown below.&lt;/p&gt;
+&lt;h3 id=&#34;4-1-What-You-Need-to-Run-Fuzzing&#34;&gt;&lt;a href=&#34;#4-1-What-You-Need-to-Run-Fuzzing&#34; class=&#34;headerlink&#34; title=&#34;4.1 What You Need to Run Fuzzing&#34;&gt;&lt;/a&gt;4.1 What You Need to Run Fuzzing&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;wtf/targets/afd/
+&amp;#x251C;&amp;#x2500;&amp;#x2500; inputs/    &amp;#x2190; Seed (Initial Input) Test Cases
+&amp;#x251C;&amp;#x2500;&amp;#x2500; outputs/   &amp;#x2190; An interesting input (minset) discovered during fuzzing
+&amp;#x251C;&amp;#x2500;&amp;#x2500; coverage/  &amp;#x2190; .cov coverage file
+&amp;#x251C;&amp;#x2500;&amp;#x2500; crashes/   &amp;#x2190; Where crashes are saved
+&amp;#x2514;&amp;#x2500;&amp;#x2500; state/     &amp;#x2190; Snapshot (The snapshot tool creates a subfolder here to store mem.dmp and regs.json)&lt;/code&gt;&lt;/pre&gt;
+&lt;h3 id=&#34;4-2-Where-Should-You-Keep-the-Harness&#34;&gt;&lt;a href=&#34;#4-2-Where-Should-You-Keep-the-Harness&#34; class=&#34;headerlink&#34; title=&#34;4.2 Where Should You Keep the Harness?&#34;&gt;&lt;/a&gt;4.2 Where Should You Keep the Harness?&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;04_confused.gif&#34; alt=&#34;04_confused.gif&#34;&gt;&lt;/p&gt;
+&lt;p&gt;WTF does not store the harness in a separate file; instead, it is included as a fuzzer module within the WTF folder and built alongside the rest of the project. Modules are created under src/wtf following the naming convention fuzzer_&lt;name&gt;.cc.&lt;/name&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;wtf/
+&amp;#x251C;&amp;#x2500;&amp;#x2500; src/
+&amp;#x2502;   &amp;#x2514;&amp;#x2500;&amp;#x2500; wtf/
+&amp;#x2502;       &amp;#x251C;&amp;#x2500;&amp;#x2500; fuzzer_afd.cc    &amp;#x2190; I&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;ll put my harness here&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&amp;#x2502;       &amp;#x251C;&amp;#x2500;&amp;#x2500; fuzzer_hevd.cc   &amp;#x2190; WTF Basic Example Module (For Reference)&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&amp;#x2502;       &amp;#x2514;&amp;#x2500;&amp;#x2500; ...&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&amp;#x251C;&amp;#x2500;&amp;#x2500; scripts/&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&amp;#x2502;   &amp;#x2514;&amp;#x2500;&amp;#x2500; gen_coveragefile_ida.py   &amp;#x2190; (For KVM/WHV) Extracting the list of basic blocks&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;&amp;#x2514;&amp;#x2500;&amp;#x2500; targets/&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;    &amp;#x2514;&amp;#x2500;&amp;#x2500; afd/                 &amp;#x2190; This target&amp;apos;&lt;/span&gt;s working folder (described &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;4.3&lt;/span&gt;)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Create a file named &lt;code&gt;fuzzer_afd.cc&lt;/code&gt; inside &lt;code&gt;src/wtf/&lt;/code&gt;, and within it, register your harness as a &lt;code&gt;Target_t&lt;/code&gt; object along with its name. You&amp;#x2019;ll use the name you set here later when running the program&amp;#x2014;for example, with the &lt;code&gt;--name afd&lt;/code&gt; option&amp;#x2014;to select which harness to use for fuzzing.&lt;/p&gt;
+&lt;p&gt;Inside the harness, you&amp;#x2019;ll implement three main functions.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// src/wtf/fuzzer_afd.cc  (Just the concept)&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// 1. Setup: Install crash detection hook, define termination conditions, remove noise&lt;/span&gt;
+bool Init(&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; Options_t &amp;amp;Opts, &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; CpuState_t &amp;amp;State) { ... }
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// 2. Input Injection: Writes the byte buffer generated by the fuzzer to the target memory&lt;/span&gt;
+bool InsertTestcase(&lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; uint8_t *Buffer, &lt;span class=&#34;hljs-keyword&#34;&gt;const&lt;/span&gt; size_t BufferSize) { ... }
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// 3. Restore: Called after every execution (WTF handles most of this automatically)&lt;/span&gt;
+bool Restore() { ... }
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// Register the above three functions under the name &amp;#x201C;afd&amp;#x201D; &amp;#x2192; Specify them with --name afd when running&lt;/span&gt;
+Target_t Afd(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;afd&amp;quot;&lt;/span&gt;, Init, InsertTestcase, Restore);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The harness must be placed in the &lt;code&gt;src/wtf/&lt;/code&gt; directory within the WTF folder; when you build it, it will be combined into a single WTF executable. In other words, if you make any changes to the harness, you must rebuild it and rerun the fuzzer.&lt;/p&gt;
+&lt;h3 id=&#34;4-3-Taking-a-Snapshot-Which-Files-Are-Used-and-What-Is-Created&#34;&gt;&lt;a href=&#34;#4-3-Taking-a-Snapshot-Which-Files-Are-Used-and-What-Is-Created&#34; class=&#34;headerlink&#34; title=&#34;4.3 Taking a Snapshot (Which Files Are Used, and What Is Created)&#34;&gt;&lt;/a&gt;4.3 Taking a Snapshot (Which Files Are Used, and What Is Created)&lt;/h3&gt;&lt;p&gt;Snapshots are captured within WinDbg. The file used for this is &lt;strong&gt;&lt;code&gt;snapshot&lt;/code&gt;&lt;/strong&gt;, a companion project of WTF. After loading it as a WinDbg extension (&lt;code&gt;snapshot.dll&lt;/code&gt;), you can dump the current state using the &lt;code&gt;!snapshot&lt;/code&gt; command.&lt;/p&gt;
+&lt;p&gt;The overall process for capturing a snapshot is as follows.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs nasm&#34;&gt;1. Launch the target on a Hyper-V VM (Windows, 1 vCPU and 4 GB of RAM recommended) and establish a kernel debugging connection.
+2. Set a breakpoint to pause the VM at the desired point. (e.g., just before a DeviceIoControl call)
+3. Load snapshot.dll into Windbg and run !snapshot. &amp;#x2192; This generates a memory and CPU state dump.&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In WinDbg, you proceed using commands like these.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// Loading the snapshot extension (built with Rust)&lt;/span&gt;
+.load C:\path\to\snapshot\target\release\snapshot.dll
+
+!snapshot C:\fuzzing\wtf\targets\afd\state   &lt;span class=&#34;hljs-comment&#34;&gt;// Save the snapshot to the &amp;#x201C;state&amp;#x201D; folder&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// If you&amp;apos;d like to check the instructions,&lt;/span&gt;
+!snapshot -h                      
+[snapshot] Usage: snapshot [OPTIONS] [STATE_PATH]
+  -k, --kind &amp;lt;KIND&amp;gt;   Snapshot Types [Default: full] [active-kernel | full]&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;One thing to note here is that if you use &lt;code&gt;!snapshot&lt;/code&gt; as shown above, it creates a folder in the &lt;code&gt;state&lt;/code&gt; directory labeled with the OS build and a timestamp, and places &lt;code&gt;json&lt;/code&gt; and &lt;code&gt;dmp&lt;/code&gt; files inside it.&lt;/p&gt;
+&lt;p&gt;When running fuzzing, you should specify &lt;code&gt;--state&lt;/code&gt; to point not to the &lt;code&gt;state/&lt;/code&gt; folder, but to the &lt;code&gt;state.1904&amp;#x2026;&lt;/code&gt; folder created within it.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;wtf/targets/afd/state/
+&amp;#x2514;&amp;#x2500;&amp;#x2500; state&lt;span class=&#34;hljs-number&#34;&gt;.19041&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;.1&lt;/span&gt;.amd64fre..._20260418_0116/   &amp;#x2190; Folder automatically created by Snapshot
+    &amp;#x251C;&amp;#x2500;&amp;#x2500; regs.json   &amp;#x2190; CPU register states (all &lt;span class=&#34;hljs-keyword&#34;&gt;of&lt;/span&gt; them, including RIP, RSP, CR3, MSR, etc.)
+    &amp;#x2514;&amp;#x2500;&amp;#x2500; mem.dmp     &amp;#x2190; Full Physical Memory Dump (Windows crash dump format)&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;regs.json&lt;/code&gt; contains the state of all CPUs at the moment the snapshot was taken. It includes information such as where to resume execution (RIP) and the location of the stack (RSP).&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;mem.dmp&lt;/code&gt; contains the entire physical memory at that moment. Because it is large, it may take several minutes to acquire.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;4-4-Building-and-Running&#34;&gt;&lt;a href=&#34;#4-4-Building-and-Running&#34; class=&#34;headerlink&#34; title=&#34;4.4 Building and Running&#34;&gt;&lt;/a&gt;4.4 Building and Running&lt;/h3&gt;&lt;p&gt;Now that the harness and snapshot are ready, you can actually run the program. Building WTF produces the &lt;code&gt;wtf&lt;/code&gt; executable, which can be used in three modes.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;code&gt;run&lt;/code&gt; &amp;#x2014; Single-input execution (for harness verification)&lt;br&gt;This is a one-time execution mode that allows you to test whether the harness is working properly and whether inputs are being injected correctly. It runs on &lt;code&gt;bochscpu&lt;/code&gt;, which is slow but precise.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;wtf.exe run --name afd --target targets\afd
+    --state targets\afd\state\&amp;lt;snap&amp;gt;
+    --input targets\afd\inputs\seed_0&lt;/code&gt;&lt;/pre&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;code&gt;master&lt;/code&gt; &amp;#x2014; Server (Master)&lt;br&gt;The actual fuzzing process involves a single &lt;code&gt;master&lt;/code&gt; managing the input queue, coverage, and crashes, while multiple &lt;code&gt;client (slave)&lt;/code&gt; instances run under its supervision. Start the &lt;code&gt;master&lt;/code&gt; first.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;wtf.exe master --name afd --target targets\afd --max_len 0x1000&lt;/code&gt;&lt;/pre&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;code&gt;fuzz&lt;/code&gt; &amp;#x2014; Client&lt;br&gt;This is the client that actually performs the fuzzing. Select the backend using &lt;code&gt;-backend&lt;/code&gt;, and launch as many instances as there are CPU cores. (On Windows, where KVM is not supported, use &lt;code&gt;bochscpu&lt;/code&gt;.)&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs bash&#34;&gt;wtf.exe fuzz --name afd --target targets\afd
+    --state targets\afd\state\&amp;lt;snap&amp;gt; --backend bochscpu&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;To summarize, the workflow is as follows.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;Create harness (src/wtf/fuzzer_afd.cc)
+   &amp;#x2192; Build WTF &amp;#x2192; wtf.exe
+Take a snapshot (!snapshot)  &amp;#x2192; targets/afd/state/&lt;span class=&#34;xml&#34;&gt;&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;snap&lt;/span&gt;&amp;gt;&lt;/span&gt;/ (regs.json + mem.dmp)&lt;/span&gt;
+&lt;span class=&#34;xml&#34;&gt;Prepare seeds (targets/afd/inputs/)&lt;/span&gt;
+&lt;span class=&#34;xml&#34;&gt;   &amp;#x2193;&lt;/span&gt;
+&lt;span class=&#34;xml&#34;&gt;Verify the harness with `wtf run` (bochscpu)&lt;/span&gt;
+&lt;span class=&#34;xml&#34;&gt;   &amp;#x2193;&lt;/span&gt;
+&lt;span class=&#34;xml&#34;&gt;Distributed fuzzing using one wtf master and multiple wtf fuzz nodes (bochscpu)&lt;/span&gt;
+&lt;span class=&#34;xml&#34;&gt;   &amp;#x2193;&lt;/span&gt;
+&lt;span class=&#34;xml&#34;&gt;Crashes start accumulating in the `targets/afd/crashes/` folder!&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;05_fuzz_test.png&#34; alt=&#34;05_fuzz_test.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;At this point, you&amp;#x2019;ll see the fuzzing counter increasing on a blank screen. The Master&amp;#x2019;s logs are displayed at the top, and the Client&amp;#x2019;s logs are displayed at the bottom. There are five key values we need to focus on here.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;cov: If cov does not increase, it means the system is not entering new coverage.&lt;/li&gt;
+&lt;li&gt;lastcov: This indicates that no new cov has been discovered for this duration.&lt;/li&gt;
+&lt;li&gt;exec/s: This value represents the number of executions per second. If this value suddenly drops sharply, a problem may have occurred.&lt;/li&gt;
+&lt;li&gt;crash: If this value increases, it means a crash has finally been detected.&lt;/li&gt;
+&lt;li&gt;corp: If the cov value increases but corp does not, there is a problem with corpus storage. Conversely, if only corp increases and cov does not, it indicates that duplicate entries are accumulating.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&#34;06_last.jpg&#34; alt=&#34;05_last.jpg&#34;&gt;&lt;/p&gt;
+&lt;p&gt;I finally managed to get the WTF fuzzer working successfully. &lt;a href=&#34;https://github.com/0vercl0k/snapshot&#34;&gt;I wasn&amp;#x2019;t aware of &amp;#x201C;snapshot,&amp;#x201D; WTF&amp;#x2019;s companion project&lt;/a&gt;, and tried to find the files needed for taking a snapshot in the WTF repo&amp;#x2014;I hope you guys can set it up without wasting any time. &amp;#x1F602;&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;In-Conclusion&#34;&gt;&lt;a href=&#34;#In-Conclusion&#34; class=&#34;headerlink&#34; title=&#34;In Conclusion&#34;&gt;&lt;/a&gt;In Conclusion&lt;/h2&gt;&lt;p&gt;Today, we covered what snapshot fuzzing is, why we didn&amp;#x2019;t use KAFL, how WTF&amp;#x2019;s 4-stage loop and three types of backends work, and even where to place the harness, snapshot, and seed, as well as the commands used to run them.&lt;/p&gt;
+&lt;p&gt;In Part 2, we&amp;#x2019;ll dissect the IOCTL structure of afd.sys, discuss which handlers we chose and why, and cover the insightful paper on taking snapshots and how we applied its findings to Windows. I learned the hard way that misidentifying a socket state can cost you an entire day&amp;#x2026; &amp;#x1F62D;&lt;/p&gt;
+&lt;p&gt;Thank you for reading. See you in the next post!&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;https://github.com/0vercl0k/wtf&#34;&gt;https://github.com/0vercl0k/wtf&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://github.com/0vercl0k/snapshot&#34;&gt;https://github.com/0vercl0k/snapshot&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://doar-e.github.io/blog/2021/07/15/building-a-new-snapshot-fuzzer-fuzzing-ida/&#34;&gt;https://doar-e.github.io/blog/2021/07/15/building-a-new-snapshot-fuzzer-fuzzing-ida/&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;https://blog.thalium.re/posts/rdpegfx/&#34;&gt;https://blog.thalium.re/posts/rdpegfx/&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2026/06/23/Libera/wtf-windows-kernel-fuzzing-part1/En/01_main.jpg">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2026/06/23/libera/wtf-windows-kernel-fuzzing-part1/en/">
+
+  <title>[Research] Running at Full Capacity Even After Work! How to Become a Fuzzing Plant Manager Who Sleeps Like a Baby Part 1 (EN) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2026-06-23 11:50" pubdate>
+      2026년 6월 23일 오전
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      3.6k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      71
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] Running at Full Capacity Even After Work! How to Become a Fuzzing Plant Manager Who Sleeps Like a Baby Part 1 (EN)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p><img src="01_main.jpg" srcset="/img/loading.gif" alt="01_main.jpg"></p>
+<h2 id="0-Introduction"><a href="#0-Introduction" class="headerlink" title="0. Introduction"></a>0. Introduction</h2><p>Hello! This is Libera, who wrote Part 3 of the recent &#x201C;Windows LPE Bug Hunting Experience&#x201D; series by the younger members. How is everyone doing?</p>
+<p>I believe there are two main approaches to finding vulnerabilities. One is &#x201C;auditing,&#x201D; where you read the code directly to identify vulnerable sections, and the other is &#x201C;fuzzing,&#x201D; where you feed a fuzzer countless inputs to trigger abnormal behavior. In the previous series, I delved into kernel drivers through auditing. I launched IDA and began my analysis starting with the dispatch routine.</p>
+<p>Now that I&#x2019;ve experienced auditing, the goal of this research is to properly study the other approach: fuzzing. The idea that vulnerabilities can be found even while I&#x2019;m sleeping is incredibly appealing, isn&#x2019;t it? So, in this series, I&#x2019;ll document the process of setting up a system to fuzz afd.sys&#x2014;the Windows socket kernel driver&#x2014;using a fuzzer called WTF (What the Fuzz).</p>
+<p>In today&#x2019;s Part 1, we&#x2019;ll understand what WTF is and explore what&#x2019;s needed to run the fuzzer. We&#x2019;ll dive into afd.sys in earnest starting with the next part, so let&#x2019;s focus on learning about WTF in this one!</p>
+<hr>
+<h2 id="1-Why-&#x201C;Snapshot&#x201D;-Fuzzing"><a href="#1-Why-&#x201C;Snapshot&#x201D;-Fuzzing" class="headerlink" title="1. Why &#x201C;Snapshot&#x201D; Fuzzing?"></a>1. Why &#x201C;Snapshot&#x201D; Fuzzing?</h2><p>When you hear the term &#x201C;fuzzer,&#x201D; you probably think of AFL or libFuzzer. These tools work as follows:</p>
+<ol>
+<li>Run the target program</li>
+<li>Feed it a single input (test case)</li>
+<li>Check if it crashes</li>
+<li>Exit the program, slightly modify the input, and repeat from step 1</li>
+</ol>
+<p>This method involves restarting the program each time. If the program is one that simply reads and parses a file from the console, this approach is sufficient. However, the target we&#x2019;re focusing on this time&#x2014;afd.sys&#x2014;isn&#x2019;t that simple.</p>
+<p>To reach the desired code (function) in afd.sys, you must first go through a series of preparatory steps, such as creating a socket (<code>socket</code>), binding it to an address (<code>bind</code>), and establishing a connection (<code>connect</code>). What if this process has to be repeated from scratch for every test case? The fuzzer would waste time re-establishing the socket connection each time, time that should be spent actually finding bugs. Furthermore, since this is kernel code, there are limitations on restarting the program after it has terminated.</p>
+<p>This is where snapshot fuzzing comes into play.</p>
+<blockquote>
+<p>What is snapshot fuzzing?<br>It involves taking a complete &#x201C;snapshot&#x201D;&#x2014;like a photograph&#x2014;of the target&#x2019;s state (the entire memory and all CPU registers) at the exact moment it reaches the desired state. From that point on, instead of running the program from the beginning, the stored snapshot is loaded, input is injected starting from that point, the program is executed briefly, and then it is rolled back to the snapshot state.</p>
+</blockquote>
+<p><img src="02_Dormammu.gif" srcset="/img/loading.gif" alt="02_Dormammu.gif"></p>
+<p>To use an analogy, it&#x2019;s similar to a &#x201C;save point&#x201D; in a video game. If you save right before a boss fight, even if you die to the boss, you don&#x2019;t have to restart from the beginning of the stage&#x2014;you can resume right where you left off, just before the boss. Snapshot fuzzing works by &#x201C;saving&#x201D; the input data right before it&#x2019;s used, and then infinitely retrying from that point while varying only the input.</p>
+<p>The advantages of this method are as follows:</p>
+<ul>
+<li>State control: You can start fuzzing after connections, authentication, initialization, and other processes have completed.</li>
+<li>Deterministic execution: Execution is possible without external factors like disk or network, making it easy to reproduce crashes.</li>
+<li>Fast recovery: Since you only need to roll back the changed pages rather than the entire memory each time, recovery is fast.</li>
+<li>Kernel fuzzing: You can fuzz the target using the same method regardless of whether it is in user mode or kernel mode.</li>
+</ul>
+<p>The last two advantages are particularly important. Since afd.sys is a kernel driver, fuzzing must be performed while the socket is connected. Snapshot fuzzing is especially useful for components like afd.sys, where the operational state can vary widely during actual execution.</p>
+<hr>
+<h2 id="2-Why-Was-It-WTF-feat-KAFL"><a href="#2-Why-Was-It-WTF-feat-KAFL" class="headerlink" title="2. Why Was It WTF? feat. KAFL"></a>2. Why Was It WTF? feat. KAFL</h2><p>Actually, when it comes to kernel fuzzing, the most well-known tool isn&#x2019;t WTF&#x2014;it&#x2019;s KAFL. Still, there was a practical reason why I chose WTF.</p>
+<p>KAFL is a hardware-based coverage fuzzer designed for OS kernels. The key is that it uses a CPU feature called Intel PT (Intel Processor Trace).</p>
+<blockquote>
+<p>What is Intel PT?<br>It&#x2019;s a feature where the hardware directly records the branch flow executed by the CPU. Since it tells you where the CPU branched to without having to track it manually with software, you can collect coverage at nearly native speed.</p>
+</blockquote>
+<p>The problem is that this approach is dependent on specific hardware and environments. KAFL requires a CPU that supports Intel PT, and it runs on a custom-developed kernel (KVM) to utilize Intel PT within a virtual machine.</p>
+<p><img src="03_ItsFine.png" srcset="/img/loading.gif" alt="03_ItsFine.png"></p>
+<p>I didn&#x2019;t want to know either&#x2014;that KAFL&#x2019;s custom kernel doesn&#x2019;t yet support the Ultra series, the latest architecture for Intel CPUs&#x2026;</p>
+<p>I built a computer specifically for fuzzing, but it seems KAFL doesn&#x2019;t support the Ultra Core yet. After purchasing the computer and struggling to set up KAFL, I started seeing reports on GitHub and elsewhere from people using Ultra Core CPUs who were experiencing build failures. I tried several times myself, but after switching to the Nyx kernel and running it, Intel PT recognition and KVM functionality were unclear, and I got stuck right at the template build stage for launching a QEMU-Nyx-based Windows VM. &#x1F62D;</p>
+<p>So I turned my attention to WTF. Here&#x2019;s why WTF was a better fit for my situation:</p>
+<ul>
+<li>It doesn&#x2019;t rely on specific hardware.<ul>
+<li>WTF&#x2019;s bochscpu backend emulates the CPU in software, so it measures coverage even without hardware features like Intel PT.</li>
+</ul>
+</li>
+<li>It lets you start small by focusing on the target.<ul>
+<li>While KAFL is a heavy-duty infrastructure that sets up an entire VM, WTF lets you take a snapshot of just the part you want to focus on and intensively fuzz a specific path; you can also choose the backend (precise bochscpu or fast KVM) depending on the situation.</li>
+</ul>
+</li>
+</ul>
+<p>Of course, KAFL is a powerful tool in terms of speed, provided the environment is right. However, what mattered most to me was whether I could run it right away in my current environment, and the answer was WTF. Now, let&#x2019;s take a closer look at what exactly WTF is.</p>
+<hr>
+<h2 id="3-WTF-what-the-fuzz"><a href="#3-WTF-what-the-fuzz" class="headerlink" title="3. WTF, what the fuzz"></a>3. WTF, what the fuzz</h2><p>WTF is an open-source snapshot fuzzer created by Axel 0vercl0k Souchet, and it excels particularly at fuzzing Windows targets. The key point is that as long as you can capture a snapshot&#x2014;whether in user mode or kernel mode&#x2014;you can fuzz it.</p>
+<p>One of the reasons <a target="_blank" rel="external nofollow noopener noreferrer" href="https://blog.thalium.re/posts/rdpegfx/">WTF gained popularity was the RDPEGFX fuzzing case by the Thalium team</a>. They used WTF to fuzz the graphics channel of the Microsoft RDP client and discovered an actual CVE (CVE-2022-30221). I learned a lot from this case study, and I plan to reference those lessons throughout this series. (Thank you, RDPEGFX team &#x1F64F;)</p>
+<p>So, let&#x2019;s start by looking at how WTF works internally.</p>
+<h3 id="3-1-The-WTF-4-Step-Loop"><a href="#3-1-The-WTF-4-Step-Loop" class="headerlink" title="3.1 The WTF 4-Step Loop"></a>3.1 The WTF 4-Step Loop</h3><p>Fuzzing with WTF essentially involves an infinite loop of the following four steps.</p>
+<ol>
+<li>Snapshot<br>Pause the target in the debugger to set it to the desired state, then save a dump of the entire physical memory and CPU state (registers) at that moment. This is a preparatory step performed exactly once before starting the fuzzing.<br>Of course, if you want to fuzz multiple target functions in parallel, you&#x2019;ll need multiple snapshots.</li>
+<li>Harness<br>You write code to specify where and how to inject test cases into the target, as well as when to halt execution. The harness&#x2019;s role is to write the bytes generated by the fuzzer into a location the target can understand (the input buffer).</li>
+<li>Execution<br>The target code is executed with the snapshot loaded and the input injected. During execution, coverage is tracked, crashes are detected, and changes to memory are recorded as &#x201C;dirty memory.&#x201D;</li>
+</ol>
+<blockquote>
+<p>What is coverage?<br>It is a metric that determines whether &#x201C;this input triggered a new code path.&#x201D; Inputs that cause the same code to loop repeatedly are meaningless; the inputs we should target are those that lead to branches that have never been visited before. The fuzzer stores inputs that generate new coverage separately, then modifies them further to delve deeper and deeper into the code.</p>
+<ol>
+<li>Restore<br>It reverts only the physical memory that was modified during execution back to its original snapshot state and resets the CPU registers. Then, it creates a new test case and proceeds to step 2. Since only the modified pages are restored&#x2014;not the entire memory&#x2014;this restoration process is extremely fast.</li>
+</ol>
+</blockquote>
+<h3 id="3-2-Three-Types-of-Execution-Backends"><a href="#3-2-Three-Types-of-Execution-Backends" class="headerlink" title="3.2 Three Types of Execution Backends"></a>3.2 Three Types of Execution Backends</h3><p>In execution step 3 above, WTF can choose one of three backends to actually run the target code. Each offers different levels of speed and precision.</p>
+<ul>
+<li>bochscpu: This uses software CPU emulation. While it is the slowest, it collects the RIP of every instruction, making it useful for debugging and enabling precise tracing.</li>
+<li>WHV: A Windows hypervisor-based approach with moderate speed. Coverage is collected using Basic Block entry points.</li>
+<li>KVM: A Linux hypervisor-based approach with the fastest speed. Coverage is collected in the same way as WHV.</li>
+</ul>
+<p>bochscpu is an emulator that mimics the CPU itself using software. It intercepts and inspects every single instruction. WTF calls a hook called <code>before_execution</code> for every instruction to retrieve the current RIP (execution location) and add it to a set. If an address is encountered for the first time, it is recorded as new coverage. While this method of examining every instruction provides high precision, it is correspondingly slow. Therefore, it is used more for harness debugging or crash trace analysis than for large-scale fuzzing. (The reason WTF ran on my Ultra 7 without any issues, unlike KAFL, is precisely because bochscpu collects coverage using only software, without any hardware features.)</p>
+<p>WHV and KVM are forms of hardware virtualization. Since they run the target on a real CPU, they&#x2019;re fast, but they don&#x2019;t allow for instruction-level inspection. Therefore, they collect coverage in a different way: by setting a breakpoint at the start of each basic block.</p>
+<blockquote>
+<p>What is a basic block (BB)?<br>It is a sequence of instructions that executes continuously without any jumps or branches; the block ends when it encounters a conditional branch.</p>
+<p>The flow can be seen in the following assembly code example.</p>
+<pre><code class="hljs nasm">addbb_A:
+  mov  eax, [rcx+4]   ; &#x2500;&#x2510;
+  cmp  eax, 8         ;  &#x2502; That concludes BB 1 (A)
+  jb   too_small      ; &#x2500;&#x2518; Conditional Branch &#x2192; End of Block
+addbb_B:
+  mov  edx, [rcx+8]   ; &#x2500;&#x2510; If jb doesn&apos;t work, click here (B)
+  test edx, 1         ;  &#x2502;
+  jz   default_case   ; &#x2500;&#x2518;
+too_small:
+  xor  eax, eax       ; &#x2190; Jumped in from another page &#x2192; New BB
+  ret</code></pre>
+</blockquote>
+<p>To use the hardware backend, you need a list of the starting addresses of all basic blocks in the target beforehand, which can be generated using the IDA script (<code>gen_coveragefile_ida.py</code>). Then, when WTF initializes, it sets <code>int3</code> (breakpoints) at those addresses. If it hits an <code>int3</code> during fuzzing, it determines that it has reached that block for the first time, increases the coverage, and then removes that breakpoint. After all, there&#x2019;s no need to revisit a location that&#x2019;s already been visited.</p>
+<p>Here&#x2019;s the practical strategy: When first building the harness, run it slowly with <code>bochscpu</code> to debug and verify that inputs are being accepted correctly and that crash detection is working. Once verification is complete, switch to <code>WHV</code> to run the fuzzing quickly. Since I&#x2019;m running on a Windows host, I couldn&#x2019;t use KVM, which is a faster backend.</p>
+<hr>
+<h2 id="4-Set-it-up-yourself-and-give-it-a-try"><a href="#4-Set-it-up-yourself-and-give-it-a-try" class="headerlink" title="4. Set it up yourself and give it a try"></a>4. Set it up yourself and give it a try</h2><p>Now that we&#x2019;ve covered the basics, let&#x2019;s take a look at the basic setup I&#x2019;ve configured. &#x201C;What do I need to put where to get WTF fuzzing to run?&#x201D; That&#x2019;s probably what you&#x2019;re most curious about in this section. I&#x2019;ll leave actual targets like afd.sys for the next section; here, I&#x2019;ll just outline the file structure and workflow.</p>
+<p>To run a fuzzing session with WTF, you ultimately need the following three components:</p>
+<ol>
+<li>Harness &#x2014; C++ code that defines where to inject input (built alongside the WTF main program)</li>
+<li>Snapshot &#x2014; A dump of the target&#x2019;s memory and CPU state (extracted using WinDbg)</li>
+<li>Seed corpus &#x2014; A few initial inputs prepared to serve as the starting point for fuzzing</li>
+</ol>
+<p>The snapshot, seed, and crash files must be placed in the designated subfolders under the <code>targets/&lt;name&gt;/</code> folder for each target, as shown below.</p>
+<h3 id="4-1-What-You-Need-to-Run-Fuzzing"><a href="#4-1-What-You-Need-to-Run-Fuzzing" class="headerlink" title="4.1 What You Need to Run Fuzzing"></a>4.1 What You Need to Run Fuzzing</h3><pre><code class="hljs jsx">wtf/targets/afd/
+&#x251C;&#x2500;&#x2500; inputs/    &#x2190; Seed (Initial Input) Test Cases
+&#x251C;&#x2500;&#x2500; outputs/   &#x2190; An interesting input (minset) discovered during fuzzing
+&#x251C;&#x2500;&#x2500; coverage/  &#x2190; .cov coverage file
+&#x251C;&#x2500;&#x2500; crashes/   &#x2190; Where crashes are saved
+&#x2514;&#x2500;&#x2500; state/     &#x2190; Snapshot (The snapshot tool creates a subfolder here to store mem.dmp and regs.json)</code></pre>
+<h3 id="4-2-Where-Should-You-Keep-the-Harness"><a href="#4-2-Where-Should-You-Keep-the-Harness" class="headerlink" title="4.2 Where Should You Keep the Harness?"></a>4.2 Where Should You Keep the Harness?</h3><p><img src="04_confused.gif" srcset="/img/loading.gif" alt="04_confused.gif"></p>
+<p>WTF does not store the harness in a separate file; instead, it is included as a fuzzer module within the WTF folder and built alongside the rest of the project. Modules are created under src/wtf following the naming convention fuzzer_<name>.cc.</name></p>
+<pre><code class="hljs jsx">wtf/
+&#x251C;&#x2500;&#x2500; src/
+&#x2502;   &#x2514;&#x2500;&#x2500; wtf/
+&#x2502;       &#x251C;&#x2500;&#x2500; fuzzer_afd.cc    &#x2190; I<span class="hljs-string">&apos;ll put my harness here</span>
+<span class="hljs-string">&#x2502;       &#x251C;&#x2500;&#x2500; fuzzer_hevd.cc   &#x2190; WTF Basic Example Module (For Reference)</span>
+<span class="hljs-string">&#x2502;       &#x2514;&#x2500;&#x2500; ...</span>
+<span class="hljs-string">&#x251C;&#x2500;&#x2500; scripts/</span>
+<span class="hljs-string">&#x2502;   &#x2514;&#x2500;&#x2500; gen_coveragefile_ida.py   &#x2190; (For KVM/WHV) Extracting the list of basic blocks</span>
+<span class="hljs-string">&#x2514;&#x2500;&#x2500; targets/</span>
+<span class="hljs-string">    &#x2514;&#x2500;&#x2500; afd/                 &#x2190; This target&apos;</span>s working folder (described <span class="hljs-keyword">in</span> <span class="hljs-number">4.3</span>)</code></pre>
+<p>Create a file named <code>fuzzer_afd.cc</code> inside <code>src/wtf/</code>, and within it, register your harness as a <code>Target_t</code> object along with its name. You&#x2019;ll use the name you set here later when running the program&#x2014;for example, with the <code>--name afd</code> option&#x2014;to select which harness to use for fuzzing.</p>
+<p>Inside the harness, you&#x2019;ll implement three main functions.</p>
+<pre><code class="hljs jsx"><span class="hljs-comment">// src/wtf/fuzzer_afd.cc  (Just the concept)</span>
+
+<span class="hljs-comment">// 1. Setup: Install crash detection hook, define termination conditions, remove noise</span>
+bool Init(<span class="hljs-keyword">const</span> Options_t &amp;Opts, <span class="hljs-keyword">const</span> CpuState_t &amp;State) { ... }
+
+<span class="hljs-comment">// 2. Input Injection: Writes the byte buffer generated by the fuzzer to the target memory</span>
+bool InsertTestcase(<span class="hljs-keyword">const</span> uint8_t *Buffer, <span class="hljs-keyword">const</span> size_t BufferSize) { ... }
+
+<span class="hljs-comment">// 3. Restore: Called after every execution (WTF handles most of this automatically)</span>
+bool Restore() { ... }
+
+<span class="hljs-comment">// Register the above three functions under the name &#x201C;afd&#x201D; &#x2192; Specify them with --name afd when running</span>
+Target_t Afd(<span class="hljs-string">&quot;afd&quot;</span>, Init, InsertTestcase, Restore);</code></pre>
+<p>The harness must be placed in the <code>src/wtf/</code> directory within the WTF folder; when you build it, it will be combined into a single WTF executable. In other words, if you make any changes to the harness, you must rebuild it and rerun the fuzzer.</p>
+<h3 id="4-3-Taking-a-Snapshot-Which-Files-Are-Used-and-What-Is-Created"><a href="#4-3-Taking-a-Snapshot-Which-Files-Are-Used-and-What-Is-Created" class="headerlink" title="4.3 Taking a Snapshot (Which Files Are Used, and What Is Created)"></a>4.3 Taking a Snapshot (Which Files Are Used, and What Is Created)</h3><p>Snapshots are captured within WinDbg. The file used for this is <strong><code>snapshot</code></strong>, a companion project of WTF. After loading it as a WinDbg extension (<code>snapshot.dll</code>), you can dump the current state using the <code>!snapshot</code> command.</p>
+<p>The overall process for capturing a snapshot is as follows.</p>
+<pre><code class="hljs nasm">1. Launch the target on a Hyper-V VM (Windows, 1 vCPU and 4 GB of RAM recommended) and establish a kernel debugging connection.
+2. Set a breakpoint to pause the VM at the desired point. (e.g., just before a DeviceIoControl call)
+3. Load snapshot.dll into Windbg and run !snapshot. &#x2192; This generates a memory and CPU state dump.</code></pre>
+<p>In WinDbg, you proceed using commands like these.</p>
+<pre><code class="hljs jsx"><span class="hljs-comment">// Loading the snapshot extension (built with Rust)</span>
+.load C:\path\to\snapshot\target\release\snapshot.dll
+
+!snapshot C:\fuzzing\wtf\targets\afd\state   <span class="hljs-comment">// Save the snapshot to the &#x201C;state&#x201D; folder</span>
+
+<span class="hljs-comment">// If you&apos;d like to check the instructions,</span>
+!snapshot -h                      
+[snapshot] Usage: snapshot [OPTIONS] [STATE_PATH]
+  -k, --kind &lt;KIND&gt;   Snapshot Types [Default: full] [active-kernel | full]</code></pre>
+<p>One thing to note here is that if you use <code>!snapshot</code> as shown above, it creates a folder in the <code>state</code> directory labeled with the OS build and a timestamp, and places <code>json</code> and <code>dmp</code> files inside it.</p>
+<p>When running fuzzing, you should specify <code>--state</code> to point not to the <code>state/</code> folder, but to the <code>state.1904&#x2026;</code> folder created within it.</p>
+<pre><code class="hljs jsx">wtf/targets/afd/state/
+&#x2514;&#x2500;&#x2500; state<span class="hljs-number">.19041</span><span class="hljs-number">.1</span>.amd64fre..._20260418_0116/   &#x2190; Folder automatically created by Snapshot
+    &#x251C;&#x2500;&#x2500; regs.json   &#x2190; CPU register states (all <span class="hljs-keyword">of</span> them, including RIP, RSP, CR3, MSR, etc.)
+    &#x2514;&#x2500;&#x2500; mem.dmp     &#x2190; Full Physical Memory Dump (Windows crash dump format)</code></pre>
+<ul>
+<li><code>regs.json</code> contains the state of all CPUs at the moment the snapshot was taken. It includes information such as where to resume execution (RIP) and the location of the stack (RSP).</li>
+<li><code>mem.dmp</code> contains the entire physical memory at that moment. Because it is large, it may take several minutes to acquire.</li>
+</ul>
+<h3 id="4-4-Building-and-Running"><a href="#4-4-Building-and-Running" class="headerlink" title="4.4 Building and Running"></a>4.4 Building and Running</h3><p>Now that the harness and snapshot are ready, you can actually run the program. Building WTF produces the <code>wtf</code> executable, which can be used in three modes.</p>
+<ol>
+<li><code>run</code> &#x2014; Single-input execution (for harness verification)<br>This is a one-time execution mode that allows you to test whether the harness is working properly and whether inputs are being injected correctly. It runs on <code>bochscpu</code>, which is slow but precise.</li>
+</ol>
+<pre><code class="hljs bash">wtf.exe run --name afd --target targets\afd
+    --state targets\afd\state\&lt;snap&gt;
+    --input targets\afd\inputs\seed_0</code></pre>
+<ol>
+<li><code>master</code> &#x2014; Server (Master)<br>The actual fuzzing process involves a single <code>master</code> managing the input queue, coverage, and crashes, while multiple <code>client (slave)</code> instances run under its supervision. Start the <code>master</code> first.</li>
+</ol>
+<pre><code class="hljs bash">wtf.exe master --name afd --target targets\afd --max_len 0x1000</code></pre>
+<ol>
+<li><code>fuzz</code> &#x2014; Client<br>This is the client that actually performs the fuzzing. Select the backend using <code>-backend</code>, and launch as many instances as there are CPU cores. (On Windows, where KVM is not supported, use <code>bochscpu</code>.)</li>
+</ol>
+<pre><code class="hljs bash">wtf.exe fuzz --name afd --target targets\afd
+    --state targets\afd\state\&lt;snap&gt; --backend bochscpu</code></pre>
+<p>To summarize, the workflow is as follows.</p>
+<pre><code class="hljs jsx">Create harness (src/wtf/fuzzer_afd.cc)
+   &#x2192; Build WTF &#x2192; wtf.exe
+Take a snapshot (!snapshot)  &#x2192; targets/afd/state/<span class="xml"><span class="hljs-tag">&lt;<span class="hljs-name">snap</span>&gt;</span>/ (regs.json + mem.dmp)</span>
+<span class="xml">Prepare seeds (targets/afd/inputs/)</span>
+<span class="xml">   &#x2193;</span>
+<span class="xml">Verify the harness with `wtf run` (bochscpu)</span>
+<span class="xml">   &#x2193;</span>
+<span class="xml">Distributed fuzzing using one wtf master and multiple wtf fuzz nodes (bochscpu)</span>
+<span class="xml">   &#x2193;</span>
+<span class="xml">Crashes start accumulating in the `targets/afd/crashes/` folder!</span></code></pre>
+<p><img src="05_fuzz_test.png" srcset="/img/loading.gif" alt="05_fuzz_test.png"></p>
+<p>At this point, you&#x2019;ll see the fuzzing counter increasing on a blank screen. The Master&#x2019;s logs are displayed at the top, and the Client&#x2019;s logs are displayed at the bottom. There are five key values we need to focus on here.</p>
+<ul>
+<li>cov: If cov does not increase, it means the system is not entering new coverage.</li>
+<li>lastcov: This indicates that no new cov has been discovered for this duration.</li>
+<li>exec/s: This value represents the number of executions per second. If this value suddenly drops sharply, a problem may have occurred.</li>
+<li>crash: If this value increases, it means a crash has finally been detected.</li>
+<li>corp: If the cov value increases but corp does not, there is a problem with corpus storage. Conversely, if only corp increases and cov does not, it indicates that duplicate entries are accumulating.</li>
+</ul>
+<p><img src="06_last.jpg" srcset="/img/loading.gif" alt="05_last.jpg"></p>
+<p>I finally managed to get the WTF fuzzer working successfully. <a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/0vercl0k/snapshot">I wasn&#x2019;t aware of &#x201C;snapshot,&#x201D; WTF&#x2019;s companion project</a>, and tried to find the files needed for taking a snapshot in the WTF repo&#x2014;I hope you guys can set it up without wasting any time. &#x1F602;</p>
+<hr>
+<h2 id="In-Conclusion"><a href="#In-Conclusion" class="headerlink" title="In Conclusion"></a>In Conclusion</h2><p>Today, we covered what snapshot fuzzing is, why we didn&#x2019;t use KAFL, how WTF&#x2019;s 4-stage loop and three types of backends work, and even where to place the harness, snapshot, and seed, as well as the commands used to run them.</p>
+<p>In Part 2, we&#x2019;ll dissect the IOCTL structure of afd.sys, discuss which handlers we chose and why, and cover the insightful paper on taking snapshots and how we applied its findings to Windows. I learned the hard way that misidentifying a socket state can cost you an entire day&#x2026; &#x1F62D;</p>
+<p>Thank you for reading. See you in the next post!</p>
+<hr>
+<h2 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a>Reference</h2><ul>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/0vercl0k/wtf">https://github.com/0vercl0k/wtf</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/0vercl0k/snapshot">https://github.com/0vercl0k/snapshot</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://doar-e.github.io/blog/2021/07/15/building-a-new-snapshot-fuzzer-fuzzing-ida/">https://doar-e.github.io/blog/2021/07/15/building-a-new-snapshot-fuzzer-fuzzing-ida/</a></li>
+<li><a target="_blank" rel="external nofollow noopener noreferrer" href="https://blog.thalium.re/posts/rdpegfx/">https://blog.thalium.re/posts/rdpegfx/</a></li>
+</ul>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/Libera/">Libera</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Windows/">Windows</a>
+                  
+                  <a class="hover-with-bg" href="/tags/BugHunting/">BugHunting</a>
+                  
+                  <a class="hover-with-bg" href="/tags/KernelDriver/">KernelDriver</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Fuzzing/">Fuzzing</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Fuzz/">Fuzz</a>
+                  
+                  <a class="hover-with-bg" href="/tags/WTF/">WTF</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_Libera.jpg" srcset="/img/loading.gif" alt="Libera">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">Libera</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/Libera">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2026/06/26/ji9umi/Wipeload_step3/kr/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[도닦기] 3단계: H0le in One (KR)</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2026/06/23/Libera/wtf-windows-kernel-fuzzing-part1/Kr/">
+                    <span class="hidden-mobile">[Research] 퇴근 후에도 풀가동! 꿀잠 자는 퍼징 공장장 되기 Part 1 (KR)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2026/06/23/Libera/wtf-windows-kernel-fuzzing-part1/En/';
+        this.page.identifier = '/2026/06/23/Libera/wtf-windows-kernel-fuzzing-part1/En/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] Running at Full Capacity Even After Work! How to Become a Fuzzing Plant Manager Who Sleeps Like a Baby Part 1 (EN)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>

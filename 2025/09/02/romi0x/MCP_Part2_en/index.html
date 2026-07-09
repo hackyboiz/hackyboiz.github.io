@@ -1,0 +1,1504 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;Hello! This is romi0x~&lt;/p&gt;
+&lt;p&gt;Following up on the last article, this is Part 2 of the MCP series~&lt;/p&gt;
+&lt;p&gt;In the previous article, we covered the concept of MCP, its background, basic structure, and adoption cases. In this article, I&amp;#x2019;ve focused on how MCP works internally.&lt;/p&gt;
+&lt;h3 id=&#34;Core-Components-of-MCP-Host-Client-Server&#34;&gt;&lt;a href=&#34;#Core-Components-of-MCP-Host-Client-Server&#34; class=&#34;headerlink&#34; title=&#34;Core Components of MCP (Host / Client / Server)&#34;&gt;&lt;/a&gt;Core Components of MCP (Host / Client / Server)&lt;/h3&gt;&lt;p&gt;As mentioned in the last article, MCP is a protocol that allows various LLMs to define context objects and exchange them in a standardized way. I also briefly introduced the simple working mechanism of MCP in the previous article!&lt;/p&gt;
+&lt;p&gt;The components were added as an &lt;strong&gt;MCP Host, an MCP Client, and an MCP Server.&lt;/strong&gt; Now, let&amp;#x2019;s examine exactly how these components operate and what their structure is.&lt;/p&gt;
+&lt;p&gt;A simple summary of the three components is as follows:&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Component&lt;/th&gt;
+&lt;th&gt;Description&lt;/th&gt;
+&lt;th&gt;Examples&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;MCP Server&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;The backend that holds actual resources&lt;/td&gt;
+&lt;td&gt;Google Drive MCP, GitHub MCP, etc.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;MCP Client&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;An intermediary for communication between Host and Server&lt;/td&gt;
+&lt;td&gt;OpenAI&amp;#x2019;s Function Router, etc.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;MCP Host&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;An LLM or LLM app (Claude, GPT, etc.)&lt;/td&gt;
+&lt;td&gt;Claude Desktop, AI IDE&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;Let&amp;#x2019;s break down each of these components!&lt;/p&gt;
+&lt;h3 id=&#34;1-MCP-Server&#34;&gt;&lt;a href=&#34;#1-MCP-Server&#34; class=&#34;headerlink&#34; title=&#34;(1) MCP Server&#34;&gt;&lt;/a&gt;(1) MCP Server&lt;/h3&gt;&lt;p&gt;The &lt;strong&gt;MCP Server&lt;/strong&gt; is a backend component that provides functionality to enable AI applications to connect with and operate in the external world. This server offers specialized functions for specific domains, such as file systems, email, travel itineraries, and databases.&lt;/p&gt;
+&lt;p&gt;For example, there can be a file system server for document management, an email server for message processing, and a travel server for trip planning.&lt;/p&gt;
+&lt;p&gt;Through the MCP server, an AI model can access resources, run tools, and perform various actions according to a specified interface.&lt;/p&gt;
+&lt;p&gt;This structure extends the LLM beyond a simple language model into an environment that can function like an app.&lt;/p&gt;
+&lt;p&gt;The MCP server provides its functionality through three main components: &lt;strong&gt;Tools&lt;/strong&gt;, &lt;strong&gt;Resources&lt;/strong&gt;, and &lt;strong&gt;Prompts&lt;/strong&gt;.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Component&lt;/th&gt;
+&lt;th&gt;Purpose&lt;/th&gt;
+&lt;th&gt;Controller&lt;/th&gt;
+&lt;th&gt;Example&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;Tool&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Actions the model can perform&lt;/td&gt;
+&lt;td&gt;Model&lt;/td&gt;
+&lt;td&gt;Search for flights, send emails, add calendar events&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;Resource&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Provides context data&lt;/td&gt;
+&lt;td&gt;Application&lt;/td&gt;
+&lt;td&gt;Calendars, documents, travel history, weather data&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;Prompt&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Provides interaction templates&lt;/td&gt;
+&lt;td&gt;User&lt;/td&gt;
+&lt;td&gt;&amp;#x201C;Plan a vacation for me,&amp;#x201D; &amp;#x201C;Summarize this meeting&amp;#x201D;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;Each element follows a standardized schema and URI structure and communicates via JSON-RPC.&lt;/p&gt;
+&lt;h3 id=&#34;1-1-Tools-Actions-executed-by-AI&#34;&gt;&lt;a href=&#34;#1-1-Tools-Actions-executed-by-AI&#34; class=&#34;headerlink&#34; title=&#34;(1-1) Tools: Actions executed by AI&#34;&gt;&lt;/a&gt;(1-1) Tools: Actions executed by AI&lt;/h3&gt;&lt;p&gt;A &lt;strong&gt;Tool&lt;/strong&gt; is an executable function that an AI model calls to perform tasks in the external world.&lt;/p&gt;
+&lt;p&gt;For example, actions like searching for flights, sending an email, or adding a calendar event can all be implemented as an MCP Tool.&lt;/p&gt;
+&lt;h3 id=&#34;Structure&#34;&gt;&lt;a href=&#34;#Structure&#34; class=&#34;headerlink&#34; title=&#34;Structure&#34;&gt;&lt;/a&gt;Structure&lt;/h3&gt;&lt;p&gt;Each Tool has a clearly defined input/output structure using &lt;strong&gt;JSON Schema&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;This helps the LLM generate accurate inputs without format errors when using a tool.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs json&#34;&gt;{
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;name&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;searchFlights&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;description&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Search for available flights&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;inputSchema&amp;quot;&lt;/span&gt;: {
+    &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;object&amp;quot;&lt;/span&gt;,
+    &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;properties&amp;quot;&lt;/span&gt;: {
+      &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;origin&amp;quot;&lt;/span&gt;: { &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;string&amp;quot;&lt;/span&gt; },
+      &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;destination&amp;quot;&lt;/span&gt;: { &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;string&amp;quot;&lt;/span&gt; },
+      &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;date&amp;quot;&lt;/span&gt;: { &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;string&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;format&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;date&amp;quot;&lt;/span&gt; }
+    },
+    &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;required&amp;quot;&lt;/span&gt;: [&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;origin&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;destination&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;date&amp;quot;&lt;/span&gt;]
+  }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;h3 id=&#34;Protocol-Methods&#34;&gt;&lt;a href=&#34;#Protocol-Methods&#34; class=&#34;headerlink&#34; title=&#34;Protocol Methods&#34;&gt;&lt;/a&gt;Protocol Methods&lt;/h3&gt;&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Method&lt;/th&gt;
+&lt;th&gt;Description&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;tools/list&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;View the list of available tools&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;tools/call&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Request to execute a specific tool&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;Tool execution always requires the user&amp;#x2019;s explicit approval. Before execution, the user can review the tool&amp;#x2019;s description, input values, and expected results and decide whether to approve it. Automatic approval can also be set for trusted tools.&lt;/p&gt;
+&lt;h3 id=&#34;1-2-Resources-&amp;#x2013;-Providing-Context-Data&#34;&gt;&lt;a href=&#34;#1-2-Resources-&amp;#x2013;-Providing-Context-Data&#34; class=&#34;headerlink&#34; title=&#34;(1-2) Resources &amp;#x2013; Providing Context Data&#34;&gt;&lt;/a&gt;(1-2) Resources &amp;#x2013; Providing Context Data&lt;/h3&gt;&lt;p&gt;A &lt;strong&gt;Resource&lt;/strong&gt; is an external data source provided in a format that an LLM can understand. It can be a document, calendar event, weather information, email, or a database record, and the model can accept and process it as context.&lt;/p&gt;
+&lt;h3 id=&#34;Structure-1&#34;&gt;&lt;a href=&#34;#Structure-1&#34; class=&#34;headerlink&#34; title=&#34;Structure&#34;&gt;&lt;/a&gt;Structure&lt;/h3&gt;&lt;p&gt;A Resource is identified by a unique URI, using schemes like &lt;code&gt;file://&lt;/code&gt;, &lt;code&gt;calendar://&lt;/code&gt;, or &lt;code&gt;travel://&lt;/code&gt;. It also includes metadata such as MIME type, title, and description.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs json&#34;&gt;{
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;uriTemplate&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;weather://forecast/{city}/{date}&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;name&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;weather-forecast&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;title&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Weather Forecast&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;description&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Get weather forecast for any city and date&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;mimeType&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;application/json&amp;quot;&lt;/span&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;h3 id=&#34;Protocol-Methods-1&#34;&gt;&lt;a href=&#34;#Protocol-Methods-1&#34; class=&#34;headerlink&#34; title=&#34;Protocol Methods&#34;&gt;&lt;/a&gt;Protocol Methods&lt;/h3&gt;&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Method&lt;/th&gt;
+&lt;th&gt;Description&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;resources/list&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;View available resources&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;resources/templates/list&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;View resource templates&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;resources/read&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Read data from a specific resource&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;resources/subscribe&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Subscribe to resource changes (optional)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;Resources can generally be explored through a file browser, search bar, or category filtering UI. The LLM can automatically load resources selected by the application, or the user can select them manually. The selected resources are passed to the AI as context for use in question-answering, analysis, etc.&lt;/p&gt;
+&lt;h3 id=&#34;1-3-Prompts-&amp;#x2013;-Interaction-Templates&#34;&gt;&lt;a href=&#34;#1-3-Prompts-&amp;#x2013;-Interaction-Templates&#34; class=&#34;headerlink&#34; title=&#34;(1-3) Prompts &amp;#x2013; Interaction Templates&#34;&gt;&lt;/a&gt;(1-3) Prompts &amp;#x2013; Interaction Templates&lt;/h3&gt;&lt;p&gt;A &lt;strong&gt;Prompt&lt;/strong&gt; is a template that defines a standardized format for tasks users frequently perform, allowing them to be reused. Through a prompt, the model can receive more structured requests than natural language input and be guided toward a workflow appropriate for a specific domain.&lt;/p&gt;
+&lt;h3 id=&#34;Structure-2&#34;&gt;&lt;a href=&#34;#Structure-2&#34; class=&#34;headerlink&#34; title=&#34;Structure&#34;&gt;&lt;/a&gt;Structure&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs json&#34;&gt;{
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;name&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;plan-vacation&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;title&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Plan a vacation&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;description&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Guide through vacation planning process&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;arguments&amp;quot;&lt;/span&gt;: [
+    { &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;name&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;destination&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;string&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;required&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-literal&#34;&gt;true&lt;/span&gt; },
+    { &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;name&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;duration&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;number&amp;quot;&lt;/span&gt; },
+    { &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;name&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;budget&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;number&amp;quot;&lt;/span&gt; },
+    { &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;name&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;interests&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;array&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;items&amp;quot;&lt;/span&gt;: { &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;string&amp;quot;&lt;/span&gt; } }
+  ]
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;h3 id=&#34;Protocol-Methods-2&#34;&gt;&lt;a href=&#34;#Protocol-Methods-2&#34; class=&#34;headerlink&#34; title=&#34;Protocol Methods&#34;&gt;&lt;/a&gt;Protocol Methods&lt;/h3&gt;&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Method&lt;/th&gt;
+&lt;th&gt;Description&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;prompts/list&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;View the list of available prompts&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;prompts/get&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Get details of a specific prompt&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;Users can execute a prompt via a slash command like &lt;code&gt;/plan-vacation&lt;/code&gt; or a UI button. The prompt appears as a structured input form (text, numbers, dropdowns, etc.), and the entered values are passed directly to the model. This allows for consistent results, autocompletion, and workflow automation.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h3 id=&#34;2-MCP-Client&#34;&gt;&lt;a href=&#34;#2-MCP-Client&#34; class=&#34;headerlink&#34; title=&#34;(2) MCP Client&#34;&gt;&lt;/a&gt;(2) MCP Client&lt;/h3&gt;&lt;p&gt;The &lt;strong&gt;MCP Client&lt;/strong&gt; is a component created by host applications like Claude or AI IDEs to communicate with the MCP Server. In other words, it is not an object that the user directly sees or handles, but every server connection must pass through the client.&lt;/p&gt;
+&lt;p&gt;Whether reading data from the server, executing a tool, or requesting additional information from the user, all requests must go through the client.&lt;/p&gt;
+&lt;h3 id=&#34;Why-the-MCP-Client-is-Important&#34;&gt;&lt;a href=&#34;#Why-the-MCP-Client-is-Important&#34; class=&#34;headerlink&#34; title=&#34;Why the MCP Client is Important&#34;&gt;&lt;/a&gt;Why the MCP Client is Important&lt;/h3&gt;&lt;p&gt;The most significant role of the MCP client is to prevent the server from directly accessing the LLM or the user&amp;#x2019;s environment. All data access and tool execution are designed to go through an approval process in front of the user, allowing them to clearly see and control what tasks the AI is attempting.&lt;/p&gt;
+&lt;p&gt;For potentially risky functions like file system access, the client establishes &lt;strong&gt;roots&lt;/strong&gt; to set boundaries, restricting access to &amp;#x201C;only up to here,&amp;#x201D; ensuring safety. Additionally, when a server needs to call a model, it doesn&amp;#x2019;t execute it directly; it delegates the task through the client, putting cost, security, and approval procedures all under user control.&lt;/p&gt;
+&lt;h3 id=&#34;Key-Features&#34;&gt;&lt;a href=&#34;#Key-Features&#34; class=&#34;headerlink&#34; title=&#34;Key Features&#34;&gt;&lt;/a&gt;Key Features&lt;/h3&gt;&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Feature Name&lt;/th&gt;
+&lt;th&gt;Description&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;Sampling&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;The server delegates AI model calls to the client&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;Roots&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Defines the file system boundaries that the server can access&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;Elicitation&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Supports the server&amp;#x2019;s ability to request additional input from the user&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;Let&amp;#x2019;s look at each of the three key features.&lt;/p&gt;
+&lt;h3 id=&#34;2-1-Sampling-Delegating-Model-Calls&#34;&gt;&lt;a href=&#34;#2-1-Sampling-Delegating-Model-Calls&#34; class=&#34;headerlink&#34; title=&#34;(2-1) Sampling: Delegating Model Calls&#34;&gt;&lt;/a&gt;(2-1) Sampling: Delegating Model Calls&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;Sampling&lt;/strong&gt; is a feature that allows the server to delegate AI model calls to the client, rather than directly calling the LLM API.&lt;/p&gt;
+&lt;h3 id=&#34;Example-Flow&#34;&gt;&lt;a href=&#34;#Example-Flow&#34; class=&#34;headerlink&#34; title=&#34;Example Flow&#34;&gt;&lt;/a&gt;Example Flow&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/09/02/romi0x/MCP_Part2_en/image.png&#34; alt=&#34;https://modelcontextprotocol.io/docs/learn/client-concepts&#34;&gt;&lt;br&gt;&lt;a href=&#34;https://modelcontextprotocol.io/docs/learn/client-concepts&#34;&gt;https://modelcontextprotocol.io/docs/learn/client-concepts&lt;/a&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;The server sends a request to the client, such as &amp;#x201C;Please analyze this data.&amp;#x201D;&lt;/li&gt;
+&lt;li&gt;The client clearly shows the request to the user and asks for their approval.&lt;/li&gt;
+&lt;li&gt;If the user approves, the client calls the LLM and sends the response back to the server.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;All responses are passed only after user review.&lt;/p&gt;
+&lt;h3 id=&#34;Sample-Request-Example&#34;&gt;&lt;a href=&#34;#Sample-Request-Example&#34; class=&#34;headerlink&#34; title=&#34;Sample Request Example&#34;&gt;&lt;/a&gt;Sample Request Example&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs json&#34;&gt;{
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;messages&amp;quot;&lt;/span&gt;: [
+    {
+      &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;role&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;user&amp;quot;&lt;/span&gt;,
+      &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;content&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Analyze the following flight options and recommend the best choice...&amp;quot;&lt;/span&gt;
+    }
+  ],
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;modelPreferences&amp;quot;&lt;/span&gt;: {
+    &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;hints&amp;quot;&lt;/span&gt;: [{ &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;name&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;claude-3-5-sonnet&amp;quot;&lt;/span&gt; }],
+    &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;costPriority&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-number&#34;&gt;0.3&lt;/span&gt;,
+    &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;speedPriority&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-number&#34;&gt;0.2&lt;/span&gt;,
+    &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;intelligencePriority&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-number&#34;&gt;0.9&lt;/span&gt;
+  },
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;systemPrompt&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;As a travel expert, please recommend flights&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;maxTokens&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-number&#34;&gt;1500&lt;/span&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;h3 id=&#34;2-2-Roots-Setting-File-System-Boundaries&#34;&gt;&lt;a href=&#34;#2-2-Roots-Setting-File-System-Boundaries&#34; class=&#34;headerlink&#34; title=&#34;(2-2) Roots: Setting File System Boundaries&#34;&gt;&lt;/a&gt;(2-2) Roots: Setting File System Boundaries&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;Roots&lt;/strong&gt; is a feature that defines the scope (directories) of the file system that the server can access. All access is configured with &lt;code&gt;file://&lt;/code&gt; URIs, and the client explicitly communicates these boundaries to the server.&lt;/p&gt;
+&lt;h3 id=&#34;Sample-Request-Example-1&#34;&gt;&lt;a href=&#34;#Sample-Request-Example-1&#34; class=&#34;headerlink&#34; title=&#34;Sample Request Example&#34;&gt;&lt;/a&gt;Sample Request Example&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs json&#34;&gt;{
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;uri&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;file:///Users/agent/travel-planning&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;name&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Travel Planning Workspace&amp;quot;&lt;/span&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The server can only access files within this root; external paths are blocked according to client policy. When a user opens a folder, the client can automatically update the roots and notify the server with a &lt;code&gt;roots/list_changed&lt;/code&gt; event.&lt;/p&gt;
+&lt;h3 id=&#34;2-3-Elicitation-Requesting-Additional-User-Input&#34;&gt;&lt;a href=&#34;#2-3-Elicitation-Requesting-Additional-User-Input&#34; class=&#34;headerlink&#34; title=&#34;(2-3) Elicitation: Requesting Additional User Input&#34;&gt;&lt;/a&gt;(2-3) Elicitation: Requesting Additional User Input&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;Elicitation&lt;/strong&gt; is a feature that allows the server to dynamically request information from the user during a task.&lt;/p&gt;
+&lt;h3 id=&#34;Usage-Flow&#34;&gt;&lt;a href=&#34;#Usage-Flow&#34; class=&#34;headerlink&#34; title=&#34;Usage Flow&#34;&gt;&lt;/a&gt;Usage Flow&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/09/02/romi0x/MCP_Part2_en/image1.png&#34; alt=&#34;https://modelcontextprotocol.io/docs/learn/client-concepts&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://modelcontextprotocol.io/docs/learn/client-concepts&#34;&gt;https://modelcontextprotocol.io/docs/learn/client-concepts&lt;/a&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;The server creates a request for user input.&lt;/li&gt;
+&lt;li&gt;The client provides a message and input form via the UI.&lt;/li&gt;
+&lt;li&gt;Once the user completes the input, the information is sent to the server, and the task continues.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3 id=&#34;Sample-Request-Example-2&#34;&gt;&lt;a href=&#34;#Sample-Request-Example-2&#34; class=&#34;headerlink&#34; title=&#34;Sample Request Example&#34;&gt;&lt;/a&gt;Sample Request Example&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs json&#34;&gt;{
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;method&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;elicitation/requestInput&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;params&amp;quot;&lt;/span&gt;: {
+    &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;message&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Please confirm the booking for your Barcelona trip:&amp;quot;&lt;/span&gt;,
+    &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;schema&amp;quot;&lt;/span&gt;: {
+      &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;object&amp;quot;&lt;/span&gt;,
+      &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;properties&amp;quot;&lt;/span&gt;: {
+        &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;confirmBooking&amp;quot;&lt;/span&gt;: { &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;boolean&amp;quot;&lt;/span&gt; },
+        &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;seatPreference&amp;quot;&lt;/span&gt;: {
+          &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;string&amp;quot;&lt;/span&gt;,
+          &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;enum&amp;quot;&lt;/span&gt;: [&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;window&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;aisle&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;no preference&amp;quot;&lt;/span&gt;]
+        },
+        &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;roomType&amp;quot;&lt;/span&gt;: {
+          &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;string&amp;quot;&lt;/span&gt;,
+          &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;enum&amp;quot;&lt;/span&gt;: [&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;sea view&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;city view&amp;quot;&lt;/span&gt;]
+        }
+      },
+      &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;required&amp;quot;&lt;/span&gt;: [&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;confirmBooking&amp;quot;&lt;/span&gt;]
+    }
+  }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;hr&gt;
+&lt;h3 id=&#34;3-Overall-Communication-Structure&#34;&gt;&lt;a href=&#34;#3-Overall-Communication-Structure&#34; class=&#34;headerlink&#34; title=&#34;(3) Overall Communication Structure&#34;&gt;&lt;/a&gt;(3) Overall Communication Structure&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/09/02/romi0x/MCP_Part2_en/image2.png&#34; alt=&#34;&amp;#xBCF8;&amp;#xC778;&amp;#xC81C;&amp;#xC791;&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The &lt;strong&gt;User&lt;/strong&gt; interacts with the AI model through a host application (e.g., Claude, a GPT-based IDE, etc.).&lt;br&gt;The &lt;strong&gt;AI Model (Host)&lt;/strong&gt; interprets the user&amp;#x2019;s request and decides what tasks are needed.&lt;br&gt;The &lt;strong&gt;MCP Client (Client)&lt;/strong&gt; acts as an intermediary between the Host and the MCP Server.&lt;br&gt;All communication is done in JSON-RPC format, and the client manages the connection with the server while handling user approval, security control, and model call delegation (sampling).&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The &lt;strong&gt;MCP Server (Server)&lt;/strong&gt; provides the actual functionality. The server exposes three core building blocks:&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Tool&lt;/strong&gt;: Specific actions that the AI can execute (e.g., search for flights, send an email, add a calendar event).&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Resource&lt;/strong&gt;: Context data provided to the AI (e.g., files, calendars, weather information).&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Prompt&lt;/strong&gt;: A structured interaction template that the user can reuse (e.g., &amp;#x201C;Plan a vacation for me&amp;#x201D;).&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Through this structure, MCP allows AI models to access external data and tools safely and consistently, and it provides a trust-based environment where the user can directly approve and control all actions.&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;This research article has covered MCP in more detail!&lt;/p&gt;
+&lt;p&gt;I think it would be much clearer if I could actually use it!&lt;/p&gt;
+&lt;p&gt;Here is a tutorial to easily use MCP, which would be great to check out together~&lt;/p&gt;
+&lt;h3 id=&#34;Ref&#34;&gt;&lt;a href=&#34;#Ref&#34; class=&#34;headerlink&#34; title=&#34;Ref&#34;&gt;&lt;/a&gt;Ref&lt;/h3&gt;&lt;p&gt;&lt;a href=&#34;https://modelcontextprotocol.io/docs/getting-started/intro&#34;&gt;https://modelcontextprotocol.io/docs/getting-started/intro&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Research] MCP (Model Context Protocol) Part 2 (en) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;Hello! This is romi0x~&lt;/p&gt;
+&lt;p&gt;Following up on the last article, this is Part 2 of the MCP series~&lt;/p&gt;
+&lt;p&gt;In the previous article, we covered the concept of MCP, its background, basic structure, and adoption cases. In this article, I&amp;#x2019;ve focused on how MCP works internally.&lt;/p&gt;
+&lt;h3 id=&#34;Core-Components-of-MCP-Host-Client-Server&#34;&gt;&lt;a href=&#34;#Core-Components-of-MCP-Host-Client-Server&#34; class=&#34;headerlink&#34; title=&#34;Core Components of MCP (Host / Client / Server)&#34;&gt;&lt;/a&gt;Core Components of MCP (Host / Client / Server)&lt;/h3&gt;&lt;p&gt;As mentioned in the last article, MCP is a protocol that allows various LLMs to define context objects and exchange them in a standardized way. I also briefly introduced the simple working mechanism of MCP in the previous article!&lt;/p&gt;
+&lt;p&gt;The components were added as an &lt;strong&gt;MCP Host, an MCP Client, and an MCP Server.&lt;/strong&gt; Now, let&amp;#x2019;s examine exactly how these components operate and what their structure is.&lt;/p&gt;
+&lt;p&gt;A simple summary of the three components is as follows:&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Component&lt;/th&gt;
+&lt;th&gt;Description&lt;/th&gt;
+&lt;th&gt;Examples&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;MCP Server&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;The backend that holds actual resources&lt;/td&gt;
+&lt;td&gt;Google Drive MCP, GitHub MCP, etc.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;MCP Client&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;An intermediary for communication between Host and Server&lt;/td&gt;
+&lt;td&gt;OpenAI&amp;#x2019;s Function Router, etc.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;MCP Host&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;An LLM or LLM app (Claude, GPT, etc.)&lt;/td&gt;
+&lt;td&gt;Claude Desktop, AI IDE&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;Let&amp;#x2019;s break down each of these components!&lt;/p&gt;
+&lt;h3 id=&#34;1-MCP-Server&#34;&gt;&lt;a href=&#34;#1-MCP-Server&#34; class=&#34;headerlink&#34; title=&#34;(1) MCP Server&#34;&gt;&lt;/a&gt;(1) MCP Server&lt;/h3&gt;&lt;p&gt;The &lt;strong&gt;MCP Server&lt;/strong&gt; is a backend component that provides functionality to enable AI applications to connect with and operate in the external world. This server offers specialized functions for specific domains, such as file systems, email, travel itineraries, and databases.&lt;/p&gt;
+&lt;p&gt;For example, there can be a file system server for document management, an email server for message processing, and a travel server for trip planning.&lt;/p&gt;
+&lt;p&gt;Through the MCP server, an AI model can access resources, run tools, and perform various actions according to a specified interface.&lt;/p&gt;
+&lt;p&gt;This structure extends the LLM beyond a simple language model into an environment that can function like an app.&lt;/p&gt;
+&lt;p&gt;The MCP server provides its functionality through three main components: &lt;strong&gt;Tools&lt;/strong&gt;, &lt;strong&gt;Resources&lt;/strong&gt;, and &lt;strong&gt;Prompts&lt;/strong&gt;.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Component&lt;/th&gt;
+&lt;th&gt;Purpose&lt;/th&gt;
+&lt;th&gt;Controller&lt;/th&gt;
+&lt;th&gt;Example&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;Tool&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Actions the model can perform&lt;/td&gt;
+&lt;td&gt;Model&lt;/td&gt;
+&lt;td&gt;Search for flights, send emails, add calendar events&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;Resource&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Provides context data&lt;/td&gt;
+&lt;td&gt;Application&lt;/td&gt;
+&lt;td&gt;Calendars, documents, travel history, weather data&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;Prompt&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Provides interaction templates&lt;/td&gt;
+&lt;td&gt;User&lt;/td&gt;
+&lt;td&gt;&amp;#x201C;Plan a vacation for me,&amp;#x201D; &amp;#x201C;Summarize this meeting&amp;#x201D;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;Each element follows a standardized schema and URI structure and communicates via JSON-RPC.&lt;/p&gt;
+&lt;h3 id=&#34;1-1-Tools-Actions-executed-by-AI&#34;&gt;&lt;a href=&#34;#1-1-Tools-Actions-executed-by-AI&#34; class=&#34;headerlink&#34; title=&#34;(1-1) Tools: Actions executed by AI&#34;&gt;&lt;/a&gt;(1-1) Tools: Actions executed by AI&lt;/h3&gt;&lt;p&gt;A &lt;strong&gt;Tool&lt;/strong&gt; is an executable function that an AI model calls to perform tasks in the external world.&lt;/p&gt;
+&lt;p&gt;For example, actions like searching for flights, sending an email, or adding a calendar event can all be implemented as an MCP Tool.&lt;/p&gt;
+&lt;h3 id=&#34;Structure&#34;&gt;&lt;a href=&#34;#Structure&#34; class=&#34;headerlink&#34; title=&#34;Structure&#34;&gt;&lt;/a&gt;Structure&lt;/h3&gt;&lt;p&gt;Each Tool has a clearly defined input/output structure using &lt;strong&gt;JSON Schema&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;This helps the LLM generate accurate inputs without format errors when using a tool.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs json&#34;&gt;{
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;name&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;searchFlights&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;description&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Search for available flights&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;inputSchema&amp;quot;&lt;/span&gt;: {
+    &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;object&amp;quot;&lt;/span&gt;,
+    &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;properties&amp;quot;&lt;/span&gt;: {
+      &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;origin&amp;quot;&lt;/span&gt;: { &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;string&amp;quot;&lt;/span&gt; },
+      &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;destination&amp;quot;&lt;/span&gt;: { &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;string&amp;quot;&lt;/span&gt; },
+      &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;date&amp;quot;&lt;/span&gt;: { &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;string&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;format&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;date&amp;quot;&lt;/span&gt; }
+    },
+    &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;required&amp;quot;&lt;/span&gt;: [&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;origin&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;destination&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;date&amp;quot;&lt;/span&gt;]
+  }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;h3 id=&#34;Protocol-Methods&#34;&gt;&lt;a href=&#34;#Protocol-Methods&#34; class=&#34;headerlink&#34; title=&#34;Protocol Methods&#34;&gt;&lt;/a&gt;Protocol Methods&lt;/h3&gt;&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Method&lt;/th&gt;
+&lt;th&gt;Description&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;tools/list&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;View the list of available tools&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;tools/call&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Request to execute a specific tool&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;Tool execution always requires the user&amp;#x2019;s explicit approval. Before execution, the user can review the tool&amp;#x2019;s description, input values, and expected results and decide whether to approve it. Automatic approval can also be set for trusted tools.&lt;/p&gt;
+&lt;h3 id=&#34;1-2-Resources-&amp;#x2013;-Providing-Context-Data&#34;&gt;&lt;a href=&#34;#1-2-Resources-&amp;#x2013;-Providing-Context-Data&#34; class=&#34;headerlink&#34; title=&#34;(1-2) Resources &amp;#x2013; Providing Context Data&#34;&gt;&lt;/a&gt;(1-2) Resources &amp;#x2013; Providing Context Data&lt;/h3&gt;&lt;p&gt;A &lt;strong&gt;Resource&lt;/strong&gt; is an external data source provided in a format that an LLM can understand. It can be a document, calendar event, weather information, email, or a database record, and the model can accept and process it as context.&lt;/p&gt;
+&lt;h3 id=&#34;Structure-1&#34;&gt;&lt;a href=&#34;#Structure-1&#34; class=&#34;headerlink&#34; title=&#34;Structure&#34;&gt;&lt;/a&gt;Structure&lt;/h3&gt;&lt;p&gt;A Resource is identified by a unique URI, using schemes like &lt;code&gt;file://&lt;/code&gt;, &lt;code&gt;calendar://&lt;/code&gt;, or &lt;code&gt;travel://&lt;/code&gt;. It also includes metadata such as MIME type, title, and description.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs json&#34;&gt;{
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;uriTemplate&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;weather://forecast/{city}/{date}&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;name&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;weather-forecast&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;title&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Weather Forecast&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;description&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Get weather forecast for any city and date&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;mimeType&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;application/json&amp;quot;&lt;/span&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;h3 id=&#34;Protocol-Methods-1&#34;&gt;&lt;a href=&#34;#Protocol-Methods-1&#34; class=&#34;headerlink&#34; title=&#34;Protocol Methods&#34;&gt;&lt;/a&gt;Protocol Methods&lt;/h3&gt;&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Method&lt;/th&gt;
+&lt;th&gt;Description&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;resources/list&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;View available resources&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;resources/templates/list&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;View resource templates&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;resources/read&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Read data from a specific resource&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;resources/subscribe&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Subscribe to resource changes (optional)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;Resources can generally be explored through a file browser, search bar, or category filtering UI. The LLM can automatically load resources selected by the application, or the user can select them manually. The selected resources are passed to the AI as context for use in question-answering, analysis, etc.&lt;/p&gt;
+&lt;h3 id=&#34;1-3-Prompts-&amp;#x2013;-Interaction-Templates&#34;&gt;&lt;a href=&#34;#1-3-Prompts-&amp;#x2013;-Interaction-Templates&#34; class=&#34;headerlink&#34; title=&#34;(1-3) Prompts &amp;#x2013; Interaction Templates&#34;&gt;&lt;/a&gt;(1-3) Prompts &amp;#x2013; Interaction Templates&lt;/h3&gt;&lt;p&gt;A &lt;strong&gt;Prompt&lt;/strong&gt; is a template that defines a standardized format for tasks users frequently perform, allowing them to be reused. Through a prompt, the model can receive more structured requests than natural language input and be guided toward a workflow appropriate for a specific domain.&lt;/p&gt;
+&lt;h3 id=&#34;Structure-2&#34;&gt;&lt;a href=&#34;#Structure-2&#34; class=&#34;headerlink&#34; title=&#34;Structure&#34;&gt;&lt;/a&gt;Structure&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs json&#34;&gt;{
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;name&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;plan-vacation&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;title&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Plan a vacation&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;description&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Guide through vacation planning process&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;arguments&amp;quot;&lt;/span&gt;: [
+    { &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;name&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;destination&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;string&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;required&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-literal&#34;&gt;true&lt;/span&gt; },
+    { &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;name&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;duration&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;number&amp;quot;&lt;/span&gt; },
+    { &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;name&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;budget&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;number&amp;quot;&lt;/span&gt; },
+    { &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;name&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;interests&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;array&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;items&amp;quot;&lt;/span&gt;: { &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;string&amp;quot;&lt;/span&gt; } }
+  ]
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;h3 id=&#34;Protocol-Methods-2&#34;&gt;&lt;a href=&#34;#Protocol-Methods-2&#34; class=&#34;headerlink&#34; title=&#34;Protocol Methods&#34;&gt;&lt;/a&gt;Protocol Methods&lt;/h3&gt;&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Method&lt;/th&gt;
+&lt;th&gt;Description&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;prompts/list&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;View the list of available prompts&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;prompts/get&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Get details of a specific prompt&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;Users can execute a prompt via a slash command like &lt;code&gt;/plan-vacation&lt;/code&gt; or a UI button. The prompt appears as a structured input form (text, numbers, dropdowns, etc.), and the entered values are passed directly to the model. This allows for consistent results, autocompletion, and workflow automation.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h3 id=&#34;2-MCP-Client&#34;&gt;&lt;a href=&#34;#2-MCP-Client&#34; class=&#34;headerlink&#34; title=&#34;(2) MCP Client&#34;&gt;&lt;/a&gt;(2) MCP Client&lt;/h3&gt;&lt;p&gt;The &lt;strong&gt;MCP Client&lt;/strong&gt; is a component created by host applications like Claude or AI IDEs to communicate with the MCP Server. In other words, it is not an object that the user directly sees or handles, but every server connection must pass through the client.&lt;/p&gt;
+&lt;p&gt;Whether reading data from the server, executing a tool, or requesting additional information from the user, all requests must go through the client.&lt;/p&gt;
+&lt;h3 id=&#34;Why-the-MCP-Client-is-Important&#34;&gt;&lt;a href=&#34;#Why-the-MCP-Client-is-Important&#34; class=&#34;headerlink&#34; title=&#34;Why the MCP Client is Important&#34;&gt;&lt;/a&gt;Why the MCP Client is Important&lt;/h3&gt;&lt;p&gt;The most significant role of the MCP client is to prevent the server from directly accessing the LLM or the user&amp;#x2019;s environment. All data access and tool execution are designed to go through an approval process in front of the user, allowing them to clearly see and control what tasks the AI is attempting.&lt;/p&gt;
+&lt;p&gt;For potentially risky functions like file system access, the client establishes &lt;strong&gt;roots&lt;/strong&gt; to set boundaries, restricting access to &amp;#x201C;only up to here,&amp;#x201D; ensuring safety. Additionally, when a server needs to call a model, it doesn&amp;#x2019;t execute it directly; it delegates the task through the client, putting cost, security, and approval procedures all under user control.&lt;/p&gt;
+&lt;h3 id=&#34;Key-Features&#34;&gt;&lt;a href=&#34;#Key-Features&#34; class=&#34;headerlink&#34; title=&#34;Key Features&#34;&gt;&lt;/a&gt;Key Features&lt;/h3&gt;&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Feature Name&lt;/th&gt;
+&lt;th&gt;Description&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;Sampling&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;The server delegates AI model calls to the client&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;Roots&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Defines the file system boundaries that the server can access&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;strong&gt;Elicitation&lt;/strong&gt;&lt;/td&gt;
+&lt;td&gt;Supports the server&amp;#x2019;s ability to request additional input from the user&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;Let&amp;#x2019;s look at each of the three key features.&lt;/p&gt;
+&lt;h3 id=&#34;2-1-Sampling-Delegating-Model-Calls&#34;&gt;&lt;a href=&#34;#2-1-Sampling-Delegating-Model-Calls&#34; class=&#34;headerlink&#34; title=&#34;(2-1) Sampling: Delegating Model Calls&#34;&gt;&lt;/a&gt;(2-1) Sampling: Delegating Model Calls&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;Sampling&lt;/strong&gt; is a feature that allows the server to delegate AI model calls to the client, rather than directly calling the LLM API.&lt;/p&gt;
+&lt;h3 id=&#34;Example-Flow&#34;&gt;&lt;a href=&#34;#Example-Flow&#34; class=&#34;headerlink&#34; title=&#34;Example Flow&#34;&gt;&lt;/a&gt;Example Flow&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/09/02/romi0x/MCP_Part2_en/image.png&#34; alt=&#34;https://modelcontextprotocol.io/docs/learn/client-concepts&#34;&gt;&lt;br&gt;&lt;a href=&#34;https://modelcontextprotocol.io/docs/learn/client-concepts&#34;&gt;https://modelcontextprotocol.io/docs/learn/client-concepts&lt;/a&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;The server sends a request to the client, such as &amp;#x201C;Please analyze this data.&amp;#x201D;&lt;/li&gt;
+&lt;li&gt;The client clearly shows the request to the user and asks for their approval.&lt;/li&gt;
+&lt;li&gt;If the user approves, the client calls the LLM and sends the response back to the server.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;All responses are passed only after user review.&lt;/p&gt;
+&lt;h3 id=&#34;Sample-Request-Example&#34;&gt;&lt;a href=&#34;#Sample-Request-Example&#34; class=&#34;headerlink&#34; title=&#34;Sample Request Example&#34;&gt;&lt;/a&gt;Sample Request Example&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs json&#34;&gt;{
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;messages&amp;quot;&lt;/span&gt;: [
+    {
+      &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;role&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;user&amp;quot;&lt;/span&gt;,
+      &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;content&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Analyze the following flight options and recommend the best choice...&amp;quot;&lt;/span&gt;
+    }
+  ],
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;modelPreferences&amp;quot;&lt;/span&gt;: {
+    &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;hints&amp;quot;&lt;/span&gt;: [{ &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;name&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;claude-3-5-sonnet&amp;quot;&lt;/span&gt; }],
+    &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;costPriority&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-number&#34;&gt;0.3&lt;/span&gt;,
+    &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;speedPriority&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-number&#34;&gt;0.2&lt;/span&gt;,
+    &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;intelligencePriority&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-number&#34;&gt;0.9&lt;/span&gt;
+  },
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;systemPrompt&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;As a travel expert, please recommend flights&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;maxTokens&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-number&#34;&gt;1500&lt;/span&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;h3 id=&#34;2-2-Roots-Setting-File-System-Boundaries&#34;&gt;&lt;a href=&#34;#2-2-Roots-Setting-File-System-Boundaries&#34; class=&#34;headerlink&#34; title=&#34;(2-2) Roots: Setting File System Boundaries&#34;&gt;&lt;/a&gt;(2-2) Roots: Setting File System Boundaries&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;Roots&lt;/strong&gt; is a feature that defines the scope (directories) of the file system that the server can access. All access is configured with &lt;code&gt;file://&lt;/code&gt; URIs, and the client explicitly communicates these boundaries to the server.&lt;/p&gt;
+&lt;h3 id=&#34;Sample-Request-Example-1&#34;&gt;&lt;a href=&#34;#Sample-Request-Example-1&#34; class=&#34;headerlink&#34; title=&#34;Sample Request Example&#34;&gt;&lt;/a&gt;Sample Request Example&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs json&#34;&gt;{
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;uri&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;file:///Users/agent/travel-planning&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;name&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Travel Planning Workspace&amp;quot;&lt;/span&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The server can only access files within this root; external paths are blocked according to client policy. When a user opens a folder, the client can automatically update the roots and notify the server with a &lt;code&gt;roots/list_changed&lt;/code&gt; event.&lt;/p&gt;
+&lt;h3 id=&#34;2-3-Elicitation-Requesting-Additional-User-Input&#34;&gt;&lt;a href=&#34;#2-3-Elicitation-Requesting-Additional-User-Input&#34; class=&#34;headerlink&#34; title=&#34;(2-3) Elicitation: Requesting Additional User Input&#34;&gt;&lt;/a&gt;(2-3) Elicitation: Requesting Additional User Input&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;Elicitation&lt;/strong&gt; is a feature that allows the server to dynamically request information from the user during a task.&lt;/p&gt;
+&lt;h3 id=&#34;Usage-Flow&#34;&gt;&lt;a href=&#34;#Usage-Flow&#34; class=&#34;headerlink&#34; title=&#34;Usage Flow&#34;&gt;&lt;/a&gt;Usage Flow&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/09/02/romi0x/MCP_Part2_en/image1.png&#34; alt=&#34;https://modelcontextprotocol.io/docs/learn/client-concepts&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://modelcontextprotocol.io/docs/learn/client-concepts&#34;&gt;https://modelcontextprotocol.io/docs/learn/client-concepts&lt;/a&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;The server creates a request for user input.&lt;/li&gt;
+&lt;li&gt;The client provides a message and input form via the UI.&lt;/li&gt;
+&lt;li&gt;Once the user completes the input, the information is sent to the server, and the task continues.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3 id=&#34;Sample-Request-Example-2&#34;&gt;&lt;a href=&#34;#Sample-Request-Example-2&#34; class=&#34;headerlink&#34; title=&#34;Sample Request Example&#34;&gt;&lt;/a&gt;Sample Request Example&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs json&#34;&gt;{
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;method&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;elicitation/requestInput&amp;quot;&lt;/span&gt;,
+  &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;params&amp;quot;&lt;/span&gt;: {
+    &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;message&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Please confirm the booking for your Barcelona trip:&amp;quot;&lt;/span&gt;,
+    &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;schema&amp;quot;&lt;/span&gt;: {
+      &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;object&amp;quot;&lt;/span&gt;,
+      &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;properties&amp;quot;&lt;/span&gt;: {
+        &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;confirmBooking&amp;quot;&lt;/span&gt;: { &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;boolean&amp;quot;&lt;/span&gt; },
+        &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;seatPreference&amp;quot;&lt;/span&gt;: {
+          &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;string&amp;quot;&lt;/span&gt;,
+          &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;enum&amp;quot;&lt;/span&gt;: [&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;window&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;aisle&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;no preference&amp;quot;&lt;/span&gt;]
+        },
+        &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;roomType&amp;quot;&lt;/span&gt;: {
+          &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;type&amp;quot;&lt;/span&gt;: &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;string&amp;quot;&lt;/span&gt;,
+          &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;enum&amp;quot;&lt;/span&gt;: [&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;sea view&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;city view&amp;quot;&lt;/span&gt;]
+        }
+      },
+      &lt;span class=&#34;hljs-attr&#34;&gt;&amp;quot;required&amp;quot;&lt;/span&gt;: [&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;confirmBooking&amp;quot;&lt;/span&gt;]
+    }
+  }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;hr&gt;
+&lt;h3 id=&#34;3-Overall-Communication-Structure&#34;&gt;&lt;a href=&#34;#3-Overall-Communication-Structure&#34; class=&#34;headerlink&#34; title=&#34;(3) Overall Communication Structure&#34;&gt;&lt;/a&gt;(3) Overall Communication Structure&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2025/09/02/romi0x/MCP_Part2_en/image2.png&#34; alt=&#34;&amp;#xBCF8;&amp;#xC778;&amp;#xC81C;&amp;#xC791;&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The &lt;strong&gt;User&lt;/strong&gt; interacts with the AI model through a host application (e.g., Claude, a GPT-based IDE, etc.).&lt;br&gt;The &lt;strong&gt;AI Model (Host)&lt;/strong&gt; interprets the user&amp;#x2019;s request and decides what tasks are needed.&lt;br&gt;The &lt;strong&gt;MCP Client (Client)&lt;/strong&gt; acts as an intermediary between the Host and the MCP Server.&lt;br&gt;All communication is done in JSON-RPC format, and the client manages the connection with the server while handling user approval, security control, and model call delegation (sampling).&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The &lt;strong&gt;MCP Server (Server)&lt;/strong&gt; provides the actual functionality. The server exposes three core building blocks:&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Tool&lt;/strong&gt;: Specific actions that the AI can execute (e.g., search for flights, send an email, add a calendar event).&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Resource&lt;/strong&gt;: Context data provided to the AI (e.g., files, calendars, weather information).&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Prompt&lt;/strong&gt;: A structured interaction template that the user can reuse (e.g., &amp;#x201C;Plan a vacation for me&amp;#x201D;).&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Through this structure, MCP allows AI models to access external data and tools safely and consistently, and it provides a trust-based environment where the user can directly approve and control all actions.&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;This research article has covered MCP in more detail!&lt;/p&gt;
+&lt;p&gt;I think it would be much clearer if I could actually use it!&lt;/p&gt;
+&lt;p&gt;Here is a tutorial to easily use MCP, which would be great to check out together~&lt;/p&gt;
+&lt;h3 id=&#34;Ref&#34;&gt;&lt;a href=&#34;#Ref&#34; class=&#34;headerlink&#34; title=&#34;Ref&#34;&gt;&lt;/a&gt;Ref&lt;/h3&gt;&lt;p&gt;&lt;a href=&#34;https://modelcontextprotocol.io/docs/getting-started/intro&#34;&gt;https://modelcontextprotocol.io/docs/getting-started/intro&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2025/09/02/romi0x/MCP_Part2_en/index.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2025/09/02/romi0x/mcp_part2_en/">
+
+  <title>[Research] MCP (Model Context Protocol) Part 2 (en) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2025-09-02 17:00" pubdate>
+      2025년 9월 2일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      1.9k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      37
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Research] MCP (Model Context Protocol) Part 2 (en)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p>Hello! This is romi0x~</p>
+<p>Following up on the last article, this is Part 2 of the MCP series~</p>
+<p>In the previous article, we covered the concept of MCP, its background, basic structure, and adoption cases. In this article, I&#x2019;ve focused on how MCP works internally.</p>
+<h3 id="Core-Components-of-MCP-Host-Client-Server"><a href="#Core-Components-of-MCP-Host-Client-Server" class="headerlink" title="Core Components of MCP (Host / Client / Server)"></a>Core Components of MCP (Host / Client / Server)</h3><p>As mentioned in the last article, MCP is a protocol that allows various LLMs to define context objects and exchange them in a standardized way. I also briefly introduced the simple working mechanism of MCP in the previous article!</p>
+<p>The components were added as an <strong>MCP Host, an MCP Client, and an MCP Server.</strong> Now, let&#x2019;s examine exactly how these components operate and what their structure is.</p>
+<p>A simple summary of the three components is as follows:</p>
+<div class="table-container">
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Description</th>
+<th>Examples</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>MCP Server</strong></td>
+<td>The backend that holds actual resources</td>
+<td>Google Drive MCP, GitHub MCP, etc.</td>
+</tr>
+<tr>
+<td><strong>MCP Client</strong></td>
+<td>An intermediary for communication between Host and Server</td>
+<td>OpenAI&#x2019;s Function Router, etc.</td>
+</tr>
+<tr>
+<td><strong>MCP Host</strong></td>
+<td>An LLM or LLM app (Claude, GPT, etc.)</td>
+<td>Claude Desktop, AI IDE</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Let&#x2019;s break down each of these components!</p>
+<h3 id="1-MCP-Server"><a href="#1-MCP-Server" class="headerlink" title="(1) MCP Server"></a>(1) MCP Server</h3><p>The <strong>MCP Server</strong> is a backend component that provides functionality to enable AI applications to connect with and operate in the external world. This server offers specialized functions for specific domains, such as file systems, email, travel itineraries, and databases.</p>
+<p>For example, there can be a file system server for document management, an email server for message processing, and a travel server for trip planning.</p>
+<p>Through the MCP server, an AI model can access resources, run tools, and perform various actions according to a specified interface.</p>
+<p>This structure extends the LLM beyond a simple language model into an environment that can function like an app.</p>
+<p>The MCP server provides its functionality through three main components: <strong>Tools</strong>, <strong>Resources</strong>, and <strong>Prompts</strong>.</p>
+<div class="table-container">
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Purpose</th>
+<th>Controller</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Tool</strong></td>
+<td>Actions the model can perform</td>
+<td>Model</td>
+<td>Search for flights, send emails, add calendar events</td>
+</tr>
+<tr>
+<td><strong>Resource</strong></td>
+<td>Provides context data</td>
+<td>Application</td>
+<td>Calendars, documents, travel history, weather data</td>
+</tr>
+<tr>
+<td><strong>Prompt</strong></td>
+<td>Provides interaction templates</td>
+<td>User</td>
+<td>&#x201C;Plan a vacation for me,&#x201D; &#x201C;Summarize this meeting&#x201D;</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Each element follows a standardized schema and URI structure and communicates via JSON-RPC.</p>
+<h3 id="1-1-Tools-Actions-executed-by-AI"><a href="#1-1-Tools-Actions-executed-by-AI" class="headerlink" title="(1-1) Tools: Actions executed by AI"></a>(1-1) Tools: Actions executed by AI</h3><p>A <strong>Tool</strong> is an executable function that an AI model calls to perform tasks in the external world.</p>
+<p>For example, actions like searching for flights, sending an email, or adding a calendar event can all be implemented as an MCP Tool.</p>
+<h3 id="Structure"><a href="#Structure" class="headerlink" title="Structure"></a>Structure</h3><p>Each Tool has a clearly defined input/output structure using <strong>JSON Schema</strong>.</p>
+<p>This helps the LLM generate accurate inputs without format errors when using a tool.</p>
+<pre><code class="hljs json">{
+  <span class="hljs-attr">&quot;name&quot;</span>: <span class="hljs-string">&quot;searchFlights&quot;</span>,
+  <span class="hljs-attr">&quot;description&quot;</span>: <span class="hljs-string">&quot;Search for available flights&quot;</span>,
+  <span class="hljs-attr">&quot;inputSchema&quot;</span>: {
+    <span class="hljs-attr">&quot;type&quot;</span>: <span class="hljs-string">&quot;object&quot;</span>,
+    <span class="hljs-attr">&quot;properties&quot;</span>: {
+      <span class="hljs-attr">&quot;origin&quot;</span>: { <span class="hljs-attr">&quot;type&quot;</span>: <span class="hljs-string">&quot;string&quot;</span> },
+      <span class="hljs-attr">&quot;destination&quot;</span>: { <span class="hljs-attr">&quot;type&quot;</span>: <span class="hljs-string">&quot;string&quot;</span> },
+      <span class="hljs-attr">&quot;date&quot;</span>: { <span class="hljs-attr">&quot;type&quot;</span>: <span class="hljs-string">&quot;string&quot;</span>, <span class="hljs-attr">&quot;format&quot;</span>: <span class="hljs-string">&quot;date&quot;</span> }
+    },
+    <span class="hljs-attr">&quot;required&quot;</span>: [<span class="hljs-string">&quot;origin&quot;</span>, <span class="hljs-string">&quot;destination&quot;</span>, <span class="hljs-string">&quot;date&quot;</span>]
+  }
+}</code></pre>
+<h3 id="Protocol-Methods"><a href="#Protocol-Methods" class="headerlink" title="Protocol Methods"></a>Protocol Methods</h3><div class="table-container">
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tools/list</code></td>
+<td>View the list of available tools</td>
+</tr>
+<tr>
+<td><code>tools/call</code></td>
+<td>Request to execute a specific tool</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Tool execution always requires the user&#x2019;s explicit approval. Before execution, the user can review the tool&#x2019;s description, input values, and expected results and decide whether to approve it. Automatic approval can also be set for trusted tools.</p>
+<h3 id="1-2-Resources-&#x2013;-Providing-Context-Data"><a href="#1-2-Resources-&#x2013;-Providing-Context-Data" class="headerlink" title="(1-2) Resources &#x2013; Providing Context Data"></a>(1-2) Resources &#x2013; Providing Context Data</h3><p>A <strong>Resource</strong> is an external data source provided in a format that an LLM can understand. It can be a document, calendar event, weather information, email, or a database record, and the model can accept and process it as context.</p>
+<h3 id="Structure-1"><a href="#Structure-1" class="headerlink" title="Structure"></a>Structure</h3><p>A Resource is identified by a unique URI, using schemes like <code>file://</code>, <code>calendar://</code>, or <code>travel://</code>. It also includes metadata such as MIME type, title, and description.</p>
+<pre><code class="hljs json">{
+  <span class="hljs-attr">&quot;uriTemplate&quot;</span>: <span class="hljs-string">&quot;weather://forecast/{city}/{date}&quot;</span>,
+  <span class="hljs-attr">&quot;name&quot;</span>: <span class="hljs-string">&quot;weather-forecast&quot;</span>,
+  <span class="hljs-attr">&quot;title&quot;</span>: <span class="hljs-string">&quot;Weather Forecast&quot;</span>,
+  <span class="hljs-attr">&quot;description&quot;</span>: <span class="hljs-string">&quot;Get weather forecast for any city and date&quot;</span>,
+  <span class="hljs-attr">&quot;mimeType&quot;</span>: <span class="hljs-string">&quot;application/json&quot;</span>
+}</code></pre>
+<h3 id="Protocol-Methods-1"><a href="#Protocol-Methods-1" class="headerlink" title="Protocol Methods"></a>Protocol Methods</h3><div class="table-container">
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>resources/list</code></td>
+<td>View available resources</td>
+</tr>
+<tr>
+<td><code>resources/templates/list</code></td>
+<td>View resource templates</td>
+</tr>
+<tr>
+<td><code>resources/read</code></td>
+<td>Read data from a specific resource</td>
+</tr>
+<tr>
+<td><code>resources/subscribe</code></td>
+<td>Subscribe to resource changes (optional)</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Resources can generally be explored through a file browser, search bar, or category filtering UI. The LLM can automatically load resources selected by the application, or the user can select them manually. The selected resources are passed to the AI as context for use in question-answering, analysis, etc.</p>
+<h3 id="1-3-Prompts-&#x2013;-Interaction-Templates"><a href="#1-3-Prompts-&#x2013;-Interaction-Templates" class="headerlink" title="(1-3) Prompts &#x2013; Interaction Templates"></a>(1-3) Prompts &#x2013; Interaction Templates</h3><p>A <strong>Prompt</strong> is a template that defines a standardized format for tasks users frequently perform, allowing them to be reused. Through a prompt, the model can receive more structured requests than natural language input and be guided toward a workflow appropriate for a specific domain.</p>
+<h3 id="Structure-2"><a href="#Structure-2" class="headerlink" title="Structure"></a>Structure</h3><pre><code class="hljs json">{
+  <span class="hljs-attr">&quot;name&quot;</span>: <span class="hljs-string">&quot;plan-vacation&quot;</span>,
+  <span class="hljs-attr">&quot;title&quot;</span>: <span class="hljs-string">&quot;Plan a vacation&quot;</span>,
+  <span class="hljs-attr">&quot;description&quot;</span>: <span class="hljs-string">&quot;Guide through vacation planning process&quot;</span>,
+  <span class="hljs-attr">&quot;arguments&quot;</span>: [
+    { <span class="hljs-attr">&quot;name&quot;</span>: <span class="hljs-string">&quot;destination&quot;</span>, <span class="hljs-attr">&quot;type&quot;</span>: <span class="hljs-string">&quot;string&quot;</span>, <span class="hljs-attr">&quot;required&quot;</span>: <span class="hljs-literal">true</span> },
+    { <span class="hljs-attr">&quot;name&quot;</span>: <span class="hljs-string">&quot;duration&quot;</span>, <span class="hljs-attr">&quot;type&quot;</span>: <span class="hljs-string">&quot;number&quot;</span> },
+    { <span class="hljs-attr">&quot;name&quot;</span>: <span class="hljs-string">&quot;budget&quot;</span>, <span class="hljs-attr">&quot;type&quot;</span>: <span class="hljs-string">&quot;number&quot;</span> },
+    { <span class="hljs-attr">&quot;name&quot;</span>: <span class="hljs-string">&quot;interests&quot;</span>, <span class="hljs-attr">&quot;type&quot;</span>: <span class="hljs-string">&quot;array&quot;</span>, <span class="hljs-attr">&quot;items&quot;</span>: { <span class="hljs-attr">&quot;type&quot;</span>: <span class="hljs-string">&quot;string&quot;</span> } }
+  ]
+}</code></pre>
+<h3 id="Protocol-Methods-2"><a href="#Protocol-Methods-2" class="headerlink" title="Protocol Methods"></a>Protocol Methods</h3><div class="table-container">
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>prompts/list</code></td>
+<td>View the list of available prompts</td>
+</tr>
+<tr>
+<td><code>prompts/get</code></td>
+<td>Get details of a specific prompt</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Users can execute a prompt via a slash command like <code>/plan-vacation</code> or a UI button. The prompt appears as a structured input form (text, numbers, dropdowns, etc.), and the entered values are passed directly to the model. This allows for consistent results, autocompletion, and workflow automation.</p>
+<hr>
+<h3 id="2-MCP-Client"><a href="#2-MCP-Client" class="headerlink" title="(2) MCP Client"></a>(2) MCP Client</h3><p>The <strong>MCP Client</strong> is a component created by host applications like Claude or AI IDEs to communicate with the MCP Server. In other words, it is not an object that the user directly sees or handles, but every server connection must pass through the client.</p>
+<p>Whether reading data from the server, executing a tool, or requesting additional information from the user, all requests must go through the client.</p>
+<h3 id="Why-the-MCP-Client-is-Important"><a href="#Why-the-MCP-Client-is-Important" class="headerlink" title="Why the MCP Client is Important"></a>Why the MCP Client is Important</h3><p>The most significant role of the MCP client is to prevent the server from directly accessing the LLM or the user&#x2019;s environment. All data access and tool execution are designed to go through an approval process in front of the user, allowing them to clearly see and control what tasks the AI is attempting.</p>
+<p>For potentially risky functions like file system access, the client establishes <strong>roots</strong> to set boundaries, restricting access to &#x201C;only up to here,&#x201D; ensuring safety. Additionally, when a server needs to call a model, it doesn&#x2019;t execute it directly; it delegates the task through the client, putting cost, security, and approval procedures all under user control.</p>
+<h3 id="Key-Features"><a href="#Key-Features" class="headerlink" title="Key Features"></a>Key Features</h3><div class="table-container">
+<table>
+<thead>
+<tr>
+<th>Feature Name</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Sampling</strong></td>
+<td>The server delegates AI model calls to the client</td>
+</tr>
+<tr>
+<td><strong>Roots</strong></td>
+<td>Defines the file system boundaries that the server can access</td>
+</tr>
+<tr>
+<td><strong>Elicitation</strong></td>
+<td>Supports the server&#x2019;s ability to request additional input from the user</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Let&#x2019;s look at each of the three key features.</p>
+<h3 id="2-1-Sampling-Delegating-Model-Calls"><a href="#2-1-Sampling-Delegating-Model-Calls" class="headerlink" title="(2-1) Sampling: Delegating Model Calls"></a>(2-1) Sampling: Delegating Model Calls</h3><p><strong>Sampling</strong> is a feature that allows the server to delegate AI model calls to the client, rather than directly calling the LLM API.</p>
+<h3 id="Example-Flow"><a href="#Example-Flow" class="headerlink" title="Example Flow"></a>Example Flow</h3><p><img src="/2025/09/02/romi0x/MCP_Part2_en/image.png" srcset="/img/loading.gif" alt="https://modelcontextprotocol.io/docs/learn/client-concepts"><br><a target="_blank" rel="external nofollow noopener noreferrer" href="https://modelcontextprotocol.io/docs/learn/client-concepts">https://modelcontextprotocol.io/docs/learn/client-concepts</a></p>
+<ol>
+<li>The server sends a request to the client, such as &#x201C;Please analyze this data.&#x201D;</li>
+<li>The client clearly shows the request to the user and asks for their approval.</li>
+<li>If the user approves, the client calls the LLM and sends the response back to the server.</li>
+</ol>
+<p>All responses are passed only after user review.</p>
+<h3 id="Sample-Request-Example"><a href="#Sample-Request-Example" class="headerlink" title="Sample Request Example"></a>Sample Request Example</h3><pre><code class="hljs json">{
+  <span class="hljs-attr">&quot;messages&quot;</span>: [
+    {
+      <span class="hljs-attr">&quot;role&quot;</span>: <span class="hljs-string">&quot;user&quot;</span>,
+      <span class="hljs-attr">&quot;content&quot;</span>: <span class="hljs-string">&quot;Analyze the following flight options and recommend the best choice...&quot;</span>
+    }
+  ],
+  <span class="hljs-attr">&quot;modelPreferences&quot;</span>: {
+    <span class="hljs-attr">&quot;hints&quot;</span>: [{ <span class="hljs-attr">&quot;name&quot;</span>: <span class="hljs-string">&quot;claude-3-5-sonnet&quot;</span> }],
+    <span class="hljs-attr">&quot;costPriority&quot;</span>: <span class="hljs-number">0.3</span>,
+    <span class="hljs-attr">&quot;speedPriority&quot;</span>: <span class="hljs-number">0.2</span>,
+    <span class="hljs-attr">&quot;intelligencePriority&quot;</span>: <span class="hljs-number">0.9</span>
+  },
+  <span class="hljs-attr">&quot;systemPrompt&quot;</span>: <span class="hljs-string">&quot;As a travel expert, please recommend flights&quot;</span>,
+  <span class="hljs-attr">&quot;maxTokens&quot;</span>: <span class="hljs-number">1500</span>
+}</code></pre>
+<h3 id="2-2-Roots-Setting-File-System-Boundaries"><a href="#2-2-Roots-Setting-File-System-Boundaries" class="headerlink" title="(2-2) Roots: Setting File System Boundaries"></a>(2-2) Roots: Setting File System Boundaries</h3><p><strong>Roots</strong> is a feature that defines the scope (directories) of the file system that the server can access. All access is configured with <code>file://</code> URIs, and the client explicitly communicates these boundaries to the server.</p>
+<h3 id="Sample-Request-Example-1"><a href="#Sample-Request-Example-1" class="headerlink" title="Sample Request Example"></a>Sample Request Example</h3><pre><code class="hljs json">{
+  <span class="hljs-attr">&quot;uri&quot;</span>: <span class="hljs-string">&quot;file:///Users/agent/travel-planning&quot;</span>,
+  <span class="hljs-attr">&quot;name&quot;</span>: <span class="hljs-string">&quot;Travel Planning Workspace&quot;</span>
+}</code></pre>
+<p>The server can only access files within this root; external paths are blocked according to client policy. When a user opens a folder, the client can automatically update the roots and notify the server with a <code>roots/list_changed</code> event.</p>
+<h3 id="2-3-Elicitation-Requesting-Additional-User-Input"><a href="#2-3-Elicitation-Requesting-Additional-User-Input" class="headerlink" title="(2-3) Elicitation: Requesting Additional User Input"></a>(2-3) Elicitation: Requesting Additional User Input</h3><p><strong>Elicitation</strong> is a feature that allows the server to dynamically request information from the user during a task.</p>
+<h3 id="Usage-Flow"><a href="#Usage-Flow" class="headerlink" title="Usage Flow"></a>Usage Flow</h3><p><img src="/2025/09/02/romi0x/MCP_Part2_en/image1.png" srcset="/img/loading.gif" alt="https://modelcontextprotocol.io/docs/learn/client-concepts"></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://modelcontextprotocol.io/docs/learn/client-concepts">https://modelcontextprotocol.io/docs/learn/client-concepts</a></p>
+<ol>
+<li>The server creates a request for user input.</li>
+<li>The client provides a message and input form via the UI.</li>
+<li>Once the user completes the input, the information is sent to the server, and the task continues.</li>
+</ol>
+<h3 id="Sample-Request-Example-2"><a href="#Sample-Request-Example-2" class="headerlink" title="Sample Request Example"></a>Sample Request Example</h3><pre><code class="hljs json">{
+  <span class="hljs-attr">&quot;method&quot;</span>: <span class="hljs-string">&quot;elicitation/requestInput&quot;</span>,
+  <span class="hljs-attr">&quot;params&quot;</span>: {
+    <span class="hljs-attr">&quot;message&quot;</span>: <span class="hljs-string">&quot;Please confirm the booking for your Barcelona trip:&quot;</span>,
+    <span class="hljs-attr">&quot;schema&quot;</span>: {
+      <span class="hljs-attr">&quot;type&quot;</span>: <span class="hljs-string">&quot;object&quot;</span>,
+      <span class="hljs-attr">&quot;properties&quot;</span>: {
+        <span class="hljs-attr">&quot;confirmBooking&quot;</span>: { <span class="hljs-attr">&quot;type&quot;</span>: <span class="hljs-string">&quot;boolean&quot;</span> },
+        <span class="hljs-attr">&quot;seatPreference&quot;</span>: {
+          <span class="hljs-attr">&quot;type&quot;</span>: <span class="hljs-string">&quot;string&quot;</span>,
+          <span class="hljs-attr">&quot;enum&quot;</span>: [<span class="hljs-string">&quot;window&quot;</span>, <span class="hljs-string">&quot;aisle&quot;</span>, <span class="hljs-string">&quot;no preference&quot;</span>]
+        },
+        <span class="hljs-attr">&quot;roomType&quot;</span>: {
+          <span class="hljs-attr">&quot;type&quot;</span>: <span class="hljs-string">&quot;string&quot;</span>,
+          <span class="hljs-attr">&quot;enum&quot;</span>: [<span class="hljs-string">&quot;sea view&quot;</span>, <span class="hljs-string">&quot;city view&quot;</span>]
+        }
+      },
+      <span class="hljs-attr">&quot;required&quot;</span>: [<span class="hljs-string">&quot;confirmBooking&quot;</span>]
+    }
+  }
+}</code></pre>
+<hr>
+<h3 id="3-Overall-Communication-Structure"><a href="#3-Overall-Communication-Structure" class="headerlink" title="(3) Overall Communication Structure"></a>(3) Overall Communication Structure</h3><p><img src="/2025/09/02/romi0x/MCP_Part2_en/image2.png" srcset="/img/loading.gif" alt="&#xBCF8;&#xC778;&#xC81C;&#xC791;"></p>
+<p>The <strong>User</strong> interacts with the AI model through a host application (e.g., Claude, a GPT-based IDE, etc.).<br>The <strong>AI Model (Host)</strong> interprets the user&#x2019;s request and decides what tasks are needed.<br>The <strong>MCP Client (Client)</strong> acts as an intermediary between the Host and the MCP Server.<br>All communication is done in JSON-RPC format, and the client manages the connection with the server while handling user approval, security control, and model call delegation (sampling).</p>
+<ul>
+<li>The <strong>MCP Server (Server)</strong> provides the actual functionality. The server exposes three core building blocks:<ul>
+<li><strong>Tool</strong>: Specific actions that the AI can execute (e.g., search for flights, send an email, add a calendar event).</li>
+<li><strong>Resource</strong>: Context data provided to the AI (e.g., files, calendars, weather information).</li>
+<li><strong>Prompt</strong>: A structured interaction template that the user can reuse (e.g., &#x201C;Plan a vacation for me&#x201D;).</li>
+</ul>
+</li>
+</ul>
+<p>Through this structure, MCP allows AI models to access external data and tools safely and consistently, and it provides a trust-based environment where the user can directly approve and control all actions.</p>
+<hr>
+<p>This research article has covered MCP in more detail!</p>
+<p>I think it would be much clearer if I could actually use it!</p>
+<p>Here is a tutorial to easily use MCP, which would be great to check out together~</p>
+<h3 id="Ref"><a href="#Ref" class="headerlink" title="Ref"></a>Ref</h3><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://modelcontextprotocol.io/docs/getting-started/intro">https://modelcontextprotocol.io/docs/getting-started/intro</a></p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/research/">research</a>
+                  
+                  <a class="hover-with-bg" href="/tags/mcp/">mcp</a>
+                  
+                  <a class="hover-with-bg" href="/tags/romi0x/">romi0x</a>
+                  
+                  <a class="hover-with-bg" href="/tags/llm/">llm</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_romi0x.jpg" srcset="/img/loading.gif" alt="romi0x">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">romi0x</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/romi0x">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2025/09/03/clalxk/CVE-2025-54309/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2025-54309: CrushFTP의 AS2 검증 취약점으로 인한 관리자 권한 탈취</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2025/09/02/romi0x/MCP_Part2_ko/">
+                    <span class="hidden-mobile">[Research] MCP (Model Context Protocol) Part 2 (ko)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            <!-- Embed Section -->
+            <div style="width: 100%; height: 210px; margin-bottom: 50px; overflow: hidden;">
+              <iframe src="https://maily.so/hackyboiz/embed?src=embed" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+            </div>            
+
+            
+            <!-- Comments -->
+            <article class="comments" id="comments">
+              
+              
+  <div class="disqus" style="width:100%">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+      var disqus_config = function () {
+        this.page.url = 'https://hackyboiz.github.io/2025/09/02/romi0x/MCP_Part2_en/';
+        this.page.identifier = '/2025/09/02/romi0x/MCP_Part2_en/';
+      };
+      function loadDisqus() {
+        (function () {
+          var d = document,
+            s = d.createElement('script');
+          s.src = '//' + 'hackyboiz' + '.disqus.com/embed.js';
+          s.setAttribute('data-timestamp', new Date());
+          (d.head || d.body).appendChild(s);
+        })();
+      }
+      waitElementVisible('disqus_thread', loadDisqus);
+    </script>
+    <noscript>Please enable JavaScript to view the
+      <a target="_blank" href="https://disqus.com/?ref_noscript" rel="external nofollow noopener noreferrer">comments powered by Disqus.</a>
+    </noscript>
+  </div>
+
+
+            </article>
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Research] MCP (Model Context Protocol) Part 2 (en)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
