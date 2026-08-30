@@ -1,0 +1,1786 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;Hello. This is banda from Hackyboiz.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/08/banda/Wipeload_step7/EN/image.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Previous articles&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/06/06/OUYA77/Wipeload_step1/en/&#34;&gt;https://hackyboiz.github.io/2026/06/06/OUYA77/Wipeload_step1/en/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/06/21/ji9umi/Wipeload_step2/en/&#34;&gt;https://hackyboiz.github.io/2026/06/21/ji9umi/Wipeload_step2/en/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/06/26/ji9umi/Wipeload_step3/en/&#34;&gt;https://hackyboiz.github.io/2026/06/26/ji9umi/Wipeload_step3/en/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/07/13/OUYA77/Wipeload_step4/en/&#34;&gt;https://hackyboiz.github.io/2026/07/13/OUYA77/Wipeload_step4/en/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/07/19/gongjae/Wipeload_step5/EN/&#34;&gt;https://hackyboiz.github.io/2026/07/19/gongjae/Wipeload_step5/EN/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/08/01/gongjae/Wipeload_step6/EN/&#34;&gt;https://hackyboiz.github.io/2026/08/01/gongjae/Wipeload_step6/EN/&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Previously, thanks to the great work of Master Sifu, it was possible to use the WASM trick to escape the V8 Sandbox and execute native code, and then escape to the Chrome Sandbox through ALPC UAF and execute code with Medium Integrity permissions. The final boundary from a chaining perspective would be the gap between UserMode and KernelMode that remains even after being moved to the Medium IL execution context.&lt;/p&gt;
+&lt;p&gt;In steps 7 and 8, we will complete Kernel EoP, the final gateway to chaining. In this 7th step, we will look at the MDL data structure and operation, which are the core of CVE-2023-29360, and in the next 8th step, we will use this to complete the actual Kernel EoP, so please look forward to it! Will his disciple Po be able to follow in his master&amp;#x2019;s footsteps and reach SYSTEM authority? Let&amp;#x2019;s find out together.&lt;/p&gt;
+&lt;h2 id=&#34;1-Memory-Descriptor-List-MDL-Overview&#34;&gt;&lt;a href=&#34;#1-Memory-Descriptor-List-MDL-Overview&#34; class=&#34;headerlink&#34; title=&#34;1. Memory Descriptor List (MDL) Overview&#34;&gt;&lt;/a&gt;&lt;strong&gt;1. Memory Descriptor List (MDL) Overview&lt;/strong&gt;&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2026/08/08/banda/Wipeload_step7/EN/image 1.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;MDL is a kernel structure that contains information about which virtual address (VA) buffer in the kernel is actually composed of which physical pages.&lt;/p&gt;
+&lt;p&gt;In general, it is difficult for kernel mode drivers to directly access user mode memory. This is because user mode buffer addresses cannot be safely stored and used with simple pointer values. When the kernel driver accesses the user mode buffer, the following problems occur.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;User-mode virtual addresses are interpreted differently for each process. If the driver stores only the user buffer pointer value of the current process and later accesses it from the context of another process, it may interpret the wrong process address space or refer to the wrong memory.&lt;/li&gt;
+&lt;li&gt;User pages are not always fixed in RAM and can be moved to disk by the OS. If the driver stores only the user buffer pointer and then accesses it, a page fault may occur because the page is not in memory.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Therefore, there are two main ways the driver handles the user buffer. One is the method of copying the user mode buffer contents to the kernel buffer and using it, and the other is the MDL method, which we will look at now.&lt;/p&gt;
+&lt;p&gt;&lt;br&gt;&lt;/p&gt;
+&lt;h4 id=&#34;1-1-General-case-when-not-using-MDL&#34;&gt;&lt;a href=&#34;#1-1-General-case-when-not-using-MDL&#34; class=&#34;headerlink&#34; title=&#34;1.1 General case (when not using MDL)&#34;&gt;&lt;/a&gt;&lt;strong&gt;1.1 General case (when not using MDL)&lt;/strong&gt;&lt;/h4&gt;&lt;p&gt;&lt;img src=&#34;/2026/08/08/banda/Wipeload_step7/EN/image 2.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;In general cases, that is, when MDL is not used directly, the user buffer is copied to the kernel buffer for processing. In IOCTL, I/O Manager usually uses &lt;code&gt;METHOD_BUFFERED&lt;/code&gt; to create a kernel buffer called &lt;code&gt;SystemBuffer&lt;/code&gt; and copy data.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;ProbeForRead(userBuf, size, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;);
+RtlCopyMemory(kernelBuf, userBuf, size);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Alternatively, when a user pointer is passed directly as with &lt;code&gt;METHOD_NEITHER&lt;/code&gt;, the driver can validate the user address with &lt;code&gt;ProbeForRead&lt;/code&gt; and &lt;code&gt;RtlCopyMemory&lt;/code&gt; before copying it to a kernel buffer. Rather than continuously referencing the user buffer directly, these approaches bring the required data into kernel memory before processing it.&lt;/p&gt;
+&lt;p&gt;&lt;br&gt;&lt;/p&gt;
+&lt;h4 id=&#34;1-2-When-to-use-MDL&#34;&gt;&lt;a href=&#34;#1-2-When-to-use-MDL&#34; class=&#34;headerlink&#34; title=&#34;1.2 When to use MDL&#34;&gt;&lt;/a&gt;1.2 When to use MDL&lt;/h4&gt;&lt;p&gt;&lt;img src=&#34;/2026/08/08/banda/Wipeload_step7/EN/image 3.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;In the case of MDL, unlike the previous case, rather than copying the contents of the user buffer to the kernel buffer, copying is avoided by allowing the driver to directly use the RAM physical page to which the user buffer is actually mapped.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;User VA: &lt;span class=&#34;hljs-number&#34;&gt;0x000001A2F0001000&lt;/span&gt;
+-&amp;gt; Physical pages: PFN 1234, PFN 1235, PFN 1236&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Looking at the code above, when a buffer is created with &lt;code&gt;malloc&lt;/code&gt;, &lt;code&gt;VirtualAlloc&lt;/code&gt;, etc. through a user program, it is internally connected to several physical memory pages. MDL is a structure that records information that this user buffer consists of PFN 1234, PFN 1235, and PFN 1236 pages, as well as the starting address and size of the buffer.&lt;/p&gt;
+&lt;p&gt;In other words, MDL is not a structure that copies and stores the contents of the user buffer, but corresponds to metadata to describe the physical pages that make up the buffer. Afterwards, the driver can lock the page based on this MDL and, if necessary, remap it to the kernel address space.&lt;/p&gt;
+&lt;p&gt;&lt;br&gt;&lt;/p&gt;
+&lt;h4 id=&#34;1-3-MDL-creation-flow&#34;&gt;&lt;a href=&#34;#1-3-MDL-creation-flow&#34; class=&#34;headerlink&#34; title=&#34;1.3 MDL creation flow&#34;&gt;&lt;/a&gt;1.3 MDL creation flow&lt;/h4&gt;&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;User mode buffer allocation&lt;/strong&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;BYTE *buf = VirtualAlloc(NULL, &lt;span class=&#34;hljs-number&#34;&gt;0x1000&lt;/span&gt;, MEM_COMMIT, PAGE_READWRITE);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Looking at the MDL creation flow, let&amp;#x2019;s first assume that the user mode program allocates a buffer to be delivered to the driver through VirtualAlloc in the virtual address space as shown above. buf will contain user mode VA, right?&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Create MDL: IoAllocateMdl&lt;/strong&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;PMDL &lt;span class=&#34;hljs-title&#34;&gt;IoAllocateMdl&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional]      __drv_aliasesMem PVOID VirtualAddress,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]                ULONG                  Length,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]                BOOLEAN                SecondaryBuffer,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]                BOOLEAN                ChargeQuota,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, out, optional] PIRP                   Irp&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;)&lt;/span&gt;&lt;/span&gt;;
+
+PMDL mdl = IoAllocateMdl(userBuffer, bufferSize, FALSE, FALSE, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Afterwards, &lt;code&gt;IoAllocateMdl()&lt;/code&gt; is performed to create an MDL kernel structure containing metadata and PFN array space for a specific virtual address range. In particular, immediately after executing &lt;code&gt;IoAllocateMdl()&lt;/code&gt;, only the PFN array space has been created and the PFN array has not yet been filled.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;typedef&lt;/span&gt; &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; _&lt;span class=&#34;hljs-title&#34;&gt;MDL&lt;/span&gt; {&lt;/span&gt;
+  &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; _&lt;span class=&#34;hljs-title&#34;&gt;MDL&lt;/span&gt;      *&lt;span class=&#34;hljs-title&#34;&gt;Next&lt;/span&gt;;&lt;/span&gt;
+  CSHORT           Size;
+  CSHORT           MdlFlags;
+  &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; _&lt;span class=&#34;hljs-title&#34;&gt;EPROCESS&lt;/span&gt; *&lt;span class=&#34;hljs-title&#34;&gt;Process&lt;/span&gt;;&lt;/span&gt;
+  PVOID            MappedSystemVa;
+  PVOID            StartVa;
+  ULONG            ByteCount;
+  ULONG            ByteOffset;
+} MDL, *PMDL;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The MDL structure created with &lt;code&gt;IoAllocateMdl()&lt;/code&gt; contains key fields to describe the buffer range. &lt;code&gt;StartVa&lt;/code&gt; is the starting virtual address of the first page containing the buffer, &lt;code&gt;ByteOffset&lt;/code&gt; is the in-page offset of the buffer start position, and &lt;code&gt;ByteCount&lt;/code&gt; is the buffer length. &lt;code&gt;MdlFlags&lt;/code&gt; is a flag field that indicates the current state of the MDL, such as whether the page is locked or whether the system address is mapped.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Physical Page Locking: MmProbeAndLockPages&lt;/strong&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;MmProbeAndLockPages&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, out] PMDL            MemoryDescriptorList,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]      KPROCESSOR_MODE AccessMode,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]      LOCK_OPERATION  Operation&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;)&lt;/span&gt;&lt;/span&gt;;
+
+MmProbeAndLockPages(mdl, UserMode, IoReadAccess);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;After creating an MDL structure through &lt;code&gt;IoAllocateMdl()&lt;/code&gt;, the process of fixing physical pages through &lt;code&gt;MmProbeAndLockPages&lt;/code&gt; generally follows. Because the user-mode buffer can be paged out at any time, the process of fixing the page in physical memory is necessary before the kernel accesses it. Through the above locking process, all pages pointed to by the MDL reside in RAM, the PFN array is filled inside the MDL, and the driver can then safely access the memory based on this MDL.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;__try {
+    MmProbeAndLockPages(
+        mdl,
+        UserMode,
+        IoReadAccess
+    );
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+    status = GetExceptionCode();
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;However, you can&amp;#x2019;t just trust the address provided by the user and lock the page, right? In a typical driver, an exception may occur while processing a buffer with an incorrect address or incorrect permissions, so the call to &lt;code&gt;MmProbeAndLockPage()&lt;/code&gt; as in the code above must be performed within the scope of exception handling.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;MmProbeAndLockPages()&lt;/code&gt; checks whether the passed virtual address is actually accessible and whether it has read/write permissions appropriate for &lt;code&gt;Operation&lt;/code&gt;. If verification is successful, the physical page in the corresponding address range is locked and the PFN array of the MDL is filled with the actual page number.&lt;/p&gt;
+&lt;p&gt;In other words, this function not only fixes the page in RAM, but is also an important verification point to check whether the address passed by the user is appropriate for MDL processing.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Kernel VA Remapping: MmMapLockedPagesSpecifyCache&lt;/strong&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;PVOID &lt;span class=&#34;hljs-title&#34;&gt;MmMapLockedPagesSpecifyCache&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;    PMDL MemoryDescriptorList,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;    KPROCESSOR_MODE AccessMode,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;    MEMORY_CACHING_TYPE CacheType,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;    PVOID RequestedAddress,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;    ULONG BugCheckOnFailure,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;    ULONG Priority&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;)&lt;/span&gt;&lt;/span&gt;;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;If you perform &lt;code&gt;MmProbeAndLockPages()&lt;/code&gt; earlier, what physical pages the user buffer actually consists of are recorded in the MDL, and the pages are locked to prevent them from being removed from RAM. Afterwards, locked physical pages recorded in MDL are mapped to new virtual addresses through &lt;code&gt;MmMapLockedPagesSpecifyCache&lt;/code&gt;. Here, based on the case where &lt;code&gt;AccessMode&lt;/code&gt; is &lt;code&gt;KernelMode&lt;/code&gt;, we will look at the flow of remapping the Physical Pages indicated by the MDL&amp;#x2019;s PFN array to the Kernel VA in the kernel address space.&lt;/p&gt;
+&lt;p&gt;The important thing is that during this process, the entire user buffer is not copied to a separate kernel buffer in advance. The driver obtains a Kernel VA that points to the same Physical Page used by the existing user buffer, and can refer to the contents of the original buffer through this.&lt;/p&gt;
+&lt;p&gt;For example, if the driver needs to move the contents to another buffer or device I/O area, the mapped Kernel VA can be used as the source of &lt;code&gt;RtlCopyMemory()&lt;/code&gt; as shown below.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;RtlCopyMemory(dst, kernelVa, length);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;As shown above, the driver can use the mapped &lt;code&gt;KernelVa&lt;/code&gt; as a source to copy the data required for device I/O processing to another buffer.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;MDL Unmap: MmUnmapLockedPages&lt;/strong&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;MmUnmapLockedPages(kernelVa, mdl);
+MmUnlockPages(mdl);
+IoFreeMdl(mdl);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;After creating and using the MDL through the above process, the lock must be unlocked and freed, and it must be released using the above process in reverse order. First, remove the kernel virtual address mapping created with &lt;code&gt;MmMapLockedPagesSpecifyCache()&lt;/code&gt; via &lt;code&gt;MmUnmapLockedPages(kernelVA, mdl)&lt;/code&gt;. Afterwards, unlock the physical pages fixed with &lt;code&gt;MmProbeAndLockPages()&lt;/code&gt; through &lt;code&gt;MmUnlockPages(mdl)&lt;/code&gt;. Finally, through &lt;code&gt;IoFreeMdl(mdl)&lt;/code&gt;, the MDL structure allocated with &lt;code&gt;IoAllocateMdl()&lt;/code&gt; is freed, and the metadata and PFN array space contained in the MDL are returned.&lt;/p&gt;
+&lt;p&gt;In other words, the MDL organizing process proceeds in the following order: Unmapping &amp;#x2192; Page Unlock &amp;#x2192; MDL Unlock. If the MDL is released first while the mapping remains, the Kernel VA can continue to refer to the PFN information of the already returned MDL, and if the Page Lock remains, the corresponding Physical Page is unnecessarily locked in RAM.&lt;/p&gt;
+&lt;h2 id=&#34;2-MDL-ABUSE-CASE-STUDY&#34;&gt;&lt;a href=&#34;#2-MDL-ABUSE-CASE-STUDY&#34; class=&#34;headerlink&#34; title=&#34;2. MDL ABUSE CASE STUDY&#34;&gt;&lt;/a&gt;2. MDL ABUSE CASE STUDY&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2026/08/08/banda/Wipeload_step7/EN/image 4.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;As seen earlier, the driver can lock the physical pages that make up the user buffer through MDL and map those pages to new virtual addresses as needed! In particular, when Locked MDL is mapped to user mode, a new User VA is created in the user process address space that points to the same physical page as the existing buffer.&lt;/p&gt;
+&lt;p&gt;So far, you have looked at the lifetime of MDL being created, mapped, and then released. After reading the article, do you not see any points where vulnerabilities may occur if something is mismanaged in this process? you&amp;#x2019;re right. MDL is created based on the buffer passed by the user, locks the physical page, and maps it to a different virtual address space. Therefore, if you mishandle which frame the generated MDL is connected to, when the mapped address and MDL are released, and whether an unlocked MDL can enter the mapping path, it can lead to strong memory corruption primitives.&lt;/p&gt;
+&lt;p&gt;His teammates have arrived for his final training before his heated bout with Tai Lung. Let&amp;#x2019;s check what type of vulnerability it can lead to when MDL management is incorrect!&lt;/p&gt;
+&lt;p&gt;Now, let&amp;#x2019;s examine the Case 1 Lifetime Bug MDL vulnerability I previously discovered, along with past MDL-related CVEs, to see the different forms MDL Abuse can take! Case 2&amp;#x2019;s CVE-2024-38237 and CVE-2025-21375 are MDL Mismatch cases where the connection between the Frame Header and the MDL is mismatched. Case 3&amp;#x2019;s CVE-2024-38238 is a Forgotten Lock case in which MDL is passed to the mapping path without being locked. For Case 2 and Case 3, we referred to the &lt;a href=&#34;https://devco.re/blog/2025/05/17/frame-by-frame-kernel-streaming-keeps-giving-vulnerabilities-en/&#34;&gt;DEVCORE case&lt;/a&gt; to classify MDL vulnerability types.&lt;/p&gt;
+&lt;p&gt;&lt;br&gt;&lt;/p&gt;
+&lt;h3 id=&#34;2-1-CASE-MDL-Lifetime-Bug-Pattern&#34;&gt;&lt;a href=&#34;#2-1-CASE-MDL-Lifetime-Bug-Pattern&#34; class=&#34;headerlink&#34; title=&#34;2.1 CASE: MDL Lifetime Bug Pattern&#34;&gt;&lt;/a&gt;2.1 CASE: MDL Lifetime Bug Pattern&lt;/h3&gt;&lt;p&gt;First, the first type of vulnerability is a Double Free vulnerability that occurs when the Lifetime of an MDL object is processed without synchronization. Broadly speaking, it is a race condition type of vulnerability that can appear in the process of MDL being released and reused.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/08/banda/Wipeload_step7/EN/image 5.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;If you check the MDL Register/Unregister Flow of the vulnerable driver, the Register request stores the VA mapped to the user and the MDL pointer describing the VA in the internal slot table. Afterwards, the Unregister request operated as a flow to find a slot based on the VA returned by the user and free the corresponding MDL.&lt;/p&gt;
+&lt;p&gt;Therefore, in the normal flow, unregister had to be performed only once for one mapped VA. In other words, when a specific slot is selected for unregister, that slot must be marked as no longer valid, and even if an unregister request is made again to the same mapped VA, the same MDL point must not be freed again.&lt;/p&gt;
+&lt;p&gt;In particular, if there is no synchronization between the time of invalidating this slot and the process of freeing the MDL, two requests may simultaneously confirm that the same slot is still valid. As a result, it may lead to a double free where the same MDL is each freed.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;slot.flag = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;; &lt;span class=&#34;hljs-comment&#34;&gt;// valid registration entry &lt;/span&gt;
+slot.mapped_va = &lt;span class=&#34;hljs-number&#34;&gt;0x12340000&lt;/span&gt;; &lt;span class=&#34;hljs-comment&#34;&gt;// mapped VA returned to user mode &lt;/span&gt;
+slot.mdl = &lt;span class=&#34;hljs-number&#34;&gt;0xffff&lt;/span&gt;...; &lt;span class=&#34;hljs-comment&#34;&gt;// MDL pointer describing this mapping&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;For example, each slot stores validity as shown above, the Mapped VA returned to the user, and an MDL Pointer that describes the mapping. At this time, &lt;code&gt;slot.flag == 1&lt;/code&gt; means that the slot is a valid registration entry, and &lt;code&gt;slot.flag == 0&lt;/code&gt; indicates a slot that has already been released or can no longer be used.&lt;/p&gt;
+&lt;p&gt;If a specific slot is selected as an unregister target, the driver must first clear the slot&amp;#x2019;s flag to &amp;#x2018;0&amp;#x2019; so that the slot can no longer be used, and release the mapping using the mapped VA and MDL pointer stored in the same slot. Even if an Unregister request is made again to the same VA later, a slot that has already been invalidated must not be selected again.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/08/banda/Wipeload_step7/EN/image 6.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;The problem is that if you check the code of the vulnerable function, you can see that the slot search, slot flag clear, and MDL unmap/free processes are not protected by a single lock. In other words, if another thread sends an Unregister request to the same VA between checking whether &lt;code&gt;slot.flag == 1&lt;/code&gt; and changing it to &lt;code&gt;slot.flag = 0&lt;/code&gt;, both threads may decide that the same Slot is still valid.&amp;#x1F631; Even if one thread invalidates the Slot and releases the MDL, the other thread may perform the Unmap and Free process again using the same MDL pointer that has already been secured.&lt;/p&gt;
+&lt;p&gt;This can result in a double free, where one MDL is freed twice.&lt;/p&gt;
+&lt;p&gt;Thread A:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;ol&gt;
+&lt;li&gt;Search for slot matching mapped VA&lt;/li&gt;
+&lt;li&gt;Change slot.flag = 0&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;MmUnmapLockedPages()&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;IoFreeMdl()&lt;/code&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Thread B:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;ol&gt;
+&lt;li&gt;Unregister request with same mapped VA&lt;/li&gt;
+&lt;li&gt;Check &lt;code&gt;slot.flag == 0&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;slot search failed&lt;/li&gt;
+&lt;li&gt;Does not enter MDL free path&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;First, let&amp;#x2019;s take a look at the normally synchronized Unregister flow. Since the slot is invalidated after Thread A selects it, even if Thread B searches for the same slot later, it cannot use the slot by checking &lt;code&gt;flag == 0&lt;/code&gt;. In other words, Unregister and Free are performed only once for one MDL.&lt;/p&gt;
+&lt;p&gt;Thread A:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;ol&gt;
+&lt;li&gt;Check &lt;code&gt;slot.flag == 1&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;Check for &lt;code&gt;mapped_va&lt;/code&gt; match&lt;/li&gt;
+&lt;li&gt;Select slot&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Thread B:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;ol&gt;
+&lt;li&gt;Thread A enters before clearing the flag&lt;/li&gt;
+&lt;li&gt;Check &lt;code&gt;slot.flag == 1&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;Check for &lt;code&gt;mapped_va&lt;/code&gt; match&lt;/li&gt;
+&lt;li&gt;Select the same slot&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;However, in vulnerable functions, the process from slot search to &lt;code&gt;flag&lt;/code&gt; change to MDL release is not protected by a single lock. If two Threads send Unregister requests to the same Mapped VA at almost the same time, both Threads may select the same Slot with &lt;code&gt;slot.flag == 1&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Afterwards, the two threads call &lt;code&gt;MmUnmapLockedPages()&lt;/code&gt; and &lt;code&gt;IoFreeMdl()&lt;/code&gt; respectively using the same MDL Pointer, and as a result, a double free occurs in which one MDL is released twice through a race condition.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/08/banda/Wipeload_step7/EN/image 11.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;(A BSOD occurs..!)&lt;/p&gt;
+&lt;p&gt;&lt;br&gt;&lt;/p&gt;
+&lt;h3 id=&#34;2-2-Case-MDL-Mismatch-Bug-Pattern&#34;&gt;&lt;a href=&#34;#2-2-Case-MDL-Mismatch-Bug-Pattern&#34; class=&#34;headerlink&#34; title=&#34;2.2 Case: MDL Mismatch Bug Pattern&#34;&gt;&lt;/a&gt;2.2 Case: MDL Mismatch Bug Pattern&lt;/h3&gt;&lt;blockquote&gt;
+&lt;p&gt;CVE-2024-38237, CVE-2025-21375&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The second case is an MDL Mismatch type vulnerability that occurs when &lt;code&gt;ksthunk.sys&lt;/code&gt; and &lt;code&gt;ks.sys&lt;/code&gt; process the &lt;code&gt;KSSTREAM_HEADER_OPTIONSF_PERSIST_SAMPLE (0x8000)&lt;/code&gt; flag differently.&lt;/p&gt;
+&lt;p&gt;First, Kernel Streaming has the characteristic of delivering &lt;code&gt;KSSTREAM_HEADER&lt;/code&gt; for each request when a video or audio frame is requested in UserMode. This structure contains the address of the actual data buffer, the frame size to process, and flags specifying frame properties.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;typedef&lt;/span&gt; &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; {&lt;/span&gt;
+  ULONG    Size;
+  ULONG    TypeSpecificFlags;
+  KSTIME   PresentationTime;
+  LONGLONG Duration;
+  ULONG    FrameExtent;
+  ULONG    DataUsed;
+  PVOID    Data;
+  ULONG    OptionsFlags;
+  ULONG    Reserved;
+} KSSTREAM_HEADER, *PKSSTREAM_HEADER;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Afterwards, &lt;code&gt;ksthunk.sys&lt;/code&gt; and &lt;code&gt;ks.sys&lt;/code&gt; prepare and connect the MDL to be used in each Frame based on this &lt;code&gt;KSSTREAM_HEADER&lt;/code&gt;. The problem is that two drivers may interpret the same flags differently, resulting in the Header being connected to a different MDL than the intended buffer. The fields that are particularly important here are:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;code&gt;Data&lt;/code&gt;&amp;#x2192; User buffer address where the device will write data.&lt;br&gt;&lt;code&gt;FrameExtent&lt;/code&gt;&amp;#x2192; Size of buffer to be processed in the frame&lt;br&gt;&lt;code&gt;OptionsFlags&lt;/code&gt; &amp;#x2192; Flags that specify how frames are processed and whether MDL is cached.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;At this time, Kernel Streaming uses MDL to use the user buffer indicated by &lt;code&gt;Data&lt;/code&gt; for actual device I/O, and then the MDL and header information are connected to the KS Frame of the kernel.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; _&lt;span class=&#34;hljs-title&#34;&gt;KSPFRAME_HEADER&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-class&#34;&gt;{&lt;/span&gt;
+  _LIST_ENTRY ListEntry;
+  _KSPFRAME_HEADER *NextFrameHeaderInIrp;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; *Queue;
+  _IRP *OriginalIrp;
+  _MDL *Mdl;
+  _IRP *Irp;
+  KSPIRP_FRAMING_ *IrpFraming;
+  KSSTREAM_HEADER *StreamHeader;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; *FrameBuffer;
+  KSPMAPPINGS_TABLE *MappingsTable;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; StreamHeaderSize;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; FrameBufferSize;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; *Context;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; RefCount;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; *OriginalData;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; *BufferedData;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; Status;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int8 DismissalCall;
+  _KSPFRAME_HEADER_TYPE Type;
+  _KSPSTREAM_POINTER *FrameHolder;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; OriginalOptionsFlags;
+  _KSPMDLCACHED_STREAM_POINTER *MdlCaching;
+};&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The field relationships directly related to the bug in this structure are as follows:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;code&gt;KSFrame::StreamHeader&lt;/code&gt; - FrameExtent: Frame processing size&lt;br&gt;&lt;code&gt;KSFrame::FrameBuffer&lt;/code&gt;: Buffer where device data will be written.&lt;br&gt;&lt;code&gt;KSFrame::Mdl&lt;/code&gt; : Describes the actual physical pages and size of the FrameBuffer.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Under normal circumstances, &lt;code&gt;KSSTREAM_HEADER&lt;/code&gt; and MDL should be concatenated in the same order and based on the same size.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;Header &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; (&lt;span class=&#34;hljs-number&#34;&gt;0x1000&lt;/span&gt;)  &amp;#x2192; MDL &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; (&lt;span class=&#34;hljs-number&#34;&gt;0x1000&lt;/span&gt; buffer)
+Header &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; (&lt;span class=&#34;hljs-number&#34;&gt;0x20000&lt;/span&gt;) &amp;#x2192; MDL &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; (&lt;span class=&#34;hljs-number&#34;&gt;0x20000&lt;/span&gt; buffer)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In other words, if the Header processes &lt;code&gt;0x20000&lt;/code&gt; bytes, the connected MDL must also be a buffer that describes &lt;code&gt;0x20000&lt;/code&gt; bytes.&lt;/p&gt;
+&lt;p&gt;However, when a 32-bit process sends a Kernel Streaming request, the request goes through &lt;code&gt;ksthunk.sys&lt;/code&gt; first and then is forwarded to &lt;code&gt;ks.sys&lt;/code&gt;. At this time, in frames where the &lt;code&gt;KSSTREAM_HEADER_OPTIONSF_PERSIST_SAMPLE (0x8000)&lt;/code&gt; flag is set, a problem may occur in which the MDL processing methods of the two drivers are different.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;KSSTREAM_HEADER_OPTIONSF_PERSIST_SAMPLE ON
+  ksthunk.sys: skip
+  ks.sys:      allocate
+
+KSSTREAM_HEADER_OPTIONSF_PERSIST_SAMPLE OFF
+  ksthunk.sys: allocate
+  ks.sys:      skip&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;If only a single frame is processed, there is no problem because the final required MDL is prepared, but if multiple frames, &lt;code&gt;KSSTREAM_HEADER&lt;/code&gt;, are placed in one request&amp;#x2026;? The order of the header array and the order of the MDL chain inside the IRP may be different.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;Headers (user-controlled &lt;span class=&#34;hljs-built_in&#34;&gt;array&lt;/span&gt;)
+
+headers[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;]
+  FrameExtent  = &lt;span class=&#34;hljs-number&#34;&gt;0x1000&lt;/span&gt;
+  OptionsFlags = KSSTREAM_HEADER_OPTIONSF_PERSIST_SAMPLE
+
+headers[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;]
+  FrameExtent  = &lt;span class=&#34;hljs-number&#34;&gt;0x20000&lt;/span&gt;
+  OptionsFlags = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In other words, two &lt;code&gt;KSSTREAM_HEADER&lt;/code&gt;s with different sizes and flags are included in one request. In this case, &lt;code&gt;ksthunk.sys&lt;/code&gt; skips generating the MDL for the first header with the &lt;code&gt;KSSTREAM_HEADER_OPTIONSF_PERSIST_SAMPLE&lt;/code&gt; flag set, and instead generates an MDL describing a buffer of size &lt;code&gt;0x20000&lt;/code&gt; for the second header without the flag.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;IRP-&amp;gt;MdlAddress&lt;br&gt;MDL A&lt;br&gt;buffer size = 0x20000&lt;br&gt;Next = NULL&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Afterwards, &lt;code&gt;ks.sys&lt;/code&gt; checks that the flag is set in the first Header and creates a new MDL describing the &lt;code&gt;0x1000&lt;/code&gt; size buffer of that header.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;code&gt;IRP-&amp;gt;MdlAddress&lt;/code&gt;&lt;br&gt;&lt;code&gt;MDL A (0x20000) -&amp;gt; MDL B (0x1000) -&amp;gt; NULL&lt;/code&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;However, the newly created MDL B is connected after the existing MDL A. Therefore, the Header array is in the order &lt;code&gt;headers[0] &amp;#x2192; headers[1]&lt;/code&gt;, but the final MDL Chain is in the order &lt;code&gt;MDL A for headers[1] &amp;#x2192; MDL B for headers[0]&lt;/code&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;KS Frame &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+  StreamHeader-&amp;gt;FrameExtent = &lt;span class=&#34;hljs-number&#34;&gt;0x1000&lt;/span&gt;
+  Mdl                       = MDL A (&lt;span class=&#34;hljs-number&#34;&gt;0x20000&lt;/span&gt;)
+
+KS Frame &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+  StreamHeader-&amp;gt;FrameExtent = &lt;span class=&#34;hljs-number&#34;&gt;0x20000&lt;/span&gt;
+  Mdl                       = MDL B (&lt;span class=&#34;hljs-number&#34;&gt;0x1000&lt;/span&gt;)&lt;/code&gt;&lt;/pre&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;code&gt;headers[0]&lt;/code&gt; : &lt;code&gt;0x1000&lt;/code&gt;&lt;br&gt;&lt;code&gt;headers[1]&lt;/code&gt; : &lt;code&gt;0x20000&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;MDL A (for &lt;code&gt;0x20000&lt;/code&gt;, &lt;code&gt;headers[1]&lt;/code&gt;)&lt;br&gt;MDL B (for &lt;code&gt;0x1000&lt;/code&gt;, &lt;code&gt;headers[0]&lt;/code&gt;)&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Afterwards, &lt;code&gt;ks.sys&lt;/code&gt; takes out the Header array and MDL Chain in order from the front and connects them to the KS Frame. At this time, because the original correspondence between the header and the MDL is not rechecked, the information for different headers is connected to each KS Frame with the information reversed.&lt;/p&gt;
+&lt;p&gt;The first KS Frame uses information from &lt;code&gt;headers[0]&lt;/code&gt; with &lt;code&gt;FrameExtent&lt;/code&gt; of &lt;code&gt;0x1000&lt;/code&gt;, but is actually associated with MDL A for &lt;code&gt;headers[1]&lt;/code&gt;. Conversely, the second KS Frame uses the information from &lt;code&gt;headers[1]&lt;/code&gt; whose &lt;code&gt;FrameExtent&lt;/code&gt; is &lt;code&gt;0x20000&lt;/code&gt;, and is connected to MDL B for &lt;code&gt;headers[0]&lt;/code&gt; whose actual size is &lt;code&gt;0x1000&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;In other words, the problem may not be immediately apparent because the first frame uses a larger buffer, but the second frame is trying to process &lt;code&gt;0x20000&lt;/code&gt; bytes in a &lt;code&gt;0x1000&lt;/code&gt; byte buffer!&amp;#x1F92F; This mismatch ultimately leads to a buffer overflow.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs apache&#34;&gt;&lt;span class=&#34;hljs-attribute&#34;&gt;KS&lt;/span&gt; Frame &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; 
+&lt;span class=&#34;hljs-attribute&#34;&gt;FrameExtent&lt;/span&gt; = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;1000&lt;/span&gt; 
+&lt;span class=&#34;hljs-attribute&#34;&gt;MDL&lt;/span&gt;-described buffer = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;20000&lt;/span&gt;
+
+&lt;span class=&#34;hljs-attribute&#34;&gt;KS&lt;/span&gt; Frame &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; 
+&lt;span class=&#34;hljs-attribute&#34;&gt;FrameExtent&lt;/span&gt; = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;20000&lt;/span&gt; 
+&lt;span class=&#34;hljs-attribute&#34;&gt;MDL&lt;/span&gt;-described buffer = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;1000&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Between Frame 0 and Frame 1, which one do you think is more suspicious? In the above situation, it is KS Frame 1 that creates the actual overflow. &lt;code&gt;StreamHeader-&amp;gt;FrameExtent&lt;/code&gt; specifies that it handles &lt;code&gt;0x20000&lt;/code&gt; bytes, but the actual buffer described by the associated MDL B is only &lt;code&gt;0x1000&lt;/code&gt; bytes.&lt;/p&gt;
+&lt;p&gt;As a result, the Kernel Streaming Worker writes data beyond the valid range described by the MDL, and adjacent kernel memory becomes corrupted. An MDL Mismatch vulnerability occurs when the order of MDL generated for different headers is reversed and the wrong header and MDL are connected to one KS Frame.&lt;/p&gt;
+&lt;p&gt;&lt;br&gt;&lt;/p&gt;
+&lt;h3 id=&#34;2-3-Case-Forgotten-Lock-Uninitialized-MDL-Bug-Pattern&#34;&gt;&lt;a href=&#34;#2-3-Case-Forgotten-Lock-Uninitialized-MDL-Bug-Pattern&#34; class=&#34;headerlink&#34; title=&#34;2.3 Case: Forgotten Lock / Uninitialized MDL Bug Pattern&#34;&gt;&lt;/a&gt;2.3 Case: &lt;strong&gt;Forgotten Lock / Uninitialized MDL Bug Pattern&lt;/strong&gt;&lt;/h3&gt;&lt;blockquote&gt;
+&lt;p&gt;CVE-2024-38238&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Lastly, this is the third case. Do you remember that &lt;code&gt;MmProbeAndLockPages()&lt;/code&gt; had to be performed before &lt;code&gt;MmMapLockedPagesSpecifyCache()&lt;/code&gt; was called during normal MDL processing? If this order is not followed, the PFN array in the MDL may remain uninitialized correctly.&lt;/p&gt;
+&lt;p&gt;The CVE-2024-38238 case is a Forgotten Lock type vulnerability that occurs when &lt;code&gt;ks.sys&lt;/code&gt; generates an MDL and then maps the MDL without calling &lt;code&gt;MmProbeAndLockPages()&lt;/code&gt;. In the previous case, MDL Mismatch was a problem in which the connection relationship between the header and MDL changed, while Forgotten Lock was a problem in which the driver considered this to be a normal chain even though the locked MDL and unlocked MDL existed together in one MDL chain.&lt;/p&gt;
+&lt;p&gt;(Here, MDL Chain refers to a structure that connects multiple MDLs with &lt;code&gt;Next Pointer&lt;/code&gt;. When one IRP processes multiple frames, the MDL describing each frame can be managed in a connected form starting from &lt;code&gt;IRP-&amp;gt;MdlAddress&lt;/code&gt;.)&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Header traversal logic in ks.sys&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;ks!CKsMdlcache::MdlCacheHandleThunkBufferIrp&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Let&amp;#x2019;s check the vulnerable MDL creation and lock flow. First, the WoW64 Kernel Streaming request goes through preprocessing in &lt;code&gt;ksthunk.sys&lt;/code&gt; and is then sent to the above function in &lt;code&gt;ks.sys&lt;/code&gt;. Afterwards, inside the function, it iterates over the &lt;code&gt;KSSTREAM_HEADER&lt;/code&gt; array and checks the OptionsFlags of each Header.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/08/banda/Wipeload_step7/EN/image 7.png&#34; alt&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; ( TotalSize &amp;gt;= &lt;span class=&#34;hljs-number&#34;&gt;0x38&lt;/span&gt; )&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;If you check the function in detail, you can see that &lt;code&gt;KSSTREAM_HEADER&lt;/code&gt; included in the request is processed in order through the While Loop. Here, &lt;code&gt;0x38&lt;/code&gt; is the size of the 64-bit &lt;code&gt;KSSTREAM_HEADER&lt;/code&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( (OptionsFlag &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x8000&lt;/span&gt;) == &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; )
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;)KsProbeStreamIrp(irp, a3, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;If the flag is set, the function generates the MDL for the current Header and then continues processing the next &lt;code&gt;KSSTREAM_HEADER&lt;/code&gt;. Conversely, if the flag is not set, I have a flow that calls &lt;code&gt;KsProbeStreamIrp()&lt;/code&gt; and returns directly from the function. The problem is that when this early return occurs, not only the subsequent Header processing but also the MDL Lock loop performed at the bottom of the function is not reached.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Location of MDL Lock Loop&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;If Header traversal is completed normally, &lt;code&gt;MmProbeAndLockPages()&lt;/code&gt; is called while traversing the MDL Chain of the IRP at the bottom of the function.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/08/banda/Wipeload_step7/EN/image 8.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Therefore, you can see that the normal processing sequence follows the flow below.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Header array traversal&lt;/li&gt;
+&lt;li&gt;Generate the required MDL&lt;/li&gt;
+&lt;li&gt;Header traversal completed&lt;/li&gt;
+&lt;li&gt;IRP&amp;#x2019;s MDL Chain traversal&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;MmProbeAndLockPages()&lt;/code&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;But can you guess the problem? The &lt;code&gt;MmProbeAndLockPages()&lt;/code&gt; loop is placed after the Header traversal. Even if MDL was created through &lt;code&gt;IoAllocateMdl()&lt;/code&gt; while processing the Header earlier, if there is no Cache Flag in the next Header, the flag verification code below is executed.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( (OptionsFlag &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x8000&lt;/span&gt;) == &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; )
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;)KsProbeStreamIrp(irp, a3, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;However, the problem is that in the second Header, if &lt;code&gt;OptionsFlags&lt;/code&gt; is &lt;code&gt;0&lt;/code&gt;, it returns early to the &lt;code&gt;KsProbeStreamIrp()&lt;/code&gt; loop and does not reach the Lock loop at the bottom of the function, &lt;code&gt;MmProbeAndLockPages()&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;In other words, a problem arises in that the MDL generated in the previous iteration can be passed to &lt;code&gt;KsProbeStreamIrp()&lt;/code&gt; without going through &lt;code&gt;MmProbeAndLockPages()&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;KsProbeStreamIrp MDL verification issue&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;Then, let&amp;#x2019;s go into &lt;code&gt;KsProbeStreamIrp()&lt;/code&gt;..? This function maps the Frame Buffer to the kernel address space using the IRP MDL Chain.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/08/banda/Wipeload_step7/EN/image 9.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;If you check the code, it first fetches the first MDL of the IRP and then checks the &lt;code&gt;0x6&lt;/code&gt; mask for the first &lt;code&gt;MdlFlags&lt;/code&gt;. The relevant flags are as follows:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;define&lt;/span&gt; MDL_MAPPED_TO_SYSTEM_VA      0x0001&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;define&lt;/span&gt; MDL_PAGES_LOCKED             0x0002&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;define&lt;/span&gt; MDL_SOURCE_IS_NONPAGED_POOL  0x0004&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;0x6&lt;/code&gt; is &lt;code&gt;0x2&lt;/code&gt; | With &lt;code&gt;0x4&lt;/code&gt;, it contains the &lt;code&gt;MDL_PAGES_LOCKED, MDL_SOURCE_IS_NONPAGED_POOL&lt;/code&gt; flags. This means that if either flag is present, the condition passes. If the first MDL is Locked or an MDL that describes a NonPaged Pool, the while loop below is entered.&lt;/p&gt;
+&lt;p&gt;However, this check is only performed for the first MDL pointed to by &lt;code&gt;Irp&amp;#x2192;MdlAddress&lt;/code&gt;, and the status of each &lt;code&gt;MDL MDL_PAGES_LOCKED&lt;/code&gt; is not checked again in subsequent while loops.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;CurrentMdl = Irp-&amp;gt;MdlAddress;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( CurrentMdl &amp;amp;&amp;amp;
+     (CurrentMdl-&amp;gt;MdlFlags &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;) &amp;amp;&amp;amp;
+     (ProbeFlags &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x40&lt;/span&gt;) )
+{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; ( CurrentMdl )
+  {
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( !(CurrentMdl-&amp;gt;MdlFlags &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;) )
+      MmMapLockedPagesSpecifyCache(CurrentMdl, ...);
+
+    CurrentMdl = CurrentMdl-&amp;gt;Next;
+  }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Additionally, inside the &lt;code&gt;while&lt;/code&gt; statement, only the &lt;code&gt;0x5&lt;/code&gt; mask is checked for each MDL. Based on the flag checked earlier, this means &lt;code&gt;MDL_MAPPED_TO_SYSTEM_VA&lt;/code&gt; or &lt;code&gt;MDL_SOURCE_IS_NONPAGED_POOL&lt;/code&gt; state. If a System VA already exists or is an MDL describing a NonPaged Pool, the existing &lt;code&gt;MappedSystemVa&lt;/code&gt; is used; otherwise, it moves on to the next &lt;code&gt;MmMapLockedPagesSpecifyCache()&lt;/code&gt; call.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;MmMapLockedPagesSpecifyCache(
+  CurrentMdl,
+  &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;,
+  MmCached,
+  &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;,
+  &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;,
+  &lt;span class=&#34;hljs-number&#34;&gt;0x40000010&lt;/span&gt;u
+);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;However, even here we do not check whether &lt;code&gt;MmProbeAndLockPages()&lt;/code&gt; is performed. In the end, we can see that the core verification error is the logic that only checks the state of the first MDL and then assumes that the rest of the chain will be in the locked state.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Configuring Vulnerability Triggers&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;Now let&amp;#x2019;s connect the two logics. First, we include two &lt;code&gt;KSSTREAM_HEADER&lt;/code&gt;s of the same size in one request to trigger the vulnerability.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;Headers (user-controlled &lt;span class=&#34;hljs-built_in&#34;&gt;array&lt;/span&gt;)
+
+headers[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;]
+  FrameExtent  = &lt;span class=&#34;hljs-number&#34;&gt;0x2000&lt;/span&gt;
+  Data         = &lt;span class=&#34;hljs-number&#34;&gt;0x42420000&lt;/span&gt;
+  OptionsFlags = KSSTREAM_HEADER_OPTIONSF_PERSIST_SAMPLE
+
+headers[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;]
+  FrameExtent  = &lt;span class=&#34;hljs-number&#34;&gt;0x2000&lt;/span&gt;
+  Data         = &lt;span class=&#34;hljs-number&#34;&gt;0x43430000&lt;/span&gt;
+  OptionsFlags = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The key is to put the Locked MDL at the beginning of the chain, followed by an Unlocked MDL with &lt;code&gt;OptionsFlags&lt;/code&gt; set to &lt;code&gt;0&lt;/code&gt; and Cache Flag turned off. Then, the first Header creates MDL in &lt;code&gt;ks.sys&lt;/code&gt;, and the second Header returns early to the &lt;code&gt;KsProbeStreamIrp()&lt;/code&gt; path.&lt;/p&gt;
+&lt;p&gt;Afterwards, &lt;code&gt;ksthunk.sys&lt;/code&gt; skips creating the MDL for the first Header, but for the second Header without the Cache Flag, it generates and locks the MDL on behalf of &lt;code&gt;ks.sys&lt;/code&gt;. Therefore, when &lt;code&gt;ksthunk.sys&lt;/code&gt; processing is completed, only MDL 2 for the second header is connected to the IRP.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;IRP-&amp;gt;MdlAddress
+MDL &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+  Header     = headers[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;]
+  Data       = &lt;span class=&#34;hljs-number&#34;&gt;0x43430000&lt;/span&gt;
+  ByteCount  = &lt;span class=&#34;hljs-number&#34;&gt;0x2000&lt;/span&gt;
+  Locked     = TRUE
+  PFN[]      = Initialized
+  Next       = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;And on the &lt;code&gt;ks.sys&lt;/code&gt; side, since the first header has the Cache Flag set, MDL 1 is created through &lt;code&gt;IoAllocateMdl&lt;/code&gt;. At this time, since MDL 2 already exists in the IRP, the newly created MDL 1 is connected to the back of the chain.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;IRP-&amp;gt;MdlAddress
+-&amp;gt;
+MDL &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; headers[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;]
+  Locked = TRUE
+  PFN[]  = Initialized
+-&amp;gt;
+MDL &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; headers[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;]
+  Locked = FALSE
+  PFN[]  = Uninitialized
+-&amp;gt;
+      &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;At this point, only &lt;code&gt;IoAllocateMdl()&lt;/code&gt; has been performed in MDL 1, and then &lt;code&gt;ks.sys&lt;/code&gt; processes the second header, and eventually, due to the weak logic, the &lt;code&gt;MmProbeAndLockPages()&lt;/code&gt; loop is not executed and MDL 1 remains in the unlocked state.&lt;/p&gt;
+&lt;p&gt;Afterwards, &lt;code&gt;KsProbeStreamIrp()&lt;/code&gt; examines MDL 2, the first node in the chain. At this time, since MDL 2 is already normally locked by &lt;code&gt;ksthunk.sys&lt;/code&gt;, &lt;code&gt;MDL_PAGES_LOCKED&lt;/code&gt; is set and the condition passes.&lt;/p&gt;
+&lt;p&gt;However, in the case of MDL 1, the PFN array is not initialized because it did not go through &lt;code&gt;MmProbeAndLockPages()&lt;/code&gt;, and even so, &lt;code&gt;MmMapLockedPagesSpecifyCache()&lt;/code&gt; tries to use the value as the physical page number described by the MDL. Therefore, if the remaining uninitialized PFN value is used, the wrong physical page will be referenced and a Bug Check (BSOD) may occur.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Furthermore, the MDL created with &lt;code&gt;IoAllocateMdl()&lt;/code&gt; in this path can reuse Pool Memory without initializing the PFN array. Therefore, an attacker can configure EoP to control uninitialized PFN values &amp;#x200B;&amp;#x200B;by spraying the desired value in the Pool area where the PFN array is located.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2 id=&#34;3-Outro&#34;&gt;&lt;a href=&#34;#3-Outro&#34; class=&#34;headerlink&#34; title=&#34;3. Outro&#34;&gt;&lt;/a&gt;&lt;strong&gt;3. Outro&lt;/strong&gt;&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2026/08/08/banda/Wipeload_step7/EN/image 10.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;In this article, we looked at the basic flow of MDL fixing physical pages in the user buffer and mapping them to the kernel address space, and the Lifetime, Mismatch, and Forgotten Lock bug patterns that occur when this is handled incorrectly.&lt;/p&gt;
+&lt;p&gt;This article was not about a final battle with Tai Lung, but rather about training to deal with him. Now that you have learned the operation of MDL and the three bug patterns, all that remains is the final authority wall that will lead you from Medium Integrity to SYSTEM in practice. Please look forward to the next Taoist episode to see whether Po will be able to complete the MDL and win the fight against Tai Lung in the next battle!&lt;/p&gt;
+&lt;h2 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference.&#34;&gt;&lt;/a&gt;Reference.&lt;/h2&gt;&lt;p&gt;&lt;a href=&#34;https://theori.io/blog/chaining-n-days-to-compromise-all-part-3-windows-driver-lpe-medium-to-system&#34;&gt;https://theori.io/blog/chaining-n-days-to-compromise-all-part-3-windows-driver-lpe-medium-to-system&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://medium.com/@WaterBucket/understanding-memory-descriptor-lists-mdls-for-windows-vulnerability-research-exploit-7de8729caee7&#34;&gt;https://medium.com/@WaterBucket/understanding-memory-descriptor-lists-mdls-for-windows-vulnerability-research-exploit-7de8729caee7&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://devco.re/blog/2025/05/17/frame-by-frame-kernel-streaming-keeps-giving-vulnerabilities-en/&#34;&gt;https://devco.re/blog/2025/05/17/frame-by-frame-kernel-streaming-keeps-giving-vulnerabilities-en/&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Wipeload Step 7.] Lock the Pages, Break the Kernel (EN) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;Hello. This is banda from Hackyboiz.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/08/banda/Wipeload_step7/EN/image.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Previous articles&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/06/06/OUYA77/Wipeload_step1/en/&#34;&gt;https://hackyboiz.github.io/2026/06/06/OUYA77/Wipeload_step1/en/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/06/21/ji9umi/Wipeload_step2/en/&#34;&gt;https://hackyboiz.github.io/2026/06/21/ji9umi/Wipeload_step2/en/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/06/26/ji9umi/Wipeload_step3/en/&#34;&gt;https://hackyboiz.github.io/2026/06/26/ji9umi/Wipeload_step3/en/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/07/13/OUYA77/Wipeload_step4/en/&#34;&gt;https://hackyboiz.github.io/2026/07/13/OUYA77/Wipeload_step4/en/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/07/19/gongjae/Wipeload_step5/EN/&#34;&gt;https://hackyboiz.github.io/2026/07/19/gongjae/Wipeload_step5/EN/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/08/01/gongjae/Wipeload_step6/EN/&#34;&gt;https://hackyboiz.github.io/2026/08/01/gongjae/Wipeload_step6/EN/&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Previously, thanks to the great work of Master Sifu, it was possible to use the WASM trick to escape the V8 Sandbox and execute native code, and then escape to the Chrome Sandbox through ALPC UAF and execute code with Medium Integrity permissions. The final boundary from a chaining perspective would be the gap between UserMode and KernelMode that remains even after being moved to the Medium IL execution context.&lt;/p&gt;
+&lt;p&gt;In steps 7 and 8, we will complete Kernel EoP, the final gateway to chaining. In this 7th step, we will look at the MDL data structure and operation, which are the core of CVE-2023-29360, and in the next 8th step, we will use this to complete the actual Kernel EoP, so please look forward to it! Will his disciple Po be able to follow in his master&amp;#x2019;s footsteps and reach SYSTEM authority? Let&amp;#x2019;s find out together.&lt;/p&gt;
+&lt;h2 id=&#34;1-Memory-Descriptor-List-MDL-Overview&#34;&gt;&lt;a href=&#34;#1-Memory-Descriptor-List-MDL-Overview&#34; class=&#34;headerlink&#34; title=&#34;1. Memory Descriptor List (MDL) Overview&#34;&gt;&lt;/a&gt;&lt;strong&gt;1. Memory Descriptor List (MDL) Overview&lt;/strong&gt;&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2026/08/08/banda/Wipeload_step7/EN/image 1.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;MDL is a kernel structure that contains information about which virtual address (VA) buffer in the kernel is actually composed of which physical pages.&lt;/p&gt;
+&lt;p&gt;In general, it is difficult for kernel mode drivers to directly access user mode memory. This is because user mode buffer addresses cannot be safely stored and used with simple pointer values. When the kernel driver accesses the user mode buffer, the following problems occur.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;User-mode virtual addresses are interpreted differently for each process. If the driver stores only the user buffer pointer value of the current process and later accesses it from the context of another process, it may interpret the wrong process address space or refer to the wrong memory.&lt;/li&gt;
+&lt;li&gt;User pages are not always fixed in RAM and can be moved to disk by the OS. If the driver stores only the user buffer pointer and then accesses it, a page fault may occur because the page is not in memory.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Therefore, there are two main ways the driver handles the user buffer. One is the method of copying the user mode buffer contents to the kernel buffer and using it, and the other is the MDL method, which we will look at now.&lt;/p&gt;
+&lt;p&gt;&lt;br&gt;&lt;/p&gt;
+&lt;h4 id=&#34;1-1-General-case-when-not-using-MDL&#34;&gt;&lt;a href=&#34;#1-1-General-case-when-not-using-MDL&#34; class=&#34;headerlink&#34; title=&#34;1.1 General case (when not using MDL)&#34;&gt;&lt;/a&gt;&lt;strong&gt;1.1 General case (when not using MDL)&lt;/strong&gt;&lt;/h4&gt;&lt;p&gt;&lt;img src=&#34;/2026/08/08/banda/Wipeload_step7/EN/image 2.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;In general cases, that is, when MDL is not used directly, the user buffer is copied to the kernel buffer for processing. In IOCTL, I/O Manager usually uses &lt;code&gt;METHOD_BUFFERED&lt;/code&gt; to create a kernel buffer called &lt;code&gt;SystemBuffer&lt;/code&gt; and copy data.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;ProbeForRead(userBuf, size, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;);
+RtlCopyMemory(kernelBuf, userBuf, size);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Alternatively, when a user pointer is passed directly as with &lt;code&gt;METHOD_NEITHER&lt;/code&gt;, the driver can validate the user address with &lt;code&gt;ProbeForRead&lt;/code&gt; and &lt;code&gt;RtlCopyMemory&lt;/code&gt; before copying it to a kernel buffer. Rather than continuously referencing the user buffer directly, these approaches bring the required data into kernel memory before processing it.&lt;/p&gt;
+&lt;p&gt;&lt;br&gt;&lt;/p&gt;
+&lt;h4 id=&#34;1-2-When-to-use-MDL&#34;&gt;&lt;a href=&#34;#1-2-When-to-use-MDL&#34; class=&#34;headerlink&#34; title=&#34;1.2 When to use MDL&#34;&gt;&lt;/a&gt;1.2 When to use MDL&lt;/h4&gt;&lt;p&gt;&lt;img src=&#34;/2026/08/08/banda/Wipeload_step7/EN/image 3.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;In the case of MDL, unlike the previous case, rather than copying the contents of the user buffer to the kernel buffer, copying is avoided by allowing the driver to directly use the RAM physical page to which the user buffer is actually mapped.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;User VA: &lt;span class=&#34;hljs-number&#34;&gt;0x000001A2F0001000&lt;/span&gt;
+-&amp;gt; Physical pages: PFN 1234, PFN 1235, PFN 1236&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Looking at the code above, when a buffer is created with &lt;code&gt;malloc&lt;/code&gt;, &lt;code&gt;VirtualAlloc&lt;/code&gt;, etc. through a user program, it is internally connected to several physical memory pages. MDL is a structure that records information that this user buffer consists of PFN 1234, PFN 1235, and PFN 1236 pages, as well as the starting address and size of the buffer.&lt;/p&gt;
+&lt;p&gt;In other words, MDL is not a structure that copies and stores the contents of the user buffer, but corresponds to metadata to describe the physical pages that make up the buffer. Afterwards, the driver can lock the page based on this MDL and, if necessary, remap it to the kernel address space.&lt;/p&gt;
+&lt;p&gt;&lt;br&gt;&lt;/p&gt;
+&lt;h4 id=&#34;1-3-MDL-creation-flow&#34;&gt;&lt;a href=&#34;#1-3-MDL-creation-flow&#34; class=&#34;headerlink&#34; title=&#34;1.3 MDL creation flow&#34;&gt;&lt;/a&gt;1.3 MDL creation flow&lt;/h4&gt;&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;User mode buffer allocation&lt;/strong&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;BYTE *buf = VirtualAlloc(NULL, &lt;span class=&#34;hljs-number&#34;&gt;0x1000&lt;/span&gt;, MEM_COMMIT, PAGE_READWRITE);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Looking at the MDL creation flow, let&amp;#x2019;s first assume that the user mode program allocates a buffer to be delivered to the driver through VirtualAlloc in the virtual address space as shown above. buf will contain user mode VA, right?&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Create MDL: IoAllocateMdl&lt;/strong&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;PMDL &lt;span class=&#34;hljs-title&#34;&gt;IoAllocateMdl&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, optional]      __drv_aliasesMem PVOID VirtualAddress,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]                ULONG                  Length,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]                BOOLEAN                SecondaryBuffer,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]                BOOLEAN                ChargeQuota,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, out, optional] PIRP                   Irp&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;)&lt;/span&gt;&lt;/span&gt;;
+
+PMDL mdl = IoAllocateMdl(userBuffer, bufferSize, FALSE, FALSE, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Afterwards, &lt;code&gt;IoAllocateMdl()&lt;/code&gt; is performed to create an MDL kernel structure containing metadata and PFN array space for a specific virtual address range. In particular, immediately after executing &lt;code&gt;IoAllocateMdl()&lt;/code&gt;, only the PFN array space has been created and the PFN array has not yet been filled.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;typedef&lt;/span&gt; &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; _&lt;span class=&#34;hljs-title&#34;&gt;MDL&lt;/span&gt; {&lt;/span&gt;
+  &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; _&lt;span class=&#34;hljs-title&#34;&gt;MDL&lt;/span&gt;      *&lt;span class=&#34;hljs-title&#34;&gt;Next&lt;/span&gt;;&lt;/span&gt;
+  CSHORT           Size;
+  CSHORT           MdlFlags;
+  &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; _&lt;span class=&#34;hljs-title&#34;&gt;EPROCESS&lt;/span&gt; *&lt;span class=&#34;hljs-title&#34;&gt;Process&lt;/span&gt;;&lt;/span&gt;
+  PVOID            MappedSystemVa;
+  PVOID            StartVa;
+  ULONG            ByteCount;
+  ULONG            ByteOffset;
+} MDL, *PMDL;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The MDL structure created with &lt;code&gt;IoAllocateMdl()&lt;/code&gt; contains key fields to describe the buffer range. &lt;code&gt;StartVa&lt;/code&gt; is the starting virtual address of the first page containing the buffer, &lt;code&gt;ByteOffset&lt;/code&gt; is the in-page offset of the buffer start position, and &lt;code&gt;ByteCount&lt;/code&gt; is the buffer length. &lt;code&gt;MdlFlags&lt;/code&gt; is a flag field that indicates the current state of the MDL, such as whether the page is locked or whether the system address is mapped.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Physical Page Locking: MmProbeAndLockPages&lt;/strong&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;MmProbeAndLockPages&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in, out] PMDL            MemoryDescriptorList,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]      KPROCESSOR_MODE AccessMode,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;  [in]      LOCK_OPERATION  Operation&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;)&lt;/span&gt;&lt;/span&gt;;
+
+MmProbeAndLockPages(mdl, UserMode, IoReadAccess);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;After creating an MDL structure through &lt;code&gt;IoAllocateMdl()&lt;/code&gt;, the process of fixing physical pages through &lt;code&gt;MmProbeAndLockPages&lt;/code&gt; generally follows. Because the user-mode buffer can be paged out at any time, the process of fixing the page in physical memory is necessary before the kernel accesses it. Through the above locking process, all pages pointed to by the MDL reside in RAM, the PFN array is filled inside the MDL, and the driver can then safely access the memory based on this MDL.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;__try {
+    MmProbeAndLockPages(
+        mdl,
+        UserMode,
+        IoReadAccess
+    );
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+    status = GetExceptionCode();
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;However, you can&amp;#x2019;t just trust the address provided by the user and lock the page, right? In a typical driver, an exception may occur while processing a buffer with an incorrect address or incorrect permissions, so the call to &lt;code&gt;MmProbeAndLockPage()&lt;/code&gt; as in the code above must be performed within the scope of exception handling.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;MmProbeAndLockPages()&lt;/code&gt; checks whether the passed virtual address is actually accessible and whether it has read/write permissions appropriate for &lt;code&gt;Operation&lt;/code&gt;. If verification is successful, the physical page in the corresponding address range is locked and the PFN array of the MDL is filled with the actual page number.&lt;/p&gt;
+&lt;p&gt;In other words, this function not only fixes the page in RAM, but is also an important verification point to check whether the address passed by the user is appropriate for MDL processing.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Kernel VA Remapping: MmMapLockedPagesSpecifyCache&lt;/strong&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;PVOID &lt;span class=&#34;hljs-title&#34;&gt;MmMapLockedPagesSpecifyCache&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;    PMDL MemoryDescriptorList,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;    KPROCESSOR_MODE AccessMode,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;    MEMORY_CACHING_TYPE CacheType,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;    PVOID RequestedAddress,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;    ULONG BugCheckOnFailure,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;    ULONG Priority&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;)&lt;/span&gt;&lt;/span&gt;;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;If you perform &lt;code&gt;MmProbeAndLockPages()&lt;/code&gt; earlier, what physical pages the user buffer actually consists of are recorded in the MDL, and the pages are locked to prevent them from being removed from RAM. Afterwards, locked physical pages recorded in MDL are mapped to new virtual addresses through &lt;code&gt;MmMapLockedPagesSpecifyCache&lt;/code&gt;. Here, based on the case where &lt;code&gt;AccessMode&lt;/code&gt; is &lt;code&gt;KernelMode&lt;/code&gt;, we will look at the flow of remapping the Physical Pages indicated by the MDL&amp;#x2019;s PFN array to the Kernel VA in the kernel address space.&lt;/p&gt;
+&lt;p&gt;The important thing is that during this process, the entire user buffer is not copied to a separate kernel buffer in advance. The driver obtains a Kernel VA that points to the same Physical Page used by the existing user buffer, and can refer to the contents of the original buffer through this.&lt;/p&gt;
+&lt;p&gt;For example, if the driver needs to move the contents to another buffer or device I/O area, the mapped Kernel VA can be used as the source of &lt;code&gt;RtlCopyMemory()&lt;/code&gt; as shown below.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;RtlCopyMemory(dst, kernelVa, length);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;As shown above, the driver can use the mapped &lt;code&gt;KernelVa&lt;/code&gt; as a source to copy the data required for device I/O processing to another buffer.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;MDL Unmap: MmUnmapLockedPages&lt;/strong&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs c&#34;&gt;MmUnmapLockedPages(kernelVa, mdl);
+MmUnlockPages(mdl);
+IoFreeMdl(mdl);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;After creating and using the MDL through the above process, the lock must be unlocked and freed, and it must be released using the above process in reverse order. First, remove the kernel virtual address mapping created with &lt;code&gt;MmMapLockedPagesSpecifyCache()&lt;/code&gt; via &lt;code&gt;MmUnmapLockedPages(kernelVA, mdl)&lt;/code&gt;. Afterwards, unlock the physical pages fixed with &lt;code&gt;MmProbeAndLockPages()&lt;/code&gt; through &lt;code&gt;MmUnlockPages(mdl)&lt;/code&gt;. Finally, through &lt;code&gt;IoFreeMdl(mdl)&lt;/code&gt;, the MDL structure allocated with &lt;code&gt;IoAllocateMdl()&lt;/code&gt; is freed, and the metadata and PFN array space contained in the MDL are returned.&lt;/p&gt;
+&lt;p&gt;In other words, the MDL organizing process proceeds in the following order: Unmapping &amp;#x2192; Page Unlock &amp;#x2192; MDL Unlock. If the MDL is released first while the mapping remains, the Kernel VA can continue to refer to the PFN information of the already returned MDL, and if the Page Lock remains, the corresponding Physical Page is unnecessarily locked in RAM.&lt;/p&gt;
+&lt;h2 id=&#34;2-MDL-ABUSE-CASE-STUDY&#34;&gt;&lt;a href=&#34;#2-MDL-ABUSE-CASE-STUDY&#34; class=&#34;headerlink&#34; title=&#34;2. MDL ABUSE CASE STUDY&#34;&gt;&lt;/a&gt;2. MDL ABUSE CASE STUDY&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2026/08/08/banda/Wipeload_step7/EN/image 4.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;As seen earlier, the driver can lock the physical pages that make up the user buffer through MDL and map those pages to new virtual addresses as needed! In particular, when Locked MDL is mapped to user mode, a new User VA is created in the user process address space that points to the same physical page as the existing buffer.&lt;/p&gt;
+&lt;p&gt;So far, you have looked at the lifetime of MDL being created, mapped, and then released. After reading the article, do you not see any points where vulnerabilities may occur if something is mismanaged in this process? you&amp;#x2019;re right. MDL is created based on the buffer passed by the user, locks the physical page, and maps it to a different virtual address space. Therefore, if you mishandle which frame the generated MDL is connected to, when the mapped address and MDL are released, and whether an unlocked MDL can enter the mapping path, it can lead to strong memory corruption primitives.&lt;/p&gt;
+&lt;p&gt;His teammates have arrived for his final training before his heated bout with Tai Lung. Let&amp;#x2019;s check what type of vulnerability it can lead to when MDL management is incorrect!&lt;/p&gt;
+&lt;p&gt;Now, let&amp;#x2019;s examine the Case 1 Lifetime Bug MDL vulnerability I previously discovered, along with past MDL-related CVEs, to see the different forms MDL Abuse can take! Case 2&amp;#x2019;s CVE-2024-38237 and CVE-2025-21375 are MDL Mismatch cases where the connection between the Frame Header and the MDL is mismatched. Case 3&amp;#x2019;s CVE-2024-38238 is a Forgotten Lock case in which MDL is passed to the mapping path without being locked. For Case 2 and Case 3, we referred to the &lt;a href=&#34;https://devco.re/blog/2025/05/17/frame-by-frame-kernel-streaming-keeps-giving-vulnerabilities-en/&#34;&gt;DEVCORE case&lt;/a&gt; to classify MDL vulnerability types.&lt;/p&gt;
+&lt;p&gt;&lt;br&gt;&lt;/p&gt;
+&lt;h3 id=&#34;2-1-CASE-MDL-Lifetime-Bug-Pattern&#34;&gt;&lt;a href=&#34;#2-1-CASE-MDL-Lifetime-Bug-Pattern&#34; class=&#34;headerlink&#34; title=&#34;2.1 CASE: MDL Lifetime Bug Pattern&#34;&gt;&lt;/a&gt;2.1 CASE: MDL Lifetime Bug Pattern&lt;/h3&gt;&lt;p&gt;First, the first type of vulnerability is a Double Free vulnerability that occurs when the Lifetime of an MDL object is processed without synchronization. Broadly speaking, it is a race condition type of vulnerability that can appear in the process of MDL being released and reused.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/08/banda/Wipeload_step7/EN/image 5.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;If you check the MDL Register/Unregister Flow of the vulnerable driver, the Register request stores the VA mapped to the user and the MDL pointer describing the VA in the internal slot table. Afterwards, the Unregister request operated as a flow to find a slot based on the VA returned by the user and free the corresponding MDL.&lt;/p&gt;
+&lt;p&gt;Therefore, in the normal flow, unregister had to be performed only once for one mapped VA. In other words, when a specific slot is selected for unregister, that slot must be marked as no longer valid, and even if an unregister request is made again to the same mapped VA, the same MDL point must not be freed again.&lt;/p&gt;
+&lt;p&gt;In particular, if there is no synchronization between the time of invalidating this slot and the process of freeing the MDL, two requests may simultaneously confirm that the same slot is still valid. As a result, it may lead to a double free where the same MDL is each freed.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;slot.flag = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;; &lt;span class=&#34;hljs-comment&#34;&gt;// valid registration entry &lt;/span&gt;
+slot.mapped_va = &lt;span class=&#34;hljs-number&#34;&gt;0x12340000&lt;/span&gt;; &lt;span class=&#34;hljs-comment&#34;&gt;// mapped VA returned to user mode &lt;/span&gt;
+slot.mdl = &lt;span class=&#34;hljs-number&#34;&gt;0xffff&lt;/span&gt;...; &lt;span class=&#34;hljs-comment&#34;&gt;// MDL pointer describing this mapping&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;For example, each slot stores validity as shown above, the Mapped VA returned to the user, and an MDL Pointer that describes the mapping. At this time, &lt;code&gt;slot.flag == 1&lt;/code&gt; means that the slot is a valid registration entry, and &lt;code&gt;slot.flag == 0&lt;/code&gt; indicates a slot that has already been released or can no longer be used.&lt;/p&gt;
+&lt;p&gt;If a specific slot is selected as an unregister target, the driver must first clear the slot&amp;#x2019;s flag to &amp;#x2018;0&amp;#x2019; so that the slot can no longer be used, and release the mapping using the mapped VA and MDL pointer stored in the same slot. Even if an Unregister request is made again to the same VA later, a slot that has already been invalidated must not be selected again.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/08/banda/Wipeload_step7/EN/image 6.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;The problem is that if you check the code of the vulnerable function, you can see that the slot search, slot flag clear, and MDL unmap/free processes are not protected by a single lock. In other words, if another thread sends an Unregister request to the same VA between checking whether &lt;code&gt;slot.flag == 1&lt;/code&gt; and changing it to &lt;code&gt;slot.flag = 0&lt;/code&gt;, both threads may decide that the same Slot is still valid.&amp;#x1F631; Even if one thread invalidates the Slot and releases the MDL, the other thread may perform the Unmap and Free process again using the same MDL pointer that has already been secured.&lt;/p&gt;
+&lt;p&gt;This can result in a double free, where one MDL is freed twice.&lt;/p&gt;
+&lt;p&gt;Thread A:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;ol&gt;
+&lt;li&gt;Search for slot matching mapped VA&lt;/li&gt;
+&lt;li&gt;Change slot.flag = 0&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;MmUnmapLockedPages()&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;IoFreeMdl()&lt;/code&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Thread B:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;ol&gt;
+&lt;li&gt;Unregister request with same mapped VA&lt;/li&gt;
+&lt;li&gt;Check &lt;code&gt;slot.flag == 0&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;slot search failed&lt;/li&gt;
+&lt;li&gt;Does not enter MDL free path&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;First, let&amp;#x2019;s take a look at the normally synchronized Unregister flow. Since the slot is invalidated after Thread A selects it, even if Thread B searches for the same slot later, it cannot use the slot by checking &lt;code&gt;flag == 0&lt;/code&gt;. In other words, Unregister and Free are performed only once for one MDL.&lt;/p&gt;
+&lt;p&gt;Thread A:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;ol&gt;
+&lt;li&gt;Check &lt;code&gt;slot.flag == 1&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;Check for &lt;code&gt;mapped_va&lt;/code&gt; match&lt;/li&gt;
+&lt;li&gt;Select slot&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Thread B:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;ol&gt;
+&lt;li&gt;Thread A enters before clearing the flag&lt;/li&gt;
+&lt;li&gt;Check &lt;code&gt;slot.flag == 1&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;Check for &lt;code&gt;mapped_va&lt;/code&gt; match&lt;/li&gt;
+&lt;li&gt;Select the same slot&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;However, in vulnerable functions, the process from slot search to &lt;code&gt;flag&lt;/code&gt; change to MDL release is not protected by a single lock. If two Threads send Unregister requests to the same Mapped VA at almost the same time, both Threads may select the same Slot with &lt;code&gt;slot.flag == 1&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Afterwards, the two threads call &lt;code&gt;MmUnmapLockedPages()&lt;/code&gt; and &lt;code&gt;IoFreeMdl()&lt;/code&gt; respectively using the same MDL Pointer, and as a result, a double free occurs in which one MDL is released twice through a race condition.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/08/banda/Wipeload_step7/EN/image 11.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;(A BSOD occurs..!)&lt;/p&gt;
+&lt;p&gt;&lt;br&gt;&lt;/p&gt;
+&lt;h3 id=&#34;2-2-Case-MDL-Mismatch-Bug-Pattern&#34;&gt;&lt;a href=&#34;#2-2-Case-MDL-Mismatch-Bug-Pattern&#34; class=&#34;headerlink&#34; title=&#34;2.2 Case: MDL Mismatch Bug Pattern&#34;&gt;&lt;/a&gt;2.2 Case: MDL Mismatch Bug Pattern&lt;/h3&gt;&lt;blockquote&gt;
+&lt;p&gt;CVE-2024-38237, CVE-2025-21375&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The second case is an MDL Mismatch type vulnerability that occurs when &lt;code&gt;ksthunk.sys&lt;/code&gt; and &lt;code&gt;ks.sys&lt;/code&gt; process the &lt;code&gt;KSSTREAM_HEADER_OPTIONSF_PERSIST_SAMPLE (0x8000)&lt;/code&gt; flag differently.&lt;/p&gt;
+&lt;p&gt;First, Kernel Streaming has the characteristic of delivering &lt;code&gt;KSSTREAM_HEADER&lt;/code&gt; for each request when a video or audio frame is requested in UserMode. This structure contains the address of the actual data buffer, the frame size to process, and flags specifying frame properties.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;typedef&lt;/span&gt; &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; {&lt;/span&gt;
+  ULONG    Size;
+  ULONG    TypeSpecificFlags;
+  KSTIME   PresentationTime;
+  LONGLONG Duration;
+  ULONG    FrameExtent;
+  ULONG    DataUsed;
+  PVOID    Data;
+  ULONG    OptionsFlags;
+  ULONG    Reserved;
+} KSSTREAM_HEADER, *PKSSTREAM_HEADER;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Afterwards, &lt;code&gt;ksthunk.sys&lt;/code&gt; and &lt;code&gt;ks.sys&lt;/code&gt; prepare and connect the MDL to be used in each Frame based on this &lt;code&gt;KSSTREAM_HEADER&lt;/code&gt;. The problem is that two drivers may interpret the same flags differently, resulting in the Header being connected to a different MDL than the intended buffer. The fields that are particularly important here are:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;code&gt;Data&lt;/code&gt;&amp;#x2192; User buffer address where the device will write data.&lt;br&gt;&lt;code&gt;FrameExtent&lt;/code&gt;&amp;#x2192; Size of buffer to be processed in the frame&lt;br&gt;&lt;code&gt;OptionsFlags&lt;/code&gt; &amp;#x2192; Flags that specify how frames are processed and whether MDL is cached.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;At this time, Kernel Streaming uses MDL to use the user buffer indicated by &lt;code&gt;Data&lt;/code&gt; for actual device I/O, and then the MDL and header information are connected to the KS Frame of the kernel.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;struct&lt;/span&gt; _&lt;span class=&#34;hljs-title&#34;&gt;KSPFRAME_HEADER&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-class&#34;&gt;{&lt;/span&gt;
+  _LIST_ENTRY ListEntry;
+  _KSPFRAME_HEADER *NextFrameHeaderInIrp;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; *Queue;
+  _IRP *OriginalIrp;
+  _MDL *Mdl;
+  _IRP *Irp;
+  KSPIRP_FRAMING_ *IrpFraming;
+  KSSTREAM_HEADER *StreamHeader;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; *FrameBuffer;
+  KSPMAPPINGS_TABLE *MappingsTable;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; StreamHeaderSize;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; FrameBufferSize;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; *Context;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; RefCount;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; *OriginalData;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; *BufferedData;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; Status;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; __int8 DismissalCall;
+  _KSPFRAME_HEADER_TYPE Type;
+  _KSPSTREAM_POINTER *FrameHolder;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; OriginalOptionsFlags;
+  _KSPMDLCACHED_STREAM_POINTER *MdlCaching;
+};&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The field relationships directly related to the bug in this structure are as follows:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;code&gt;KSFrame::StreamHeader&lt;/code&gt; - FrameExtent: Frame processing size&lt;br&gt;&lt;code&gt;KSFrame::FrameBuffer&lt;/code&gt;: Buffer where device data will be written.&lt;br&gt;&lt;code&gt;KSFrame::Mdl&lt;/code&gt; : Describes the actual physical pages and size of the FrameBuffer.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Under normal circumstances, &lt;code&gt;KSSTREAM_HEADER&lt;/code&gt; and MDL should be concatenated in the same order and based on the same size.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;Header &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; (&lt;span class=&#34;hljs-number&#34;&gt;0x1000&lt;/span&gt;)  &amp;#x2192; MDL &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; (&lt;span class=&#34;hljs-number&#34;&gt;0x1000&lt;/span&gt; buffer)
+Header &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; (&lt;span class=&#34;hljs-number&#34;&gt;0x20000&lt;/span&gt;) &amp;#x2192; MDL &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; (&lt;span class=&#34;hljs-number&#34;&gt;0x20000&lt;/span&gt; buffer)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In other words, if the Header processes &lt;code&gt;0x20000&lt;/code&gt; bytes, the connected MDL must also be a buffer that describes &lt;code&gt;0x20000&lt;/code&gt; bytes.&lt;/p&gt;
+&lt;p&gt;However, when a 32-bit process sends a Kernel Streaming request, the request goes through &lt;code&gt;ksthunk.sys&lt;/code&gt; first and then is forwarded to &lt;code&gt;ks.sys&lt;/code&gt;. At this time, in frames where the &lt;code&gt;KSSTREAM_HEADER_OPTIONSF_PERSIST_SAMPLE (0x8000)&lt;/code&gt; flag is set, a problem may occur in which the MDL processing methods of the two drivers are different.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;KSSTREAM_HEADER_OPTIONSF_PERSIST_SAMPLE ON
+  ksthunk.sys: skip
+  ks.sys:      allocate
+
+KSSTREAM_HEADER_OPTIONSF_PERSIST_SAMPLE OFF
+  ksthunk.sys: allocate
+  ks.sys:      skip&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;If only a single frame is processed, there is no problem because the final required MDL is prepared, but if multiple frames, &lt;code&gt;KSSTREAM_HEADER&lt;/code&gt;, are placed in one request&amp;#x2026;? The order of the header array and the order of the MDL chain inside the IRP may be different.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;Headers (user-controlled &lt;span class=&#34;hljs-built_in&#34;&gt;array&lt;/span&gt;)
+
+headers[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;]
+  FrameExtent  = &lt;span class=&#34;hljs-number&#34;&gt;0x1000&lt;/span&gt;
+  OptionsFlags = KSSTREAM_HEADER_OPTIONSF_PERSIST_SAMPLE
+
+headers[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;]
+  FrameExtent  = &lt;span class=&#34;hljs-number&#34;&gt;0x20000&lt;/span&gt;
+  OptionsFlags = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In other words, two &lt;code&gt;KSSTREAM_HEADER&lt;/code&gt;s with different sizes and flags are included in one request. In this case, &lt;code&gt;ksthunk.sys&lt;/code&gt; skips generating the MDL for the first header with the &lt;code&gt;KSSTREAM_HEADER_OPTIONSF_PERSIST_SAMPLE&lt;/code&gt; flag set, and instead generates an MDL describing a buffer of size &lt;code&gt;0x20000&lt;/code&gt; for the second header without the flag.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;IRP-&amp;gt;MdlAddress&lt;br&gt;MDL A&lt;br&gt;buffer size = 0x20000&lt;br&gt;Next = NULL&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Afterwards, &lt;code&gt;ks.sys&lt;/code&gt; checks that the flag is set in the first Header and creates a new MDL describing the &lt;code&gt;0x1000&lt;/code&gt; size buffer of that header.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;code&gt;IRP-&amp;gt;MdlAddress&lt;/code&gt;&lt;br&gt;&lt;code&gt;MDL A (0x20000) -&amp;gt; MDL B (0x1000) -&amp;gt; NULL&lt;/code&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;However, the newly created MDL B is connected after the existing MDL A. Therefore, the Header array is in the order &lt;code&gt;headers[0] &amp;#x2192; headers[1]&lt;/code&gt;, but the final MDL Chain is in the order &lt;code&gt;MDL A for headers[1] &amp;#x2192; MDL B for headers[0]&lt;/code&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;KS Frame &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
+  StreamHeader-&amp;gt;FrameExtent = &lt;span class=&#34;hljs-number&#34;&gt;0x1000&lt;/span&gt;
+  Mdl                       = MDL A (&lt;span class=&#34;hljs-number&#34;&gt;0x20000&lt;/span&gt;)
+
+KS Frame &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+  StreamHeader-&amp;gt;FrameExtent = &lt;span class=&#34;hljs-number&#34;&gt;0x20000&lt;/span&gt;
+  Mdl                       = MDL B (&lt;span class=&#34;hljs-number&#34;&gt;0x1000&lt;/span&gt;)&lt;/code&gt;&lt;/pre&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;code&gt;headers[0]&lt;/code&gt; : &lt;code&gt;0x1000&lt;/code&gt;&lt;br&gt;&lt;code&gt;headers[1]&lt;/code&gt; : &lt;code&gt;0x20000&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;MDL A (for &lt;code&gt;0x20000&lt;/code&gt;, &lt;code&gt;headers[1]&lt;/code&gt;)&lt;br&gt;MDL B (for &lt;code&gt;0x1000&lt;/code&gt;, &lt;code&gt;headers[0]&lt;/code&gt;)&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Afterwards, &lt;code&gt;ks.sys&lt;/code&gt; takes out the Header array and MDL Chain in order from the front and connects them to the KS Frame. At this time, because the original correspondence between the header and the MDL is not rechecked, the information for different headers is connected to each KS Frame with the information reversed.&lt;/p&gt;
+&lt;p&gt;The first KS Frame uses information from &lt;code&gt;headers[0]&lt;/code&gt; with &lt;code&gt;FrameExtent&lt;/code&gt; of &lt;code&gt;0x1000&lt;/code&gt;, but is actually associated with MDL A for &lt;code&gt;headers[1]&lt;/code&gt;. Conversely, the second KS Frame uses the information from &lt;code&gt;headers[1]&lt;/code&gt; whose &lt;code&gt;FrameExtent&lt;/code&gt; is &lt;code&gt;0x20000&lt;/code&gt;, and is connected to MDL B for &lt;code&gt;headers[0]&lt;/code&gt; whose actual size is &lt;code&gt;0x1000&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;In other words, the problem may not be immediately apparent because the first frame uses a larger buffer, but the second frame is trying to process &lt;code&gt;0x20000&lt;/code&gt; bytes in a &lt;code&gt;0x1000&lt;/code&gt; byte buffer!&amp;#x1F92F; This mismatch ultimately leads to a buffer overflow.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs apache&#34;&gt;&lt;span class=&#34;hljs-attribute&#34;&gt;KS&lt;/span&gt; Frame &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; 
+&lt;span class=&#34;hljs-attribute&#34;&gt;FrameExtent&lt;/span&gt; = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;1000&lt;/span&gt; 
+&lt;span class=&#34;hljs-attribute&#34;&gt;MDL&lt;/span&gt;-described buffer = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;20000&lt;/span&gt;
+
+&lt;span class=&#34;hljs-attribute&#34;&gt;KS&lt;/span&gt; Frame &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; 
+&lt;span class=&#34;hljs-attribute&#34;&gt;FrameExtent&lt;/span&gt; = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;20000&lt;/span&gt; 
+&lt;span class=&#34;hljs-attribute&#34;&gt;MDL&lt;/span&gt;-described buffer = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;1000&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Between Frame 0 and Frame 1, which one do you think is more suspicious? In the above situation, it is KS Frame 1 that creates the actual overflow. &lt;code&gt;StreamHeader-&amp;gt;FrameExtent&lt;/code&gt; specifies that it handles &lt;code&gt;0x20000&lt;/code&gt; bytes, but the actual buffer described by the associated MDL B is only &lt;code&gt;0x1000&lt;/code&gt; bytes.&lt;/p&gt;
+&lt;p&gt;As a result, the Kernel Streaming Worker writes data beyond the valid range described by the MDL, and adjacent kernel memory becomes corrupted. An MDL Mismatch vulnerability occurs when the order of MDL generated for different headers is reversed and the wrong header and MDL are connected to one KS Frame.&lt;/p&gt;
+&lt;p&gt;&lt;br&gt;&lt;/p&gt;
+&lt;h3 id=&#34;2-3-Case-Forgotten-Lock-Uninitialized-MDL-Bug-Pattern&#34;&gt;&lt;a href=&#34;#2-3-Case-Forgotten-Lock-Uninitialized-MDL-Bug-Pattern&#34; class=&#34;headerlink&#34; title=&#34;2.3 Case: Forgotten Lock / Uninitialized MDL Bug Pattern&#34;&gt;&lt;/a&gt;2.3 Case: &lt;strong&gt;Forgotten Lock / Uninitialized MDL Bug Pattern&lt;/strong&gt;&lt;/h3&gt;&lt;blockquote&gt;
+&lt;p&gt;CVE-2024-38238&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Lastly, this is the third case. Do you remember that &lt;code&gt;MmProbeAndLockPages()&lt;/code&gt; had to be performed before &lt;code&gt;MmMapLockedPagesSpecifyCache()&lt;/code&gt; was called during normal MDL processing? If this order is not followed, the PFN array in the MDL may remain uninitialized correctly.&lt;/p&gt;
+&lt;p&gt;The CVE-2024-38238 case is a Forgotten Lock type vulnerability that occurs when &lt;code&gt;ks.sys&lt;/code&gt; generates an MDL and then maps the MDL without calling &lt;code&gt;MmProbeAndLockPages()&lt;/code&gt;. In the previous case, MDL Mismatch was a problem in which the connection relationship between the header and MDL changed, while Forgotten Lock was a problem in which the driver considered this to be a normal chain even though the locked MDL and unlocked MDL existed together in one MDL chain.&lt;/p&gt;
+&lt;p&gt;(Here, MDL Chain refers to a structure that connects multiple MDLs with &lt;code&gt;Next Pointer&lt;/code&gt;. When one IRP processes multiple frames, the MDL describing each frame can be managed in a connected form starting from &lt;code&gt;IRP-&amp;gt;MdlAddress&lt;/code&gt;.)&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Header traversal logic in ks.sys&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;ks!CKsMdlcache::MdlCacheHandleThunkBufferIrp&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Let&amp;#x2019;s check the vulnerable MDL creation and lock flow. First, the WoW64 Kernel Streaming request goes through preprocessing in &lt;code&gt;ksthunk.sys&lt;/code&gt; and is then sent to the above function in &lt;code&gt;ks.sys&lt;/code&gt;. Afterwards, inside the function, it iterates over the &lt;code&gt;KSSTREAM_HEADER&lt;/code&gt; array and checks the OptionsFlags of each Header.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/08/banda/Wipeload_step7/EN/image 7.png&#34; alt&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; ( TotalSize &amp;gt;= &lt;span class=&#34;hljs-number&#34;&gt;0x38&lt;/span&gt; )&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;If you check the function in detail, you can see that &lt;code&gt;KSSTREAM_HEADER&lt;/code&gt; included in the request is processed in order through the While Loop. Here, &lt;code&gt;0x38&lt;/code&gt; is the size of the 64-bit &lt;code&gt;KSSTREAM_HEADER&lt;/code&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( (OptionsFlag &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x8000&lt;/span&gt;) == &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; )
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;)KsProbeStreamIrp(irp, a3, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;If the flag is set, the function generates the MDL for the current Header and then continues processing the next &lt;code&gt;KSSTREAM_HEADER&lt;/code&gt;. Conversely, if the flag is not set, I have a flow that calls &lt;code&gt;KsProbeStreamIrp()&lt;/code&gt; and returns directly from the function. The problem is that when this early return occurs, not only the subsequent Header processing but also the MDL Lock loop performed at the bottom of the function is not reached.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Location of MDL Lock Loop&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;If Header traversal is completed normally, &lt;code&gt;MmProbeAndLockPages()&lt;/code&gt; is called while traversing the MDL Chain of the IRP at the bottom of the function.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/08/banda/Wipeload_step7/EN/image 8.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;Therefore, you can see that the normal processing sequence follows the flow below.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Header array traversal&lt;/li&gt;
+&lt;li&gt;Generate the required MDL&lt;/li&gt;
+&lt;li&gt;Header traversal completed&lt;/li&gt;
+&lt;li&gt;IRP&amp;#x2019;s MDL Chain traversal&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;MmProbeAndLockPages()&lt;/code&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;But can you guess the problem? The &lt;code&gt;MmProbeAndLockPages()&lt;/code&gt; loop is placed after the Header traversal. Even if MDL was created through &lt;code&gt;IoAllocateMdl()&lt;/code&gt; while processing the Header earlier, if there is no Cache Flag in the next Header, the flag verification code below is executed.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( (OptionsFlag &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x8000&lt;/span&gt;) == &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; )
+  &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; (&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;)KsProbeStreamIrp(irp, a3, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;However, the problem is that in the second Header, if &lt;code&gt;OptionsFlags&lt;/code&gt; is &lt;code&gt;0&lt;/code&gt;, it returns early to the &lt;code&gt;KsProbeStreamIrp()&lt;/code&gt; loop and does not reach the Lock loop at the bottom of the function, &lt;code&gt;MmProbeAndLockPages()&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;In other words, a problem arises in that the MDL generated in the previous iteration can be passed to &lt;code&gt;KsProbeStreamIrp()&lt;/code&gt; without going through &lt;code&gt;MmProbeAndLockPages()&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;KsProbeStreamIrp MDL verification issue&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;Then, let&amp;#x2019;s go into &lt;code&gt;KsProbeStreamIrp()&lt;/code&gt;..? This function maps the Frame Buffer to the kernel address space using the IRP MDL Chain.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/08/banda/Wipeload_step7/EN/image 9.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;If you check the code, it first fetches the first MDL of the IRP and then checks the &lt;code&gt;0x6&lt;/code&gt; mask for the first &lt;code&gt;MdlFlags&lt;/code&gt;. The relevant flags are as follows:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;define&lt;/span&gt; MDL_MAPPED_TO_SYSTEM_VA      0x0001&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;define&lt;/span&gt; MDL_PAGES_LOCKED             0x0002&lt;/span&gt;
+&lt;span class=&#34;hljs-meta&#34;&gt;#&lt;span class=&#34;hljs-meta-keyword&#34;&gt;define&lt;/span&gt; MDL_SOURCE_IS_NONPAGED_POOL  0x0004&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;0x6&lt;/code&gt; is &lt;code&gt;0x2&lt;/code&gt; | With &lt;code&gt;0x4&lt;/code&gt;, it contains the &lt;code&gt;MDL_PAGES_LOCKED, MDL_SOURCE_IS_NONPAGED_POOL&lt;/code&gt; flags. This means that if either flag is present, the condition passes. If the first MDL is Locked or an MDL that describes a NonPaged Pool, the while loop below is entered.&lt;/p&gt;
+&lt;p&gt;However, this check is only performed for the first MDL pointed to by &lt;code&gt;Irp&amp;#x2192;MdlAddress&lt;/code&gt;, and the status of each &lt;code&gt;MDL MDL_PAGES_LOCKED&lt;/code&gt; is not checked again in subsequent while loops.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;CurrentMdl = Irp-&amp;gt;MdlAddress;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( CurrentMdl &amp;amp;&amp;amp;
+     (CurrentMdl-&amp;gt;MdlFlags &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;) &amp;amp;&amp;amp;
+     (ProbeFlags &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x40&lt;/span&gt;) )
+{
+  &lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; ( CurrentMdl )
+  {
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( !(CurrentMdl-&amp;gt;MdlFlags &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;) )
+      MmMapLockedPagesSpecifyCache(CurrentMdl, ...);
+
+    CurrentMdl = CurrentMdl-&amp;gt;Next;
+  }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Additionally, inside the &lt;code&gt;while&lt;/code&gt; statement, only the &lt;code&gt;0x5&lt;/code&gt; mask is checked for each MDL. Based on the flag checked earlier, this means &lt;code&gt;MDL_MAPPED_TO_SYSTEM_VA&lt;/code&gt; or &lt;code&gt;MDL_SOURCE_IS_NONPAGED_POOL&lt;/code&gt; state. If a System VA already exists or is an MDL describing a NonPaged Pool, the existing &lt;code&gt;MappedSystemVa&lt;/code&gt; is used; otherwise, it moves on to the next &lt;code&gt;MmMapLockedPagesSpecifyCache()&lt;/code&gt; call.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;MmMapLockedPagesSpecifyCache(
+  CurrentMdl,
+  &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;,
+  MmCached,
+  &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;,
+  &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;,
+  &lt;span class=&#34;hljs-number&#34;&gt;0x40000010&lt;/span&gt;u
+);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;However, even here we do not check whether &lt;code&gt;MmProbeAndLockPages()&lt;/code&gt; is performed. In the end, we can see that the core verification error is the logic that only checks the state of the first MDL and then assumes that the rest of the chain will be in the locked state.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Configuring Vulnerability Triggers&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;Now let&amp;#x2019;s connect the two logics. First, we include two &lt;code&gt;KSSTREAM_HEADER&lt;/code&gt;s of the same size in one request to trigger the vulnerability.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;Headers (user-controlled &lt;span class=&#34;hljs-built_in&#34;&gt;array&lt;/span&gt;)
+
+headers[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;]
+  FrameExtent  = &lt;span class=&#34;hljs-number&#34;&gt;0x2000&lt;/span&gt;
+  Data         = &lt;span class=&#34;hljs-number&#34;&gt;0x42420000&lt;/span&gt;
+  OptionsFlags = KSSTREAM_HEADER_OPTIONSF_PERSIST_SAMPLE
+
+headers[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;]
+  FrameExtent  = &lt;span class=&#34;hljs-number&#34;&gt;0x2000&lt;/span&gt;
+  Data         = &lt;span class=&#34;hljs-number&#34;&gt;0x43430000&lt;/span&gt;
+  OptionsFlags = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The key is to put the Locked MDL at the beginning of the chain, followed by an Unlocked MDL with &lt;code&gt;OptionsFlags&lt;/code&gt; set to &lt;code&gt;0&lt;/code&gt; and Cache Flag turned off. Then, the first Header creates MDL in &lt;code&gt;ks.sys&lt;/code&gt;, and the second Header returns early to the &lt;code&gt;KsProbeStreamIrp()&lt;/code&gt; path.&lt;/p&gt;
+&lt;p&gt;Afterwards, &lt;code&gt;ksthunk.sys&lt;/code&gt; skips creating the MDL for the first Header, but for the second Header without the Cache Flag, it generates and locks the MDL on behalf of &lt;code&gt;ks.sys&lt;/code&gt;. Therefore, when &lt;code&gt;ksthunk.sys&lt;/code&gt; processing is completed, only MDL 2 for the second header is connected to the IRP.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;IRP-&amp;gt;MdlAddress
+MDL &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+  Header     = headers[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;]
+  Data       = &lt;span class=&#34;hljs-number&#34;&gt;0x43430000&lt;/span&gt;
+  ByteCount  = &lt;span class=&#34;hljs-number&#34;&gt;0x2000&lt;/span&gt;
+  Locked     = TRUE
+  PFN[]      = Initialized
+  Next       = &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;And on the &lt;code&gt;ks.sys&lt;/code&gt; side, since the first header has the Cache Flag set, MDL 1 is created through &lt;code&gt;IoAllocateMdl&lt;/code&gt;. At this time, since MDL 2 already exists in the IRP, the newly created MDL 1 is connected to the back of the chain.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;IRP-&amp;gt;MdlAddress
+-&amp;gt;
+MDL &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; headers[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;]
+  Locked = TRUE
+  PFN[]  = Initialized
+-&amp;gt;
+MDL &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; headers[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;]
+  Locked = FALSE
+  PFN[]  = Uninitialized
+-&amp;gt;
+      &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;At this point, only &lt;code&gt;IoAllocateMdl()&lt;/code&gt; has been performed in MDL 1, and then &lt;code&gt;ks.sys&lt;/code&gt; processes the second header, and eventually, due to the weak logic, the &lt;code&gt;MmProbeAndLockPages()&lt;/code&gt; loop is not executed and MDL 1 remains in the unlocked state.&lt;/p&gt;
+&lt;p&gt;Afterwards, &lt;code&gt;KsProbeStreamIrp()&lt;/code&gt; examines MDL 2, the first node in the chain. At this time, since MDL 2 is already normally locked by &lt;code&gt;ksthunk.sys&lt;/code&gt;, &lt;code&gt;MDL_PAGES_LOCKED&lt;/code&gt; is set and the condition passes.&lt;/p&gt;
+&lt;p&gt;However, in the case of MDL 1, the PFN array is not initialized because it did not go through &lt;code&gt;MmProbeAndLockPages()&lt;/code&gt;, and even so, &lt;code&gt;MmMapLockedPagesSpecifyCache()&lt;/code&gt; tries to use the value as the physical page number described by the MDL. Therefore, if the remaining uninitialized PFN value is used, the wrong physical page will be referenced and a Bug Check (BSOD) may occur.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Furthermore, the MDL created with &lt;code&gt;IoAllocateMdl()&lt;/code&gt; in this path can reuse Pool Memory without initializing the PFN array. Therefore, an attacker can configure EoP to control uninitialized PFN values &amp;#x200B;&amp;#x200B;by spraying the desired value in the Pool area where the PFN array is located.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h2 id=&#34;3-Outro&#34;&gt;&lt;a href=&#34;#3-Outro&#34; class=&#34;headerlink&#34; title=&#34;3. Outro&#34;&gt;&lt;/a&gt;&lt;strong&gt;3. Outro&lt;/strong&gt;&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2026/08/08/banda/Wipeload_step7/EN/image 10.png&#34; alt&gt;&lt;/p&gt;
+&lt;p&gt;In this article, we looked at the basic flow of MDL fixing physical pages in the user buffer and mapping them to the kernel address space, and the Lifetime, Mismatch, and Forgotten Lock bug patterns that occur when this is handled incorrectly.&lt;/p&gt;
+&lt;p&gt;This article was not about a final battle with Tai Lung, but rather about training to deal with him. Now that you have learned the operation of MDL and the three bug patterns, all that remains is the final authority wall that will lead you from Medium Integrity to SYSTEM in practice. Please look forward to the next Taoist episode to see whether Po will be able to complete the MDL and win the fight against Tai Lung in the next battle!&lt;/p&gt;
+&lt;h2 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference.&#34;&gt;&lt;/a&gt;Reference.&lt;/h2&gt;&lt;p&gt;&lt;a href=&#34;https://theori.io/blog/chaining-n-days-to-compromise-all-part-3-windows-driver-lpe-medium-to-system&#34;&gt;https://theori.io/blog/chaining-n-days-to-compromise-all-part-3-windows-driver-lpe-medium-to-system&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://medium.com/@WaterBucket/understanding-memory-descriptor-lists-mdls-for-windows-vulnerability-research-exploit-7de8729caee7&#34;&gt;https://medium.com/@WaterBucket/understanding-memory-descriptor-lists-mdls-for-windows-vulnerability-research-exploit-7de8729caee7&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://devco.re/blog/2025/05/17/frame-by-frame-kernel-streaming-keeps-giving-vulnerabilities-en/&#34;&gt;https://devco.re/blog/2025/05/17/frame-by-frame-kernel-streaming-keeps-giving-vulnerabilities-en/&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2026/08/08/banda/Wipeload_step7/EN/image.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2026/08/08/banda/wipeload_step7/en/">
+
+  <title>[Wipeload Step 7.] Lock the Pages, Break the Kernel (EN) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2026-08-08 17:00" pubdate>
+      2026년 8월 8일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      4.9k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      97
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Wipeload Step 7.] Lock the Pages, Break the Kernel (EN)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p>Hello. This is banda from Hackyboiz.</p>
+<p><img src="/2026/08/08/banda/Wipeload_step7/EN/image.png" srcset="/img/loading.gif" alt></p>
+<p>Previous articles</p>
+<blockquote>
+<p><a href="https://hackyboiz.github.io/2026/06/06/OUYA77/Wipeload_step1/en/">https://hackyboiz.github.io/2026/06/06/OUYA77/Wipeload_step1/en/</a></p>
+<p><a href="https://hackyboiz.github.io/2026/06/21/ji9umi/Wipeload_step2/en/">https://hackyboiz.github.io/2026/06/21/ji9umi/Wipeload_step2/en/</a></p>
+<p><a href="https://hackyboiz.github.io/2026/06/26/ji9umi/Wipeload_step3/en/">https://hackyboiz.github.io/2026/06/26/ji9umi/Wipeload_step3/en/</a></p>
+<p><a href="https://hackyboiz.github.io/2026/07/13/OUYA77/Wipeload_step4/en/">https://hackyboiz.github.io/2026/07/13/OUYA77/Wipeload_step4/en/</a></p>
+<p><a href="https://hackyboiz.github.io/2026/07/19/gongjae/Wipeload_step5/EN/">https://hackyboiz.github.io/2026/07/19/gongjae/Wipeload_step5/EN/</a></p>
+<p><a href="https://hackyboiz.github.io/2026/08/01/gongjae/Wipeload_step6/EN/">https://hackyboiz.github.io/2026/08/01/gongjae/Wipeload_step6/EN/</a></p>
+</blockquote>
+<p>Previously, thanks to the great work of Master Sifu, it was possible to use the WASM trick to escape the V8 Sandbox and execute native code, and then escape to the Chrome Sandbox through ALPC UAF and execute code with Medium Integrity permissions. The final boundary from a chaining perspective would be the gap between UserMode and KernelMode that remains even after being moved to the Medium IL execution context.</p>
+<p>In steps 7 and 8, we will complete Kernel EoP, the final gateway to chaining. In this 7th step, we will look at the MDL data structure and operation, which are the core of CVE-2023-29360, and in the next 8th step, we will use this to complete the actual Kernel EoP, so please look forward to it! Will his disciple Po be able to follow in his master&#x2019;s footsteps and reach SYSTEM authority? Let&#x2019;s find out together.</p>
+<h2 id="1-Memory-Descriptor-List-MDL-Overview"><a href="#1-Memory-Descriptor-List-MDL-Overview" class="headerlink" title="1. Memory Descriptor List (MDL) Overview"></a><strong>1. Memory Descriptor List (MDL) Overview</strong></h2><p><img src="/2026/08/08/banda/Wipeload_step7/EN/image 1.png" srcset="/img/loading.gif" alt></p>
+<p>MDL is a kernel structure that contains information about which virtual address (VA) buffer in the kernel is actually composed of which physical pages.</p>
+<p>In general, it is difficult for kernel mode drivers to directly access user mode memory. This is because user mode buffer addresses cannot be safely stored and used with simple pointer values. When the kernel driver accesses the user mode buffer, the following problems occur.</p>
+<ol>
+<li>User-mode virtual addresses are interpreted differently for each process. If the driver stores only the user buffer pointer value of the current process and later accesses it from the context of another process, it may interpret the wrong process address space or refer to the wrong memory.</li>
+<li>User pages are not always fixed in RAM and can be moved to disk by the OS. If the driver stores only the user buffer pointer and then accesses it, a page fault may occur because the page is not in memory.</li>
+</ol>
+<p>Therefore, there are two main ways the driver handles the user buffer. One is the method of copying the user mode buffer contents to the kernel buffer and using it, and the other is the MDL method, which we will look at now.</p>
+<p><br></p>
+<h4 id="1-1-General-case-when-not-using-MDL"><a href="#1-1-General-case-when-not-using-MDL" class="headerlink" title="1.1 General case (when not using MDL)"></a><strong>1.1 General case (when not using MDL)</strong></h4><p><img src="/2026/08/08/banda/Wipeload_step7/EN/image 2.png" srcset="/img/loading.gif" alt></p>
+<p>In general cases, that is, when MDL is not used directly, the user buffer is copied to the kernel buffer for processing. In IOCTL, I/O Manager usually uses <code>METHOD_BUFFERED</code> to create a kernel buffer called <code>SystemBuffer</code> and copy data.</p>
+<pre><code class="hljs python">ProbeForRead(userBuf, size, <span class="hljs-number">1</span>);
+RtlCopyMemory(kernelBuf, userBuf, size);</code></pre>
+<p>Alternatively, when a user pointer is passed directly as with <code>METHOD_NEITHER</code>, the driver can validate the user address with <code>ProbeForRead</code> and <code>RtlCopyMemory</code> before copying it to a kernel buffer. Rather than continuously referencing the user buffer directly, these approaches bring the required data into kernel memory before processing it.</p>
+<p><br></p>
+<h4 id="1-2-When-to-use-MDL"><a href="#1-2-When-to-use-MDL" class="headerlink" title="1.2 When to use MDL"></a>1.2 When to use MDL</h4><p><img src="/2026/08/08/banda/Wipeload_step7/EN/image 3.png" srcset="/img/loading.gif" alt></p>
+<p>In the case of MDL, unlike the previous case, rather than copying the contents of the user buffer to the kernel buffer, copying is avoided by allowing the driver to directly use the RAM physical page to which the user buffer is actually mapped.</p>
+<pre><code class="hljs python">User VA: <span class="hljs-number">0x000001A2F0001000</span>
+-&gt; Physical pages: PFN 1234, PFN 1235, PFN 1236</code></pre>
+<p>Looking at the code above, when a buffer is created with <code>malloc</code>, <code>VirtualAlloc</code>, etc. through a user program, it is internally connected to several physical memory pages. MDL is a structure that records information that this user buffer consists of PFN 1234, PFN 1235, and PFN 1236 pages, as well as the starting address and size of the buffer.</p>
+<p>In other words, MDL is not a structure that copies and stores the contents of the user buffer, but corresponds to metadata to describe the physical pages that make up the buffer. Afterwards, the driver can lock the page based on this MDL and, if necessary, remap it to the kernel address space.</p>
+<p><br></p>
+<h4 id="1-3-MDL-creation-flow"><a href="#1-3-MDL-creation-flow" class="headerlink" title="1.3 MDL creation flow"></a>1.3 MDL creation flow</h4><ol>
+<li><strong>User mode buffer allocation</strong></li>
+</ol>
+<pre><code class="hljs python">BYTE *buf = VirtualAlloc(NULL, <span class="hljs-number">0x1000</span>, MEM_COMMIT, PAGE_READWRITE);</code></pre>
+<p>Looking at the MDL creation flow, let&#x2019;s first assume that the user mode program allocates a buffer to be delivered to the driver through VirtualAlloc in the virtual address space as shown above. buf will contain user mode VA, right?</p>
+<ol>
+<li><strong>Create MDL: IoAllocateMdl</strong></li>
+</ol>
+<pre><code class="hljs c"><span class="hljs-function">PMDL <span class="hljs-title">IoAllocateMdl</span><span class="hljs-params">(</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in, optional]      __drv_aliasesMem PVOID VirtualAddress,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in]                ULONG                  Length,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in]                BOOLEAN                SecondaryBuffer,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in]                BOOLEAN                ChargeQuota,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in, out, optional] PIRP                   Irp</span></span>
+<span class="hljs-function"><span class="hljs-params">)</span></span>;
+
+PMDL mdl = IoAllocateMdl(userBuffer, bufferSize, FALSE, FALSE, <span class="hljs-literal">NULL</span>);</code></pre>
+<p>Afterwards, <code>IoAllocateMdl()</code> is performed to create an MDL kernel structure containing metadata and PFN array space for a specific virtual address range. In particular, immediately after executing <code>IoAllocateMdl()</code>, only the PFN array space has been created and the PFN array has not yet been filled.</p>
+<pre><code class="hljs c"><span class="hljs-keyword">typedef</span> <span class="hljs-class"><span class="hljs-keyword">struct</span> _<span class="hljs-title">MDL</span> {</span>
+  <span class="hljs-class"><span class="hljs-keyword">struct</span> _<span class="hljs-title">MDL</span>      *<span class="hljs-title">Next</span>;</span>
+  CSHORT           Size;
+  CSHORT           MdlFlags;
+  <span class="hljs-class"><span class="hljs-keyword">struct</span> _<span class="hljs-title">EPROCESS</span> *<span class="hljs-title">Process</span>;</span>
+  PVOID            MappedSystemVa;
+  PVOID            StartVa;
+  ULONG            ByteCount;
+  ULONG            ByteOffset;
+} MDL, *PMDL;</code></pre>
+<p>The MDL structure created with <code>IoAllocateMdl()</code> contains key fields to describe the buffer range. <code>StartVa</code> is the starting virtual address of the first page containing the buffer, <code>ByteOffset</code> is the in-page offset of the buffer start position, and <code>ByteCount</code> is the buffer length. <code>MdlFlags</code> is a flag field that indicates the current state of the MDL, such as whether the page is locked or whether the system address is mapped.</p>
+<ol>
+<li><strong>Physical Page Locking: MmProbeAndLockPages</strong></li>
+</ol>
+<pre><code class="hljs c"><span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">MmProbeAndLockPages</span><span class="hljs-params">(</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in, out] PMDL            MemoryDescriptorList,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in]      KPROCESSOR_MODE AccessMode,</span></span>
+<span class="hljs-function"><span class="hljs-params">  [in]      LOCK_OPERATION  Operation</span></span>
+<span class="hljs-function"><span class="hljs-params">)</span></span>;
+
+MmProbeAndLockPages(mdl, UserMode, IoReadAccess);</code></pre>
+<p>After creating an MDL structure through <code>IoAllocateMdl()</code>, the process of fixing physical pages through <code>MmProbeAndLockPages</code> generally follows. Because the user-mode buffer can be paged out at any time, the process of fixing the page in physical memory is necessary before the kernel accesses it. Through the above locking process, all pages pointed to by the MDL reside in RAM, the PFN array is filled inside the MDL, and the driver can then safely access the memory based on this MDL.</p>
+<pre><code class="hljs cpp">__try {
+    MmProbeAndLockPages(
+        mdl,
+        UserMode,
+        IoReadAccess
+    );
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+    status = GetExceptionCode();
+}</code></pre>
+<p>However, you can&#x2019;t just trust the address provided by the user and lock the page, right? In a typical driver, an exception may occur while processing a buffer with an incorrect address or incorrect permissions, so the call to <code>MmProbeAndLockPage()</code> as in the code above must be performed within the scope of exception handling.</p>
+<p><code>MmProbeAndLockPages()</code> checks whether the passed virtual address is actually accessible and whether it has read/write permissions appropriate for <code>Operation</code>. If verification is successful, the physical page in the corresponding address range is locked and the PFN array of the MDL is filled with the actual page number.</p>
+<p>In other words, this function not only fixes the page in RAM, but is also an important verification point to check whether the address passed by the user is appropriate for MDL processing.</p>
+<ol>
+<li><strong>Kernel VA Remapping: MmMapLockedPagesSpecifyCache</strong></li>
+</ol>
+<pre><code class="hljs c"><span class="hljs-function">PVOID <span class="hljs-title">MmMapLockedPagesSpecifyCache</span><span class="hljs-params">(</span></span>
+<span class="hljs-function"><span class="hljs-params">    PMDL MemoryDescriptorList,</span></span>
+<span class="hljs-function"><span class="hljs-params">    KPROCESSOR_MODE AccessMode,</span></span>
+<span class="hljs-function"><span class="hljs-params">    MEMORY_CACHING_TYPE CacheType,</span></span>
+<span class="hljs-function"><span class="hljs-params">    PVOID RequestedAddress,</span></span>
+<span class="hljs-function"><span class="hljs-params">    ULONG BugCheckOnFailure,</span></span>
+<span class="hljs-function"><span class="hljs-params">    ULONG Priority</span></span>
+<span class="hljs-function"><span class="hljs-params">)</span></span>;</code></pre>
+<p>If you perform <code>MmProbeAndLockPages()</code> earlier, what physical pages the user buffer actually consists of are recorded in the MDL, and the pages are locked to prevent them from being removed from RAM. Afterwards, locked physical pages recorded in MDL are mapped to new virtual addresses through <code>MmMapLockedPagesSpecifyCache</code>. Here, based on the case where <code>AccessMode</code> is <code>KernelMode</code>, we will look at the flow of remapping the Physical Pages indicated by the MDL&#x2019;s PFN array to the Kernel VA in the kernel address space.</p>
+<p>The important thing is that during this process, the entire user buffer is not copied to a separate kernel buffer in advance. The driver obtains a Kernel VA that points to the same Physical Page used by the existing user buffer, and can refer to the contents of the original buffer through this.</p>
+<p>For example, if the driver needs to move the contents to another buffer or device I/O area, the mapped Kernel VA can be used as the source of <code>RtlCopyMemory()</code> as shown below.</p>
+<pre><code class="hljs c">RtlCopyMemory(dst, kernelVa, length);</code></pre>
+<p>As shown above, the driver can use the mapped <code>KernelVa</code> as a source to copy the data required for device I/O processing to another buffer.</p>
+<ol>
+<li><strong>MDL Unmap: MmUnmapLockedPages</strong></li>
+</ol>
+<pre><code class="hljs c">MmUnmapLockedPages(kernelVa, mdl);
+MmUnlockPages(mdl);
+IoFreeMdl(mdl);</code></pre>
+<p>After creating and using the MDL through the above process, the lock must be unlocked and freed, and it must be released using the above process in reverse order. First, remove the kernel virtual address mapping created with <code>MmMapLockedPagesSpecifyCache()</code> via <code>MmUnmapLockedPages(kernelVA, mdl)</code>. Afterwards, unlock the physical pages fixed with <code>MmProbeAndLockPages()</code> through <code>MmUnlockPages(mdl)</code>. Finally, through <code>IoFreeMdl(mdl)</code>, the MDL structure allocated with <code>IoAllocateMdl()</code> is freed, and the metadata and PFN array space contained in the MDL are returned.</p>
+<p>In other words, the MDL organizing process proceeds in the following order: Unmapping &#x2192; Page Unlock &#x2192; MDL Unlock. If the MDL is released first while the mapping remains, the Kernel VA can continue to refer to the PFN information of the already returned MDL, and if the Page Lock remains, the corresponding Physical Page is unnecessarily locked in RAM.</p>
+<h2 id="2-MDL-ABUSE-CASE-STUDY"><a href="#2-MDL-ABUSE-CASE-STUDY" class="headerlink" title="2. MDL ABUSE CASE STUDY"></a>2. MDL ABUSE CASE STUDY</h2><p><img src="/2026/08/08/banda/Wipeload_step7/EN/image 4.png" srcset="/img/loading.gif" alt></p>
+<p>As seen earlier, the driver can lock the physical pages that make up the user buffer through MDL and map those pages to new virtual addresses as needed! In particular, when Locked MDL is mapped to user mode, a new User VA is created in the user process address space that points to the same physical page as the existing buffer.</p>
+<p>So far, you have looked at the lifetime of MDL being created, mapped, and then released. After reading the article, do you not see any points where vulnerabilities may occur if something is mismanaged in this process? you&#x2019;re right. MDL is created based on the buffer passed by the user, locks the physical page, and maps it to a different virtual address space. Therefore, if you mishandle which frame the generated MDL is connected to, when the mapped address and MDL are released, and whether an unlocked MDL can enter the mapping path, it can lead to strong memory corruption primitives.</p>
+<p>His teammates have arrived for his final training before his heated bout with Tai Lung. Let&#x2019;s check what type of vulnerability it can lead to when MDL management is incorrect!</p>
+<p>Now, let&#x2019;s examine the Case 1 Lifetime Bug MDL vulnerability I previously discovered, along with past MDL-related CVEs, to see the different forms MDL Abuse can take! Case 2&#x2019;s CVE-2024-38237 and CVE-2025-21375 are MDL Mismatch cases where the connection between the Frame Header and the MDL is mismatched. Case 3&#x2019;s CVE-2024-38238 is a Forgotten Lock case in which MDL is passed to the mapping path without being locked. For Case 2 and Case 3, we referred to the <a target="_blank" rel="external nofollow noopener noreferrer" href="https://devco.re/blog/2025/05/17/frame-by-frame-kernel-streaming-keeps-giving-vulnerabilities-en/">DEVCORE case</a> to classify MDL vulnerability types.</p>
+<p><br></p>
+<h3 id="2-1-CASE-MDL-Lifetime-Bug-Pattern"><a href="#2-1-CASE-MDL-Lifetime-Bug-Pattern" class="headerlink" title="2.1 CASE: MDL Lifetime Bug Pattern"></a>2.1 CASE: MDL Lifetime Bug Pattern</h3><p>First, the first type of vulnerability is a Double Free vulnerability that occurs when the Lifetime of an MDL object is processed without synchronization. Broadly speaking, it is a race condition type of vulnerability that can appear in the process of MDL being released and reused.</p>
+<p><img src="/2026/08/08/banda/Wipeload_step7/EN/image 5.png" srcset="/img/loading.gif" alt></p>
+<p>If you check the MDL Register/Unregister Flow of the vulnerable driver, the Register request stores the VA mapped to the user and the MDL pointer describing the VA in the internal slot table. Afterwards, the Unregister request operated as a flow to find a slot based on the VA returned by the user and free the corresponding MDL.</p>
+<p>Therefore, in the normal flow, unregister had to be performed only once for one mapped VA. In other words, when a specific slot is selected for unregister, that slot must be marked as no longer valid, and even if an unregister request is made again to the same mapped VA, the same MDL point must not be freed again.</p>
+<p>In particular, if there is no synchronization between the time of invalidating this slot and the process of freeing the MDL, two requests may simultaneously confirm that the same slot is still valid. As a result, it may lead to a double free where the same MDL is each freed.</p>
+<pre><code class="hljs cpp">slot.flag = <span class="hljs-number">1</span>; <span class="hljs-comment">// valid registration entry </span>
+slot.mapped_va = <span class="hljs-number">0x12340000</span>; <span class="hljs-comment">// mapped VA returned to user mode </span>
+slot.mdl = <span class="hljs-number">0xffff</span>...; <span class="hljs-comment">// MDL pointer describing this mapping</span></code></pre>
+<p>For example, each slot stores validity as shown above, the Mapped VA returned to the user, and an MDL Pointer that describes the mapping. At this time, <code>slot.flag == 1</code> means that the slot is a valid registration entry, and <code>slot.flag == 0</code> indicates a slot that has already been released or can no longer be used.</p>
+<p>If a specific slot is selected as an unregister target, the driver must first clear the slot&#x2019;s flag to &#x2018;0&#x2019; so that the slot can no longer be used, and release the mapping using the mapped VA and MDL pointer stored in the same slot. Even if an Unregister request is made again to the same VA later, a slot that has already been invalidated must not be selected again.</p>
+<p><img src="/2026/08/08/banda/Wipeload_step7/EN/image 6.png" srcset="/img/loading.gif" alt></p>
+<p>The problem is that if you check the code of the vulnerable function, you can see that the slot search, slot flag clear, and MDL unmap/free processes are not protected by a single lock. In other words, if another thread sends an Unregister request to the same VA between checking whether <code>slot.flag == 1</code> and changing it to <code>slot.flag = 0</code>, both threads may decide that the same Slot is still valid.&#x1F631; Even if one thread invalidates the Slot and releases the MDL, the other thread may perform the Unmap and Free process again using the same MDL pointer that has already been secured.</p>
+<p>This can result in a double free, where one MDL is freed twice.</p>
+<p>Thread A:</p>
+<blockquote>
+<ol>
+<li>Search for slot matching mapped VA</li>
+<li>Change slot.flag = 0</li>
+<li><code>MmUnmapLockedPages()</code></li>
+<li><code>IoFreeMdl()</code></li>
+</ol>
+</blockquote>
+<p>Thread B:</p>
+<blockquote>
+<ol>
+<li>Unregister request with same mapped VA</li>
+<li>Check <code>slot.flag == 0</code></li>
+<li>slot search failed</li>
+<li>Does not enter MDL free path</li>
+</ol>
+</blockquote>
+<p>First, let&#x2019;s take a look at the normally synchronized Unregister flow. Since the slot is invalidated after Thread A selects it, even if Thread B searches for the same slot later, it cannot use the slot by checking <code>flag == 0</code>. In other words, Unregister and Free are performed only once for one MDL.</p>
+<p>Thread A:</p>
+<blockquote>
+<ol>
+<li>Check <code>slot.flag == 1</code></li>
+<li>Check for <code>mapped_va</code> match</li>
+<li>Select slot</li>
+</ol>
+</blockquote>
+<p>Thread B:</p>
+<blockquote>
+<ol>
+<li>Thread A enters before clearing the flag</li>
+<li>Check <code>slot.flag == 1</code></li>
+<li>Check for <code>mapped_va</code> match</li>
+<li>Select the same slot</li>
+</ol>
+</blockquote>
+<p>However, in vulnerable functions, the process from slot search to <code>flag</code> change to MDL release is not protected by a single lock. If two Threads send Unregister requests to the same Mapped VA at almost the same time, both Threads may select the same Slot with <code>slot.flag == 1</code>.</p>
+<p>Afterwards, the two threads call <code>MmUnmapLockedPages()</code> and <code>IoFreeMdl()</code> respectively using the same MDL Pointer, and as a result, a double free occurs in which one MDL is released twice through a race condition.</p>
+<p><img src="/2026/08/08/banda/Wipeload_step7/EN/image 11.png" srcset="/img/loading.gif" alt></p>
+<p>(A BSOD occurs..!)</p>
+<p><br></p>
+<h3 id="2-2-Case-MDL-Mismatch-Bug-Pattern"><a href="#2-2-Case-MDL-Mismatch-Bug-Pattern" class="headerlink" title="2.2 Case: MDL Mismatch Bug Pattern"></a>2.2 Case: MDL Mismatch Bug Pattern</h3><blockquote>
+<p>CVE-2024-38237, CVE-2025-21375</p>
+</blockquote>
+<p>The second case is an MDL Mismatch type vulnerability that occurs when <code>ksthunk.sys</code> and <code>ks.sys</code> process the <code>KSSTREAM_HEADER_OPTIONSF_PERSIST_SAMPLE (0x8000)</code> flag differently.</p>
+<p>First, Kernel Streaming has the characteristic of delivering <code>KSSTREAM_HEADER</code> for each request when a video or audio frame is requested in UserMode. This structure contains the address of the actual data buffer, the frame size to process, and flags specifying frame properties.</p>
+<pre><code class="hljs cpp"><span class="hljs-keyword">typedef</span> <span class="hljs-class"><span class="hljs-keyword">struct</span> {</span>
+  ULONG    Size;
+  ULONG    TypeSpecificFlags;
+  KSTIME   PresentationTime;
+  LONGLONG Duration;
+  ULONG    FrameExtent;
+  ULONG    DataUsed;
+  PVOID    Data;
+  ULONG    OptionsFlags;
+  ULONG    Reserved;
+} KSSTREAM_HEADER, *PKSSTREAM_HEADER;</code></pre>
+<p>Afterwards, <code>ksthunk.sys</code> and <code>ks.sys</code> prepare and connect the MDL to be used in each Frame based on this <code>KSSTREAM_HEADER</code>. The problem is that two drivers may interpret the same flags differently, resulting in the Header being connected to a different MDL than the intended buffer. The fields that are particularly important here are:</p>
+<blockquote>
+<p><code>Data</code>&#x2192; User buffer address where the device will write data.<br><code>FrameExtent</code>&#x2192; Size of buffer to be processed in the frame<br><code>OptionsFlags</code> &#x2192; Flags that specify how frames are processed and whether MDL is cached.</p>
+</blockquote>
+<p>At this time, Kernel Streaming uses MDL to use the user buffer indicated by <code>Data</code> for actual device I/O, and then the MDL and header information are connected to the KS Frame of the kernel.</p>
+<pre><code class="hljs cpp"><span class="hljs-class"><span class="hljs-keyword">struct</span> _<span class="hljs-title">KSPFRAME_HEADER</span></span>
+<span class="hljs-class">{</span>
+  _LIST_ENTRY ListEntry;
+  _KSPFRAME_HEADER *NextFrameHeaderInIrp;
+  <span class="hljs-keyword">void</span> *Queue;
+  _IRP *OriginalIrp;
+  _MDL *Mdl;
+  _IRP *Irp;
+  KSPIRP_FRAMING_ *IrpFraming;
+  KSSTREAM_HEADER *StreamHeader;
+  <span class="hljs-keyword">void</span> *FrameBuffer;
+  KSPMAPPINGS_TABLE *MappingsTable;
+  <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span> StreamHeaderSize;
+  <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span> FrameBufferSize;
+  <span class="hljs-keyword">void</span> *Context;
+  <span class="hljs-keyword">int</span> RefCount;
+  <span class="hljs-keyword">void</span> *OriginalData;
+  <span class="hljs-keyword">void</span> *BufferedData;
+  <span class="hljs-keyword">int</span> Status;
+  <span class="hljs-keyword">unsigned</span> __int8 DismissalCall;
+  _KSPFRAME_HEADER_TYPE Type;
+  _KSPSTREAM_POINTER *FrameHolder;
+  <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span> OriginalOptionsFlags;
+  _KSPMDLCACHED_STREAM_POINTER *MdlCaching;
+};</code></pre>
+<p>The field relationships directly related to the bug in this structure are as follows:</p>
+<blockquote>
+<p><code>KSFrame::StreamHeader</code> - FrameExtent: Frame processing size<br><code>KSFrame::FrameBuffer</code>: Buffer where device data will be written.<br><code>KSFrame::Mdl</code> : Describes the actual physical pages and size of the FrameBuffer.</p>
+</blockquote>
+<p>Under normal circumstances, <code>KSSTREAM_HEADER</code> and MDL should be concatenated in the same order and based on the same size.</p>
+<pre><code class="hljs cpp">Header <span class="hljs-number">1</span> (<span class="hljs-number">0x1000</span>)  &#x2192; MDL <span class="hljs-number">1</span> (<span class="hljs-number">0x1000</span> buffer)
+Header <span class="hljs-number">2</span> (<span class="hljs-number">0x20000</span>) &#x2192; MDL <span class="hljs-number">2</span> (<span class="hljs-number">0x20000</span> buffer)</code></pre>
+<p>In other words, if the Header processes <code>0x20000</code> bytes, the connected MDL must also be a buffer that describes <code>0x20000</code> bytes.</p>
+<p>However, when a 32-bit process sends a Kernel Streaming request, the request goes through <code>ksthunk.sys</code> first and then is forwarded to <code>ks.sys</code>. At this time, in frames where the <code>KSSTREAM_HEADER_OPTIONSF_PERSIST_SAMPLE (0x8000)</code> flag is set, a problem may occur in which the MDL processing methods of the two drivers are different.</p>
+<pre><code class="hljs cpp">KSSTREAM_HEADER_OPTIONSF_PERSIST_SAMPLE ON
+  ksthunk.sys: skip
+  ks.sys:      allocate
+
+KSSTREAM_HEADER_OPTIONSF_PERSIST_SAMPLE OFF
+  ksthunk.sys: allocate
+  ks.sys:      skip</code></pre>
+<p>If only a single frame is processed, there is no problem because the final required MDL is prepared, but if multiple frames, <code>KSSTREAM_HEADER</code>, are placed in one request&#x2026;? The order of the header array and the order of the MDL chain inside the IRP may be different.</p>
+<pre><code class="hljs cpp">Headers (user-controlled <span class="hljs-built_in">array</span>)
+
+headers[<span class="hljs-number">0</span>]
+  FrameExtent  = <span class="hljs-number">0x1000</span>
+  OptionsFlags = KSSTREAM_HEADER_OPTIONSF_PERSIST_SAMPLE
+
+headers[<span class="hljs-number">1</span>]
+  FrameExtent  = <span class="hljs-number">0x20000</span>
+  OptionsFlags = <span class="hljs-number">0</span></code></pre>
+<p>In other words, two <code>KSSTREAM_HEADER</code>s with different sizes and flags are included in one request. In this case, <code>ksthunk.sys</code> skips generating the MDL for the first header with the <code>KSSTREAM_HEADER_OPTIONSF_PERSIST_SAMPLE</code> flag set, and instead generates an MDL describing a buffer of size <code>0x20000</code> for the second header without the flag.</p>
+<blockquote>
+<p>IRP-&gt;MdlAddress<br>MDL A<br>buffer size = 0x20000<br>Next = NULL</p>
+</blockquote>
+<p>Afterwards, <code>ks.sys</code> checks that the flag is set in the first Header and creates a new MDL describing the <code>0x1000</code> size buffer of that header.</p>
+<blockquote>
+<p><code>IRP-&gt;MdlAddress</code><br><code>MDL A (0x20000) -&gt; MDL B (0x1000) -&gt; NULL</code></p>
+</blockquote>
+<p>However, the newly created MDL B is connected after the existing MDL A. Therefore, the Header array is in the order <code>headers[0] &#x2192; headers[1]</code>, but the final MDL Chain is in the order <code>MDL A for headers[1] &#x2192; MDL B for headers[0]</code>.</p>
+<pre><code class="hljs cpp">KS Frame <span class="hljs-number">0</span>
+  StreamHeader-&gt;FrameExtent = <span class="hljs-number">0x1000</span>
+  Mdl                       = MDL A (<span class="hljs-number">0x20000</span>)
+
+KS Frame <span class="hljs-number">1</span>
+  StreamHeader-&gt;FrameExtent = <span class="hljs-number">0x20000</span>
+  Mdl                       = MDL B (<span class="hljs-number">0x1000</span>)</code></pre>
+<blockquote>
+<p><code>headers[0]</code> : <code>0x1000</code><br><code>headers[1]</code> : <code>0x20000</code></p>
+<p>MDL A (for <code>0x20000</code>, <code>headers[1]</code>)<br>MDL B (for <code>0x1000</code>, <code>headers[0]</code>)</p>
+</blockquote>
+<p>Afterwards, <code>ks.sys</code> takes out the Header array and MDL Chain in order from the front and connects them to the KS Frame. At this time, because the original correspondence between the header and the MDL is not rechecked, the information for different headers is connected to each KS Frame with the information reversed.</p>
+<p>The first KS Frame uses information from <code>headers[0]</code> with <code>FrameExtent</code> of <code>0x1000</code>, but is actually associated with MDL A for <code>headers[1]</code>. Conversely, the second KS Frame uses the information from <code>headers[1]</code> whose <code>FrameExtent</code> is <code>0x20000</code>, and is connected to MDL B for <code>headers[0]</code> whose actual size is <code>0x1000</code>.</p>
+<p>In other words, the problem may not be immediately apparent because the first frame uses a larger buffer, but the second frame is trying to process <code>0x20000</code> bytes in a <code>0x1000</code> byte buffer!&#x1F92F; This mismatch ultimately leads to a buffer overflow.</p>
+<pre><code class="hljs apache"><span class="hljs-attribute">KS</span> Frame <span class="hljs-number">0</span> 
+<span class="hljs-attribute">FrameExtent</span> = <span class="hljs-number">0</span>x<span class="hljs-number">1000</span> 
+<span class="hljs-attribute">MDL</span>-described buffer = <span class="hljs-number">0</span>x<span class="hljs-number">20000</span>
+
+<span class="hljs-attribute">KS</span> Frame <span class="hljs-number">1</span> 
+<span class="hljs-attribute">FrameExtent</span> = <span class="hljs-number">0</span>x<span class="hljs-number">20000</span> 
+<span class="hljs-attribute">MDL</span>-described buffer = <span class="hljs-number">0</span>x<span class="hljs-number">1000</span></code></pre>
+<p>Between Frame 0 and Frame 1, which one do you think is more suspicious? In the above situation, it is KS Frame 1 that creates the actual overflow. <code>StreamHeader-&gt;FrameExtent</code> specifies that it handles <code>0x20000</code> bytes, but the actual buffer described by the associated MDL B is only <code>0x1000</code> bytes.</p>
+<p>As a result, the Kernel Streaming Worker writes data beyond the valid range described by the MDL, and adjacent kernel memory becomes corrupted. An MDL Mismatch vulnerability occurs when the order of MDL generated for different headers is reversed and the wrong header and MDL are connected to one KS Frame.</p>
+<p><br></p>
+<h3 id="2-3-Case-Forgotten-Lock-Uninitialized-MDL-Bug-Pattern"><a href="#2-3-Case-Forgotten-Lock-Uninitialized-MDL-Bug-Pattern" class="headerlink" title="2.3 Case: Forgotten Lock / Uninitialized MDL Bug Pattern"></a>2.3 Case: <strong>Forgotten Lock / Uninitialized MDL Bug Pattern</strong></h3><blockquote>
+<p>CVE-2024-38238</p>
+</blockquote>
+<p>Lastly, this is the third case. Do you remember that <code>MmProbeAndLockPages()</code> had to be performed before <code>MmMapLockedPagesSpecifyCache()</code> was called during normal MDL processing? If this order is not followed, the PFN array in the MDL may remain uninitialized correctly.</p>
+<p>The CVE-2024-38238 case is a Forgotten Lock type vulnerability that occurs when <code>ks.sys</code> generates an MDL and then maps the MDL without calling <code>MmProbeAndLockPages()</code>. In the previous case, MDL Mismatch was a problem in which the connection relationship between the header and MDL changed, while Forgotten Lock was a problem in which the driver considered this to be a normal chain even though the locked MDL and unlocked MDL existed together in one MDL chain.</p>
+<p>(Here, MDL Chain refers to a structure that connects multiple MDLs with <code>Next Pointer</code>. When one IRP processes multiple frames, the MDL describing each frame can be managed in a connected form starting from <code>IRP-&gt;MdlAddress</code>.)</p>
+<p><strong>Header traversal logic in ks.sys</strong></p>
+<pre><code class="hljs cpp">ks!CKsMdlcache::MdlCacheHandleThunkBufferIrp</code></pre>
+<p>Let&#x2019;s check the vulnerable MDL creation and lock flow. First, the WoW64 Kernel Streaming request goes through preprocessing in <code>ksthunk.sys</code> and is then sent to the above function in <code>ks.sys</code>. Afterwards, inside the function, it iterates over the <code>KSSTREAM_HEADER</code> array and checks the OptionsFlags of each Header.</p>
+<p><img src="/2026/08/08/banda/Wipeload_step7/EN/image 7.png" srcset="/img/loading.gif" alt></p>
+<pre><code class="hljs cpp"><span class="hljs-keyword">while</span> ( TotalSize &gt;= <span class="hljs-number">0x38</span> )</code></pre>
+<p>If you check the function in detail, you can see that <code>KSSTREAM_HEADER</code> included in the request is processed in order through the While Loop. Here, <code>0x38</code> is the size of the 64-bit <code>KSSTREAM_HEADER</code>.</p>
+<pre><code class="hljs cpp"><span class="hljs-keyword">if</span> ( (OptionsFlag &amp; <span class="hljs-number">0x8000</span>) == <span class="hljs-number">0</span> )
+  <span class="hljs-keyword">return</span> (<span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span>)KsProbeStreamIrp(irp, a3, <span class="hljs-number">0</span>);</code></pre>
+<p>If the flag is set, the function generates the MDL for the current Header and then continues processing the next <code>KSSTREAM_HEADER</code>. Conversely, if the flag is not set, I have a flow that calls <code>KsProbeStreamIrp()</code> and returns directly from the function. The problem is that when this early return occurs, not only the subsequent Header processing but also the MDL Lock loop performed at the bottom of the function is not reached.</p>
+<p><strong>Location of MDL Lock Loop</strong></p>
+<p>If Header traversal is completed normally, <code>MmProbeAndLockPages()</code> is called while traversing the MDL Chain of the IRP at the bottom of the function.</p>
+<p><img src="/2026/08/08/banda/Wipeload_step7/EN/image 8.png" srcset="/img/loading.gif" alt></p>
+<p>Therefore, you can see that the normal processing sequence follows the flow below.</p>
+<ol>
+<li>Header array traversal</li>
+<li>Generate the required MDL</li>
+<li>Header traversal completed</li>
+<li>IRP&#x2019;s MDL Chain traversal</li>
+<li><code>MmProbeAndLockPages()</code></li>
+</ol>
+<p>But can you guess the problem? The <code>MmProbeAndLockPages()</code> loop is placed after the Header traversal. Even if MDL was created through <code>IoAllocateMdl()</code> while processing the Header earlier, if there is no Cache Flag in the next Header, the flag verification code below is executed.</p>
+<pre><code class="hljs cpp"><span class="hljs-keyword">if</span> ( (OptionsFlag &amp; <span class="hljs-number">0x8000</span>) == <span class="hljs-number">0</span> )
+  <span class="hljs-keyword">return</span> (<span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span>)KsProbeStreamIrp(irp, a3, <span class="hljs-number">0</span>);</code></pre>
+<p>However, the problem is that in the second Header, if <code>OptionsFlags</code> is <code>0</code>, it returns early to the <code>KsProbeStreamIrp()</code> loop and does not reach the Lock loop at the bottom of the function, <code>MmProbeAndLockPages()</code>.</p>
+<p>In other words, a problem arises in that the MDL generated in the previous iteration can be passed to <code>KsProbeStreamIrp()</code> without going through <code>MmProbeAndLockPages()</code>.</p>
+<p><strong>KsProbeStreamIrp MDL verification issue</strong></p>
+<p>Then, let&#x2019;s go into <code>KsProbeStreamIrp()</code>..? This function maps the Frame Buffer to the kernel address space using the IRP MDL Chain.</p>
+<p><img src="/2026/08/08/banda/Wipeload_step7/EN/image 9.png" srcset="/img/loading.gif" alt></p>
+<p>If you check the code, it first fetches the first MDL of the IRP and then checks the <code>0x6</code> mask for the first <code>MdlFlags</code>. The relevant flags are as follows:</p>
+<pre><code class="hljs cpp"><span class="hljs-meta">#<span class="hljs-meta-keyword">define</span> MDL_MAPPED_TO_SYSTEM_VA      0x0001</span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">define</span> MDL_PAGES_LOCKED             0x0002</span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">define</span> MDL_SOURCE_IS_NONPAGED_POOL  0x0004</span></code></pre>
+<p><code>0x6</code> is <code>0x2</code> | With <code>0x4</code>, it contains the <code>MDL_PAGES_LOCKED, MDL_SOURCE_IS_NONPAGED_POOL</code> flags. This means that if either flag is present, the condition passes. If the first MDL is Locked or an MDL that describes a NonPaged Pool, the while loop below is entered.</p>
+<p>However, this check is only performed for the first MDL pointed to by <code>Irp&#x2192;MdlAddress</code>, and the status of each <code>MDL MDL_PAGES_LOCKED</code> is not checked again in subsequent while loops.</p>
+<pre><code class="hljs cpp">CurrentMdl = Irp-&gt;MdlAddress;
+
+<span class="hljs-keyword">if</span> ( CurrentMdl &amp;&amp;
+     (CurrentMdl-&gt;MdlFlags &amp; <span class="hljs-number">6</span>) &amp;&amp;
+     (ProbeFlags &amp; <span class="hljs-number">0x40</span>) )
+{
+  <span class="hljs-keyword">while</span> ( CurrentMdl )
+  {
+    <span class="hljs-keyword">if</span> ( !(CurrentMdl-&gt;MdlFlags &amp; <span class="hljs-number">5</span>) )
+      MmMapLockedPagesSpecifyCache(CurrentMdl, ...);
+
+    CurrentMdl = CurrentMdl-&gt;Next;
+  }
+}</code></pre>
+<p>Additionally, inside the <code>while</code> statement, only the <code>0x5</code> mask is checked for each MDL. Based on the flag checked earlier, this means <code>MDL_MAPPED_TO_SYSTEM_VA</code> or <code>MDL_SOURCE_IS_NONPAGED_POOL</code> state. If a System VA already exists or is an MDL describing a NonPaged Pool, the existing <code>MappedSystemVa</code> is used; otherwise, it moves on to the next <code>MmMapLockedPagesSpecifyCache()</code> call.</p>
+<pre><code class="hljs cpp">MmMapLockedPagesSpecifyCache(
+  CurrentMdl,
+  <span class="hljs-number">0</span>,
+  MmCached,
+  <span class="hljs-number">0</span>,
+  <span class="hljs-number">0</span>,
+  <span class="hljs-number">0x40000010</span>u
+);</code></pre>
+<p>However, even here we do not check whether <code>MmProbeAndLockPages()</code> is performed. In the end, we can see that the core verification error is the logic that only checks the state of the first MDL and then assumes that the rest of the chain will be in the locked state.</p>
+<p><strong>Configuring Vulnerability Triggers</strong></p>
+<p>Now let&#x2019;s connect the two logics. First, we include two <code>KSSTREAM_HEADER</code>s of the same size in one request to trigger the vulnerability.</p>
+<pre><code class="hljs cpp">Headers (user-controlled <span class="hljs-built_in">array</span>)
+
+headers[<span class="hljs-number">0</span>]
+  FrameExtent  = <span class="hljs-number">0x2000</span>
+  Data         = <span class="hljs-number">0x42420000</span>
+  OptionsFlags = KSSTREAM_HEADER_OPTIONSF_PERSIST_SAMPLE
+
+headers[<span class="hljs-number">1</span>]
+  FrameExtent  = <span class="hljs-number">0x2000</span>
+  Data         = <span class="hljs-number">0x43430000</span>
+  OptionsFlags = <span class="hljs-number">0</span></code></pre>
+<p>The key is to put the Locked MDL at the beginning of the chain, followed by an Unlocked MDL with <code>OptionsFlags</code> set to <code>0</code> and Cache Flag turned off. Then, the first Header creates MDL in <code>ks.sys</code>, and the second Header returns early to the <code>KsProbeStreamIrp()</code> path.</p>
+<p>Afterwards, <code>ksthunk.sys</code> skips creating the MDL for the first Header, but for the second Header without the Cache Flag, it generates and locks the MDL on behalf of <code>ks.sys</code>. Therefore, when <code>ksthunk.sys</code> processing is completed, only MDL 2 for the second header is connected to the IRP.</p>
+<pre><code class="hljs cpp">IRP-&gt;MdlAddress
+MDL <span class="hljs-number">2</span>
+  Header     = headers[<span class="hljs-number">1</span>]
+  Data       = <span class="hljs-number">0x43430000</span>
+  ByteCount  = <span class="hljs-number">0x2000</span>
+  Locked     = TRUE
+  PFN[]      = Initialized
+  Next       = <span class="hljs-literal">NULL</span></code></pre>
+<p>And on the <code>ks.sys</code> side, since the first header has the Cache Flag set, MDL 1 is created through <code>IoAllocateMdl</code>. At this time, since MDL 2 already exists in the IRP, the newly created MDL 1 is connected to the back of the chain.</p>
+<pre><code class="hljs cpp">IRP-&gt;MdlAddress
+-&gt;
+MDL <span class="hljs-number">2</span>
+  <span class="hljs-keyword">for</span> headers[<span class="hljs-number">1</span>]
+  Locked = TRUE
+  PFN[]  = Initialized
+-&gt;
+MDL <span class="hljs-number">1</span>
+  <span class="hljs-keyword">for</span> headers[<span class="hljs-number">0</span>]
+  Locked = FALSE
+  PFN[]  = Uninitialized
+-&gt;
+      <span class="hljs-literal">NULL</span></code></pre>
+<p>At this point, only <code>IoAllocateMdl()</code> has been performed in MDL 1, and then <code>ks.sys</code> processes the second header, and eventually, due to the weak logic, the <code>MmProbeAndLockPages()</code> loop is not executed and MDL 1 remains in the unlocked state.</p>
+<p>Afterwards, <code>KsProbeStreamIrp()</code> examines MDL 2, the first node in the chain. At this time, since MDL 2 is already normally locked by <code>ksthunk.sys</code>, <code>MDL_PAGES_LOCKED</code> is set and the condition passes.</p>
+<p>However, in the case of MDL 1, the PFN array is not initialized because it did not go through <code>MmProbeAndLockPages()</code>, and even so, <code>MmMapLockedPagesSpecifyCache()</code> tries to use the value as the physical page number described by the MDL. Therefore, if the remaining uninitialized PFN value is used, the wrong physical page will be referenced and a Bug Check (BSOD) may occur.</p>
+<blockquote>
+<p>Furthermore, the MDL created with <code>IoAllocateMdl()</code> in this path can reuse Pool Memory without initializing the PFN array. Therefore, an attacker can configure EoP to control uninitialized PFN values &#x200B;&#x200B;by spraying the desired value in the Pool area where the PFN array is located.</p>
+</blockquote>
+<h2 id="3-Outro"><a href="#3-Outro" class="headerlink" title="3. Outro"></a><strong>3. Outro</strong></h2><p><img src="/2026/08/08/banda/Wipeload_step7/EN/image 10.png" srcset="/img/loading.gif" alt></p>
+<p>In this article, we looked at the basic flow of MDL fixing physical pages in the user buffer and mapping them to the kernel address space, and the Lifetime, Mismatch, and Forgotten Lock bug patterns that occur when this is handled incorrectly.</p>
+<p>This article was not about a final battle with Tai Lung, but rather about training to deal with him. Now that you have learned the operation of MDL and the three bug patterns, all that remains is the final authority wall that will lead you from Medium Integrity to SYSTEM in practice. Please look forward to the next Taoist episode to see whether Po will be able to complete the MDL and win the fight against Tai Lung in the next battle!</p>
+<h2 id="Reference"><a href="#Reference" class="headerlink" title="Reference."></a>Reference.</h2><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://theori.io/blog/chaining-n-days-to-compromise-all-part-3-windows-driver-lpe-medium-to-system">https://theori.io/blog/chaining-n-days-to-compromise-all-part-3-windows-driver-lpe-medium-to-system</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://medium.com/@WaterBucket/understanding-memory-descriptor-lists-mdls-for-windows-vulnerability-research-exploit-7de8729caee7">https://medium.com/@WaterBucket/understanding-memory-descriptor-lists-mdls-for-windows-vulnerability-research-exploit-7de8729caee7</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://devco.re/blog/2025/05/17/frame-by-frame-kernel-streaming-keeps-giving-vulnerabilities-en/">https://devco.re/blog/2025/05/17/frame-by-frame-kernel-streaming-keeps-giving-vulnerabilities-en/</a></p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/Windows-Kernel/">Windows Kernel</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Windows/">Windows</a>
+                  
+                  <a class="hover-with-bg" href="/tags/banda/">banda</a>
+                  
+                  <a class="hover-with-bg" href="/tags/MDL/">MDL</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Wipeload/">Wipeload</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Chrome-Sandbox/">Chrome Sandbox</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_banda.jpg" srcset="/img/loading.gif" alt="banda">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">banda</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/banda">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2026/08/15/banda/Wipeload_step8/EN/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[Wipeload Step 8.] The Last Road, Paved by MDL Kernel EoP (EN)</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2026/08/08/banda/Wipeload_step7/KR/">
+                    <span class="hidden-mobile">[도닦기] 7단계: Lock the Pages, Break the Kernel (KR)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            
+
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Wipeload Step 7.] Lock the Pages, Break the Kernel (EN)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>

