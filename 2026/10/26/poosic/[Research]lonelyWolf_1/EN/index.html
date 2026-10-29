@@ -1,0 +1,1376 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;h1 id=&#34;0-Intro&#34;&gt;&lt;a href=&#34;#0-Intro&#34; class=&#34;headerlink&#34; title=&#34;0. Intro&#34;&gt;&lt;/a&gt;0. Intro&lt;/h1&gt;&lt;p&gt;&lt;img src=&#34;image.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Hello! This is t0be. Today, I&amp;#x2019;m back with the next post following the &amp;#x201C;Lone Wolves&amp;#x201D; project that gongjae posted earlier! &amp;#x1F43A;&lt;/p&gt;
+&lt;p&gt;Before we begin, though, there&amp;#x2019;s one thing I&amp;#x2019;d like to mention. Although we&amp;#x2019;re working on this project together as a team, each of us has different interests, so it feels like we&amp;#x2019;re a team, but also not quite a team. Because of this, &lt;a href=&#34;https://hackyboiz.github.io/2026/10/11/gongjae/LoneWolves_MacOS_part0/KR/&#34;&gt;gongjae&amp;#x2019;s macOS research article&lt;/a&gt; and this post cover completely different topics.&lt;/p&gt;
+&lt;p&gt;Since I focus on automotive security, my mind naturally went to the vehicle itself or its internal Electronic Control Units (ECUs) at first. Then, a thought suddenly crossed my mind: &amp;#x201C;What if I look into peripherals instead of the vehicle itself&amp;#x2026; wouldn&amp;#x2019;t they be vulnerable?&amp;#x201D;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%201.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;While searching for various candidates, a product caught my eye: a wireless Android Auto / CarPlay dongle.&lt;/p&gt;
+&lt;p&gt;In fact, this was a product I had saved in my shopping cart a while ago because I wanted to use Android Auto wirelessly in my car. Just plug it into the vehicle, pair it with your smartphone, and you&amp;#x2019;re done! It has quite impressive capabilities for its small size, but I always wondered how secure it actually was.&lt;/p&gt;
+&lt;p&gt;After all, a third-party device handling Bluetooth, Wi-Fi, and USB simultaneously is introduced right between the vehicle and the smartphone. On top of that, this device processes data displayed on the car&amp;#x2019;s screen and handles mirroring sessions from the smartphone. What a appetizing target to analyze!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%202.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The product I analyzed this time is an Ottocast CP88-M series wireless mirroring dongle sold under the Anniver brand. I bought it directly on Coupang. I physically opened the device, observed its USB communications, obtained its OTA firmware and SPI flash, reverse-engineered it, and verified a few security issues firsthand.&lt;/p&gt;
+&lt;p&gt;My original plan was simply: &amp;#x201C;Let&amp;#x2019;s quickly crack open the firmware and take a look!&amp;#x201D; However, I ended up diving into everything from RISC-V extended instructions to firmware update structures. &lt;del&gt;Oh dear, I crossed the point of no return&lt;/del&gt; &amp;#x1F607;&lt;/p&gt;
+&lt;p&gt;In this article, I will focus on how this dongle works, how I acquired and analyzed the firmware, what I actually verified, and what remains a hypothesis at this stage.&lt;/p&gt;
+&lt;p&gt;Actually, I couldn&amp;#x2019;t be the only one who has analyzed a product like this, right? When I started analyzing, I looked for materials covering similar dongles, and &lt;a href=&#34;https://sec1.dk/blog/carplay-re-blog.html&#34;&gt;sec1.dk&amp;#x2019;s Reverse Engineering a Wireless CarPlay Adapter &amp;#x2014; Full Journey&lt;/a&gt; caught my attention. It was a comprehensive article covering everything from acquiring firmware to OTA, hardware analysis, flash recovery, and getting a root shell. Thanks to that, I didn&amp;#x2019;t have to start from scratch and redo all the trial and error without any clues.&lt;/p&gt;
+&lt;p&gt;Fortunately, our work didn&amp;#x2019;t overlap completely, which is why I&amp;#x2019;m able to share this research. The target in the referenced article was based on the Allwinner V851S3 (ARM), while the product I bought turned out to be based on the V821 (RISC-V). Furthermore, even the firmware file structures differed slightly. Therefore, I decided to verify actual behavior and potential vulnerabilities directly on my device.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Scope of Analysis: Tested without an actual vehicle using a CP88-M dongle owned by the researcher and a Pixel 10a. No attacks were performed on vehicle head units, CAN networks, or vehicle control functions.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h1 id=&#34;1-How-to-work&#34;&gt;&lt;a href=&#34;#1-How-to-work&#34; class=&#34;headerlink&#34; title=&#34;1. How to work?&#34;&gt;&lt;/a&gt;1. How to work?&lt;/h1&gt;&lt;h2 id=&#34;1-1-What-exactly-does-an-Android-Auto-dongle-do&#34;&gt;&lt;a href=&#34;#1-1-What-exactly-does-an-Android-Auto-dongle-do&#34; class=&#34;headerlink&#34; title=&#34;1-1. What exactly does an Android Auto dongle do?&#34;&gt;&lt;/a&gt;1-1. What exactly does an Android Auto dongle do?&lt;/h2&gt;&lt;p&gt;First, let me clarify something that confused me at the beginning. Looking at the name alone, doesn&amp;#x2019;t it feel like just plugging in this dongle would magically add Android Auto functionality to a vehicle that doesn&amp;#x2019;t support Android Auto at all?&lt;/p&gt;
+&lt;p&gt;However, the CP88-M analyzed here is essentially an adapter that converts a vehicle&amp;#x2019;s factory-supported wired CarPlay or Android Auto into a wireless connection. If the vehicle itself does not support these functions natively, plugging in the dongle alone won&amp;#x2019;t enable them. The manufacturer&amp;#x2019;s product description also assumes existing wired functionality. I heard there are products that enable Android Auto on unsupported vehicles, but due to the limits of my searching skills, I couldn&amp;#x2019;t find one.&lt;/p&gt;
+&lt;p&gt;Looking at the operational principle, it&amp;#x2019;s surprisingly intuitive:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs routeros&#34;&gt;                 Bluetooth / Wi-Fi                USB
+&amp;#x250C;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2510;     &lt;span class=&#34;hljs-built_in&#34;&gt; Wireless &lt;/span&gt;Conn.   &amp;#x250C;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2510;     Wired Conn.   &amp;#x250C;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2510;
+&amp;#x2502;   Smartphone &amp;#x2502; &amp;lt;-----------------&amp;gt; &amp;#x2502; CP88-M Dongle     &amp;#x2502; &amp;lt;-------------&amp;gt; &amp;#x2502; Car Head Unit  &amp;#x2502;
+&amp;#x2502; Android / iOS&amp;#x2502;                     &amp;#x2502; Linux + BT + Wi-Fi&amp;#x2502;                   &amp;#x2502; (Wired AA/CP)  &amp;#x2502;
+&amp;#x2514;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2518;                     &amp;#x2514;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2518;                   &amp;#x2514;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2518;
+
+   &lt;span class=&#34;hljs-built_in&#34;&gt; Wireless &lt;/span&gt;Android Auto/CarPlay Receiver     Session Processing &amp;amp; Relay      Behaves like Wired Phone&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The dongle acts like a car providing wireless Android Auto/CarPlay to the smartphone, while acting like a smartphone plugged into USB to the car&amp;#x2019;s head unit. It takes wirelessly received data and passes it to the wired side, and forwards user input or control data from the vehicle back in the opposite direction.&lt;/p&gt;
+&lt;p&gt;In other words, this product is not a simple USB cable adapter. It can be viewed as a small embedded bridge equipped with its own OS and communication stack to process protocols between two devices.&lt;/p&gt;
+&lt;p&gt;So, what happens if this device, sitting right in the middle where both devices trust each other, is compromised by an attacker?&lt;/p&gt;
+&lt;p&gt;Of course, being in the middle doesn&amp;#x2019;t mean all traffic is automatically decrypted or that arbitrary commands can be executed. That depends on the authentication, encryption, and session state of the actual protocol. However, from an attacker&amp;#x2019;s perspective, it certainly looks like a juicy device.&lt;/p&gt;
+&lt;h2 id=&#34;1-2-A-30-iPhone&#34;&gt;&lt;a href=&#34;#1-2-A-30-iPhone&#34; class=&#34;headerlink&#34; title=&#34;1-2. A $30 iPhone?&#34;&gt;&lt;/a&gt;1-2. A $30 iPhone?&lt;/h2&gt;&lt;p&gt;First, I connected the dongle to my PC and checked the USB descriptor. But I was surprised because no matter how hard I looked, I couldn&amp;#x2019;t see anything that looked like a dongle.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs apache&#34;&gt;&lt;span class=&#34;hljs-attribute&#34;&gt;Bus&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;003&lt;/span&gt; Device &lt;span class=&#34;hljs-number&#34;&gt;006&lt;/span&gt;: ID &lt;span class=&#34;hljs-number&#34;&gt;05&lt;/span&gt;ac:&lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt;a&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt; Apple, Inc. iPhone
+  &lt;span class=&#34;hljs-attribute&#34;&gt;idVendor&lt;/span&gt;           &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;05&lt;/span&gt;ac Apple, Inc.
+  &lt;span class=&#34;hljs-attribute&#34;&gt;idProduct&lt;/span&gt;          &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt;a&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt; iPhone
+  &lt;span class=&#34;hljs-attribute&#34;&gt;iManufacturer&lt;/span&gt;           Apple Inc.
+  &lt;span class=&#34;hljs-attribute&#34;&gt;iProduct&lt;/span&gt;                iPhone
+  &lt;span class=&#34;hljs-attribute&#34;&gt;bNumConfigurations&lt;/span&gt;      &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;I connected an Android Auto dongle, but it reported that an Apple iPhone was connected. Whew~ If I were using an iPhone instead of a Galaxy, I almost wouldn&amp;#x2019;t have found it!&lt;/p&gt;
+&lt;p&gt;At first, I thought another USB device was captured, but even after disconnecting everything except the dongle, the same values appeared. The dongle was advertising its USB descriptor as an iPhone, rather than an actual iPhone.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;USB Configuration&lt;/th&gt;
+&lt;th&gt;Feature Identified in Descriptor&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;Configuration 1&lt;/td&gt;
+&lt;td&gt;PTP (Picture Transfer Protocol)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Configuration 2&lt;/td&gt;
+&lt;td&gt;iPod / iAP-related Interface&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Configuration 3&lt;/td&gt;
+&lt;td&gt;Apple Mobile Device, USB Multiplexor&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Configuration 4&lt;/td&gt;
+&lt;td&gt;Apple Mobile Device + USB Ethernet&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;CarPlay uses a USB interface alongside an IP-based session. Therefore, to make it appear as if a wired iPhone is connected to the head unit, it needs to provide interfaces like these.&lt;/p&gt;
+&lt;p&gt;Initially, only Configuration 1 was selected properly, while Configurations 2&amp;#x2013;4 failed. I wondered, &amp;#x201C;Is it just impersonating the descriptor without actual functionality?&amp;#x201D; But once the smartphone was paired and I checked again, the other Configurations became active.&lt;/p&gt;
+&lt;p&gt;When I set the Pixel and dongle to Android Auto mode, the &lt;strong&gt;USB device side of the dongle connected to the PC&lt;/strong&gt; was now displayed as &lt;code&gt;2717:ff40&lt;/code&gt; with the product name &lt;code&gt;CAR2&lt;/code&gt;. Sending an AOA (Android Open Accessory) control request caused the USB device to re-enumerate, changing its ID to &lt;code&gt;18d1:2d00&lt;/code&gt;. Originally, &lt;code&gt;18d1:2d00&lt;/code&gt; is defined in the &lt;a href=&#34;https://source.android.com/docs/core/interaction/accessories/aoa&#34;&gt;Android AOA documentation&lt;/a&gt; as the ID for accessory mode on Android devices. Here, &lt;strong&gt;the dongle is imitating that role on the USB port side connecting to the car&lt;/strong&gt;. First pretending to be an iPhone, and now an Android&amp;#x2026; it&amp;#x2019;s quite busy.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs livescript&#34;&gt;AOA_GET_PROTOCOL &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Request &lt;span class=&#34;hljs-number&#34;&gt;51&lt;/span&gt;)&lt;/span&gt;  -&amp;gt;&lt;/span&gt; Version &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+AOA_SEND_IDENT   &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Request &lt;span class=&#34;hljs-number&#34;&gt;52&lt;/span&gt;)&lt;/span&gt;  -&amp;gt;&lt;/span&gt; Send Identification &lt;span class=&#34;hljs-built_in&#34;&gt;String&lt;/span&gt;
+AOA_START        &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Request &lt;span class=&#34;hljs-number&#34;&gt;53&lt;/span&gt;)&lt;/span&gt;  -&amp;gt;&lt;/span&gt; Switch &lt;span class=&#34;hljs-keyword&#34;&gt;to&lt;/span&gt; Accessory Mode
+
+USB ID Change: &lt;span class=&#34;hljs-number&#34;&gt;2717&lt;/span&gt;:ff40&lt;span class=&#34;hljs-function&#34;&gt;  -&amp;gt;&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;18d&lt;/span&gt;1:&lt;span class=&#34;hljs-number&#34;&gt;2d&lt;/span&gt;00&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In short, this product identifies itself as different USB devices in CarPlay and Android Auto modes. As a side note, the USB ID change mentioned above was &lt;strong&gt;observed on the dongle connected to the PC&lt;/strong&gt;, not a case where the Pixel was connected via USB and re-enumerated. Furthermore, confirming the transition to AOA mode does not mean the entire Android Auto session is complete. Although I succeeded in sending the actual AA version request via Bulk OUT, I couldn&amp;#x2019;t verify responses or TLS sessions because a stack acting as the head unit wasn&amp;#x2019;t fully set up. I&amp;#x2019;m trying to borrow a car from people around me, but it&amp;#x2019;s not easy.&lt;/p&gt;
+&lt;h2 id=&#34;1-3-Why-are-both-Bluetooth-and-Wi-Fi-required&#34;&gt;&lt;a href=&#34;#1-3-Why-are-both-Bluetooth-and-Wi-Fi-required&#34; class=&#34;headerlink&#34; title=&#34;1-3. Why are both Bluetooth and Wi-Fi required?&#34;&gt;&lt;/a&gt;1-3. Why are both Bluetooth and Wi-Fi required?&lt;/h2&gt;&lt;p&gt;Even though it&amp;#x2019;s called wireless mirroring, screen data isn&amp;#x2019;t transmitted entirely over Bluetooth. Typically, Bluetooth handles device discovery, pairing, and initial connection setup, while high-bandwidth mirroring data utilizes the Wi-Fi/IP path.&lt;/p&gt;
+&lt;p&gt;I found elements corresponding to this structure in this dongle as well.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Component&lt;/th&gt;
+&lt;th&gt;Confirmed Role&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;btapp&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Handles Bluetooth connection, uses &lt;code&gt;/dev/ttyS1&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;hostapd&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Operates 5GHz Wi-Fi AP&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;wpa_supplicant&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Configures Wi-Fi Direct (P2P)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;udhcpd&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Assigns IP addresses to connected devices&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;mdnsd&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Advertises network services&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;rcpservice&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;CarPlay session and network communication&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;raaservice&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Service binary for Android Auto mode&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;In practice, the dongle advertised a Wi-Fi AP named &lt;code&gt;CAR2-2F7D&lt;/code&gt;, with IP assignments being &lt;code&gt;192.168.1.101&lt;/code&gt; for the dongle and &lt;code&gt;192.168.1.102&lt;/code&gt; for the connected Pixel. A Wi-Fi Direct group was also confirmed on the same hardware.&lt;/p&gt;
+&lt;p&gt;In the Pixel logs, I could observe a flow initiating an RFCOMM connection to a previously registered device and attempting to connect to Wi-Fi using saved credentials. This means automatic reconnection happens without requiring fresh pairing every time. While convenient from a usability perspective, from an attacker&amp;#x2019;s perspective, it implies that an accessory trusted once will continue to be trusted later. This raised my curiosity regarding how much impact compromising such a device could have on the phone or vehicle side.&lt;/p&gt;
+&lt;p&gt;Of course, up to this point, these are all normal functionalities. The fact that automatic reconnection occurs doesn&amp;#x2019;t automatically mean pairing bypasses or data leaks are immediately possible.&lt;/p&gt;
+&lt;h1 id=&#34;2-Firmware-Acquisition&#34;&gt;&lt;a href=&#34;#2-Firmware-Acquisition&#34; class=&#34;headerlink&#34; title=&#34;2. Firmware Acquisition&#34;&gt;&lt;/a&gt;2. Firmware Acquisition&lt;/h1&gt;&lt;p&gt;Now let&amp;#x2019;s take a proper look inside. This analysis progressed from USB to wireless network, OTA, flash dump, and binary reverse engineering.&lt;/p&gt;
+&lt;p&gt;Looking at prior research, update servers and other interfaces could serve as good starting points, but I naturally didn&amp;#x2019;t expect my device to share the exact same addresses, partitions, or validation logic. Therefore, I decided to proceed step-by-step using values measured directly from my device.&lt;/p&gt;
+&lt;h2 id=&#34;2-1-Firmware-Extraction&#34;&gt;&lt;a href=&#34;#2-1-Firmware-Extraction&#34; class=&#34;headerlink&#34; title=&#34;2-1. Firmware Extraction&#34;&gt;&lt;/a&gt;2-1. Firmware Extraction&lt;/h2&gt;&lt;p&gt;At first, I wondered if I should teardown the hardware and read the SPI flash right away, as is typical in embedded analysis. While I was naturally preparing my CH341A, I asked my best friend ChatGPT to check it out. After connecting to the dongle&amp;#x2019;s Wi-Fi, navigating to &lt;code&gt;http://192.168.1.101&lt;/code&gt; brought up the settings page, and it began analyzing the features on its own. (Yay!)&lt;/p&gt;
+&lt;p&gt;The report generated by ChatGPT showed features like device info, settings modification, and firmware updates on the web UI. Naturally, what interested me most was the Firmware Update&amp;#x2014;since I might be able to obtain the firmware without tearing down the hardware!&lt;/p&gt;
+&lt;p&gt;Here, &lt;a href=&#34;https://sec1.dk/blog/carplay-re-blog.html&#34;&gt;sec1.dk&amp;#x2019;s analysis post&lt;/a&gt; was very helpful. In that post, the author followed the OTA path on the settings page of a similar product to obtain official firmware, outlining a structure where an MD5 string is prepended to the package, followed by a CPIO archive for SWUpdate. Instead of blindly copying those paths, I first checked what URLs my dongle&amp;#x2019;s web page generated.&lt;/p&gt;
+&lt;p&gt;Examining &lt;code&gt;cpbox.js&lt;/code&gt; and &lt;code&gt;index.html&lt;/code&gt; used by the page revealed the update flow:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs routeros&#34;&gt;[Management Page]
+    |
+    | 1. Check current version (?&lt;span class=&#34;hljs-attribute&#34;&gt;id&lt;/span&gt;=host)
+    v
+[Request OTA Version &lt;span class=&#34;hljs-builtin-name&#34;&gt;Info&lt;/span&gt;]
+    |
+    | 2. Check build/release &lt;span class=&#34;hljs-builtin-name&#34;&gt;info&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; version.json
+    v
+[Download&lt;span class=&#34;hljs-built_in&#34;&gt; Firmware &lt;/span&gt;Image]
+    |
+    | 3. Download update.img
+    v
+[Dongle&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;s Upload CGI]&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;    |&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;    | 4. Save to /tmp/update.img &amp;amp; process update&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;    v&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;[SWUpdate]&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The device version string was &lt;code&gt;26061510.5140.2&lt;/code&gt;, and the update management code used &lt;code&gt;5140&lt;/code&gt; (corresponding to the model/project line) to construct the OTA object path. At the time of testing, firmware images and version information could be downloaded without authentication from known object paths on the vendor&amp;#x2019;s OTA repository. It wasn&amp;#x2019;t that the entire repository directory listing was exposed, but rather that known update object paths were directly accessible.&lt;/p&gt;
+&lt;p&gt;Obtaining the firmware made me think everything was solved. However, inspecting the file header brought up another problem.&lt;/p&gt;
+&lt;h2 id=&#34;2-2-Encrypted-Firmware&#34;&gt;&lt;a href=&#34;#2-2-Encrypted-Firmware&#34; class=&#34;headerlink&#34; title=&#34;2-2. Encrypted Firmware&#34;&gt;&lt;/a&gt;2-2. Encrypted Firmware&lt;/h2&gt;&lt;p&gt;Some older images from the same product family had the following structure:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs mipsasm&#34;&gt;&amp;lt;MD5 Checksum&amp;gt;  update.&lt;span class=&#34;hljs-keyword&#34;&gt;swu&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;070702... &lt;/span&gt;                &lt;span class=&#34;hljs-comment&#34;&gt;# CPIO (newc + CRC)&lt;/span&gt;
+  &amp;#x251C;&amp;#x2500;&amp;#x2500; &lt;span class=&#34;hljs-keyword&#34;&gt;sw-description &lt;/span&gt;     &lt;span class=&#34;hljs-comment&#34;&gt;# Update Metadata&lt;/span&gt;
+  &amp;#x251C;&amp;#x2500;&amp;#x2500; kernel              &lt;span class=&#34;hljs-comment&#34;&gt;# Kernel Image&lt;/span&gt;
+  &amp;#x2514;&amp;#x2500;&amp;#x2500; rootfs              &lt;span class=&#34;hljs-comment&#34;&gt;# Root Filesystem&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Here, &lt;code&gt;sw-description&lt;/code&gt; is a manifest determining which files SWUpdate installs where. Prior research had already pointed out that confusing &lt;code&gt;070701&lt;/code&gt; (newc) with &lt;code&gt;070702&lt;/code&gt; (newc with CRC) causes SWUpdate to reject the package. Thanks to that insight, when handling the package, I checked which CPIO format was used and at which offset in the file the header started.&lt;/p&gt;
+&lt;p&gt;Indeed, the simple CPIO parser I initially wrote stopped right after reading the first member. Because of the leading MD5 string, the archive start offset wasn&amp;#x2019;t zero, but alignment calculations were made relative to the beginning of the file. Fixing the alignment reference to the CPIO start offset allowed &lt;code&gt;sw-description&lt;/code&gt;, &lt;code&gt;kernel&lt;/code&gt;, and &lt;code&gt;rootfs&lt;/code&gt; to be read sequentially.&lt;/p&gt;
+&lt;p&gt;However, in newer model lines closer to my target, normal CPIO headers were still not immediately visible. At first, I wondered if it was an encrypted image. Asking ChatGPT didn&amp;#x2019;t yield a full recovery either. &lt;del&gt;Downloading the firmware was the easy part&amp;#x2026;&lt;/del&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%203.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;However, while comparing images across various builds, I noticed something strange. Although they were different files, bytes in certain sections were identical. This pattern was hard to explain if independent nonces/IVs were used for encryption per image.&lt;/p&gt;
+&lt;p&gt;I considered the possibility of a repeating short XOR key and searched for a period, but that wasn&amp;#x2019;t it either. Hoping to at least recover the header, I downloaded older firmware versions as a last resort&amp;#x2026; and fortunately, older firmware left on the vendor&amp;#x2019;s server was in plaintext! I could use the CPIO structure and known parts of &lt;code&gt;sw-description&lt;/code&gt; identified earlier as known plaintext.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# Compare identical offsets exclusively within sections where plaintext is available&lt;/span&gt;
+keystream = bytes(c ^ p &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; c, p &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; zip(encrypted_bytes, known_plaintext_bytes))
+candidate_plaintext = bytes(c ^ k &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; c, k &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; zip(other_encrypted_bytes, keystream))&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Applying the keystream recovered from identical positions to images of other models revealed structurally valid &lt;code&gt;sw-description&lt;/code&gt; contents. Text encrypted in other models such as 5110/5130 was restored, and model-specific project names were verified normally. By confirming a shared XOR keystream in sections where known plaintext was obtained, it was possible to apply it to subsequent firmwares. Of course, I couldn&amp;#x2019;t perfectly decrypt every single byte of the latest image. Nevertheless, it clearly demonstrated that XOR-based OTA obfuscation fails to properly protect firmware confidentiality. It was a prime example showing &lt;strong&gt;why independent encryption per image is necessary&lt;/strong&gt;. &lt;del&gt;At this point, one wonders if they even intended to hide it properly.&lt;/del&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%204.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;h2 id=&#34;2-3-Not-Satisfied-Bring-On-the-Flash-ROM&#34;&gt;&lt;a href=&#34;#2-3-Not-Satisfied-Bring-On-the-Flash-ROM&#34; class=&#34;headerlink&#34; title=&#34;2-3. Not Satisfied! Bring On the Flash ROM~!&#34;&gt;&lt;/a&gt;2-3. Not Satisfied! Bring On the Flash ROM~!&lt;/h2&gt;&lt;p&gt;What I got from OTA was primarily the files targeted for updates. To analyze the full boot process and the base rootfs, I needed the full flash. Originally, I planned to clip onto the SPI NOR chip and read it, but after reading the aforementioned &lt;a href=&#34;https://sec1.dk/blog/carplay-re-blog.html&#34;&gt;sec1.dk article&lt;/a&gt; describing a recovery process using Allwinner FEL (USB download mode of the BootROM), I changed my plan.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%205.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;I disassembled it immediately and decided to check the interfaces supported by the device first before attempting soldering or SPI clips.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%206.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Using tweezers on the relevant pads, I attempted to trigger mode switching. Initially, instead of the expected FEL device, the USB ID changed to &lt;code&gt;0525:a4a7&lt;/code&gt;. I initially noted this in my project notes as A2A Debug Mode, but upon looking it up, I found this ID is used as the CDC ACM example for &lt;strong&gt;USB Gadget Serial&lt;/strong&gt; in the &lt;a href=&#34;https://docs.kernel.org/usb/gadget_serial.html&#34;&gt;Linux Kernel Documentation&lt;/a&gt;. Still, there was no concrete evidence that a debug console actually opened. At any rate, &lt;strong&gt;it was clearly not FEL&lt;/strong&gt;, so I retried several times. Finally, the ID changed to &lt;code&gt;1f3a:efe8&lt;/code&gt;, and &lt;code&gt;xfel&lt;/code&gt; recognized it as a V821.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs apache&#34;&gt;&lt;span class=&#34;hljs-attribute&#34;&gt;FEL&lt;/span&gt; USB enumeration : &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;f&lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;a:efe&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;
+&lt;span class=&#34;hljs-attribute&#34;&gt;xfel&lt;/span&gt; version         : AWUSBFEX ID=&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;00188200&lt;/span&gt; (V&lt;span class=&#34;hljs-number&#34;&gt;821&lt;/span&gt;)
+&lt;span class=&#34;hljs-attribute&#34;&gt;SPI&lt;/span&gt; NOR flash        : &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;,&lt;span class=&#34;hljs-number&#34;&gt;777&lt;/span&gt;,&lt;span class=&#34;hljs-number&#34;&gt;216&lt;/span&gt; bytes (&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt; MiB)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Looking solely at the &lt;code&gt;TC397&lt;/code&gt; marking on the chip surface, Infineon AURIX/TriCore first came to mind. However, &lt;strong&gt;the ID read via USB FEL and the extracted kernel/executables&lt;/strong&gt; pointed to an Allwinner V821-based RISC-V platform. Judging the SoC purely by chip markings would have led me down the wrong path entirely. As for why it has that marking&amp;#x2026; I honestly don&amp;#x2019;t know either.&lt;/p&gt;
+&lt;p&gt;To ensure the integrity of the extracted firmware, I read the entire binary three separate times and verified that all SHA-256 hashes matched before proceeding with analysis. Having a recoverable original backup made me feel much more at ease, as an incorrect modification could render the device unbootable. With this, all foundational preparation for vulnerability analysis and testing was complete.&lt;/p&gt;
+&lt;p&gt;Analyzing the dump with &lt;code&gt;binwalk&lt;/code&gt; and &lt;code&gt;unsquashfs&lt;/code&gt; produced the following results:&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Flash Offset&lt;/th&gt;
+&lt;th&gt;Identified Component&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;0x000000&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Boot Region (SPL/boot0)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;0x060000&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Kernel Boot Image&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;0x370000&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Kernel Boot Image Copy&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;0x680000&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;SquashFS &lt;code&gt;rootfs&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;0xB00000&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;SquashFS &lt;code&gt;customer&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Around &lt;code&gt;0xED0050&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;JFFS2 Writable Data&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;Inside the filesystem, alongside Linux kernel &lt;code&gt;5.4.220&lt;/code&gt;, BusyBox, and musl libc, were device boot scripts, Wi-Fi configurations, a web server, and update utilities. It feels like analyzing a standard embedded Linux device inside this tiny gadget. I expected nothing much, but it was packed quite densely.&lt;/p&gt;
+&lt;p&gt;As a side note, while organizing this article, I also cross-referenced &lt;a href=&#34;https://github.com/lvalen91/CPC200-CCPA_resources/blob/main/hardware/c2air_v821_spec.md&#34;&gt;lvalen91&amp;#x2019;s C2Air V821 platform analysis notes&lt;/a&gt;. Other products in those notes match in several configurations: V821, 16MB SPI NOR, Linux 5.4.220, &lt;code&gt;rootfs&lt;/code&gt; at 0x680000 / &lt;code&gt;customer&lt;/code&gt; at 0xB00000. While this hints at a common platform across product lines, the offsets and SoC identification above are strictly based on the flash dumps and FEL results I measured directly.&lt;/p&gt;
+&lt;h1 id=&#34;3-Reverse-Engineering&#34;&gt;&lt;a href=&#34;#3-Reverse-Engineering&#34; class=&#34;headerlink&#34; title=&#34;3. Reverse Engineering&#34;&gt;&lt;/a&gt;3. Reverse Engineering&lt;/h1&gt;&lt;p&gt;Now that we have the firmware, it&amp;#x2019;s time to analyze the binaries.&lt;/p&gt;
+&lt;p&gt;However, as mentioned earlier&amp;#x2026; yes, the binaries are RISC-V 32-bit ELFs. Having prior research available made me think it would be a breeze, but when running some executables in &lt;code&gt;qemu-riscv32&lt;/code&gt;, an &lt;code&gt;Illegal instruction&lt;/code&gt; occurred, and Ghidra displayed unfamiliar code in the middle of functions.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%207.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;In the past, one would have to look up each instruction manually and fix alignment, but nowadays this isn&amp;#x2019;t much of a problem.&lt;/p&gt;
+&lt;p&gt;After feeding it to ChatGPT, I confirmed that Andes vendor extension instructions were being used. If Ghidra fails to interpret these properly, it doesn&amp;#x2019;t just result in messy pseudocode&amp;#x2014;string references disappear, branch targets break, and ultimately entire function execution flows get truncated. Of course, just saying &amp;#x201C;it solved it all&amp;#x201D; is too result-oriented, so let&amp;#x2019;s look through the issues together one by one.&lt;/p&gt;
+&lt;p&gt;Among the analysis targets, about 14.9% of &lt;code&gt;.text&lt;/code&gt; in &lt;code&gt;/sbin/update&lt;/code&gt; and about 12.3% in &lt;code&gt;index.cgi&lt;/code&gt; consisted of these custom opcodes. Left as is, it would be impossible to follow critical request-handling logic properly.&lt;/p&gt;
+&lt;h2 id=&#34;3-1-ADDIGP&#34;&gt;&lt;a href=&#34;#3-1-ADDIGP&#34; class=&#34;headerlink&#34; title=&#34;3-1. ADDIGP&#34;&gt;&lt;/a&gt;3-1. ADDIGP&lt;/h2&gt;&lt;p&gt;While strings in &lt;code&gt;index.cgi&lt;/code&gt; could be found in Ghidra, cross-references (xrefs) to those strings were not connected properly. Tracing the cause showed that &lt;code&gt;custom-0&lt;/code&gt; series instructions mapped to Andes &lt;code&gt;ADDIGP&lt;/code&gt;, which calculates global addresses.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;ADDIGP&lt;/code&gt; is used to reference data relative to the Global Pointer (&lt;code&gt;gp&lt;/code&gt;). When Ghidra treats this like an unknown function call, it fails to resolve addresses calculated via &lt;code&gt;gp&lt;/code&gt;, severing string xrefs.&lt;/p&gt;
+&lt;p&gt;Initially, I guessed conventional &lt;code&gt;gp&lt;/code&gt; values, but results were off by several bytes. What made it even more frustrating was that in dense string regions, wrong addresses still looked like plausible strings. &lt;del&gt;I was so happy thinking I got it right, only to realize I was wrong upon second look.&lt;/del&gt;&lt;/p&gt;
+&lt;p&gt;So I tracked the &lt;code&gt;auipc&lt;/code&gt;/&lt;code&gt;addi&lt;/code&gt; combination in the ELF initialization code to determine the exact &lt;code&gt;gp&lt;/code&gt; value and statistically verified if addresses landed cleanly within actual data sections. As a result, I was able to restore many lost string references in Ghidra.&lt;/p&gt;
+&lt;p&gt;For example, in &lt;code&gt;index.cgi&lt;/code&gt;, recalculating relative to &lt;code&gt;gp=0x17800&lt;/code&gt; resulted in &lt;strong&gt;418 out of 510 candidates (approx. 82%)&lt;/strong&gt; matching exact starting positions of valid strings. Unlike guessing blindly based on &lt;code&gt;.sdata + 0x800&lt;/code&gt;, I could now trace which strings &lt;code&gt;index.cgi&lt;/code&gt; was actually referencing.&lt;/p&gt;
+&lt;h2 id=&#34;3-2-BEQC-BNEC&#34;&gt;&lt;a href=&#34;#3-2-BEQC-BNEC&#34; class=&#34;headerlink&#34; title=&#34;3-2. BEQC/BNEC&#34;&gt;&lt;/a&gt;3-2. BEQC/BNEC&lt;/h2&gt;&lt;p&gt;Next was an issue with the command dispatcher in &lt;code&gt;rcpservice&lt;/code&gt;. Reading it like standard RISC-V instructions resulted in a series of incomprehensible branches, but inspecting surrounding code revealed a switch structure choosing handlers based on command IDs.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%208.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The decisive clues here were the numbers appearing as comparison values:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs angelscript&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;13&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Fields that looked like register numbers turned out to be individual command codes! Reinterpreting instruction bits &lt;code&gt;[24:20]&lt;/code&gt; as immediate comparison values (&lt;code&gt;cimm&lt;/code&gt;) and applying standard RISC-V B-type formatting for branch offsets caused eight branches to lead to valid handler starting addresses.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs apache&#34;&gt;&lt;span class=&#34;hljs-attribute&#34;&gt;custom&lt;/span&gt;-&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; / funct&lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;=&lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt; -&amp;gt; BEQC (Branch if Register == Constant)
+&lt;span class=&#34;hljs-attribute&#34;&gt;custom&lt;/span&gt;-&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; / funct&lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;=&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt; -&amp;gt; BNEC (Branch if Register != Constant)
+
+&lt;span class=&#34;hljs-attribute&#34;&gt;Comparison&lt;/span&gt; Immediate: instruction[&lt;span class=&#34;hljs-number&#34;&gt;24&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;20&lt;/span&gt;]
+&lt;span class=&#34;hljs-attribute&#34;&gt;Branch&lt;/span&gt; Displacement : RISC-V B-type immediate&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Interpreting branch displacements in various ways revealed that &lt;strong&gt;97.5%&lt;/strong&gt; using standard B-type displacement landed on valid instruction starting points. Other candidates yielded 60&amp;#x2013;75%, and a simple even-address baseline yielded 63.9%, showing a significant difference. In particular, the 8 commands in &lt;code&gt;rcpservice&lt;/code&gt; led precisely to &lt;strong&gt;8 distinct handler starting addresses&lt;/strong&gt;. For instance, &lt;code&gt;beqc s10, 1&lt;/code&gt; jumps to &lt;code&gt;0x1c5c0&lt;/code&gt;, and &lt;code&gt;beqc s10, 11&lt;/code&gt; jumps to &lt;code&gt;0x1c608&lt;/code&gt;. At this point, I was confident in the decoding logic.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%209.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;When loading into Ghidra, I patched these branches to standard &lt;code&gt;beq&lt;/code&gt; instructions in an analysis copy (rather than the original executable) to reconstruct the Control Flow Graph (CFG). However, there is an important limitation: while branch destinations were preserved, the semantic meaning of comparison conditions wasn&amp;#x2019;t fully maintained. Therefore, pseudocode obtained this way serves as reference material to follow handler structure, and detailed condition evaluations must be cross-checked against original instructions.&lt;/p&gt;
+&lt;p&gt;Analyzing an Android Auto dongle only to end up reconstructing RISC-V instruction encodings was quite exhausting&amp;#x2026; &amp;#x3160;&amp;#x3160;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%2010.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;h2 id=&#34;3-3-Runtime-Binary-Extraction&#34;&gt;&lt;a href=&#34;#3-3-Runtime-Binary-Extraction&#34; class=&#34;headerlink&#34; title=&#34;3-3. Runtime Binary Extraction&#34;&gt;&lt;/a&gt;3-3. Runtime Binary Extraction&lt;/h2&gt;&lt;p&gt;Following the boot script &lt;code&gt;lyLink.sh&lt;/code&gt;, I found that certain services were not placed as ordinary files. This was because a vendor container called &lt;code&gt;lylink&lt;/code&gt; was extracted into &lt;code&gt;/tmp/app&lt;/code&gt; using &lt;code&gt;lypack&lt;/code&gt; before services were executed.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs coq&#34;&gt;init / rcS
+   &amp;#x2514;&amp;#x2500;&amp;#x2500; lyLink.sh
+         &amp;#x251C;&amp;#x2500;&amp;#x2500; &lt;span class=&#34;hljs-keyword&#34;&gt;Extract&lt;/span&gt; lylink via lypack -&amp;gt; /tmp/app/
+         &amp;#x251C;&amp;#x2500;&amp;#x2500; CarPlay &lt;span class=&#34;hljs-keyword&#34;&gt;Path&lt;/span&gt;    : rcpservice, lylinkapp, mdnsd ...
+         &amp;#x2514;&amp;#x2500;&amp;#x2500; Android Auto &lt;span class=&#34;hljs-keyword&#34;&gt;Path&lt;/span&gt;: raaservice, mtpservice ...&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Looking purely at static files meant missing part of the binaries that actually needed analysis. Furthermore, &lt;code&gt;lypack&lt;/code&gt; itself relied on Andes instructions, making it unexecutable in standard &lt;code&gt;qemu-riscv32&lt;/code&gt;. I wondered if I had to reverse engineer the entire archive format from scratch, but realized I didn&amp;#x2019;t need to&amp;#x2014;the actual physical device already unpacks and uses those files during boot!&lt;/p&gt;
+&lt;p&gt;Once again, I got a hint from prior research. sec1.dk modified the boot script in &lt;code&gt;customer&lt;/code&gt; and reflashed via the recovery interface to build an analysis root shell. Referencing the core idea&amp;#x2014;&amp;#x2018;full flash backup &amp;#x2192; target modification of customer section &amp;#x2192; write/verify read via FEL&amp;#x2019;&amp;#x2014;I adapted it to my device environment by adding a diagnostic CGI. This was necessary because the default BusyBox lacked utilities like &lt;code&gt;telnetd&lt;/code&gt; or &lt;code&gt;nc&lt;/code&gt;, preventing me from running identical commands directly.&lt;/p&gt;
+&lt;p&gt;Using physical FEL access and backups, I prepared a modified image for research and obtained an analysis shell with &lt;code&gt;uid=0(root)&lt;/code&gt; in that environment. After that, all that was left was to retrieve the binaries the device unpacked into &lt;code&gt;/tmp/app&lt;/code&gt; at runtime. A hurdle that nearly required full reverse engineering of an archive format was bypassed through runtime observation.&lt;/p&gt;
+&lt;p&gt;The files acquired here&amp;#x2014;such as &lt;code&gt;rcpservice&lt;/code&gt;, &lt;code&gt;librcarplay.so&lt;/code&gt;, and &lt;code&gt;libriap2.so&lt;/code&gt;&amp;#x2014;allowed me to inspect CarPlay-related network services and parsers in greater detail.&lt;/p&gt;
+&lt;h1 id=&#34;4-Conclusion&#34;&gt;&lt;a href=&#34;#4-Conclusion&#34; class=&#34;headerlink&#34; title=&#34;4. Conclusion&#34;&gt;&lt;/a&gt;4. Conclusion&lt;/h1&gt;&lt;p&gt;It definitely started with &amp;#x201C;Let&amp;#x2019;s crack open a $30 dongle,&amp;#x201D; but plugging it into USB showed an iPhone, fetching the firmware hid the headers, and Ghidra showed nothing but a flood of &lt;code&gt;custom2&lt;/code&gt; instructions.&lt;/p&gt;
+&lt;p&gt;Still, after obtaining the firmware via OTA, reading the flash via FEL, and pushing through roadblocks caused by Andes instructions, I made it through. Having gathered binaries unpacked to &lt;code&gt;/tmp/app&lt;/code&gt; at boot, all the materials needed for analysis are finally collected.&lt;/p&gt;
+&lt;p&gt;So, what&amp;#x2019;s next in Part 2? The whole point of buying this dongle was to see if there were vulnerabilities. &lt;strong&gt;Now it&amp;#x2019;s time to dive into vulnerability analysis proper.&lt;/strong&gt; I plan to examine everything step-by-step, from the dongle&amp;#x2019;s Wi-Fi and Web API to &lt;code&gt;index.cgi&lt;/code&gt; upload handling, and &lt;code&gt;/sbin/update&lt;/code&gt; alongside SWUpdate firmware update procedures. I&amp;#x2019;ll also share what was actually possible and where roadblocks occurred. &lt;del&gt;Finally time for the main course. Got to give it a taste!&lt;/del&gt;&lt;/p&gt;
+&lt;p&gt;Note that the root shell obtained in Part 1 was created by physically opening the device and modifying the firmware to build an analysis environment. This doesn&amp;#x2019;t mean it was popped remotely&amp;#x2014;that needs to be analyzed separately.&lt;/p&gt;
+&lt;p&gt;What started as a lightweight project ended up having much more to look into than expected, extending it into Part 2. Thank you for reading this far! See you in the next post!&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Lone Wolves] Analyzing an Android Auto Dongle - Part 1 - hackyboiz">
+  <meta property="og:description" content="&lt;h1 id=&#34;0-Intro&#34;&gt;&lt;a href=&#34;#0-Intro&#34; class=&#34;headerlink&#34; title=&#34;0. Intro&#34;&gt;&lt;/a&gt;0. Intro&lt;/h1&gt;&lt;p&gt;&lt;img src=&#34;image.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Hello! This is t0be. Today, I&amp;#x2019;m back with the next post following the &amp;#x201C;Lone Wolves&amp;#x201D; project that gongjae posted earlier! &amp;#x1F43A;&lt;/p&gt;
+&lt;p&gt;Before we begin, though, there&amp;#x2019;s one thing I&amp;#x2019;d like to mention. Although we&amp;#x2019;re working on this project together as a team, each of us has different interests, so it feels like we&amp;#x2019;re a team, but also not quite a team. Because of this, &lt;a href=&#34;https://hackyboiz.github.io/2026/10/11/gongjae/LoneWolves_MacOS_part0/KR/&#34;&gt;gongjae&amp;#x2019;s macOS research article&lt;/a&gt; and this post cover completely different topics.&lt;/p&gt;
+&lt;p&gt;Since I focus on automotive security, my mind naturally went to the vehicle itself or its internal Electronic Control Units (ECUs) at first. Then, a thought suddenly crossed my mind: &amp;#x201C;What if I look into peripherals instead of the vehicle itself&amp;#x2026; wouldn&amp;#x2019;t they be vulnerable?&amp;#x201D;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%201.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;While searching for various candidates, a product caught my eye: a wireless Android Auto / CarPlay dongle.&lt;/p&gt;
+&lt;p&gt;In fact, this was a product I had saved in my shopping cart a while ago because I wanted to use Android Auto wirelessly in my car. Just plug it into the vehicle, pair it with your smartphone, and you&amp;#x2019;re done! It has quite impressive capabilities for its small size, but I always wondered how secure it actually was.&lt;/p&gt;
+&lt;p&gt;After all, a third-party device handling Bluetooth, Wi-Fi, and USB simultaneously is introduced right between the vehicle and the smartphone. On top of that, this device processes data displayed on the car&amp;#x2019;s screen and handles mirroring sessions from the smartphone. What a appetizing target to analyze!&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%202.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The product I analyzed this time is an Ottocast CP88-M series wireless mirroring dongle sold under the Anniver brand. I bought it directly on Coupang. I physically opened the device, observed its USB communications, obtained its OTA firmware and SPI flash, reverse-engineered it, and verified a few security issues firsthand.&lt;/p&gt;
+&lt;p&gt;My original plan was simply: &amp;#x201C;Let&amp;#x2019;s quickly crack open the firmware and take a look!&amp;#x201D; However, I ended up diving into everything from RISC-V extended instructions to firmware update structures. &lt;del&gt;Oh dear, I crossed the point of no return&lt;/del&gt; &amp;#x1F607;&lt;/p&gt;
+&lt;p&gt;In this article, I will focus on how this dongle works, how I acquired and analyzed the firmware, what I actually verified, and what remains a hypothesis at this stage.&lt;/p&gt;
+&lt;p&gt;Actually, I couldn&amp;#x2019;t be the only one who has analyzed a product like this, right? When I started analyzing, I looked for materials covering similar dongles, and &lt;a href=&#34;https://sec1.dk/blog/carplay-re-blog.html&#34;&gt;sec1.dk&amp;#x2019;s Reverse Engineering a Wireless CarPlay Adapter &amp;#x2014; Full Journey&lt;/a&gt; caught my attention. It was a comprehensive article covering everything from acquiring firmware to OTA, hardware analysis, flash recovery, and getting a root shell. Thanks to that, I didn&amp;#x2019;t have to start from scratch and redo all the trial and error without any clues.&lt;/p&gt;
+&lt;p&gt;Fortunately, our work didn&amp;#x2019;t overlap completely, which is why I&amp;#x2019;m able to share this research. The target in the referenced article was based on the Allwinner V851S3 (ARM), while the product I bought turned out to be based on the V821 (RISC-V). Furthermore, even the firmware file structures differed slightly. Therefore, I decided to verify actual behavior and potential vulnerabilities directly on my device.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Scope of Analysis: Tested without an actual vehicle using a CP88-M dongle owned by the researcher and a Pixel 10a. No attacks were performed on vehicle head units, CAN networks, or vehicle control functions.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h1 id=&#34;1-How-to-work&#34;&gt;&lt;a href=&#34;#1-How-to-work&#34; class=&#34;headerlink&#34; title=&#34;1. How to work?&#34;&gt;&lt;/a&gt;1. How to work?&lt;/h1&gt;&lt;h2 id=&#34;1-1-What-exactly-does-an-Android-Auto-dongle-do&#34;&gt;&lt;a href=&#34;#1-1-What-exactly-does-an-Android-Auto-dongle-do&#34; class=&#34;headerlink&#34; title=&#34;1-1. What exactly does an Android Auto dongle do?&#34;&gt;&lt;/a&gt;1-1. What exactly does an Android Auto dongle do?&lt;/h2&gt;&lt;p&gt;First, let me clarify something that confused me at the beginning. Looking at the name alone, doesn&amp;#x2019;t it feel like just plugging in this dongle would magically add Android Auto functionality to a vehicle that doesn&amp;#x2019;t support Android Auto at all?&lt;/p&gt;
+&lt;p&gt;However, the CP88-M analyzed here is essentially an adapter that converts a vehicle&amp;#x2019;s factory-supported wired CarPlay or Android Auto into a wireless connection. If the vehicle itself does not support these functions natively, plugging in the dongle alone won&amp;#x2019;t enable them. The manufacturer&amp;#x2019;s product description also assumes existing wired functionality. I heard there are products that enable Android Auto on unsupported vehicles, but due to the limits of my searching skills, I couldn&amp;#x2019;t find one.&lt;/p&gt;
+&lt;p&gt;Looking at the operational principle, it&amp;#x2019;s surprisingly intuitive:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs routeros&#34;&gt;                 Bluetooth / Wi-Fi                USB
+&amp;#x250C;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2510;     &lt;span class=&#34;hljs-built_in&#34;&gt; Wireless &lt;/span&gt;Conn.   &amp;#x250C;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2510;     Wired Conn.   &amp;#x250C;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2510;
+&amp;#x2502;   Smartphone &amp;#x2502; &amp;lt;-----------------&amp;gt; &amp;#x2502; CP88-M Dongle     &amp;#x2502; &amp;lt;-------------&amp;gt; &amp;#x2502; Car Head Unit  &amp;#x2502;
+&amp;#x2502; Android / iOS&amp;#x2502;                     &amp;#x2502; Linux + BT + Wi-Fi&amp;#x2502;                   &amp;#x2502; (Wired AA/CP)  &amp;#x2502;
+&amp;#x2514;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2518;                     &amp;#x2514;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2518;                   &amp;#x2514;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2500;&amp;#x2518;
+
+   &lt;span class=&#34;hljs-built_in&#34;&gt; Wireless &lt;/span&gt;Android Auto/CarPlay Receiver     Session Processing &amp;amp; Relay      Behaves like Wired Phone&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The dongle acts like a car providing wireless Android Auto/CarPlay to the smartphone, while acting like a smartphone plugged into USB to the car&amp;#x2019;s head unit. It takes wirelessly received data and passes it to the wired side, and forwards user input or control data from the vehicle back in the opposite direction.&lt;/p&gt;
+&lt;p&gt;In other words, this product is not a simple USB cable adapter. It can be viewed as a small embedded bridge equipped with its own OS and communication stack to process protocols between two devices.&lt;/p&gt;
+&lt;p&gt;So, what happens if this device, sitting right in the middle where both devices trust each other, is compromised by an attacker?&lt;/p&gt;
+&lt;p&gt;Of course, being in the middle doesn&amp;#x2019;t mean all traffic is automatically decrypted or that arbitrary commands can be executed. That depends on the authentication, encryption, and session state of the actual protocol. However, from an attacker&amp;#x2019;s perspective, it certainly looks like a juicy device.&lt;/p&gt;
+&lt;h2 id=&#34;1-2-A-30-iPhone&#34;&gt;&lt;a href=&#34;#1-2-A-30-iPhone&#34; class=&#34;headerlink&#34; title=&#34;1-2. A $30 iPhone?&#34;&gt;&lt;/a&gt;1-2. A $30 iPhone?&lt;/h2&gt;&lt;p&gt;First, I connected the dongle to my PC and checked the USB descriptor. But I was surprised because no matter how hard I looked, I couldn&amp;#x2019;t see anything that looked like a dongle.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs apache&#34;&gt;&lt;span class=&#34;hljs-attribute&#34;&gt;Bus&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;003&lt;/span&gt; Device &lt;span class=&#34;hljs-number&#34;&gt;006&lt;/span&gt;: ID &lt;span class=&#34;hljs-number&#34;&gt;05&lt;/span&gt;ac:&lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt;a&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt; Apple, Inc. iPhone
+  &lt;span class=&#34;hljs-attribute&#34;&gt;idVendor&lt;/span&gt;           &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;05&lt;/span&gt;ac Apple, Inc.
+  &lt;span class=&#34;hljs-attribute&#34;&gt;idProduct&lt;/span&gt;          &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt;a&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt; iPhone
+  &lt;span class=&#34;hljs-attribute&#34;&gt;iManufacturer&lt;/span&gt;           Apple Inc.
+  &lt;span class=&#34;hljs-attribute&#34;&gt;iProduct&lt;/span&gt;                iPhone
+  &lt;span class=&#34;hljs-attribute&#34;&gt;bNumConfigurations&lt;/span&gt;      &lt;span class=&#34;hljs-number&#34;&gt;4&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;I connected an Android Auto dongle, but it reported that an Apple iPhone was connected. Whew~ If I were using an iPhone instead of a Galaxy, I almost wouldn&amp;#x2019;t have found it!&lt;/p&gt;
+&lt;p&gt;At first, I thought another USB device was captured, but even after disconnecting everything except the dongle, the same values appeared. The dongle was advertising its USB descriptor as an iPhone, rather than an actual iPhone.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;USB Configuration&lt;/th&gt;
+&lt;th&gt;Feature Identified in Descriptor&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;Configuration 1&lt;/td&gt;
+&lt;td&gt;PTP (Picture Transfer Protocol)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Configuration 2&lt;/td&gt;
+&lt;td&gt;iPod / iAP-related Interface&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Configuration 3&lt;/td&gt;
+&lt;td&gt;Apple Mobile Device, USB Multiplexor&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Configuration 4&lt;/td&gt;
+&lt;td&gt;Apple Mobile Device + USB Ethernet&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;CarPlay uses a USB interface alongside an IP-based session. Therefore, to make it appear as if a wired iPhone is connected to the head unit, it needs to provide interfaces like these.&lt;/p&gt;
+&lt;p&gt;Initially, only Configuration 1 was selected properly, while Configurations 2&amp;#x2013;4 failed. I wondered, &amp;#x201C;Is it just impersonating the descriptor without actual functionality?&amp;#x201D; But once the smartphone was paired and I checked again, the other Configurations became active.&lt;/p&gt;
+&lt;p&gt;When I set the Pixel and dongle to Android Auto mode, the &lt;strong&gt;USB device side of the dongle connected to the PC&lt;/strong&gt; was now displayed as &lt;code&gt;2717:ff40&lt;/code&gt; with the product name &lt;code&gt;CAR2&lt;/code&gt;. Sending an AOA (Android Open Accessory) control request caused the USB device to re-enumerate, changing its ID to &lt;code&gt;18d1:2d00&lt;/code&gt;. Originally, &lt;code&gt;18d1:2d00&lt;/code&gt; is defined in the &lt;a href=&#34;https://source.android.com/docs/core/interaction/accessories/aoa&#34;&gt;Android AOA documentation&lt;/a&gt; as the ID for accessory mode on Android devices. Here, &lt;strong&gt;the dongle is imitating that role on the USB port side connecting to the car&lt;/strong&gt;. First pretending to be an iPhone, and now an Android&amp;#x2026; it&amp;#x2019;s quite busy.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs livescript&#34;&gt;AOA_GET_PROTOCOL &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Request &lt;span class=&#34;hljs-number&#34;&gt;51&lt;/span&gt;)&lt;/span&gt;  -&amp;gt;&lt;/span&gt; Version &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;
+AOA_SEND_IDENT   &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Request &lt;span class=&#34;hljs-number&#34;&gt;52&lt;/span&gt;)&lt;/span&gt;  -&amp;gt;&lt;/span&gt; Send Identification &lt;span class=&#34;hljs-built_in&#34;&gt;String&lt;/span&gt;
+AOA_START        &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Request &lt;span class=&#34;hljs-number&#34;&gt;53&lt;/span&gt;)&lt;/span&gt;  -&amp;gt;&lt;/span&gt; Switch &lt;span class=&#34;hljs-keyword&#34;&gt;to&lt;/span&gt; Accessory Mode
+
+USB ID Change: &lt;span class=&#34;hljs-number&#34;&gt;2717&lt;/span&gt;:ff40&lt;span class=&#34;hljs-function&#34;&gt;  -&amp;gt;&lt;/span&gt;  &lt;span class=&#34;hljs-number&#34;&gt;18d&lt;/span&gt;1:&lt;span class=&#34;hljs-number&#34;&gt;2d&lt;/span&gt;00&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In short, this product identifies itself as different USB devices in CarPlay and Android Auto modes. As a side note, the USB ID change mentioned above was &lt;strong&gt;observed on the dongle connected to the PC&lt;/strong&gt;, not a case where the Pixel was connected via USB and re-enumerated. Furthermore, confirming the transition to AOA mode does not mean the entire Android Auto session is complete. Although I succeeded in sending the actual AA version request via Bulk OUT, I couldn&amp;#x2019;t verify responses or TLS sessions because a stack acting as the head unit wasn&amp;#x2019;t fully set up. I&amp;#x2019;m trying to borrow a car from people around me, but it&amp;#x2019;s not easy.&lt;/p&gt;
+&lt;h2 id=&#34;1-3-Why-are-both-Bluetooth-and-Wi-Fi-required&#34;&gt;&lt;a href=&#34;#1-3-Why-are-both-Bluetooth-and-Wi-Fi-required&#34; class=&#34;headerlink&#34; title=&#34;1-3. Why are both Bluetooth and Wi-Fi required?&#34;&gt;&lt;/a&gt;1-3. Why are both Bluetooth and Wi-Fi required?&lt;/h2&gt;&lt;p&gt;Even though it&amp;#x2019;s called wireless mirroring, screen data isn&amp;#x2019;t transmitted entirely over Bluetooth. Typically, Bluetooth handles device discovery, pairing, and initial connection setup, while high-bandwidth mirroring data utilizes the Wi-Fi/IP path.&lt;/p&gt;
+&lt;p&gt;I found elements corresponding to this structure in this dongle as well.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Component&lt;/th&gt;
+&lt;th&gt;Confirmed Role&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;btapp&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Handles Bluetooth connection, uses &lt;code&gt;/dev/ttyS1&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;hostapd&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Operates 5GHz Wi-Fi AP&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;wpa_supplicant&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Configures Wi-Fi Direct (P2P)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;udhcpd&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Assigns IP addresses to connected devices&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;mdnsd&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Advertises network services&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;rcpservice&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;CarPlay session and network communication&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;raaservice&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Service binary for Android Auto mode&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;In practice, the dongle advertised a Wi-Fi AP named &lt;code&gt;CAR2-2F7D&lt;/code&gt;, with IP assignments being &lt;code&gt;192.168.1.101&lt;/code&gt; for the dongle and &lt;code&gt;192.168.1.102&lt;/code&gt; for the connected Pixel. A Wi-Fi Direct group was also confirmed on the same hardware.&lt;/p&gt;
+&lt;p&gt;In the Pixel logs, I could observe a flow initiating an RFCOMM connection to a previously registered device and attempting to connect to Wi-Fi using saved credentials. This means automatic reconnection happens without requiring fresh pairing every time. While convenient from a usability perspective, from an attacker&amp;#x2019;s perspective, it implies that an accessory trusted once will continue to be trusted later. This raised my curiosity regarding how much impact compromising such a device could have on the phone or vehicle side.&lt;/p&gt;
+&lt;p&gt;Of course, up to this point, these are all normal functionalities. The fact that automatic reconnection occurs doesn&amp;#x2019;t automatically mean pairing bypasses or data leaks are immediately possible.&lt;/p&gt;
+&lt;h1 id=&#34;2-Firmware-Acquisition&#34;&gt;&lt;a href=&#34;#2-Firmware-Acquisition&#34; class=&#34;headerlink&#34; title=&#34;2. Firmware Acquisition&#34;&gt;&lt;/a&gt;2. Firmware Acquisition&lt;/h1&gt;&lt;p&gt;Now let&amp;#x2019;s take a proper look inside. This analysis progressed from USB to wireless network, OTA, flash dump, and binary reverse engineering.&lt;/p&gt;
+&lt;p&gt;Looking at prior research, update servers and other interfaces could serve as good starting points, but I naturally didn&amp;#x2019;t expect my device to share the exact same addresses, partitions, or validation logic. Therefore, I decided to proceed step-by-step using values measured directly from my device.&lt;/p&gt;
+&lt;h2 id=&#34;2-1-Firmware-Extraction&#34;&gt;&lt;a href=&#34;#2-1-Firmware-Extraction&#34; class=&#34;headerlink&#34; title=&#34;2-1. Firmware Extraction&#34;&gt;&lt;/a&gt;2-1. Firmware Extraction&lt;/h2&gt;&lt;p&gt;At first, I wondered if I should teardown the hardware and read the SPI flash right away, as is typical in embedded analysis. While I was naturally preparing my CH341A, I asked my best friend ChatGPT to check it out. After connecting to the dongle&amp;#x2019;s Wi-Fi, navigating to &lt;code&gt;http://192.168.1.101&lt;/code&gt; brought up the settings page, and it began analyzing the features on its own. (Yay!)&lt;/p&gt;
+&lt;p&gt;The report generated by ChatGPT showed features like device info, settings modification, and firmware updates on the web UI. Naturally, what interested me most was the Firmware Update&amp;#x2014;since I might be able to obtain the firmware without tearing down the hardware!&lt;/p&gt;
+&lt;p&gt;Here, &lt;a href=&#34;https://sec1.dk/blog/carplay-re-blog.html&#34;&gt;sec1.dk&amp;#x2019;s analysis post&lt;/a&gt; was very helpful. In that post, the author followed the OTA path on the settings page of a similar product to obtain official firmware, outlining a structure where an MD5 string is prepended to the package, followed by a CPIO archive for SWUpdate. Instead of blindly copying those paths, I first checked what URLs my dongle&amp;#x2019;s web page generated.&lt;/p&gt;
+&lt;p&gt;Examining &lt;code&gt;cpbox.js&lt;/code&gt; and &lt;code&gt;index.html&lt;/code&gt; used by the page revealed the update flow:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs routeros&#34;&gt;[Management Page]
+    |
+    | 1. Check current version (?&lt;span class=&#34;hljs-attribute&#34;&gt;id&lt;/span&gt;=host)
+    v
+[Request OTA Version &lt;span class=&#34;hljs-builtin-name&#34;&gt;Info&lt;/span&gt;]
+    |
+    | 2. Check build/release &lt;span class=&#34;hljs-builtin-name&#34;&gt;info&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; version.json
+    v
+[Download&lt;span class=&#34;hljs-built_in&#34;&gt; Firmware &lt;/span&gt;Image]
+    |
+    | 3. Download update.img
+    v
+[Dongle&lt;span class=&#34;hljs-string&#34;&gt;&amp;apos;s Upload CGI]&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;    |&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;    | 4. Save to /tmp/update.img &amp;amp; process update&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;    v&lt;/span&gt;
+&lt;span class=&#34;hljs-string&#34;&gt;[SWUpdate]&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The device version string was &lt;code&gt;26061510.5140.2&lt;/code&gt;, and the update management code used &lt;code&gt;5140&lt;/code&gt; (corresponding to the model/project line) to construct the OTA object path. At the time of testing, firmware images and version information could be downloaded without authentication from known object paths on the vendor&amp;#x2019;s OTA repository. It wasn&amp;#x2019;t that the entire repository directory listing was exposed, but rather that known update object paths were directly accessible.&lt;/p&gt;
+&lt;p&gt;Obtaining the firmware made me think everything was solved. However, inspecting the file header brought up another problem.&lt;/p&gt;
+&lt;h2 id=&#34;2-2-Encrypted-Firmware&#34;&gt;&lt;a href=&#34;#2-2-Encrypted-Firmware&#34; class=&#34;headerlink&#34; title=&#34;2-2. Encrypted Firmware&#34;&gt;&lt;/a&gt;2-2. Encrypted Firmware&lt;/h2&gt;&lt;p&gt;Some older images from the same product family had the following structure:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs mipsasm&#34;&gt;&amp;lt;MD5 Checksum&amp;gt;  update.&lt;span class=&#34;hljs-keyword&#34;&gt;swu&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;070702... &lt;/span&gt;                &lt;span class=&#34;hljs-comment&#34;&gt;# CPIO (newc + CRC)&lt;/span&gt;
+  &amp;#x251C;&amp;#x2500;&amp;#x2500; &lt;span class=&#34;hljs-keyword&#34;&gt;sw-description &lt;/span&gt;     &lt;span class=&#34;hljs-comment&#34;&gt;# Update Metadata&lt;/span&gt;
+  &amp;#x251C;&amp;#x2500;&amp;#x2500; kernel              &lt;span class=&#34;hljs-comment&#34;&gt;# Kernel Image&lt;/span&gt;
+  &amp;#x2514;&amp;#x2500;&amp;#x2500; rootfs              &lt;span class=&#34;hljs-comment&#34;&gt;# Root Filesystem&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Here, &lt;code&gt;sw-description&lt;/code&gt; is a manifest determining which files SWUpdate installs where. Prior research had already pointed out that confusing &lt;code&gt;070701&lt;/code&gt; (newc) with &lt;code&gt;070702&lt;/code&gt; (newc with CRC) causes SWUpdate to reject the package. Thanks to that insight, when handling the package, I checked which CPIO format was used and at which offset in the file the header started.&lt;/p&gt;
+&lt;p&gt;Indeed, the simple CPIO parser I initially wrote stopped right after reading the first member. Because of the leading MD5 string, the archive start offset wasn&amp;#x2019;t zero, but alignment calculations were made relative to the beginning of the file. Fixing the alignment reference to the CPIO start offset allowed &lt;code&gt;sw-description&lt;/code&gt;, &lt;code&gt;kernel&lt;/code&gt;, and &lt;code&gt;rootfs&lt;/code&gt; to be read sequentially.&lt;/p&gt;
+&lt;p&gt;However, in newer model lines closer to my target, normal CPIO headers were still not immediately visible. At first, I wondered if it was an encrypted image. Asking ChatGPT didn&amp;#x2019;t yield a full recovery either. &lt;del&gt;Downloading the firmware was the easy part&amp;#x2026;&lt;/del&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%203.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;However, while comparing images across various builds, I noticed something strange. Although they were different files, bytes in certain sections were identical. This pattern was hard to explain if independent nonces/IVs were used for encryption per image.&lt;/p&gt;
+&lt;p&gt;I considered the possibility of a repeating short XOR key and searched for a period, but that wasn&amp;#x2019;t it either. Hoping to at least recover the header, I downloaded older firmware versions as a last resort&amp;#x2026; and fortunately, older firmware left on the vendor&amp;#x2019;s server was in plaintext! I could use the CPIO structure and known parts of &lt;code&gt;sw-description&lt;/code&gt; identified earlier as known plaintext.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs python&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;# Compare identical offsets exclusively within sections where plaintext is available&lt;/span&gt;
+keystream = bytes(c ^ p &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; c, p &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; zip(encrypted_bytes, known_plaintext_bytes))
+candidate_plaintext = bytes(c ^ k &lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; c, k &lt;span class=&#34;hljs-keyword&#34;&gt;in&lt;/span&gt; zip(other_encrypted_bytes, keystream))&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Applying the keystream recovered from identical positions to images of other models revealed structurally valid &lt;code&gt;sw-description&lt;/code&gt; contents. Text encrypted in other models such as 5110/5130 was restored, and model-specific project names were verified normally. By confirming a shared XOR keystream in sections where known plaintext was obtained, it was possible to apply it to subsequent firmwares. Of course, I couldn&amp;#x2019;t perfectly decrypt every single byte of the latest image. Nevertheless, it clearly demonstrated that XOR-based OTA obfuscation fails to properly protect firmware confidentiality. It was a prime example showing &lt;strong&gt;why independent encryption per image is necessary&lt;/strong&gt;. &lt;del&gt;At this point, one wonders if they even intended to hide it properly.&lt;/del&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%204.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;h2 id=&#34;2-3-Not-Satisfied-Bring-On-the-Flash-ROM&#34;&gt;&lt;a href=&#34;#2-3-Not-Satisfied-Bring-On-the-Flash-ROM&#34; class=&#34;headerlink&#34; title=&#34;2-3. Not Satisfied! Bring On the Flash ROM~!&#34;&gt;&lt;/a&gt;2-3. Not Satisfied! Bring On the Flash ROM~!&lt;/h2&gt;&lt;p&gt;What I got from OTA was primarily the files targeted for updates. To analyze the full boot process and the base rootfs, I needed the full flash. Originally, I planned to clip onto the SPI NOR chip and read it, but after reading the aforementioned &lt;a href=&#34;https://sec1.dk/blog/carplay-re-blog.html&#34;&gt;sec1.dk article&lt;/a&gt; describing a recovery process using Allwinner FEL (USB download mode of the BootROM), I changed my plan.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%205.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;I disassembled it immediately and decided to check the interfaces supported by the device first before attempting soldering or SPI clips.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%206.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Using tweezers on the relevant pads, I attempted to trigger mode switching. Initially, instead of the expected FEL device, the USB ID changed to &lt;code&gt;0525:a4a7&lt;/code&gt;. I initially noted this in my project notes as A2A Debug Mode, but upon looking it up, I found this ID is used as the CDC ACM example for &lt;strong&gt;USB Gadget Serial&lt;/strong&gt; in the &lt;a href=&#34;https://docs.kernel.org/usb/gadget_serial.html&#34;&gt;Linux Kernel Documentation&lt;/a&gt;. Still, there was no concrete evidence that a debug console actually opened. At any rate, &lt;strong&gt;it was clearly not FEL&lt;/strong&gt;, so I retried several times. Finally, the ID changed to &lt;code&gt;1f3a:efe8&lt;/code&gt;, and &lt;code&gt;xfel&lt;/code&gt; recognized it as a V821.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs apache&#34;&gt;&lt;span class=&#34;hljs-attribute&#34;&gt;FEL&lt;/span&gt; USB enumeration : &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;f&lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;a:efe&lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;
+&lt;span class=&#34;hljs-attribute&#34;&gt;xfel&lt;/span&gt; version         : AWUSBFEX ID=&lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;x&lt;span class=&#34;hljs-number&#34;&gt;00188200&lt;/span&gt; (V&lt;span class=&#34;hljs-number&#34;&gt;821&lt;/span&gt;)
+&lt;span class=&#34;hljs-attribute&#34;&gt;SPI&lt;/span&gt; NOR flash        : &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;,&lt;span class=&#34;hljs-number&#34;&gt;777&lt;/span&gt;,&lt;span class=&#34;hljs-number&#34;&gt;216&lt;/span&gt; bytes (&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt; MiB)&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Looking solely at the &lt;code&gt;TC397&lt;/code&gt; marking on the chip surface, Infineon AURIX/TriCore first came to mind. However, &lt;strong&gt;the ID read via USB FEL and the extracted kernel/executables&lt;/strong&gt; pointed to an Allwinner V821-based RISC-V platform. Judging the SoC purely by chip markings would have led me down the wrong path entirely. As for why it has that marking&amp;#x2026; I honestly don&amp;#x2019;t know either.&lt;/p&gt;
+&lt;p&gt;To ensure the integrity of the extracted firmware, I read the entire binary three separate times and verified that all SHA-256 hashes matched before proceeding with analysis. Having a recoverable original backup made me feel much more at ease, as an incorrect modification could render the device unbootable. With this, all foundational preparation for vulnerability analysis and testing was complete.&lt;/p&gt;
+&lt;p&gt;Analyzing the dump with &lt;code&gt;binwalk&lt;/code&gt; and &lt;code&gt;unsquashfs&lt;/code&gt; produced the following results:&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;Flash Offset&lt;/th&gt;
+&lt;th&gt;Identified Component&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;0x000000&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Boot Region (SPL/boot0)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;0x060000&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Kernel Boot Image&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;0x370000&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Kernel Boot Image Copy&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;0x680000&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;SquashFS &lt;code&gt;rootfs&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;code&gt;0xB00000&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;SquashFS &lt;code&gt;customer&lt;/code&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Around &lt;code&gt;0xED0050&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;JFFS2 Writable Data&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;Inside the filesystem, alongside Linux kernel &lt;code&gt;5.4.220&lt;/code&gt;, BusyBox, and musl libc, were device boot scripts, Wi-Fi configurations, a web server, and update utilities. It feels like analyzing a standard embedded Linux device inside this tiny gadget. I expected nothing much, but it was packed quite densely.&lt;/p&gt;
+&lt;p&gt;As a side note, while organizing this article, I also cross-referenced &lt;a href=&#34;https://github.com/lvalen91/CPC200-CCPA_resources/blob/main/hardware/c2air_v821_spec.md&#34;&gt;lvalen91&amp;#x2019;s C2Air V821 platform analysis notes&lt;/a&gt;. Other products in those notes match in several configurations: V821, 16MB SPI NOR, Linux 5.4.220, &lt;code&gt;rootfs&lt;/code&gt; at 0x680000 / &lt;code&gt;customer&lt;/code&gt; at 0xB00000. While this hints at a common platform across product lines, the offsets and SoC identification above are strictly based on the flash dumps and FEL results I measured directly.&lt;/p&gt;
+&lt;h1 id=&#34;3-Reverse-Engineering&#34;&gt;&lt;a href=&#34;#3-Reverse-Engineering&#34; class=&#34;headerlink&#34; title=&#34;3. Reverse Engineering&#34;&gt;&lt;/a&gt;3. Reverse Engineering&lt;/h1&gt;&lt;p&gt;Now that we have the firmware, it&amp;#x2019;s time to analyze the binaries.&lt;/p&gt;
+&lt;p&gt;However, as mentioned earlier&amp;#x2026; yes, the binaries are RISC-V 32-bit ELFs. Having prior research available made me think it would be a breeze, but when running some executables in &lt;code&gt;qemu-riscv32&lt;/code&gt;, an &lt;code&gt;Illegal instruction&lt;/code&gt; occurred, and Ghidra displayed unfamiliar code in the middle of functions.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%207.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;In the past, one would have to look up each instruction manually and fix alignment, but nowadays this isn&amp;#x2019;t much of a problem.&lt;/p&gt;
+&lt;p&gt;After feeding it to ChatGPT, I confirmed that Andes vendor extension instructions were being used. If Ghidra fails to interpret these properly, it doesn&amp;#x2019;t just result in messy pseudocode&amp;#x2014;string references disappear, branch targets break, and ultimately entire function execution flows get truncated. Of course, just saying &amp;#x201C;it solved it all&amp;#x201D; is too result-oriented, so let&amp;#x2019;s look through the issues together one by one.&lt;/p&gt;
+&lt;p&gt;Among the analysis targets, about 14.9% of &lt;code&gt;.text&lt;/code&gt; in &lt;code&gt;/sbin/update&lt;/code&gt; and about 12.3% in &lt;code&gt;index.cgi&lt;/code&gt; consisted of these custom opcodes. Left as is, it would be impossible to follow critical request-handling logic properly.&lt;/p&gt;
+&lt;h2 id=&#34;3-1-ADDIGP&#34;&gt;&lt;a href=&#34;#3-1-ADDIGP&#34; class=&#34;headerlink&#34; title=&#34;3-1. ADDIGP&#34;&gt;&lt;/a&gt;3-1. ADDIGP&lt;/h2&gt;&lt;p&gt;While strings in &lt;code&gt;index.cgi&lt;/code&gt; could be found in Ghidra, cross-references (xrefs) to those strings were not connected properly. Tracing the cause showed that &lt;code&gt;custom-0&lt;/code&gt; series instructions mapped to Andes &lt;code&gt;ADDIGP&lt;/code&gt;, which calculates global addresses.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;ADDIGP&lt;/code&gt; is used to reference data relative to the Global Pointer (&lt;code&gt;gp&lt;/code&gt;). When Ghidra treats this like an unknown function call, it fails to resolve addresses calculated via &lt;code&gt;gp&lt;/code&gt;, severing string xrefs.&lt;/p&gt;
+&lt;p&gt;Initially, I guessed conventional &lt;code&gt;gp&lt;/code&gt; values, but results were off by several bytes. What made it even more frustrating was that in dense string regions, wrong addresses still looked like plausible strings. &lt;del&gt;I was so happy thinking I got it right, only to realize I was wrong upon second look.&lt;/del&gt;&lt;/p&gt;
+&lt;p&gt;So I tracked the &lt;code&gt;auipc&lt;/code&gt;/&lt;code&gt;addi&lt;/code&gt; combination in the ELF initialization code to determine the exact &lt;code&gt;gp&lt;/code&gt; value and statistically verified if addresses landed cleanly within actual data sections. As a result, I was able to restore many lost string references in Ghidra.&lt;/p&gt;
+&lt;p&gt;For example, in &lt;code&gt;index.cgi&lt;/code&gt;, recalculating relative to &lt;code&gt;gp=0x17800&lt;/code&gt; resulted in &lt;strong&gt;418 out of 510 candidates (approx. 82%)&lt;/strong&gt; matching exact starting positions of valid strings. Unlike guessing blindly based on &lt;code&gt;.sdata + 0x800&lt;/code&gt;, I could now trace which strings &lt;code&gt;index.cgi&lt;/code&gt; was actually referencing.&lt;/p&gt;
+&lt;h2 id=&#34;3-2-BEQC-BNEC&#34;&gt;&lt;a href=&#34;#3-2-BEQC-BNEC&#34; class=&#34;headerlink&#34; title=&#34;3-2. BEQC/BNEC&#34;&gt;&lt;/a&gt;3-2. BEQC/BNEC&lt;/h2&gt;&lt;p&gt;Next was an issue with the command dispatcher in &lt;code&gt;rcpservice&lt;/code&gt;. Reading it like standard RISC-V instructions resulted in a series of incomprehensible branches, but inspecting surrounding code revealed a switch structure choosing handlers based on command IDs.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%208.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;The decisive clues here were the numbers appearing as comparison values:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs angelscript&#34;&gt;&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;13&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Fields that looked like register numbers turned out to be individual command codes! Reinterpreting instruction bits &lt;code&gt;[24:20]&lt;/code&gt; as immediate comparison values (&lt;code&gt;cimm&lt;/code&gt;) and applying standard RISC-V B-type formatting for branch offsets caused eight branches to lead to valid handler starting addresses.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs apache&#34;&gt;&lt;span class=&#34;hljs-attribute&#34;&gt;custom&lt;/span&gt;-&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; / funct&lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;=&lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt; -&amp;gt; BEQC (Branch if Register == Constant)
+&lt;span class=&#34;hljs-attribute&#34;&gt;custom&lt;/span&gt;-&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; / funct&lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt;=&lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt; -&amp;gt; BNEC (Branch if Register != Constant)
+
+&lt;span class=&#34;hljs-attribute&#34;&gt;Comparison&lt;/span&gt; Immediate: instruction[&lt;span class=&#34;hljs-number&#34;&gt;24&lt;/span&gt;:&lt;span class=&#34;hljs-number&#34;&gt;20&lt;/span&gt;]
+&lt;span class=&#34;hljs-attribute&#34;&gt;Branch&lt;/span&gt; Displacement : RISC-V B-type immediate&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Interpreting branch displacements in various ways revealed that &lt;strong&gt;97.5%&lt;/strong&gt; using standard B-type displacement landed on valid instruction starting points. Other candidates yielded 60&amp;#x2013;75%, and a simple even-address baseline yielded 63.9%, showing a significant difference. In particular, the 8 commands in &lt;code&gt;rcpservice&lt;/code&gt; led precisely to &lt;strong&gt;8 distinct handler starting addresses&lt;/strong&gt;. For instance, &lt;code&gt;beqc s10, 1&lt;/code&gt; jumps to &lt;code&gt;0x1c5c0&lt;/code&gt;, and &lt;code&gt;beqc s10, 11&lt;/code&gt; jumps to &lt;code&gt;0x1c608&lt;/code&gt;. At this point, I was confident in the decoding logic.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%209.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;When loading into Ghidra, I patched these branches to standard &lt;code&gt;beq&lt;/code&gt; instructions in an analysis copy (rather than the original executable) to reconstruct the Control Flow Graph (CFG). However, there is an important limitation: while branch destinations were preserved, the semantic meaning of comparison conditions wasn&amp;#x2019;t fully maintained. Therefore, pseudocode obtained this way serves as reference material to follow handler structure, and detailed condition evaluations must be cross-checked against original instructions.&lt;/p&gt;
+&lt;p&gt;Analyzing an Android Auto dongle only to end up reconstructing RISC-V instruction encodings was quite exhausting&amp;#x2026; &amp;#x3160;&amp;#x3160;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%2010.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;h2 id=&#34;3-3-Runtime-Binary-Extraction&#34;&gt;&lt;a href=&#34;#3-3-Runtime-Binary-Extraction&#34; class=&#34;headerlink&#34; title=&#34;3-3. Runtime Binary Extraction&#34;&gt;&lt;/a&gt;3-3. Runtime Binary Extraction&lt;/h2&gt;&lt;p&gt;Following the boot script &lt;code&gt;lyLink.sh&lt;/code&gt;, I found that certain services were not placed as ordinary files. This was because a vendor container called &lt;code&gt;lylink&lt;/code&gt; was extracted into &lt;code&gt;/tmp/app&lt;/code&gt; using &lt;code&gt;lypack&lt;/code&gt; before services were executed.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs coq&#34;&gt;init / rcS
+   &amp;#x2514;&amp;#x2500;&amp;#x2500; lyLink.sh
+         &amp;#x251C;&amp;#x2500;&amp;#x2500; &lt;span class=&#34;hljs-keyword&#34;&gt;Extract&lt;/span&gt; lylink via lypack -&amp;gt; /tmp/app/
+         &amp;#x251C;&amp;#x2500;&amp;#x2500; CarPlay &lt;span class=&#34;hljs-keyword&#34;&gt;Path&lt;/span&gt;    : rcpservice, lylinkapp, mdnsd ...
+         &amp;#x2514;&amp;#x2500;&amp;#x2500; Android Auto &lt;span class=&#34;hljs-keyword&#34;&gt;Path&lt;/span&gt;: raaservice, mtpservice ...&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Looking purely at static files meant missing part of the binaries that actually needed analysis. Furthermore, &lt;code&gt;lypack&lt;/code&gt; itself relied on Andes instructions, making it unexecutable in standard &lt;code&gt;qemu-riscv32&lt;/code&gt;. I wondered if I had to reverse engineer the entire archive format from scratch, but realized I didn&amp;#x2019;t need to&amp;#x2014;the actual physical device already unpacks and uses those files during boot!&lt;/p&gt;
+&lt;p&gt;Once again, I got a hint from prior research. sec1.dk modified the boot script in &lt;code&gt;customer&lt;/code&gt; and reflashed via the recovery interface to build an analysis root shell. Referencing the core idea&amp;#x2014;&amp;#x2018;full flash backup &amp;#x2192; target modification of customer section &amp;#x2192; write/verify read via FEL&amp;#x2019;&amp;#x2014;I adapted it to my device environment by adding a diagnostic CGI. This was necessary because the default BusyBox lacked utilities like &lt;code&gt;telnetd&lt;/code&gt; or &lt;code&gt;nc&lt;/code&gt;, preventing me from running identical commands directly.&lt;/p&gt;
+&lt;p&gt;Using physical FEL access and backups, I prepared a modified image for research and obtained an analysis shell with &lt;code&gt;uid=0(root)&lt;/code&gt; in that environment. After that, all that was left was to retrieve the binaries the device unpacked into &lt;code&gt;/tmp/app&lt;/code&gt; at runtime. A hurdle that nearly required full reverse engineering of an archive format was bypassed through runtime observation.&lt;/p&gt;
+&lt;p&gt;The files acquired here&amp;#x2014;such as &lt;code&gt;rcpservice&lt;/code&gt;, &lt;code&gt;librcarplay.so&lt;/code&gt;, and &lt;code&gt;libriap2.so&lt;/code&gt;&amp;#x2014;allowed me to inspect CarPlay-related network services and parsers in greater detail.&lt;/p&gt;
+&lt;h1 id=&#34;4-Conclusion&#34;&gt;&lt;a href=&#34;#4-Conclusion&#34; class=&#34;headerlink&#34; title=&#34;4. Conclusion&#34;&gt;&lt;/a&gt;4. Conclusion&lt;/h1&gt;&lt;p&gt;It definitely started with &amp;#x201C;Let&amp;#x2019;s crack open a $30 dongle,&amp;#x201D; but plugging it into USB showed an iPhone, fetching the firmware hid the headers, and Ghidra showed nothing but a flood of &lt;code&gt;custom2&lt;/code&gt; instructions.&lt;/p&gt;
+&lt;p&gt;Still, after obtaining the firmware via OTA, reading the flash via FEL, and pushing through roadblocks caused by Andes instructions, I made it through. Having gathered binaries unpacked to &lt;code&gt;/tmp/app&lt;/code&gt; at boot, all the materials needed for analysis are finally collected.&lt;/p&gt;
+&lt;p&gt;So, what&amp;#x2019;s next in Part 2? The whole point of buying this dongle was to see if there were vulnerabilities. &lt;strong&gt;Now it&amp;#x2019;s time to dive into vulnerability analysis proper.&lt;/strong&gt; I plan to examine everything step-by-step, from the dongle&amp;#x2019;s Wi-Fi and Web API to &lt;code&gt;index.cgi&lt;/code&gt; upload handling, and &lt;code&gt;/sbin/update&lt;/code&gt; alongside SWUpdate firmware update procedures. I&amp;#x2019;ll also share what was actually possible and where roadblocks occurred. &lt;del&gt;Finally time for the main course. Got to give it a taste!&lt;/del&gt;&lt;/p&gt;
+&lt;p&gt;Note that the root shell obtained in Part 1 was created by physically opening the device and modifying the firmware to build an analysis environment. This doesn&amp;#x2019;t mean it was popped remotely&amp;#x2014;that needs to be analyzed separately.&lt;/p&gt;
+&lt;p&gt;What started as a lightweight project ended up having much more to look into than expected, extending it into Part 2. Thank you for reading this far! See you in the next post!&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2026/10/26/poosic/[Research]lonelyWolf_1/KR/image.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2026/10/26/poosic/[research]lonelywolf_1/en/">
+
+  <title>[Lone Wolves] Analyzing an Android Auto Dongle - Part 1 - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.4.2"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2026-10-26 19:00" pubdate>
+      2026년 10월 26일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      4.5k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      89
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Lone Wolves] Analyzing an Android Auto Dongle - Part 1</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <h1 id="0-Intro"><a href="#0-Intro" class="headerlink" title="0. Intro"></a>0. Intro</h1><p><img src="image.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Hello! This is t0be. Today, I&#x2019;m back with the next post following the &#x201C;Lone Wolves&#x201D; project that gongjae posted earlier! &#x1F43A;</p>
+<p>Before we begin, though, there&#x2019;s one thing I&#x2019;d like to mention. Although we&#x2019;re working on this project together as a team, each of us has different interests, so it feels like we&#x2019;re a team, but also not quite a team. Because of this, <a href="https://hackyboiz.github.io/2026/10/11/gongjae/LoneWolves_MacOS_part0/KR/">gongjae&#x2019;s macOS research article</a> and this post cover completely different topics.</p>
+<p>Since I focus on automotive security, my mind naturally went to the vehicle itself or its internal Electronic Control Units (ECUs) at first. Then, a thought suddenly crossed my mind: &#x201C;What if I look into peripherals instead of the vehicle itself&#x2026; wouldn&#x2019;t they be vulnerable?&#x201D;</p>
+<p><img src="image%201.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>While searching for various candidates, a product caught my eye: a wireless Android Auto / CarPlay dongle.</p>
+<p>In fact, this was a product I had saved in my shopping cart a while ago because I wanted to use Android Auto wirelessly in my car. Just plug it into the vehicle, pair it with your smartphone, and you&#x2019;re done! It has quite impressive capabilities for its small size, but I always wondered how secure it actually was.</p>
+<p>After all, a third-party device handling Bluetooth, Wi-Fi, and USB simultaneously is introduced right between the vehicle and the smartphone. On top of that, this device processes data displayed on the car&#x2019;s screen and handles mirroring sessions from the smartphone. What a appetizing target to analyze!</p>
+<p><img src="image%202.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>The product I analyzed this time is an Ottocast CP88-M series wireless mirroring dongle sold under the Anniver brand. I bought it directly on Coupang. I physically opened the device, observed its USB communications, obtained its OTA firmware and SPI flash, reverse-engineered it, and verified a few security issues firsthand.</p>
+<p>My original plan was simply: &#x201C;Let&#x2019;s quickly crack open the firmware and take a look!&#x201D; However, I ended up diving into everything from RISC-V extended instructions to firmware update structures. <del>Oh dear, I crossed the point of no return</del> &#x1F607;</p>
+<p>In this article, I will focus on how this dongle works, how I acquired and analyzed the firmware, what I actually verified, and what remains a hypothesis at this stage.</p>
+<p>Actually, I couldn&#x2019;t be the only one who has analyzed a product like this, right? When I started analyzing, I looked for materials covering similar dongles, and <a target="_blank" rel="external nofollow noopener noreferrer" href="https://sec1.dk/blog/carplay-re-blog.html">sec1.dk&#x2019;s Reverse Engineering a Wireless CarPlay Adapter &#x2014; Full Journey</a> caught my attention. It was a comprehensive article covering everything from acquiring firmware to OTA, hardware analysis, flash recovery, and getting a root shell. Thanks to that, I didn&#x2019;t have to start from scratch and redo all the trial and error without any clues.</p>
+<p>Fortunately, our work didn&#x2019;t overlap completely, which is why I&#x2019;m able to share this research. The target in the referenced article was based on the Allwinner V851S3 (ARM), while the product I bought turned out to be based on the V821 (RISC-V). Furthermore, even the firmware file structures differed slightly. Therefore, I decided to verify actual behavior and potential vulnerabilities directly on my device.</p>
+<blockquote>
+<p>Scope of Analysis: Tested without an actual vehicle using a CP88-M dongle owned by the researcher and a Pixel 10a. No attacks were performed on vehicle head units, CAN networks, or vehicle control functions.</p>
+</blockquote>
+<h1 id="1-How-to-work"><a href="#1-How-to-work" class="headerlink" title="1. How to work?"></a>1. How to work?</h1><h2 id="1-1-What-exactly-does-an-Android-Auto-dongle-do"><a href="#1-1-What-exactly-does-an-Android-Auto-dongle-do" class="headerlink" title="1-1. What exactly does an Android Auto dongle do?"></a>1-1. What exactly does an Android Auto dongle do?</h2><p>First, let me clarify something that confused me at the beginning. Looking at the name alone, doesn&#x2019;t it feel like just plugging in this dongle would magically add Android Auto functionality to a vehicle that doesn&#x2019;t support Android Auto at all?</p>
+<p>However, the CP88-M analyzed here is essentially an adapter that converts a vehicle&#x2019;s factory-supported wired CarPlay or Android Auto into a wireless connection. If the vehicle itself does not support these functions natively, plugging in the dongle alone won&#x2019;t enable them. The manufacturer&#x2019;s product description also assumes existing wired functionality. I heard there are products that enable Android Auto on unsupported vehicles, but due to the limits of my searching skills, I couldn&#x2019;t find one.</p>
+<p>Looking at the operational principle, it&#x2019;s surprisingly intuitive:</p>
+<pre><code class="hljs routeros">                 Bluetooth / Wi-Fi                USB
+&#x250C;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2510;     <span class="hljs-built_in"> Wireless </span>Conn.   &#x250C;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2510;     Wired Conn.   &#x250C;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2510;
+&#x2502;   Smartphone &#x2502; &lt;-----------------&gt; &#x2502; CP88-M Dongle     &#x2502; &lt;-------------&gt; &#x2502; Car Head Unit  &#x2502;
+&#x2502; Android / iOS&#x2502;                     &#x2502; Linux + BT + Wi-Fi&#x2502;                   &#x2502; (Wired AA/CP)  &#x2502;
+&#x2514;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2518;                     &#x2514;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2518;                   &#x2514;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2518;
+
+   <span class="hljs-built_in"> Wireless </span>Android Auto/CarPlay Receiver     Session Processing &amp; Relay      Behaves like Wired Phone</code></pre>
+<p>The dongle acts like a car providing wireless Android Auto/CarPlay to the smartphone, while acting like a smartphone plugged into USB to the car&#x2019;s head unit. It takes wirelessly received data and passes it to the wired side, and forwards user input or control data from the vehicle back in the opposite direction.</p>
+<p>In other words, this product is not a simple USB cable adapter. It can be viewed as a small embedded bridge equipped with its own OS and communication stack to process protocols between two devices.</p>
+<p>So, what happens if this device, sitting right in the middle where both devices trust each other, is compromised by an attacker?</p>
+<p>Of course, being in the middle doesn&#x2019;t mean all traffic is automatically decrypted or that arbitrary commands can be executed. That depends on the authentication, encryption, and session state of the actual protocol. However, from an attacker&#x2019;s perspective, it certainly looks like a juicy device.</p>
+<h2 id="1-2-A-30-iPhone"><a href="#1-2-A-30-iPhone" class="headerlink" title="1-2. A $30 iPhone?"></a>1-2. A $30 iPhone?</h2><p>First, I connected the dongle to my PC and checked the USB descriptor. But I was surprised because no matter how hard I looked, I couldn&#x2019;t see anything that looked like a dongle.</p>
+<pre><code class="hljs apache"><span class="hljs-attribute">Bus</span> <span class="hljs-number">003</span> Device <span class="hljs-number">006</span>: ID <span class="hljs-number">05</span>ac:<span class="hljs-number">12</span>a<span class="hljs-number">8</span> Apple, Inc. iPhone
+  <span class="hljs-attribute">idVendor</span>           <span class="hljs-number">0</span>x<span class="hljs-number">05</span>ac Apple, Inc.
+  <span class="hljs-attribute">idProduct</span>          <span class="hljs-number">0</span>x<span class="hljs-number">12</span>a<span class="hljs-number">8</span> iPhone
+  <span class="hljs-attribute">iManufacturer</span>           Apple Inc.
+  <span class="hljs-attribute">iProduct</span>                iPhone
+  <span class="hljs-attribute">bNumConfigurations</span>      <span class="hljs-number">4</span></code></pre>
+<p>I connected an Android Auto dongle, but it reported that an Apple iPhone was connected. Whew~ If I were using an iPhone instead of a Galaxy, I almost wouldn&#x2019;t have found it!</p>
+<p>At first, I thought another USB device was captured, but even after disconnecting everything except the dongle, the same values appeared. The dongle was advertising its USB descriptor as an iPhone, rather than an actual iPhone.</p>
+<div class="table-container">
+<table>
+<thead>
+<tr>
+<th>USB Configuration</th>
+<th>Feature Identified in Descriptor</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Configuration 1</td>
+<td>PTP (Picture Transfer Protocol)</td>
+</tr>
+<tr>
+<td>Configuration 2</td>
+<td>iPod / iAP-related Interface</td>
+</tr>
+<tr>
+<td>Configuration 3</td>
+<td>Apple Mobile Device, USB Multiplexor</td>
+</tr>
+<tr>
+<td>Configuration 4</td>
+<td>Apple Mobile Device + USB Ethernet</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>CarPlay uses a USB interface alongside an IP-based session. Therefore, to make it appear as if a wired iPhone is connected to the head unit, it needs to provide interfaces like these.</p>
+<p>Initially, only Configuration 1 was selected properly, while Configurations 2&#x2013;4 failed. I wondered, &#x201C;Is it just impersonating the descriptor without actual functionality?&#x201D; But once the smartphone was paired and I checked again, the other Configurations became active.</p>
+<p>When I set the Pixel and dongle to Android Auto mode, the <strong>USB device side of the dongle connected to the PC</strong> was now displayed as <code>2717:ff40</code> with the product name <code>CAR2</code>. Sending an AOA (Android Open Accessory) control request caused the USB device to re-enumerate, changing its ID to <code>18d1:2d00</code>. Originally, <code>18d1:2d00</code> is defined in the <a target="_blank" rel="external nofollow noopener noreferrer" href="https://source.android.com/docs/core/interaction/accessories/aoa">Android AOA documentation</a> as the ID for accessory mode on Android devices. Here, <strong>the dongle is imitating that role on the USB port side connecting to the car</strong>. First pretending to be an iPhone, and now an Android&#x2026; it&#x2019;s quite busy.</p>
+<pre><code class="hljs livescript">AOA_GET_PROTOCOL <span class="hljs-function"><span class="hljs-params">(Request <span class="hljs-number">51</span>)</span>  -&gt;</span> Version <span class="hljs-number">2</span>
+AOA_SEND_IDENT   <span class="hljs-function"><span class="hljs-params">(Request <span class="hljs-number">52</span>)</span>  -&gt;</span> Send Identification <span class="hljs-built_in">String</span>
+AOA_START        <span class="hljs-function"><span class="hljs-params">(Request <span class="hljs-number">53</span>)</span>  -&gt;</span> Switch <span class="hljs-keyword">to</span> Accessory Mode
+
+USB ID Change: <span class="hljs-number">2717</span>:ff40<span class="hljs-function">  -&gt;</span>  <span class="hljs-number">18d</span>1:<span class="hljs-number">2d</span>00</code></pre>
+<p>In short, this product identifies itself as different USB devices in CarPlay and Android Auto modes. As a side note, the USB ID change mentioned above was <strong>observed on the dongle connected to the PC</strong>, not a case where the Pixel was connected via USB and re-enumerated. Furthermore, confirming the transition to AOA mode does not mean the entire Android Auto session is complete. Although I succeeded in sending the actual AA version request via Bulk OUT, I couldn&#x2019;t verify responses or TLS sessions because a stack acting as the head unit wasn&#x2019;t fully set up. I&#x2019;m trying to borrow a car from people around me, but it&#x2019;s not easy.</p>
+<h2 id="1-3-Why-are-both-Bluetooth-and-Wi-Fi-required"><a href="#1-3-Why-are-both-Bluetooth-and-Wi-Fi-required" class="headerlink" title="1-3. Why are both Bluetooth and Wi-Fi required?"></a>1-3. Why are both Bluetooth and Wi-Fi required?</h2><p>Even though it&#x2019;s called wireless mirroring, screen data isn&#x2019;t transmitted entirely over Bluetooth. Typically, Bluetooth handles device discovery, pairing, and initial connection setup, while high-bandwidth mirroring data utilizes the Wi-Fi/IP path.</p>
+<p>I found elements corresponding to this structure in this dongle as well.</p>
+<div class="table-container">
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Confirmed Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>btapp</code></td>
+<td>Handles Bluetooth connection, uses <code>/dev/ttyS1</code></td>
+</tr>
+<tr>
+<td><code>hostapd</code></td>
+<td>Operates 5GHz Wi-Fi AP</td>
+</tr>
+<tr>
+<td><code>wpa_supplicant</code></td>
+<td>Configures Wi-Fi Direct (P2P)</td>
+</tr>
+<tr>
+<td><code>udhcpd</code></td>
+<td>Assigns IP addresses to connected devices</td>
+</tr>
+<tr>
+<td><code>mdnsd</code></td>
+<td>Advertises network services</td>
+</tr>
+<tr>
+<td><code>rcpservice</code></td>
+<td>CarPlay session and network communication</td>
+</tr>
+<tr>
+<td><code>raaservice</code></td>
+<td>Service binary for Android Auto mode</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>In practice, the dongle advertised a Wi-Fi AP named <code>CAR2-2F7D</code>, with IP assignments being <code>192.168.1.101</code> for the dongle and <code>192.168.1.102</code> for the connected Pixel. A Wi-Fi Direct group was also confirmed on the same hardware.</p>
+<p>In the Pixel logs, I could observe a flow initiating an RFCOMM connection to a previously registered device and attempting to connect to Wi-Fi using saved credentials. This means automatic reconnection happens without requiring fresh pairing every time. While convenient from a usability perspective, from an attacker&#x2019;s perspective, it implies that an accessory trusted once will continue to be trusted later. This raised my curiosity regarding how much impact compromising such a device could have on the phone or vehicle side.</p>
+<p>Of course, up to this point, these are all normal functionalities. The fact that automatic reconnection occurs doesn&#x2019;t automatically mean pairing bypasses or data leaks are immediately possible.</p>
+<h1 id="2-Firmware-Acquisition"><a href="#2-Firmware-Acquisition" class="headerlink" title="2. Firmware Acquisition"></a>2. Firmware Acquisition</h1><p>Now let&#x2019;s take a proper look inside. This analysis progressed from USB to wireless network, OTA, flash dump, and binary reverse engineering.</p>
+<p>Looking at prior research, update servers and other interfaces could serve as good starting points, but I naturally didn&#x2019;t expect my device to share the exact same addresses, partitions, or validation logic. Therefore, I decided to proceed step-by-step using values measured directly from my device.</p>
+<h2 id="2-1-Firmware-Extraction"><a href="#2-1-Firmware-Extraction" class="headerlink" title="2-1. Firmware Extraction"></a>2-1. Firmware Extraction</h2><p>At first, I wondered if I should teardown the hardware and read the SPI flash right away, as is typical in embedded analysis. While I was naturally preparing my CH341A, I asked my best friend ChatGPT to check it out. After connecting to the dongle&#x2019;s Wi-Fi, navigating to <code>http://192.168.1.101</code> brought up the settings page, and it began analyzing the features on its own. (Yay!)</p>
+<p>The report generated by ChatGPT showed features like device info, settings modification, and firmware updates on the web UI. Naturally, what interested me most was the Firmware Update&#x2014;since I might be able to obtain the firmware without tearing down the hardware!</p>
+<p>Here, <a target="_blank" rel="external nofollow noopener noreferrer" href="https://sec1.dk/blog/carplay-re-blog.html">sec1.dk&#x2019;s analysis post</a> was very helpful. In that post, the author followed the OTA path on the settings page of a similar product to obtain official firmware, outlining a structure where an MD5 string is prepended to the package, followed by a CPIO archive for SWUpdate. Instead of blindly copying those paths, I first checked what URLs my dongle&#x2019;s web page generated.</p>
+<p>Examining <code>cpbox.js</code> and <code>index.html</code> used by the page revealed the update flow:</p>
+<pre><code class="hljs routeros">[Management Page]
+    |
+    | 1. Check current version (?<span class="hljs-attribute">id</span>=host)
+    v
+[Request OTA Version <span class="hljs-builtin-name">Info</span>]
+    |
+    | 2. Check build/release <span class="hljs-builtin-name">info</span> <span class="hljs-keyword">in</span> version.json
+    v
+[Download<span class="hljs-built_in"> Firmware </span>Image]
+    |
+    | 3. Download update.img
+    v
+[Dongle<span class="hljs-string">&apos;s Upload CGI]</span>
+<span class="hljs-string">    |</span>
+<span class="hljs-string">    | 4. Save to /tmp/update.img &amp; process update</span>
+<span class="hljs-string">    v</span>
+<span class="hljs-string">[SWUpdate]</span></code></pre>
+<p>The device version string was <code>26061510.5140.2</code>, and the update management code used <code>5140</code> (corresponding to the model/project line) to construct the OTA object path. At the time of testing, firmware images and version information could be downloaded without authentication from known object paths on the vendor&#x2019;s OTA repository. It wasn&#x2019;t that the entire repository directory listing was exposed, but rather that known update object paths were directly accessible.</p>
+<p>Obtaining the firmware made me think everything was solved. However, inspecting the file header brought up another problem.</p>
+<h2 id="2-2-Encrypted-Firmware"><a href="#2-2-Encrypted-Firmware" class="headerlink" title="2-2. Encrypted Firmware"></a>2-2. Encrypted Firmware</h2><p>Some older images from the same product family had the following structure:</p>
+<pre><code class="hljs mipsasm">&lt;MD5 Checksum&gt;  update.<span class="hljs-keyword">swu</span>
+<span class="hljs-keyword">070702... </span>                <span class="hljs-comment"># CPIO (newc + CRC)</span>
+  &#x251C;&#x2500;&#x2500; <span class="hljs-keyword">sw-description </span>     <span class="hljs-comment"># Update Metadata</span>
+  &#x251C;&#x2500;&#x2500; kernel              <span class="hljs-comment"># Kernel Image</span>
+  &#x2514;&#x2500;&#x2500; rootfs              <span class="hljs-comment"># Root Filesystem</span></code></pre>
+<p>Here, <code>sw-description</code> is a manifest determining which files SWUpdate installs where. Prior research had already pointed out that confusing <code>070701</code> (newc) with <code>070702</code> (newc with CRC) causes SWUpdate to reject the package. Thanks to that insight, when handling the package, I checked which CPIO format was used and at which offset in the file the header started.</p>
+<p>Indeed, the simple CPIO parser I initially wrote stopped right after reading the first member. Because of the leading MD5 string, the archive start offset wasn&#x2019;t zero, but alignment calculations were made relative to the beginning of the file. Fixing the alignment reference to the CPIO start offset allowed <code>sw-description</code>, <code>kernel</code>, and <code>rootfs</code> to be read sequentially.</p>
+<p>However, in newer model lines closer to my target, normal CPIO headers were still not immediately visible. At first, I wondered if it was an encrypted image. Asking ChatGPT didn&#x2019;t yield a full recovery either. <del>Downloading the firmware was the easy part&#x2026;</del></p>
+<p><img src="image%203.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>However, while comparing images across various builds, I noticed something strange. Although they were different files, bytes in certain sections were identical. This pattern was hard to explain if independent nonces/IVs were used for encryption per image.</p>
+<p>I considered the possibility of a repeating short XOR key and searched for a period, but that wasn&#x2019;t it either. Hoping to at least recover the header, I downloaded older firmware versions as a last resort&#x2026; and fortunately, older firmware left on the vendor&#x2019;s server was in plaintext! I could use the CPIO structure and known parts of <code>sw-description</code> identified earlier as known plaintext.</p>
+<pre><code class="hljs python"><span class="hljs-comment"># Compare identical offsets exclusively within sections where plaintext is available</span>
+keystream = bytes(c ^ p <span class="hljs-keyword">for</span> c, p <span class="hljs-keyword">in</span> zip(encrypted_bytes, known_plaintext_bytes))
+candidate_plaintext = bytes(c ^ k <span class="hljs-keyword">for</span> c, k <span class="hljs-keyword">in</span> zip(other_encrypted_bytes, keystream))</code></pre>
+<p>Applying the keystream recovered from identical positions to images of other models revealed structurally valid <code>sw-description</code> contents. Text encrypted in other models such as 5110/5130 was restored, and model-specific project names were verified normally. By confirming a shared XOR keystream in sections where known plaintext was obtained, it was possible to apply it to subsequent firmwares. Of course, I couldn&#x2019;t perfectly decrypt every single byte of the latest image. Nevertheless, it clearly demonstrated that XOR-based OTA obfuscation fails to properly protect firmware confidentiality. It was a prime example showing <strong>why independent encryption per image is necessary</strong>. <del>At this point, one wonders if they even intended to hide it properly.</del></p>
+<p><img src="image%204.png" srcset="/img/loading.gif" alt="image.png"></p>
+<h2 id="2-3-Not-Satisfied-Bring-On-the-Flash-ROM"><a href="#2-3-Not-Satisfied-Bring-On-the-Flash-ROM" class="headerlink" title="2-3. Not Satisfied! Bring On the Flash ROM~!"></a>2-3. Not Satisfied! Bring On the Flash ROM~!</h2><p>What I got from OTA was primarily the files targeted for updates. To analyze the full boot process and the base rootfs, I needed the full flash. Originally, I planned to clip onto the SPI NOR chip and read it, but after reading the aforementioned <a target="_blank" rel="external nofollow noopener noreferrer" href="https://sec1.dk/blog/carplay-re-blog.html">sec1.dk article</a> describing a recovery process using Allwinner FEL (USB download mode of the BootROM), I changed my plan.</p>
+<p><img src="image%205.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>I disassembled it immediately and decided to check the interfaces supported by the device first before attempting soldering or SPI clips.</p>
+<p><img src="image%206.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Using tweezers on the relevant pads, I attempted to trigger mode switching. Initially, instead of the expected FEL device, the USB ID changed to <code>0525:a4a7</code>. I initially noted this in my project notes as A2A Debug Mode, but upon looking it up, I found this ID is used as the CDC ACM example for <strong>USB Gadget Serial</strong> in the <a target="_blank" rel="external nofollow noopener noreferrer" href="https://docs.kernel.org/usb/gadget_serial.html">Linux Kernel Documentation</a>. Still, there was no concrete evidence that a debug console actually opened. At any rate, <strong>it was clearly not FEL</strong>, so I retried several times. Finally, the ID changed to <code>1f3a:efe8</code>, and <code>xfel</code> recognized it as a V821.</p>
+<pre><code class="hljs apache"><span class="hljs-attribute">FEL</span> USB enumeration : <span class="hljs-number">1</span>f<span class="hljs-number">3</span>a:efe<span class="hljs-number">8</span>
+<span class="hljs-attribute">xfel</span> version         : AWUSBFEX ID=<span class="hljs-number">0</span>x<span class="hljs-number">00188200</span> (V<span class="hljs-number">821</span>)
+<span class="hljs-attribute">SPI</span> NOR flash        : <span class="hljs-number">16</span>,<span class="hljs-number">777</span>,<span class="hljs-number">216</span> bytes (<span class="hljs-number">16</span> MiB)</code></pre>
+<p>Looking solely at the <code>TC397</code> marking on the chip surface, Infineon AURIX/TriCore first came to mind. However, <strong>the ID read via USB FEL and the extracted kernel/executables</strong> pointed to an Allwinner V821-based RISC-V platform. Judging the SoC purely by chip markings would have led me down the wrong path entirely. As for why it has that marking&#x2026; I honestly don&#x2019;t know either.</p>
+<p>To ensure the integrity of the extracted firmware, I read the entire binary three separate times and verified that all SHA-256 hashes matched before proceeding with analysis. Having a recoverable original backup made me feel much more at ease, as an incorrect modification could render the device unbootable. With this, all foundational preparation for vulnerability analysis and testing was complete.</p>
+<p>Analyzing the dump with <code>binwalk</code> and <code>unsquashfs</code> produced the following results:</p>
+<div class="table-container">
+<table>
+<thead>
+<tr>
+<th>Flash Offset</th>
+<th>Identified Component</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>0x000000</code></td>
+<td>Boot Region (SPL/boot0)</td>
+</tr>
+<tr>
+<td><code>0x060000</code></td>
+<td>Kernel Boot Image</td>
+</tr>
+<tr>
+<td><code>0x370000</code></td>
+<td>Kernel Boot Image Copy</td>
+</tr>
+<tr>
+<td><code>0x680000</code></td>
+<td>SquashFS <code>rootfs</code></td>
+</tr>
+<tr>
+<td><code>0xB00000</code></td>
+<td>SquashFS <code>customer</code></td>
+</tr>
+<tr>
+<td>Around <code>0xED0050</code></td>
+<td>JFFS2 Writable Data</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Inside the filesystem, alongside Linux kernel <code>5.4.220</code>, BusyBox, and musl libc, were device boot scripts, Wi-Fi configurations, a web server, and update utilities. It feels like analyzing a standard embedded Linux device inside this tiny gadget. I expected nothing much, but it was packed quite densely.</p>
+<p>As a side note, while organizing this article, I also cross-referenced <a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/lvalen91/CPC200-CCPA_resources/blob/main/hardware/c2air_v821_spec.md">lvalen91&#x2019;s C2Air V821 platform analysis notes</a>. Other products in those notes match in several configurations: V821, 16MB SPI NOR, Linux 5.4.220, <code>rootfs</code> at 0x680000 / <code>customer</code> at 0xB00000. While this hints at a common platform across product lines, the offsets and SoC identification above are strictly based on the flash dumps and FEL results I measured directly.</p>
+<h1 id="3-Reverse-Engineering"><a href="#3-Reverse-Engineering" class="headerlink" title="3. Reverse Engineering"></a>3. Reverse Engineering</h1><p>Now that we have the firmware, it&#x2019;s time to analyze the binaries.</p>
+<p>However, as mentioned earlier&#x2026; yes, the binaries are RISC-V 32-bit ELFs. Having prior research available made me think it would be a breeze, but when running some executables in <code>qemu-riscv32</code>, an <code>Illegal instruction</code> occurred, and Ghidra displayed unfamiliar code in the middle of functions.</p>
+<p><img src="image%207.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>In the past, one would have to look up each instruction manually and fix alignment, but nowadays this isn&#x2019;t much of a problem.</p>
+<p>After feeding it to ChatGPT, I confirmed that Andes vendor extension instructions were being used. If Ghidra fails to interpret these properly, it doesn&#x2019;t just result in messy pseudocode&#x2014;string references disappear, branch targets break, and ultimately entire function execution flows get truncated. Of course, just saying &#x201C;it solved it all&#x201D; is too result-oriented, so let&#x2019;s look through the issues together one by one.</p>
+<p>Among the analysis targets, about 14.9% of <code>.text</code> in <code>/sbin/update</code> and about 12.3% in <code>index.cgi</code> consisted of these custom opcodes. Left as is, it would be impossible to follow critical request-handling logic properly.</p>
+<h2 id="3-1-ADDIGP"><a href="#3-1-ADDIGP" class="headerlink" title="3-1. ADDIGP"></a>3-1. ADDIGP</h2><p>While strings in <code>index.cgi</code> could be found in Ghidra, cross-references (xrefs) to those strings were not connected properly. Tracing the cause showed that <code>custom-0</code> series instructions mapped to Andes <code>ADDIGP</code>, which calculates global addresses.</p>
+<p><code>ADDIGP</code> is used to reference data relative to the Global Pointer (<code>gp</code>). When Ghidra treats this like an unknown function call, it fails to resolve addresses calculated via <code>gp</code>, severing string xrefs.</p>
+<p>Initially, I guessed conventional <code>gp</code> values, but results were off by several bytes. What made it even more frustrating was that in dense string regions, wrong addresses still looked like plausible strings. <del>I was so happy thinking I got it right, only to realize I was wrong upon second look.</del></p>
+<p>So I tracked the <code>auipc</code>/<code>addi</code> combination in the ELF initialization code to determine the exact <code>gp</code> value and statistically verified if addresses landed cleanly within actual data sections. As a result, I was able to restore many lost string references in Ghidra.</p>
+<p>For example, in <code>index.cgi</code>, recalculating relative to <code>gp=0x17800</code> resulted in <strong>418 out of 510 candidates (approx. 82%)</strong> matching exact starting positions of valid strings. Unlike guessing blindly based on <code>.sdata + 0x800</code>, I could now trace which strings <code>index.cgi</code> was actually referencing.</p>
+<h2 id="3-2-BEQC-BNEC"><a href="#3-2-BEQC-BNEC" class="headerlink" title="3-2. BEQC/BNEC"></a>3-2. BEQC/BNEC</h2><p>Next was an issue with the command dispatcher in <code>rcpservice</code>. Reading it like standard RISC-V instructions resulted in a series of incomprehensible branches, but inspecting surrounding code revealed a switch structure choosing handlers based on command IDs.</p>
+<p><img src="image%208.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>The decisive clues here were the numbers appearing as comparison values:</p>
+<pre><code class="hljs angelscript"><span class="hljs-number">1</span>, <span class="hljs-number">2</span>, <span class="hljs-number">3</span>, <span class="hljs-number">5</span>, <span class="hljs-number">11</span>, <span class="hljs-number">12</span>, <span class="hljs-number">13</span>, <span class="hljs-number">16</span></code></pre>
+<p>Fields that looked like register numbers turned out to be individual command codes! Reinterpreting instruction bits <code>[24:20]</code> as immediate comparison values (<code>cimm</code>) and applying standard RISC-V B-type formatting for branch offsets caused eight branches to lead to valid handler starting addresses.</p>
+<pre><code class="hljs apache"><span class="hljs-attribute">custom</span>-<span class="hljs-number">2</span> / funct<span class="hljs-number">3</span>=<span class="hljs-number">5</span> -&gt; BEQC (Branch if Register == Constant)
+<span class="hljs-attribute">custom</span>-<span class="hljs-number">2</span> / funct<span class="hljs-number">3</span>=<span class="hljs-number">7</span> -&gt; BNEC (Branch if Register != Constant)
+
+<span class="hljs-attribute">Comparison</span> Immediate: instruction[<span class="hljs-number">24</span>:<span class="hljs-number">20</span>]
+<span class="hljs-attribute">Branch</span> Displacement : RISC-V B-type immediate</code></pre>
+<p>Interpreting branch displacements in various ways revealed that <strong>97.5%</strong> using standard B-type displacement landed on valid instruction starting points. Other candidates yielded 60&#x2013;75%, and a simple even-address baseline yielded 63.9%, showing a significant difference. In particular, the 8 commands in <code>rcpservice</code> led precisely to <strong>8 distinct handler starting addresses</strong>. For instance, <code>beqc s10, 1</code> jumps to <code>0x1c5c0</code>, and <code>beqc s10, 11</code> jumps to <code>0x1c608</code>. At this point, I was confident in the decoding logic.</p>
+<p><img src="image%209.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>When loading into Ghidra, I patched these branches to standard <code>beq</code> instructions in an analysis copy (rather than the original executable) to reconstruct the Control Flow Graph (CFG). However, there is an important limitation: while branch destinations were preserved, the semantic meaning of comparison conditions wasn&#x2019;t fully maintained. Therefore, pseudocode obtained this way serves as reference material to follow handler structure, and detailed condition evaluations must be cross-checked against original instructions.</p>
+<p>Analyzing an Android Auto dongle only to end up reconstructing RISC-V instruction encodings was quite exhausting&#x2026; &#x3160;&#x3160;</p>
+<p><img src="image%2010.png" srcset="/img/loading.gif" alt="image.png"></p>
+<h2 id="3-3-Runtime-Binary-Extraction"><a href="#3-3-Runtime-Binary-Extraction" class="headerlink" title="3-3. Runtime Binary Extraction"></a>3-3. Runtime Binary Extraction</h2><p>Following the boot script <code>lyLink.sh</code>, I found that certain services were not placed as ordinary files. This was because a vendor container called <code>lylink</code> was extracted into <code>/tmp/app</code> using <code>lypack</code> before services were executed.</p>
+<pre><code class="hljs coq">init / rcS
+   &#x2514;&#x2500;&#x2500; lyLink.sh
+         &#x251C;&#x2500;&#x2500; <span class="hljs-keyword">Extract</span> lylink via lypack -&gt; /tmp/app/
+         &#x251C;&#x2500;&#x2500; CarPlay <span class="hljs-keyword">Path</span>    : rcpservice, lylinkapp, mdnsd ...
+         &#x2514;&#x2500;&#x2500; Android Auto <span class="hljs-keyword">Path</span>: raaservice, mtpservice ...</code></pre>
+<p>Looking purely at static files meant missing part of the binaries that actually needed analysis. Furthermore, <code>lypack</code> itself relied on Andes instructions, making it unexecutable in standard <code>qemu-riscv32</code>. I wondered if I had to reverse engineer the entire archive format from scratch, but realized I didn&#x2019;t need to&#x2014;the actual physical device already unpacks and uses those files during boot!</p>
+<p>Once again, I got a hint from prior research. sec1.dk modified the boot script in <code>customer</code> and reflashed via the recovery interface to build an analysis root shell. Referencing the core idea&#x2014;&#x2018;full flash backup &#x2192; target modification of customer section &#x2192; write/verify read via FEL&#x2019;&#x2014;I adapted it to my device environment by adding a diagnostic CGI. This was necessary because the default BusyBox lacked utilities like <code>telnetd</code> or <code>nc</code>, preventing me from running identical commands directly.</p>
+<p>Using physical FEL access and backups, I prepared a modified image for research and obtained an analysis shell with <code>uid=0(root)</code> in that environment. After that, all that was left was to retrieve the binaries the device unpacked into <code>/tmp/app</code> at runtime. A hurdle that nearly required full reverse engineering of an archive format was bypassed through runtime observation.</p>
+<p>The files acquired here&#x2014;such as <code>rcpservice</code>, <code>librcarplay.so</code>, and <code>libriap2.so</code>&#x2014;allowed me to inspect CarPlay-related network services and parsers in greater detail.</p>
+<h1 id="4-Conclusion"><a href="#4-Conclusion" class="headerlink" title="4. Conclusion"></a>4. Conclusion</h1><p>It definitely started with &#x201C;Let&#x2019;s crack open a $30 dongle,&#x201D; but plugging it into USB showed an iPhone, fetching the firmware hid the headers, and Ghidra showed nothing but a flood of <code>custom2</code> instructions.</p>
+<p>Still, after obtaining the firmware via OTA, reading the flash via FEL, and pushing through roadblocks caused by Andes instructions, I made it through. Having gathered binaries unpacked to <code>/tmp/app</code> at boot, all the materials needed for analysis are finally collected.</p>
+<p>So, what&#x2019;s next in Part 2? The whole point of buying this dongle was to see if there were vulnerabilities. <strong>Now it&#x2019;s time to dive into vulnerability analysis proper.</strong> I plan to examine everything step-by-step, from the dongle&#x2019;s Wi-Fi and Web API to <code>index.cgi</code> upload handling, and <code>/sbin/update</code> alongside SWUpdate firmware update procedures. I&#x2019;ll also share what was actually possible and where roadblocks occurred. <del>Finally time for the main course. Got to give it a taste!</del></p>
+<p>Note that the root shell obtained in Part 1 was created by physically opening the device and modifying the firmware to build an analysis environment. This doesn&#x2019;t mean it was popped remotely&#x2014;that needs to be analyzed separately.</p>
+<p>What started as a lightweight project ended up having much more to look into than expected, extending it into Part 2. Thank you for reading this far! See you in the next post!</p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/Android/">Android</a>
+                  
+                  <a class="hover-with-bg" href="/tags/t0be/">t0be</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Android-Auto/">Android Auto</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Dongle/">Dongle</a>
+                  
+                  <a class="hover-with-bg" href="/tags/Research/">Research</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_tobe.jpg" srcset="/img/loading.gif" alt="tobe">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">tobe</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/tobe">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                  <a href="/2026/10/28/d3lu0/cve-2026-110264/">
+                    <i class="iconfont icon-arrowleft"></i>
+                    <span class="hidden-mobile">[하루한줄] CVE-2026-110264 : GitLab의 Integer Overflow로 인한 Remote Code Execution</span>
+                    <span class="visible-mobile">Previous</span>
+                  </a>
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2026/10/26/poosic/%5BResearch%5DlonelyWolf_1/KR/">
+                    <span class="hidden-mobile">[고독한 늑대들] Android Auto dongle을 분석해보자 - Part 1</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            
+
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Lone Wolves] Analyzing an Android Auto Dongle - Part 1&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
