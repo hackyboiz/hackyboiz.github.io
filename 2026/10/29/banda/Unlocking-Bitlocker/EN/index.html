@@ -42,27 +42,27 @@
 &lt;h2 id=&#34;2-WinRE-is-a-separate-trust-boundary&#34;&gt;&lt;a href=&#34;#2-WinRE-is-a-separate-trust-boundary&#34; class=&#34;headerlink&#34; title=&#34;2. WinRE is a separate trust boundary&#34;&gt;&lt;/a&gt;2. WinRE is a separate trust boundary&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2026/10/29/banda/Unlocking-Bitlocker/EN/image%203.png&#34; alt&gt;&lt;/p&gt;
 &lt;p&gt;WinRE (Windows Recovery Environment) is a pre-OS environment that can perform Startup Repair, system reset, update removal, Command Prompt, and Defender Offline scanning. It is not always running: it boots from a separate recovery image. Crucially, it must still start when Windows has a problem or when the BitLocker OS volume cannot be read immediately, so WinRE is designed as a Recovery OS separate from the OS volume.&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2026/10/29/banda/Unlocking-Bitlocker/EN/image%204.png&#34; alt&gt;&lt;/p&gt;
-&lt;p&gt;The Recovery OS executables, DLLs, drivers, and recovery tools are commonly contained in a compressed image named winre.wim. On a typical UEFI system, bootmgfw.efi on the EFI System Partition runs as Windows Boot Manager, reads the BCD in the same area, and decides whether to boot normal Windows or take a recovery path.&lt;/p&gt;
+&lt;p&gt;The Recovery OS executables, DLLs, drivers, and recovery tools are commonly contained in a compressed image named &lt;code&gt;winre.wim&lt;/code&gt;. On a typical UEFI system, &lt;code&gt;bootmgfw.efi&lt;/code&gt; on the EFI System Partition runs as Windows Boot Manager, reads the &lt;code&gt;BCD&lt;/code&gt; in the same area, and decides whether to boot normal Windows or take a recovery path.&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2026/10/29/banda/Unlocking-Bitlocker/EN/image%205.png&#34; alt&gt;&lt;/p&gt;
-&lt;p&gt;When the BCD selects a WinRE RAM-disk boot, boot.sdi and winre.wim from the recovery partition are used.&lt;/p&gt;
+&lt;p&gt;When the &lt;code&gt;BCD&lt;/code&gt; selects a WinRE RAM-disk boot, &lt;code&gt;boot.sdi&lt;/code&gt; and &lt;code&gt;winre.wim&lt;/code&gt; from the recovery partition are used.&lt;/p&gt;
 &lt;ul&gt;
-&lt;li&gt;&lt;strong&gt;boot.sdi&lt;/strong&gt;: An SDI image that builds the basic structure of a virtual NTFS disk in memory.&lt;/li&gt;
-&lt;li&gt;&lt;strong&gt;winre.wim&lt;/strong&gt;: The compressed image expanded onto that RAM disk to build the actual Recovery OS, such as the R: drive shown in the screenshots.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;&lt;code&gt;boot.sdi&lt;/code&gt;&lt;/strong&gt;: An SDI image that builds the basic structure of a virtual NTFS disk in memory.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;&lt;code&gt;winre.wim&lt;/code&gt;&lt;/strong&gt;: The compressed image expanded onto that RAM disk to build the actual Recovery OS, such as the &lt;code&gt;R:&lt;/code&gt; drive shown in the screenshots.&lt;/li&gt;
 &lt;/ul&gt;
-&lt;p&gt;In other words, bootmgfw.efi and the BCD decide the entry path &amp;#x2014; which of normal Windows or WinRE, and which image, to use. The subsequently loaded boot.sdi and winre.wim provide the actual disk structure and operating tools in the selected WinRE environment.&lt;/p&gt;
+&lt;p&gt;In other words, &lt;code&gt;bootmgfw.efi&lt;/code&gt; and the &lt;code&gt;BCD&lt;/code&gt; decide the entry path &amp;#x2014; which of normal Windows or WinRE, and which image, to use. The subsequently loaded &lt;code&gt;boot.sdi&lt;/code&gt; and &lt;code&gt;winre.wim&lt;/code&gt; provide the actual disk structure and operating tools in the selected WinRE environment.&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2026/10/29/banda/Unlocking-Bitlocker/EN/image%206.png&#34; alt&gt;&lt;/p&gt;
-&lt;p&gt;Input processing continues even after WinRE starts from R:. The SYSTEM hive and Boot Execute determine initial execution; winpeshl.ini, startnet.cmd, and wpeinit.exe construct the WinPE shell. Then ReAgent.xml, offline-OS information, recovery logs, and task-specific settings decide which OS is targeted and which recovery task and process run.&lt;/p&gt;
+&lt;p&gt;Input processing continues even after WinRE starts from &lt;code&gt;R:&lt;/code&gt;. The &lt;code&gt;SYSTEM&lt;/code&gt; hive and &lt;code&gt;Boot Execute&lt;/code&gt; determine initial execution; &lt;code&gt;winpeshl.ini&lt;/code&gt;, &lt;code&gt;startnet.cmd&lt;/code&gt;, and &lt;code&gt;wpeinit.exe&lt;/code&gt; construct the WinPE shell. Then &lt;code&gt;ReAgent.xml&lt;/code&gt;, offline-OS information, recovery logs, and task-specific settings decide which OS is targeted and which recovery task and process run.&lt;/p&gt;
 &lt;p&gt;When analyzing WinRE, it is useful to follow each stage: which entry started the image, which volumes and drivers initialization prepared, and which settings the shell and recovery task use to launch the next process and change the FVE state.&lt;/p&gt;
 &lt;p&gt;Before the case study, let us look at two classes of logic flaws previously observed in WinRE boot and recovery flows.&lt;/p&gt;
 &lt;h2 id=&#34;3-1-Boot-Recovery-Object-Binding-Failure&#34;&gt;&lt;a href=&#34;#3-1-Boot-Recovery-Object-Binding-Failure&#34; class=&#34;headerlink&#34; title=&#34;3.1 Boot / Recovery Object Binding Failure&#34;&gt;&lt;/a&gt;3.1 Boot / Recovery Object Binding Failure&lt;/h2&gt;&lt;blockquote&gt;
 &lt;p&gt;&lt;em&gt;Trusted WIM and Target-Volume Binding Failures&lt;/em&gt;&lt;/p&gt;
 &lt;/blockquote&gt;
 &lt;p&gt;&lt;img src=&#34;/2026/10/29/banda/Unlocking-Bitlocker/EN/image%207.png&#34; alt&gt;&lt;/p&gt;
-&lt;p&gt;During a WinRE boot, Boot Manager follows the RAM-disk device and path supplied by the BCD to find boot.sdi and winre.wim. A Trusted WIM Boot verifies the selected WIM&amp;#x2019;s integrity and permits BitLocker OS-volume access on the assumption that WinRE will start from that image.&lt;/p&gt;
+&lt;p&gt;During a WinRE boot, Boot Manager follows the RAM-disk device and path supplied by the &lt;code&gt;BCD&lt;/code&gt; to find &lt;code&gt;boot.sdi&lt;/code&gt; and &lt;code&gt;winre.wim&lt;/code&gt;. A Trusted WIM Boot verifies the selected WIM&amp;#x2019;s integrity and permits BitLocker OS-volume access on the assumption that WinRE will start from that image.&lt;/p&gt;
 &lt;p&gt;After the BCD determines the recovery path, Boot Manager lays boot.sdi and winre.wim out in one RAM-disk buffer as follows:&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;RamDiskImageBuffer = AllocateMemory(SdiSize + WimSize);
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;RamDiskImageBuffer = AllocateMemory(SdiSize + WimSize);
 
-LoadFileToBuffer(SdiPath, RamDiskImageBuffer, SdiSize, NULL);
+LoadFileToBuffer(SdiPath, RamDiskImageBuffer, SdiSize, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;);
 
 LoadFileToBuffer(
     WimPath,
@@ -70,31 +70,30 @@ LoadFileToBuffer(
     WimSize,
     WimHash);
 
-WimAddress = RamDiskImageBuffer + SdiTrust-&amp;gt;WimOffset;
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;In this flow, WIM A is read at RamDiskImageBuffer + SdiSize and the WimHash is computed for precisely that WIM A. The actual WinRE start address, however, is determined by SdiTrust-&amp;gt;WimOffset. Normally, SdiTrust-&amp;gt;WimOffset should equal SdiSize, the real start offset of WIM A.&lt;/p&gt;
-&lt;p&gt;What if that relationship is not checked? WimHash could verify WIM A while SdiTrust-&amp;gt;WimOffset points to another WIM B in the buffer. That would make the verified recovery image differ from the recovery image that actually constructs WinRE.&lt;/p&gt;
-&lt;p&gt;There is a similar example: the target-volume-confusion vulnerability in Online PBR. It occurs after WinRE boots, when Online PBR finds its target OS. PBR uses the BCD&amp;#x2019;s osdevice to find the target volume and parses ResetSession.xml there. If it misidentifies the Recovery partition as the target OS, it can use that partition&amp;#x2019;s configuration for a PBR operation.&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;&amp;lt;WindowsRE version=&amp;quot;2.0&amp;quot;&amp;gt;
-  &amp;lt;WinreBCD id=&amp;quot;{WinRE-BCD-GUID}&amp;quot; /&amp;gt;
-  &amp;lt;WinreLocation
-      path=&amp;quot;\\Recovery\\WindowsRE&amp;quot;
-      id=&amp;quot;0&amp;quot;
-      offset=&amp;quot;...&amp;quot;
-      guid=&amp;quot;{RECOVERY-PARTITION-GUID}&amp;quot; /&amp;gt;
-  &amp;lt;ImageLocation path=&amp;quot;&amp;quot; id=&amp;quot;0&amp;quot; offset=&amp;quot;0&amp;quot; guid=&amp;quot;{...}&amp;quot; /&amp;gt;
-  &amp;lt;PBRImageLocation path=&amp;quot;&amp;quot; id=&amp;quot;0&amp;quot; offset=&amp;quot;0&amp;quot; guid=&amp;quot;{...}&amp;quot; index=&amp;quot;0&amp;quot; /&amp;gt;
-&amp;lt;/WindowsRE&amp;gt;
-
-&amp;lt;Operation OperationType=&amp;quot;DecryptVolumes&amp;quot; TargetVolume=&amp;quot;C:\&amp;quot; /&amp;gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;The core issue was that the configuration read from the Recovery partition was not verified as belonging to the real target OS. If its DecryptVolumes entry named a BitLocker-protected OS volume, PBR could process it as a normal recovery operation without restriction. In effect, it could remove protection from the OS volume by using PBR&amp;#x2019;s decryption authority even without the user entering a recovery key or disabling BitLocker protection.&lt;/p&gt;
+WimAddress = RamDiskImageBuffer + SdiTrust-&amp;gt;WimOffset;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In this flow, WIM A is read at &lt;code&gt;RamDiskImageBuffer + SdiSize&lt;/code&gt; and the &lt;code&gt;WimHash&lt;/code&gt; is computed for precisely that WIM A. The actual WinRE start address, however, is determined by &lt;code&gt;SdiTrust-&amp;gt;WimOffset&lt;/code&gt;. Normally, &lt;code&gt;SdiTrust-&amp;gt;WimOffset&lt;/code&gt; should equal &lt;code&gt;SdiSize&lt;/code&gt;, the real start offset of WIM A.&lt;/p&gt;
+&lt;p&gt;What if that relationship is not checked? &lt;code&gt;WimHash&lt;/code&gt; could verify WIM A while &lt;code&gt;SdiTrust-&amp;gt;WimOffset&lt;/code&gt; points to another WIM B in the buffer. That would make the verified recovery image differ from the recovery image that actually constructs WinRE.&lt;/p&gt;
+&lt;p&gt;There is a similar example: the target-volume-confusion vulnerability in Online PBR. It occurs after WinRE boots, when Online PBR finds its target OS. PBR uses the &lt;code&gt;BCD&lt;/code&gt;&amp;#x2019;s &lt;code&gt;osdevice&lt;/code&gt; to find the target volume and parses &lt;code&gt;ResetSession.xml&lt;/code&gt; there. If it misidentifies the Recovery partition as the target OS, it can use that partition&amp;#x2019;s configuration for a PBR operation.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs xml&#34;&gt;&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;WindowsRE&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;version&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;2.0&amp;quot;&lt;/span&gt;&amp;gt;&lt;/span&gt;
+  &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;WinreBCD&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;id&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;{WinRE-BCD-GUID}&amp;quot;&lt;/span&gt; /&amp;gt;&lt;/span&gt;
+  &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;WinreLocation&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;      &lt;span class=&#34;hljs-attr&#34;&gt;path&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;\\Recovery\\WindowsRE&amp;quot;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;      &lt;span class=&#34;hljs-attr&#34;&gt;id&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;0&amp;quot;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;      &lt;span class=&#34;hljs-attr&#34;&gt;offset&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;...&amp;quot;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;      &lt;span class=&#34;hljs-attr&#34;&gt;guid&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;{RECOVERY-PARTITION-GUID}&amp;quot;&lt;/span&gt; /&amp;gt;&lt;/span&gt;
+  &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;ImageLocation&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;path&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;id&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;0&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;offset&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;0&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;guid&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;{...}&amp;quot;&lt;/span&gt; /&amp;gt;&lt;/span&gt;
+  &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;PBRImageLocation&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;path&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;id&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;0&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;offset&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;0&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;guid&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;{...}&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;index&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;0&amp;quot;&lt;/span&gt; /&amp;gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;WindowsRE&lt;/span&gt;&amp;gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs xml&#34;&gt;&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;Operation&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;OperationType&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;DecryptVolumes&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;TargetVolume&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;C:\&amp;quot;&lt;/span&gt; /&amp;gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The core issue was that the configuration read from the Recovery partition was not verified as belonging to the real target OS. If its &lt;code&gt;DecryptVolumes&lt;/code&gt; entry named a BitLocker-protected OS volume, PBR could process it as a normal recovery operation without restriction. In effect, it could remove protection from the OS volume by using PBR&amp;#x2019;s decryption authority even without the user entering a recovery key or disabling BitLocker protection.&lt;/p&gt;
 &lt;p&gt;Both patterns point to the same research question: throughout a boot transition, do the verified WIM, the selected WIM, and the OS volume being opened continue to refer to the same object?&lt;/p&gt;
 &lt;h2 id=&#34;3-2-Recovery-Access-Scope-Bypass&#34;&gt;&lt;a href=&#34;#3-2-Recovery-Access-Scope-Bypass&#34; class=&#34;headerlink&#34; title=&#34;3.2 Recovery Access Scope Bypass&#34;&gt;&lt;/a&gt;3.2 Recovery Access Scope Bypass&lt;/h2&gt;&lt;blockquote&gt;
 &lt;p&gt;&lt;em&gt;Recovery Access Scope Bypass&lt;/em&gt;&lt;/p&gt;
 &lt;/blockquote&gt;
 &lt;p&gt;&lt;img src=&#34;/2026/10/29/banda/Unlocking-Bitlocker/EN/image%208.png&#34; alt&gt;&lt;/p&gt;
 &lt;p&gt;Some boot-time operations, such as Offline Scan, need to read the OS volume. Because Offline Scan must inspect that volume, WinRE runs it with the BitLocker volume auto-unlocked.&lt;/p&gt;
-&lt;p&gt;For example, a published case described a vulnerable path in which a trusted scanning tool could launch an unintended child process through an Offline Scan setting in ReAgent.xml. The problem was not necessarily the scanner itself; it was the lack of validation that the same access level should extend to the next process created by that tool.&lt;/p&gt;
-&lt;p&gt;Normally, opening a dangerous tool such as cmd.exe should first relock the OS volume so it cannot be read without a recovery key. In the vulnerable path, however, the Offline Scanner-permitted tttracer.exe could receive cmd.exe as an argument. Since relock had not occurred, cmd.exe could inherit exposure to an OS volume that was already open.&lt;/p&gt;
+&lt;p&gt;For example, a published case described a vulnerable path in which a trusted scanning tool could launch an unintended child process through an Offline Scan setting in &lt;code&gt;ReAgent.xml&lt;/code&gt;. The problem was not necessarily the scanner itself; it was the lack of validation that the same access level should extend to the next process created by that tool.&lt;/p&gt;
+&lt;p&gt;Normally, opening a dangerous tool such as &lt;code&gt;cmd.exe&lt;/code&gt; should first relock the OS volume so it cannot be read without a recovery key. In the vulnerable path, however, the Offline Scanner-permitted &lt;code&gt;tttracer.exe&lt;/code&gt; could receive &lt;code&gt;cmd.exe&lt;/code&gt; as an argument. Since relock had not occurred, &lt;code&gt;cmd.exe&lt;/code&gt; could inherit exposure to an OS volume that was already open.&lt;/p&gt;
 &lt;p&gt;For boot-time research, it is therefore important to trace which configuration a scheduled tool reads, whether it can create child processes, and whether relock runs before the operation ends.&lt;/p&gt;
 &lt;p&gt;The implementations of these two WinRE issue types differ, but they ask the same question:&lt;/p&gt;
 &lt;blockquote&gt;
@@ -103,43 +102,43 @@ WimAddress = RamDiskImageBuffer + SdiTrust-&amp;gt;WimOffset;
 &lt;p&gt;The object may be a recovery image, a target OS volume, or a process to execute. The access scope is the unlocked state of the BitLocker OS volume and the point at which it is re-locked.&lt;/p&gt;
 &lt;p&gt;Let us apply that question to the following practical flow.&lt;/p&gt;
 &lt;h2 id=&#34;4-CVE-2026-45585&#34;&gt;&lt;a href=&#34;#4-CVE-2026-45585&#34; class=&#34;headerlink&#34; title=&#34;4. CVE-2026-45585&#34;&gt;&lt;/a&gt;4. &lt;strong&gt;CVE-2026-45585&lt;/strong&gt;&lt;/h2&gt;&lt;p&gt;Now we will trace the WinRE recovery-input and access-scope issues above as one execution chain. This case study targets the publicly disclosed FsTx recovery path in CVE-2026-45585.&lt;/p&gt;
-&lt;h3 id=&#34;4-1-Core-structure-and-research-question&#34;&gt;&lt;a href=&#34;#4-1-Core-structure-and-research-question&#34; class=&#34;headerlink&#34; title=&#34;4.1 Core structure and research question&#34;&gt;&lt;/a&gt;4.1 Core structure and research question&lt;/h3&gt;&lt;p&gt;Starting from the WinRE components autofstx.exe and Fstx.dll, the question is whether an FsTx artifact processed as recovery data during WinRE initialization can affect the BitLocker OS-volume access boundary. The controlled input in this study is an FsTx record on a USB volume.&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;USB: System Volume Information\FsTx
+&lt;h3 id=&#34;4-1-Core-structure-and-research-question&#34;&gt;&lt;a href=&#34;#4-1-Core-structure-and-research-question&#34; class=&#34;headerlink&#34; title=&#34;4.1 Core structure and research question&#34;&gt;&lt;/a&gt;4.1 Core structure and research question&lt;/h3&gt;&lt;p&gt;Starting from the WinRE components &lt;code&gt;autofstx.exe&lt;/code&gt; and &lt;code&gt;Fstx.dll&lt;/code&gt;, the question is whether an &lt;code&gt;FsTx&lt;/code&gt; artifact processed as recovery data during WinRE initialization can affect the BitLocker OS-volume access boundary. The controlled input in this study is an &lt;code&gt;FsTx&lt;/code&gt; record on a USB volume.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs routeros&#34;&gt;USB:&lt;span class=&#34;hljs-built_in&#34;&gt; System &lt;/span&gt;Volume Information\FsTx
 &amp;#x2192; WinRE BootExecute: autofstx.exe
 &amp;#x2192; FsTx.dll: in-doubt transaction rollback
 &amp;#x2192; delete X:\Windows\System32\winpeshl.ini
 &amp;#x2192; winpeshl.exe: cmd.exe /K startnet.cmd fallback
-&amp;#x2192; OS-volume access before RecEnv.exe / RelockVolumes()
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;As a preview: while an FsTx record is processed for rollback, a LinkPath pointing to X:\Windows\System32\winpeshl.ini causes the rollback result to prevent the current WinRE instance from finding RecEnv.exe. It launches the cmd.exe /K startnet.cmd fallback instead. Let us see why this Security Feature Bypass occurs.&lt;/p&gt;
+&amp;#x2192; OS-volume access before RecEnv.exe / RelockVolumes()&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;As a preview: while an &lt;code&gt;FsTx&lt;/code&gt; record is processed for rollback, a &lt;code&gt;LinkPath&lt;/code&gt; pointing to &lt;code&gt;X:\Windows\System32\winpeshl.ini&lt;/code&gt; causes the rollback result to prevent the current WinRE instance from finding &lt;code&gt;RecEnv.exe&lt;/code&gt;. It launches the &lt;code&gt;cmd.exe /K startnet.cmd&lt;/code&gt; fallback instead. Let us see why this Security Feature Bypass occurs.&lt;/p&gt;
 &lt;h3 id=&#34;4-2-Test-conditions-and-baseline-state&#34;&gt;&lt;a href=&#34;#4-2-Test-conditions-and-baseline-state&#34; class=&#34;headerlink&#34; title=&#34;4.2 Test conditions and baseline state&#34;&gt;&lt;/a&gt;4.2 Test conditions and baseline state&lt;/h3&gt;&lt;blockquote&gt;
 &lt;p&gt;Windows 11 Pro 24H2 VM&lt;br&gt;TPM enabled/ready, Secure Boot enabled&lt;br&gt;WinRE enabled&lt;br&gt;BitLocker OS volume C: enabled&lt;/p&gt;
 &lt;/blockquote&gt;
 &lt;p&gt;The reproduction environment was a Windows 11 Pro 24H2 VM with TPM and Secure Boot enabled, as well as WinRE and the BitLocker OS volume enabled. TPM and a Recovery Password were used together as key protectors.&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;PS C:\&amp;gt; manage-bde -status C:
-Volume C: [OS Volume]
-    Size:                 63.00 GB
-    BitLocker Version:    2.0
+&lt;pre&gt;&lt;code class=&#34;hljs powershell&#34;&gt;&lt;span class=&#34;hljs-built_in&#34;&gt;PS&lt;/span&gt; C:\&amp;gt; manage&lt;span class=&#34;hljs-literal&#34;&gt;-bde&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;-status&lt;/span&gt; C:
+Volume C: [&lt;span class=&#34;hljs-type&#34;&gt;OS&lt;/span&gt; &lt;span class=&#34;hljs-type&#34;&gt;Volume&lt;/span&gt;]
+    Size:                 &lt;span class=&#34;hljs-number&#34;&gt;63.00&lt;/span&gt; GB
+    BitLocker Version:    &lt;span class=&#34;hljs-number&#34;&gt;2.0&lt;/span&gt;
     Conversion Status:    Fully Encrypted
-    Percentage Encrypted: 100.0%
-    Encryption Method:    XTS-AES 128
+    Percentage Encrypted: &lt;span class=&#34;hljs-number&#34;&gt;100.0&lt;/span&gt;%
+    Encryption Method:    XTS&lt;span class=&#34;hljs-literal&#34;&gt;-AES&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;128&lt;/span&gt;
     Protection Status:    Protection On
     Lock Status:          Unlocked
     Key Protectors:
         TPM
         Numerical Password
 
-PS C:\&amp;gt; manage-bde -protectors -get C:
+&lt;span class=&#34;hljs-built_in&#34;&gt;PS&lt;/span&gt; C:\&amp;gt; manage&lt;span class=&#34;hljs-literal&#34;&gt;-bde&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;-protectors&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;-get&lt;/span&gt; C:
 
-Volume C: [OS Volume]
+Volume C: [&lt;span class=&#34;hljs-type&#34;&gt;OS&lt;/span&gt; &lt;span class=&#34;hljs-type&#34;&gt;Volume&lt;/span&gt;]
     TPM:
-      ID: {&amp;lt;TPM-PROTECTOR-GUID&amp;gt;}
+      ID: {&amp;lt;TPM&lt;span class=&#34;hljs-literal&#34;&gt;-PROTECTOR&lt;/span&gt;&lt;span class=&#34;hljs-literal&#34;&gt;-GUID&lt;/span&gt;&amp;gt;}
       PCR Validation Profile:
-        7, 11
+        &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;
 
     Numerical Password:
-      ID: {&amp;lt;RECOVERY-PROTECTOR-GUID&amp;gt;}
+      ID: {&amp;lt;RECOVERY&lt;span class=&#34;hljs-literal&#34;&gt;-PROTECTOR&lt;/span&gt;&lt;span class=&#34;hljs-literal&#34;&gt;-GUID&lt;/span&gt;&amp;gt;}
 
-PS C:\&amp;gt; reagentc /info
+&lt;span class=&#34;hljs-built_in&#34;&gt;PS&lt;/span&gt; C:\&amp;gt; reagentc /info
 
 Windows Recovery Environment (Windows RE)
 and system reset configuration
@@ -147,173 +146,173 @@ and system reset configuration
     Windows RE status:    Enabled
     Windows RE location:  \\?\GLOBALROOT\device\
                            harddisk0\partition&amp;lt;RECOVERY&amp;gt;\Recovery\WindowsRE
-    BCD identifier:       {&amp;lt;WINRE-BCD-GUID&amp;gt;}
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;One possible source of confusion is that &amp;#x201C;Lock Status: Unlocked&amp;#x201D; while booted normally simply means that Windows is using its own volume. It does not mean BitLocker protection is disabled.&lt;/p&gt;
+    BCD identifier:       {&amp;lt;WINRE&lt;span class=&#34;hljs-literal&#34;&gt;-BCD&lt;/span&gt;&lt;span class=&#34;hljs-literal&#34;&gt;-GUID&lt;/span&gt;&amp;gt;}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;One possible source of confusion is that &amp;#x201C;Lock Status: Unlocked&amp;#x201D; while booted normally simply means that Windows is using its own volume. It does not mean BitLocker protection is disabled.&lt;/p&gt;
 &lt;p&gt;For the reproduction check, I created a marker file on the OS volume:&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;mkdir C:\yk_lab
-echo YK_MARKER &amp;gt; C:\yk_lab\marker.txt
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;I also confirmed that the HKLM\SOFTWARE\Microsoft\RecoveryEnvironment\FailRelock value was absent.&lt;/p&gt;
-&lt;p&gt;According to Microsoft documentation, a TPM-only environment satisfying the PCR[7] supported-device condition can auto-unlock a BitLocker OS volume when started from trusted WinRE. Which execution paths can access that auto-unlocked volume before RecEnv.exe relocks it?&lt;/p&gt;
-&lt;h3 id=&#34;4-3-Normal-flow-and-the-relock-path-bypassed-by-FsTx&#34;&gt;&lt;a href=&#34;#4-3-Normal-flow-and-the-relock-path-bypassed-by-FsTx&#34; class=&#34;headerlink&#34; title=&#34;4.3 Normal flow and the relock path bypassed by FsTx&#34;&gt;&lt;/a&gt;4.3 Normal flow and the relock path bypassed by FsTx&lt;/h3&gt;&lt;p&gt;Once trusted WinRE begins initialization, the normal flow has winpeshl.exe read winpeshl.ini and launch RecEnv.exe. RecEnv.exe calls RelockVolume() before displaying the recovery UI.&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;CImmersiveRecoveryUi::Run
+&lt;pre&gt;&lt;code class=&#34;hljs powershell&#34;&gt;mkdir C:\yk_lab
+&lt;span class=&#34;hljs-built_in&#34;&gt;echo&lt;/span&gt; YK_MARKER &amp;gt; C:\yk_lab\marker.txt&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;I also confirmed that the &lt;code&gt;HKLM\SOFTWARE\Microsoft\RecoveryEnvironment\FailRelock&lt;/code&gt; value was absent.&lt;/p&gt;
+&lt;p&gt;According to Microsoft documentation, a TPM-only environment satisfying the &lt;code&gt;PCR[7]&lt;/code&gt; supported-device condition can auto-unlock a BitLocker OS volume when started from trusted WinRE. Which execution paths can access that auto-unlocked volume before &lt;code&gt;RecEnv.exe&lt;/code&gt; relocks it?&lt;/p&gt;
+&lt;h3 id=&#34;4-3-Normal-flow-and-the-relock-path-bypassed-by-FsTx&#34;&gt;&lt;a href=&#34;#4-3-Normal-flow-and-the-relock-path-bypassed-by-FsTx&#34; class=&#34;headerlink&#34; title=&#34;4.3 Normal flow and the relock path bypassed by FsTx&#34;&gt;&lt;/a&gt;4.3 Normal flow and the relock path bypassed by FsTx&lt;/h3&gt;&lt;p&gt;Once trusted WinRE begins initialization, the normal flow has &lt;code&gt;winpeshl.exe&lt;/code&gt; read &lt;code&gt;winpeshl.ini&lt;/code&gt; and launch &lt;code&gt;RecEnv.exe&lt;/code&gt;. &lt;code&gt;RecEnv.exe&lt;/code&gt; calls &lt;code&gt;RelockVolume()&lt;/code&gt; before displaying the recovery UI.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;CImmersiveRecoveryUi::Run
   &amp;#x2514;&amp;#x2500; CRecoveryEnvironment::RelockVolumes
       &amp;#x2514;&amp;#x2500; CFveUtil::RelockAllVolumes
-          &amp;#x2514;&amp;#x2500; CFveUtil::RelockVolume
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;CImmersiveRecoveryUi::Run is both the recovery-UI entry point and the relock trigger. Before drawing its UI, it calls CRecoveryEnvironment::RelockVolumes; if that fails, it logs &amp;#x201C;Failed to relock volumes. 0x%08x  Shutting down.&amp;#x201D; and exits.&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;// CImmersiveRecoveryUi::Run, summarized
-if (!relockHandled) {
-    HRESULT hr = CRecoveryEnvironment::RelockVolumes(*this);
-    if (FAILED(hr)) {
-        WdsSetupLogMessageW(..., &amp;quot;Failed to relock volumes. 0x%08x  Shutting down.&amp;quot;, hr);
-        goto shutdown;
+          &amp;#x2514;&amp;#x2500; CFveUtil::RelockVolume&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;CImmersiveRecoveryUi::Run&lt;/code&gt; is both the recovery-UI entry point and the relock trigger. Before drawing its UI, it calls &lt;code&gt;CRecoveryEnvironment::RelockVolumes&lt;/code&gt;; if that fails, it logs &amp;#x201C;Failed to relock volumes. 0x%08x  Shutting down.&amp;#x201D; and exits.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// CImmersiveRecoveryUi::Run, summarized&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (!relockHandled) {
+    HRESULT hr = CRecoveryEnvironment::RelockVolumes(*&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (FAILED(hr)) {
+        WdsSetupLogMessageW(..., &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Failed to relock volumes. 0x%08x  Shutting down.&amp;quot;&lt;/span&gt;, hr);
+        &lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; shutdown;
     }
-    CRecoveryEnvironment::UnlockVolumes(*this, 0);
-    relockHandled = 1;
+    CRecoveryEnvironment::UnlockVolumes(*&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+    relockHandled = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The internal &lt;code&gt;RelockVolumes&lt;/code&gt; dispatcher, &lt;code&gt;CFveUtil::RelockAllVolumes&lt;/code&gt;, iterates volumes with &lt;code&gt;FindFirstVolumeW&lt;/code&gt;/&lt;code&gt;FindNextVolumeW&lt;/code&gt; and calls &lt;code&gt;CFveUtil::RelockVolume&lt;/code&gt; for each volume.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// CFveUtil::RelockAllVolumes, summarized&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; (FindNextVolume(...)) {
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (Utils::GetDriveLetterForVolumeMountPoint(szVolumeName, letter, MAX_PATH))
+        &lt;span class=&#34;hljs-keyword&#34;&gt;continue&lt;/span&gt;;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (!CFveUtil::RelockVolume(&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;, letter))
+        &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;;
 }
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;The internal RelockVolumes dispatcher, CFveUtil::RelockAllVolumes, iterates volumes with FindFirstVolumeW/FindNextVolumeW and calls CFveUtil::RelockVolume for each volume.&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;// CFveUtil::RelockAllVolumes, summarized
-while (FindNextVolume(...)) {
-    if (Utils::GetDriveLetterForVolumeMountPoint(szVolumeName, letter, MAX_PATH))
-        continue;
-    if (!CFveUtil::RelockVolume(this, letter))
-        break;
-}
-return 31; // relock failed
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;The normal path is:&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;winpeshl.exe &amp;#x2192; winpeshl.ini &amp;#x2192; RecEnv.exe &amp;#x2192; RelockVolumes() &amp;#x2192; recovery UI
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;This case study does not tamper with or make RelockVolume() fail. Instead, if winpeshl.ini disappears and winpeshl.exe selects a fallback shell rather than RecEnv.exe, the relock path is never reached.&lt;/p&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;31&lt;/span&gt;; &lt;span class=&#34;hljs-comment&#34;&gt;// relock failed&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The normal path is:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs css&#34;&gt;&lt;span class=&#34;hljs-selector-tag&#34;&gt;winpeshl&lt;/span&gt;&lt;span class=&#34;hljs-selector-class&#34;&gt;.exe&lt;/span&gt; &amp;#x2192; &lt;span class=&#34;hljs-selector-tag&#34;&gt;winpeshl&lt;/span&gt;&lt;span class=&#34;hljs-selector-class&#34;&gt;.ini&lt;/span&gt; &amp;#x2192; &lt;span class=&#34;hljs-selector-tag&#34;&gt;RecEnv&lt;/span&gt;&lt;span class=&#34;hljs-selector-class&#34;&gt;.exe&lt;/span&gt; &amp;#x2192; &lt;span class=&#34;hljs-selector-tag&#34;&gt;RelockVolumes&lt;/span&gt;() &amp;#x2192; &lt;span class=&#34;hljs-selector-tag&#34;&gt;recovery&lt;/span&gt; &lt;span class=&#34;hljs-selector-tag&#34;&gt;UI&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This case study does not tamper with or make &lt;code&gt;RelockVolume()&lt;/code&gt; fail. Instead, if &lt;code&gt;winpeshl.ini&lt;/code&gt; disappears and &lt;code&gt;winpeshl.exe&lt;/code&gt; selects a fallback shell rather than &lt;code&gt;RecEnv.exe&lt;/code&gt;, the relock path is never reached.&lt;/p&gt;
 &lt;h3 id=&#34;4-4-FsTx-artifacts-and-the-root-cause&#34;&gt;&lt;a href=&#34;#4-4-FsTx-artifacts-and-the-root-cause&#34; class=&#34;headerlink&#34; title=&#34;4.4 FsTx artifacts and the root cause&#34;&gt;&lt;/a&gt;4.4 FsTx artifacts and the root cause&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2026/10/29/banda/Unlocking-Bitlocker/EN/image%209.png&#34; alt&gt;&lt;/p&gt;
 &lt;p&gt;FsTx is related to TxF (Transactional NTFS), an NTFS feature that groups file operations into one transaction. For example, creating a file, renaming it, and adding a hard link elsewhere can be started as a group. Once all work is finished, the transaction is committed and the changes remain. &lt;strong&gt;If power is lost or an error occurs midway, uncommitted work is rolled back to its prior state.&lt;/strong&gt;&lt;/p&gt;
-&lt;p&gt;FsTx metadata is the record needed for that rollback. It logs file operations that began and paths that were to be created or removed under System Volume Information\FsTx on a volume. WinRE&amp;#x2019;s autofstx.exe and FsTx.dll read those records and process the recorded operations to restore the file system to its pre-transaction state.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;FsTx&lt;/code&gt; metadata is the record needed for that rollback. It logs file operations that began and paths that were to be created or removed under &lt;code&gt;System Volume Information\FsTx&lt;/code&gt; on a volume. WinRE&amp;#x2019;s &lt;code&gt;autofstx.exe&lt;/code&gt; and &lt;code&gt;FsTx.dll&lt;/code&gt; read those records and process the recorded operations to restore the file system to its pre-transaction state.&lt;/p&gt;
 &lt;p&gt;For this test, I placed only an FsTx artifact on USB &amp;#x2014; not an executable.&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;FsTx\
-&amp;#x2514;&amp;#x2500; 95F62703B343F111A92A005056975458\
+&lt;pre&gt;&lt;code class=&#34;hljs dns&#34;&gt;FsTx\
+&amp;#x2514;&amp;#x2500; &lt;span class=&#34;hljs-number&#34;&gt;95&lt;/span&gt;F62703B343F111A92A0&lt;span class=&#34;hljs-number&#34;&gt;05056975458&lt;/span&gt;\
    &amp;#x251C;&amp;#x2500; FsTxLogs\
    &amp;#x2502;  &amp;#x251C;&amp;#x2500; FsTxKtmLog.blf
-   &amp;#x2502;  &amp;#x251C;&amp;#x2500; FsTxKtmLogContainer00000000000000000001
-   &amp;#x2502;  &amp;#x251C;&amp;#x2500; FsTxKtmLogContainer00000000000000000002
+   &amp;#x2502;  &amp;#x251C;&amp;#x2500; FsTxKtmLogContainer000000000&lt;span class=&#34;hljs-number&#34;&gt;00000000001&lt;/span&gt;
+   &amp;#x2502;  &amp;#x251C;&amp;#x2500; FsTxKtmLogContainer000000000&lt;span class=&#34;hljs-number&#34;&gt;00000000002&lt;/span&gt;
    &amp;#x2502;  &amp;#x251C;&amp;#x2500; FsTxLog.blf
-   &amp;#x2502;  &amp;#x251C;&amp;#x2500; FsTxLogContainer00000000000000000001
-   &amp;#x2502;  &amp;#x2514;&amp;#x2500; FsTxLogContainer00000000000000000002
+   &amp;#x2502;  &amp;#x251C;&amp;#x2500; FsTxLogContainer000000000&lt;span class=&#34;hljs-number&#34;&gt;00000000001&lt;/span&gt;
+   &amp;#x2502;  &amp;#x2514;&amp;#x2500; FsTxLogContainer000000000&lt;span class=&#34;hljs-number&#34;&gt;00000000002&lt;/span&gt;
    &amp;#x2514;&amp;#x2500; FsTxTemp\
-      &amp;#x2514;&amp;#x2500; 98F62703B343F111A92A005056975458
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;The root cause has two connected steps: autofstx.exe accepts an external volume as an FsTx recovery candidate, then FsTx.dll processes an absolute path in a rollback record.&lt;/p&gt;
-&lt;p&gt;The reason to place only an FsTx artifact on the USB was to determine whether WinRE finds it as a normal recovery log and rolls back the file operation left in the transaction record. If that record&amp;#x2019;s LinkPath points to X:\Windows\System32\winpeshl.ini, the rollback deletes that file.&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;TargetPath (source data) = \??\C:\Windows\win.ini
-LinkPath (new link)      = \??\X:\Windows\System32\winpeshl.ini
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;This represents creating a hard link named winpeshl.ini from win.ini. Critically, to trigger the issue, the creation operation must be left uncommitted, with only the log remaining.&lt;/p&gt;
+       &amp;#x2514;&amp;#x2500; &lt;span class=&#34;hljs-number&#34;&gt;98&lt;/span&gt;F62703B343F111A92A0&lt;span class=&#34;hljs-number&#34;&gt;05056975458&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The root cause has two connected steps: &lt;code&gt;autofstx.exe&lt;/code&gt; accepts an external volume as an &lt;code&gt;FsTx&lt;/code&gt; recovery candidate, then &lt;code&gt;FsTx.dll&lt;/code&gt; processes an absolute path in a rollback record.&lt;/p&gt;
+&lt;p&gt;The reason to place only an &lt;code&gt;FsTx&lt;/code&gt; artifact on the USB was to determine whether WinRE finds it as a normal recovery log and rolls back the file operation left in the transaction record. If that record&amp;#x2019;s &lt;code&gt;LinkPath&lt;/code&gt; points to &lt;code&gt;X:\Windows\System32\winpeshl.ini&lt;/code&gt;, the rollback deletes that file.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs latex&#34;&gt;TargetPath (source data) = &lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;?&lt;/span&gt;&lt;/span&gt;?&lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;C&lt;/span&gt;&lt;/span&gt;:&lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;Windows&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;win&lt;/span&gt;&lt;/span&gt;.ini
+LinkPath (new link)      = &lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;?&lt;/span&gt;&lt;/span&gt;?&lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;X&lt;/span&gt;&lt;/span&gt;:&lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;Windows&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;System&lt;/span&gt;&lt;/span&gt;32&lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;winpeshl&lt;/span&gt;&lt;/span&gt;.ini&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This represents creating a hard link named &lt;code&gt;winpeshl.ini&lt;/code&gt; from &lt;code&gt;win.ini&lt;/code&gt;. Critically, to trigger the issue, the creation operation must be left uncommitted, with only the log remaining.&lt;/p&gt;
 &lt;p&gt;When WinRE finds a stored but unfinished transaction, it rolls it back for file-system consistency. Reverting hard-link creation means deleting the new link:&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;File = DoCreateFile(..., LinkPath /* = X:\...\winpeshl.ini */, ...);
-dispositionFlags = 0x11;   // DELETE | POSIX
-SetFileInformationByHandle(File);   // &amp;#x2192; deletes LinkPath directly
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;The rollback code therefore means &amp;#x201C;delete the file at LinkPath.&amp;#x201D; There is no apparent verification that the link was truly created by this transaction. winpeshl.ini originally comes from winre.wim and is unrelated to the transaction, yet the rollback treats the file at LinkPath as its deletion target.&lt;/p&gt;
-&lt;h4 id=&#34;How-autofstx-exe-replays-FsTx-transactions&#34;&gt;&lt;a href=&#34;#How-autofstx-exe-replays-FsTx-transactions&#34; class=&#34;headerlink&#34; title=&#34;How autofstx.exe replays FsTx transactions&#34;&gt;&lt;/a&gt;How autofstx.exe replays FsTx transactions&lt;/h4&gt;&lt;p&gt;For autofstx.exe 26100.1, the OS version used in this reproduction, the PDB reveals this flow:&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;main
-  &amp;#x2192; AutoFsTxSession::Init
-      &amp;#x2192; LdrLoadDll(&amp;quot;FsTx.dll&amp;quot;)
-  &amp;#x2192; AutoFsTxSession::RunSession
-      &amp;#x2192; VolumeContext::FindFsTxVolumes
-      &amp;#x2192; FsTxSessionSet::ScanSessions
-      &amp;#x2192; FsTxCreateRecoverySession
-      &amp;#x2192; FsTxEnumTransactions
-      &amp;#x2192; FsTxPerformRecovery
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;autofstx.exe does not roll back FsTx logs itself. It first finds volumes containing System Volume Information\FsTx and passes them as recovery targets; the dynamically loaded FsTx.dll performs the log parsing and rollback.&lt;/p&gt;
-&lt;p&gt;The relevant points are therefore autofstx.exe&amp;#x2019;s volume selection and FsTx.dll&amp;#x2019;s LinkPath handling. The former passes the USB FsTx artifact to WinRE recovery code, while the latter deletes X:\Windows\System32\winpeshl.ini specified in the record.&lt;/p&gt;
-&lt;p&gt;VolumeContext::FindFsTxVolumes enumerates the volume-GUID namespace with FindFirstVolumeW/FindNextVolumeW, finds a mount path that is a drive-letter root (A:\ through Z:), and adds a volume to the recovery candidates if it contains a System Volume Information\FsTx directory.&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;// VolumeContext::FindFsTxVolumes, summarized
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;File = DoCreateFile(..., LinkPath &lt;span class=&#34;hljs-comment&#34;&gt;/* = X:\...\winpeshl.ini */&lt;/span&gt;, ...);
+dispositionFlags = &lt;span class=&#34;hljs-number&#34;&gt;0x11&lt;/span&gt;;   &lt;span class=&#34;hljs-comment&#34;&gt;// DELETE | POSIX&lt;/span&gt;
+SetFileInformationByHandle(File);   &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2192; deletes LinkPath directly&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The rollback code therefore means &amp;#x201C;delete the file at &lt;code&gt;LinkPath&lt;/code&gt;.&amp;#x201D; There is no apparent verification that the link was truly created by this transaction. &lt;code&gt;winpeshl.ini&lt;/code&gt; originally comes from &lt;code&gt;winre.wim&lt;/code&gt; and is unrelated to the transaction, yet the rollback treats the file at &lt;code&gt;LinkPath&lt;/code&gt; as its deletion target.&lt;/p&gt;
+&lt;h4 id=&#34;How-autofstx-exe-replays-FsTx-transactions&#34;&gt;&lt;a href=&#34;#How-autofstx-exe-replays-FsTx-transactions&#34; class=&#34;headerlink&#34; title=&#34;How autofstx.exe replays FsTx transactions&#34;&gt;&lt;/a&gt;How autofstx.exe replays FsTx transactions&lt;/h4&gt;&lt;p&gt;For &lt;code&gt;autofstx.exe&lt;/code&gt; 26100.1, the OS version used in this reproduction, the &lt;code&gt;PDB&lt;/code&gt; reveals this flow:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs less&#34;&gt;&lt;span class=&#34;hljs-selector-tag&#34;&gt;main&lt;/span&gt;
+  &amp;#x2192; &lt;span class=&#34;hljs-selector-tag&#34;&gt;AutoFsTxSession&lt;/span&gt;&lt;span class=&#34;hljs-selector-pseudo&#34;&gt;::Init&lt;/span&gt;
+      &amp;#x2192; &lt;span class=&#34;hljs-selector-tag&#34;&gt;LdrLoadDll&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;FsTx.dll&amp;quot;&lt;/span&gt;)
+  &amp;#x2192; &lt;span class=&#34;hljs-selector-tag&#34;&gt;AutoFsTxSession&lt;/span&gt;&lt;span class=&#34;hljs-selector-pseudo&#34;&gt;::RunSession&lt;/span&gt;
+      &amp;#x2192; &lt;span class=&#34;hljs-selector-tag&#34;&gt;VolumeContext&lt;/span&gt;&lt;span class=&#34;hljs-selector-pseudo&#34;&gt;::FindFsTxVolumes&lt;/span&gt;
+      &amp;#x2192; &lt;span class=&#34;hljs-selector-tag&#34;&gt;FsTxSessionSet&lt;/span&gt;&lt;span class=&#34;hljs-selector-pseudo&#34;&gt;::ScanSessions&lt;/span&gt;
+      &amp;#x2192; &lt;span class=&#34;hljs-selector-tag&#34;&gt;FsTxCreateRecoverySession&lt;/span&gt;
+      &amp;#x2192; &lt;span class=&#34;hljs-selector-tag&#34;&gt;FsTxEnumTransactions&lt;/span&gt;
+      &amp;#x2192; &lt;span class=&#34;hljs-selector-tag&#34;&gt;FsTxPerformRecovery&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;autofstx.exe&lt;/code&gt; does not roll back &lt;code&gt;FsTx&lt;/code&gt; logs itself. It first finds volumes containing &lt;code&gt;System Volume Information\FsTx&lt;/code&gt; and passes them as recovery targets; the dynamically loaded &lt;code&gt;FsTx.dll&lt;/code&gt; performs the log parsing and rollback.&lt;/p&gt;
+&lt;p&gt;The relevant points are therefore &lt;code&gt;autofstx.exe&lt;/code&gt;&amp;#x2019;s volume selection and &lt;code&gt;FsTx.dll&lt;/code&gt;&amp;#x2019;s &lt;code&gt;LinkPath&lt;/code&gt; handling. The former passes the USB &lt;code&gt;FsTx&lt;/code&gt; artifact to WinRE recovery code, while the latter deletes &lt;code&gt;X:\Windows\System32\winpeshl.ini&lt;/code&gt; specified in the record.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;VolumeContext::FindFsTxVolumes&lt;/code&gt; enumerates the volume-GUID namespace with &lt;code&gt;FindFirstVolumeW&lt;/code&gt;/&lt;code&gt;FindNextVolumeW&lt;/code&gt;, finds a mount path that is a drive-letter root (&lt;code&gt;A:\${b} through&lt;/code&gt;Z:${b}), and adds a volume to the recovery candidates if it contains a &lt;code&gt;System Volume Information\FsTx&lt;/code&gt; directory.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// VolumeContext::FindFsTxVolumes, summarized&lt;/span&gt;
 GetVolumePathNamesForVolumeNameW(volumeGuid, mountPaths, ...);
 
-for (WCHAR *i = mountPaths; *i; i += wcslen(i) + 1) {
-    if (wcslen(i) == 3 &amp;amp;&amp;amp; i[1] == L&amp;apos;:&amp;apos; &amp;amp;&amp;amp; i[2] == L&amp;apos;\\&amp;apos;) {
+&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (WCHAR *i = mountPaths; *i; i += wcslen(i) + &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;) {
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (wcslen(i) == &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt; &amp;amp;&amp;amp; i[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;] == &lt;span class=&#34;hljs-string&#34;&gt;L&amp;apos;:&amp;apos;&lt;/span&gt; &amp;amp;&amp;amp; i[&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;] == &lt;span class=&#34;hljs-string&#34;&gt;L&amp;apos;\\&amp;apos;&lt;/span&gt;) {
         driveLetter = *i;
-        break;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;;
     }
 }
-if (!driveLetter) continue;
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (!driveLetter) &lt;span class=&#34;hljs-keyword&#34;&gt;continue&lt;/span&gt;;
 
-wcscat_s(path, MAX_PATH, L&amp;quot;System Volume Information\\FsTx&amp;quot;);
+wcscat_s(path, MAX_PATH, &lt;span class=&#34;hljs-string&#34;&gt;L&amp;quot;System Volume Information\\FsTx&amp;quot;&lt;/span&gt;);
 DWORD attrs = GetFileAttributesW(path);
-if (attrs == INVALID_FILE_ATTRIBUTES || !(attrs &amp;amp; FILE_ATTRIBUTE_DIRECTORY))
-    continue;
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (attrs == INVALID_FILE_ATTRIBUTES || !(attrs &amp;amp; FILE_ATTRIBUTE_DIRECTORY))
+    &lt;span class=&#34;hljs-keyword&#34;&gt;continue&lt;/span&gt;;
 
-candidates.push_back(volume);
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;Thus, the function selects recovery targets based on the presence of a drive letter and a System Volume Information\FsTx directory. An external USB with that structure is accepted as a recovery candidate, then AutoFsTxSession::RunSession finds its session and starts replay with FsTxPerformRecovery(handle, 0, 60000).&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;// Recovery handling for each candidate inside AutoFsTxSession::RunSession
-messageContext = (AutoFsTxSession *)((char *)session + 96);
-if (recoveryStatus &amp;gt;= 0) {
-    FsTxMessageContext::OutputMessage(messageContext, 2u, 0x3F4u, sessionIndex);
-    v50 = 1;
-} else {
-    FsTxMessageContext::OutputMessage(messageContext, 8u, 0x3F5u, sessionIndex, recoveryStatus);
-    v50 = 0;
+candidates.push_back(volume);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Thus, the function selects recovery targets based on the presence of a drive letter and a &lt;code&gt;System Volume Information\FsTx&lt;/code&gt; directory. An external USB with that structure is accepted as a recovery candidate, then &lt;code&gt;AutoFsTxSession::RunSession&lt;/code&gt; finds its session and starts replay with &lt;code&gt;FsTxPerformRecovery(handle, 0, 60000)&lt;/code&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// Recovery handling for each candidate inside AutoFsTxSession::RunSession&lt;/span&gt;
+messageContext = (AutoFsTxSession *)((&lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *)session + &lt;span class=&#34;hljs-number&#34;&gt;96&lt;/span&gt;);
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (recoveryStatus &amp;gt;= &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;) {
+    FsTxMessageContext::OutputMessage(messageContext, &lt;span class=&#34;hljs-number&#34;&gt;2u&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x3F4&lt;/span&gt;u, sessionIndex);
+    v50 = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+} &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+    FsTxMessageContext::OutputMessage(messageContext, &lt;span class=&#34;hljs-number&#34;&gt;8u&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x3F5&lt;/span&gt;u, sessionIndex, recoveryStatus);
+    v50 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
 }
-*(_BYTE *)(fsTxSession + 98) = v50;
+*(_BYTE *)(fsTxSession + &lt;span class=&#34;hljs-number&#34;&gt;98&lt;/span&gt;) = v50;
 FsTxSession::CloseSession((FsTxSession *)fsTxSession, closeReason);
 
-// Actual replay call (export of dynamically loaded FsTx.dll)
+&lt;span class=&#34;hljs-comment&#34;&gt;// Actual replay call (export of dynamically loaded FsTx.dll)&lt;/span&gt;
 pfnFsTxPerformRecovery = (int64 (*)(int64, QWORD, int64))g_FsTxPerformRecovery;
-FsTxVolumes = pfnFsTxPerformRecovery(sessionHandle, 0, 60000);
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;autofstx.exe does not process the work performed by FsTx.dll directly; it only receives the success or failure result and logs it. Deletion of winpeshl.ini happens in FsTx.dll&amp;#x2019;s replay stage.&lt;/p&gt;
-&lt;p&gt;Now let us look at the code where the USB volume becomes a recovery candidate and where rollback processes LinkPath.&lt;/p&gt;
-&lt;h4 id=&#34;Root-cause-code&#34;&gt;&lt;a href=&#34;#Root-cause-code&#34; class=&#34;headerlink&#34; title=&#34;Root-cause code&#34;&gt;&lt;/a&gt;Root-cause code&lt;/h4&gt;&lt;h4 id=&#34;1-VolumeContext-FindFsTxVolumes-&amp;#x2014;-accepting-an-untrusted-USB-as-a-recovery-candidate&#34;&gt;&lt;a href=&#34;#1-VolumeContext-FindFsTxVolumes-&amp;#x2014;-accepting-an-untrusted-USB-as-a-recovery-candidate&#34; class=&#34;headerlink&#34; title=&#34;1. VolumeContext::FindFsTxVolumes &amp;#x2014; accepting an untrusted USB as a recovery candidate&#34;&gt;&lt;/a&gt;&lt;strong&gt;1. VolumeContext::FindFsTxVolumes &amp;#x2014; accepting an untrusted USB as a recovery candidate&lt;/strong&gt;&lt;/h4&gt;&lt;pre&gt;&lt;code&gt;BaseAddress = FindFirstVolumeW(Str);
-// &amp;#x2190; Enumerates every volume; no fixed/removable/USB distinction
+FsTxVolumes = pfnFsTxPerformRecovery(sessionHandle, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;60000&lt;/span&gt;);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;autofstx.exe&lt;/code&gt; does not process the work performed by &lt;code&gt;FsTx.dll&lt;/code&gt; directly; it only receives the success or failure result and logs it. Deletion of &lt;code&gt;winpeshl.ini&lt;/code&gt; happens in &lt;code&gt;FsTx.dll&lt;/code&gt;&amp;#x2019;s replay stage.&lt;/p&gt;
+&lt;p&gt;Now let us look at the code where the USB volume becomes a recovery candidate and where rollback processes &lt;code&gt;LinkPath&lt;/code&gt;.&lt;/p&gt;
+&lt;h4 id=&#34;Root-cause-code&#34;&gt;&lt;a href=&#34;#Root-cause-code&#34; class=&#34;headerlink&#34; title=&#34;Root-cause code&#34;&gt;&lt;/a&gt;Root-cause code&lt;/h4&gt;&lt;h4 id=&#34;1-VolumeContext-FindFsTxVolumes-&amp;#x2014;-accepting-an-untrusted-USB-as-a-recovery-candidate&#34;&gt;&lt;a href=&#34;#1-VolumeContext-FindFsTxVolumes-&amp;#x2014;-accepting-an-untrusted-USB-as-a-recovery-candidate&#34; class=&#34;headerlink&#34; title=&#34;1. VolumeContext::FindFsTxVolumes &amp;#x2014; accepting an untrusted USB as a recovery candidate&#34;&gt;&lt;/a&gt;&lt;strong&gt;1. &lt;code&gt;VolumeContext::FindFsTxVolumes&lt;/code&gt; &amp;#x2014; accepting an untrusted USB as a recovery candidate&lt;/strong&gt;&lt;/h4&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;BaseAddress = FindFirstVolumeW(Str);
+&lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2190; Enumerates every volume; no fixed/removable/USB distinction&lt;/span&gt;
 
-// Is there a drive-letter root such as X:\?
-if ( v20 == 3 &amp;amp;&amp;amp; i[1] == 58 /* &amp;apos;:&amp;apos; */ &amp;amp;&amp;amp; i[2] == 92 /* &amp;apos;\&amp;apos; */ &amp;amp;&amp;amp; (letter a-z/A-Z) )
-    v17 = *i;                              // Obtain the drive letter
+&lt;span class=&#34;hljs-comment&#34;&gt;// Is there a drive-letter root such as X:\?&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( v20 == &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt; &amp;amp;&amp;amp; i[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;] == &lt;span class=&#34;hljs-number&#34;&gt;58&lt;/span&gt; &lt;span class=&#34;hljs-comment&#34;&gt;/* &amp;apos;:&amp;apos; */&lt;/span&gt; &amp;amp;&amp;amp; i[&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;] == &lt;span class=&#34;hljs-number&#34;&gt;92&lt;/span&gt; &lt;span class=&#34;hljs-comment&#34;&gt;/* &amp;apos;\&amp;apos; */&lt;/span&gt; &amp;amp;&amp;amp; (letter a-z/A-Z) )
+    v17 = *i;                              &lt;span class=&#34;hljs-comment&#34;&gt;// Obtain the drive letter&lt;/span&gt;
 
-// Sole eligibility check: does &amp;quot;&amp;lt;drive&amp;gt;:\System Volume Information\FsTx&amp;quot; exist?
-wcscat_s(Str, 0x104u, L&amp;quot;System Volume Information\\FsTx&amp;quot;);
+&lt;span class=&#34;hljs-comment&#34;&gt;// Sole eligibility check: does &amp;quot;&amp;lt;drive&amp;gt;:\System Volume Information\FsTx&amp;quot; exist?&lt;/span&gt;
+wcscat_s(Str, &lt;span class=&#34;hljs-number&#34;&gt;0x104&lt;/span&gt;u, &lt;span class=&#34;hljs-string&#34;&gt;L&amp;quot;System Volume Information\\FsTx&amp;quot;&lt;/span&gt;);
 FileAttributesW = GetFileAttributesW(Str);
-if ( FileAttributesW == -1 || (FileAttributesW &amp;amp; 0x10) == 0 )
-    v7 = 0;                                // Reject if the directory is absent
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( FileAttributesW == &lt;span class=&#34;hljs-number&#34;&gt;-1&lt;/span&gt; || (FileAttributesW &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x10&lt;/span&gt;) == &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; )
+    v7 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;                                &lt;span class=&#34;hljs-comment&#34;&gt;// Reject if the directory is absent&lt;/span&gt;
 LABEL_54:
-    v23 = AutoChkMalloc(0x48u);            // &amp;#x2605; This is where the volume becomes a recovery candidate
+    v23 = AutoChkMalloc(&lt;span class=&#34;hljs-number&#34;&gt;0x48&lt;/span&gt;u);            &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2605; This is where the volume becomes a recovery candidate&lt;/span&gt;
     ...
-    v24[66] = v7;                          // v7(+0x42): whether recovery runs; RunSession uses it
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;As introduced earlier, a volume with a drive letter and a System Volume Information\FsTx directory is handled as a recovery candidate.&lt;/p&gt;
-&lt;h4 id=&#34;2-PerformOperationRollbackRecovery-op-5-&amp;#x2014;-cross-volume-deletion-of-winpeshl-ini&#34;&gt;&lt;a href=&#34;#2-PerformOperationRollbackRecovery-op-5-&amp;#x2014;-cross-volume-deletion-of-winpeshl-ini&#34; class=&#34;headerlink&#34; title=&#34;2. PerformOperationRollbackRecovery (op==5) &amp;#x2014; cross-volume deletion of winpeshl.ini&#34;&gt;&lt;/a&gt;&lt;strong&gt;2. PerformOperationRollbackRecovery (op==5) &amp;#x2014; cross-volume deletion of winpeshl.ini&lt;/strong&gt;&lt;/h4&gt;&lt;pre&gt;&lt;code&gt;if ( opType == 5 )   // Roll back HARDLINK creation.
+    v24[&lt;span class=&#34;hljs-number&#34;&gt;66&lt;/span&gt;] = v7;                          &lt;span class=&#34;hljs-comment&#34;&gt;// v7(+0x42): whether recovery runs; RunSession uses it&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;As introduced earlier, a volume with a drive letter and a &lt;code&gt;System Volume Information\FsTx&lt;/code&gt; directory is handled as a recovery candidate.&lt;/p&gt;
+&lt;h4 id=&#34;2-PerformOperationRollbackRecovery-op-5-&amp;#x2014;-cross-volume-deletion-of-winpeshl-ini&#34;&gt;&lt;a href=&#34;#2-PerformOperationRollbackRecovery-op-5-&amp;#x2014;-cross-volume-deletion-of-winpeshl-ini&#34; class=&#34;headerlink&#34; title=&#34;2. PerformOperationRollbackRecovery (op == 5) &amp;#x2014; cross-volume deletion of winpeshl.ini&#34;&gt;&lt;/a&gt;&lt;strong&gt;2. &lt;code&gt;PerformOperationRollbackRecovery&lt;/code&gt; (&lt;code&gt;op == 5&lt;/code&gt;) &amp;#x2014; cross-volume deletion of &lt;code&gt;winpeshl.ini&lt;/code&gt;&lt;/strong&gt;&lt;/h4&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( opType == &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt; )   &lt;span class=&#34;hljs-comment&#34;&gt;// Roll back HARDLINK creation.&lt;/span&gt;
 {
-    TempRootPath = (wchar_t *)GetTempRootPath(recoveryCtx, linkPath, linkPath);
+    TempRootPath = (&lt;span class=&#34;hljs-keyword&#34;&gt;wchar_t&lt;/span&gt; *)GetTempRootPath(recoveryCtx, linkPath, linkPath);
     v30 = TempRootPath;
-    if ( TempRootPath )
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( TempRootPath )
     {
-        v43 = AddPathToPathSet((PRTL_DYNAMIC_HASH_TABLE)(recoveryCtx + 2152), TempRootPath);
+        v43 = AddPathToPathSet((PRTL_DYNAMIC_HASH_TABLE)(recoveryCtx + &lt;span class=&#34;hljs-number&#34;&gt;2152&lt;/span&gt;), TempRootPath);
         RtlNtStatusToDosError(v43);
     }
-    HIDWORD(v115) = 0;
+    HIDWORD(v115) = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
 
-    File = (HANDLE)DoCreateFile(recoveryCtx, 0, (_DWORD)Name, (unsigned int)&amp;amp;v135, *(_DWORD *)(opRecord + 12) &amp;amp; 8);
-    // &amp;#x2191; Opens Name, record path[1] = \??\X:\Windows\System32\winpeshl.ini,
-    //   directly as an absolute NT path. There is no check that its volume
-    //   matches the source volume of this transaction.
+    File = (HANDLE)DoCreateFile(recoveryCtx, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, (_DWORD)Name, (&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;)&amp;amp;v135, *(_DWORD *)(opRecord + &lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt;) &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;);
+    &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2191; Opens Name, record path[1] = \??\X:\Windows\System32\winpeshl.ini,&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;//   directly as an absolute NT path. There is no check that its volume&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;//   matches the source volume of this transaction.&lt;/span&gt;
 
-    if ( File != (HANDLE)-1LL || (LastWin32Error = RtlGetLastWin32Error()) != 0 )
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( File != (HANDLE)&lt;span class=&#34;hljs-number&#34;&gt;-1L&lt;/span&gt;L || (LastWin32Error = RtlGetLastWin32Error()) != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; )
     {
         v44 = LastWin32Error;
-        if ( LastWin32Error == 2 ) // No link: skip
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( LastWin32Error == &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; ) &lt;span class=&#34;hljs-comment&#34;&gt;// No link: skip&lt;/span&gt;
         {
-            LastWin32Error = 0;
-            goto LABEL_225;
+            LastWin32Error = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+            &lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; LABEL_225;
         }
-        if ( !LastWin32Error )
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( !LastWin32Error )
         {
-            dispositionFlags = 17;
-            // 0x11 = DELETE | POSIX &amp;#x2014; unvalidated cross-volume deletion
+            dispositionFlags = &lt;span class=&#34;hljs-number&#34;&gt;17&lt;/span&gt;;
+            &lt;span class=&#34;hljs-comment&#34;&gt;// 0x11 = DELETE | POSIX &amp;#x2014; unvalidated cross-volume deletion&lt;/span&gt;
             SetFileInformationByHandle(File);
-            goto LABEL_225;
+            &lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; LABEL_225;
         }
     }
-}
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;The problem is that DoCreateFile() opens the record&amp;#x2019;s Name directly as an absolute NT path and does not confirm that the file was the link created by this transaction. If a USB transaction record sets LinkPath to X:\Windows\System32\winpeshl.ini, FsTx.dll treats the existing file &amp;#x2014; unrelated to the USB source volume &amp;#x2014; as a link that must be reverted. With dispositionFlags = 0x11, that path is removed with a POSIX delete.&lt;/p&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The problem is that &lt;code&gt;DoCreateFile()&lt;/code&gt; opens the record&amp;#x2019;s &lt;code&gt;Name&lt;/code&gt; directly as an absolute NT path and does not confirm that the file was the link created by this transaction. If a USB transaction record sets &lt;code&gt;LinkPath&lt;/code&gt; to &lt;code&gt;X:\Windows\System32\winpeshl.ini&lt;/code&gt;, &lt;code&gt;FsTx.dll&lt;/code&gt; treats the existing file &amp;#x2014; unrelated to the USB source volume &amp;#x2014; as a link that must be reverted. With &lt;code&gt;dispositionFlags = 0x11&lt;/code&gt;, that path is removed with a POSIX delete.&lt;/p&gt;
 &lt;h3 id=&#34;4-5-Reproduction-result&#34;&gt;&lt;a href=&#34;#4-5-Reproduction-result&#34; class=&#34;headerlink&#34; title=&#34;4.5 Reproduction result&#34;&gt;&lt;/a&gt;4.5 Reproduction result&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2026/10/29/banda/Unlocking-Bitlocker/EN/image%2010.png&#34; alt&gt;&lt;/p&gt;
 &lt;p&gt;First, I placed the FsTx artifact on USB drive E:. A normal boot into WinRE would display the recovery UI. Let us look at the result after inserting the USB and booting into WinRE.&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2026/10/29/banda/Unlocking-Bitlocker/EN/image%2011.png&#34; alt&gt;&lt;/p&gt;
-&lt;p&gt;After connecting the USB containing the intended FsTx artifact and booting into WinRE, X:\Windows\System32\cmd.exe appears instead of the normal recovery UI. Files such as winpeshl.exe and winpeshl.log remain, but winpeshl.ini &amp;#x2014; which should be in the same directory &amp;#x2014; cannot be found. This indicates it was deleted by rollback.&lt;/p&gt;
+&lt;p&gt;After connecting the USB containing the intended &lt;code&gt;FsTx&lt;/code&gt; artifact and booting into WinRE, &lt;code&gt;X:\Windows\System32\cmd.exe&lt;/code&gt; appears instead of the normal recovery UI. Files such as &lt;code&gt;winpeshl.exe&lt;/code&gt; and &lt;code&gt;winpeshl.log&lt;/code&gt; remain, but &lt;code&gt;winpeshl.ini&lt;/code&gt; &amp;#x2014; which should be in the same directory &amp;#x2014; cannot be found. This indicates it was deleted by rollback.&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2026/10/29/banda/Unlocking-Bitlocker/EN/image%2012.png&#34; alt&gt;&lt;/p&gt;
-&lt;p&gt;winpeshl.log also records execution of X:\Windows\System32\cmd.exe /K startnet.cmd, confirming that the cmd.exe fallback ran.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;winpeshl.log&lt;/code&gt; also records execution of &lt;code&gt;X:\Windows\System32\cmd.exe /K startnet.cmd&lt;/code&gt;, confirming that the &lt;code&gt;cmd.exe&lt;/code&gt; fallback ran.&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2026/10/29/banda/Unlocking-Bitlocker/EN/image%2013.png&#34; alt&gt;&lt;/p&gt;
-&lt;p&gt;winre_access_proof.txt contains WinRE_ACCESS_PROOF and a timestamp, and the marker file created from the WinRE session shows that writing to the file succeeded.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;winre_access_proof.txt&lt;/code&gt; contains &lt;code&gt;WinRE_ACCESS_PROOF&lt;/code&gt; and a timestamp, and the marker file created from the WinRE session shows that writing to the file succeeded.&lt;/p&gt;
 &lt;h2 id=&#34;Closing-thoughts&#34;&gt;&lt;a href=&#34;#Closing-thoughts&#34; class=&#34;headerlink&#34; title=&#34;Closing thoughts&#34;&gt;&lt;/a&gt;Closing thoughts&lt;/h2&gt;&lt;p&gt;In this article, we directly followed the WinRE boot process and recovery code, which are easy to overlook. The next time you accidentally enter Windows recovery mode, perhaps you will remember that behind the blue recovery screen, a separate WinRE environment has booted and is preparing and running recovery functions.&lt;/p&gt;
 &lt;p&gt;Did you enjoy the WinRE series? In the next article, we will go one step earlier than WinRE and return to Boot Manager to look at BitPixie: why an older signed Boot Manager can be run again, and what happens during the PXE transition that follows. Please look forward to it!&lt;/p&gt;
 &lt;h2 id=&#34;References&#34;&gt;&lt;a href=&#34;#References&#34; class=&#34;headerlink&#34; title=&#34;References&#34;&gt;&lt;/a&gt;References&lt;/h2&gt;&lt;ol&gt;
@@ -364,27 +363,27 @@ LABEL_54:
 &lt;h2 id=&#34;2-WinRE-is-a-separate-trust-boundary&#34;&gt;&lt;a href=&#34;#2-WinRE-is-a-separate-trust-boundary&#34; class=&#34;headerlink&#34; title=&#34;2. WinRE is a separate trust boundary&#34;&gt;&lt;/a&gt;2. WinRE is a separate trust boundary&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;/2026/10/29/banda/Unlocking-Bitlocker/EN/image%203.png&#34; alt&gt;&lt;/p&gt;
 &lt;p&gt;WinRE (Windows Recovery Environment) is a pre-OS environment that can perform Startup Repair, system reset, update removal, Command Prompt, and Defender Offline scanning. It is not always running: it boots from a separate recovery image. Crucially, it must still start when Windows has a problem or when the BitLocker OS volume cannot be read immediately, so WinRE is designed as a Recovery OS separate from the OS volume.&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2026/10/29/banda/Unlocking-Bitlocker/EN/image%204.png&#34; alt&gt;&lt;/p&gt;
-&lt;p&gt;The Recovery OS executables, DLLs, drivers, and recovery tools are commonly contained in a compressed image named winre.wim. On a typical UEFI system, bootmgfw.efi on the EFI System Partition runs as Windows Boot Manager, reads the BCD in the same area, and decides whether to boot normal Windows or take a recovery path.&lt;/p&gt;
+&lt;p&gt;The Recovery OS executables, DLLs, drivers, and recovery tools are commonly contained in a compressed image named &lt;code&gt;winre.wim&lt;/code&gt;. On a typical UEFI system, &lt;code&gt;bootmgfw.efi&lt;/code&gt; on the EFI System Partition runs as Windows Boot Manager, reads the &lt;code&gt;BCD&lt;/code&gt; in the same area, and decides whether to boot normal Windows or take a recovery path.&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2026/10/29/banda/Unlocking-Bitlocker/EN/image%205.png&#34; alt&gt;&lt;/p&gt;
-&lt;p&gt;When the BCD selects a WinRE RAM-disk boot, boot.sdi and winre.wim from the recovery partition are used.&lt;/p&gt;
+&lt;p&gt;When the &lt;code&gt;BCD&lt;/code&gt; selects a WinRE RAM-disk boot, &lt;code&gt;boot.sdi&lt;/code&gt; and &lt;code&gt;winre.wim&lt;/code&gt; from the recovery partition are used.&lt;/p&gt;
 &lt;ul&gt;
-&lt;li&gt;&lt;strong&gt;boot.sdi&lt;/strong&gt;: An SDI image that builds the basic structure of a virtual NTFS disk in memory.&lt;/li&gt;
-&lt;li&gt;&lt;strong&gt;winre.wim&lt;/strong&gt;: The compressed image expanded onto that RAM disk to build the actual Recovery OS, such as the R: drive shown in the screenshots.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;&lt;code&gt;boot.sdi&lt;/code&gt;&lt;/strong&gt;: An SDI image that builds the basic structure of a virtual NTFS disk in memory.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;&lt;code&gt;winre.wim&lt;/code&gt;&lt;/strong&gt;: The compressed image expanded onto that RAM disk to build the actual Recovery OS, such as the &lt;code&gt;R:&lt;/code&gt; drive shown in the screenshots.&lt;/li&gt;
 &lt;/ul&gt;
-&lt;p&gt;In other words, bootmgfw.efi and the BCD decide the entry path &amp;#x2014; which of normal Windows or WinRE, and which image, to use. The subsequently loaded boot.sdi and winre.wim provide the actual disk structure and operating tools in the selected WinRE environment.&lt;/p&gt;
+&lt;p&gt;In other words, &lt;code&gt;bootmgfw.efi&lt;/code&gt; and the &lt;code&gt;BCD&lt;/code&gt; decide the entry path &amp;#x2014; which of normal Windows or WinRE, and which image, to use. The subsequently loaded &lt;code&gt;boot.sdi&lt;/code&gt; and &lt;code&gt;winre.wim&lt;/code&gt; provide the actual disk structure and operating tools in the selected WinRE environment.&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2026/10/29/banda/Unlocking-Bitlocker/EN/image%206.png&#34; alt&gt;&lt;/p&gt;
-&lt;p&gt;Input processing continues even after WinRE starts from R:. The SYSTEM hive and Boot Execute determine initial execution; winpeshl.ini, startnet.cmd, and wpeinit.exe construct the WinPE shell. Then ReAgent.xml, offline-OS information, recovery logs, and task-specific settings decide which OS is targeted and which recovery task and process run.&lt;/p&gt;
+&lt;p&gt;Input processing continues even after WinRE starts from &lt;code&gt;R:&lt;/code&gt;. The &lt;code&gt;SYSTEM&lt;/code&gt; hive and &lt;code&gt;Boot Execute&lt;/code&gt; determine initial execution; &lt;code&gt;winpeshl.ini&lt;/code&gt;, &lt;code&gt;startnet.cmd&lt;/code&gt;, and &lt;code&gt;wpeinit.exe&lt;/code&gt; construct the WinPE shell. Then &lt;code&gt;ReAgent.xml&lt;/code&gt;, offline-OS information, recovery logs, and task-specific settings decide which OS is targeted and which recovery task and process run.&lt;/p&gt;
 &lt;p&gt;When analyzing WinRE, it is useful to follow each stage: which entry started the image, which volumes and drivers initialization prepared, and which settings the shell and recovery task use to launch the next process and change the FVE state.&lt;/p&gt;
 &lt;p&gt;Before the case study, let us look at two classes of logic flaws previously observed in WinRE boot and recovery flows.&lt;/p&gt;
 &lt;h2 id=&#34;3-1-Boot-Recovery-Object-Binding-Failure&#34;&gt;&lt;a href=&#34;#3-1-Boot-Recovery-Object-Binding-Failure&#34; class=&#34;headerlink&#34; title=&#34;3.1 Boot / Recovery Object Binding Failure&#34;&gt;&lt;/a&gt;3.1 Boot / Recovery Object Binding Failure&lt;/h2&gt;&lt;blockquote&gt;
 &lt;p&gt;&lt;em&gt;Trusted WIM and Target-Volume Binding Failures&lt;/em&gt;&lt;/p&gt;
 &lt;/blockquote&gt;
 &lt;p&gt;&lt;img src=&#34;/2026/10/29/banda/Unlocking-Bitlocker/EN/image%207.png&#34; alt&gt;&lt;/p&gt;
-&lt;p&gt;During a WinRE boot, Boot Manager follows the RAM-disk device and path supplied by the BCD to find boot.sdi and winre.wim. A Trusted WIM Boot verifies the selected WIM&amp;#x2019;s integrity and permits BitLocker OS-volume access on the assumption that WinRE will start from that image.&lt;/p&gt;
+&lt;p&gt;During a WinRE boot, Boot Manager follows the RAM-disk device and path supplied by the &lt;code&gt;BCD&lt;/code&gt; to find &lt;code&gt;boot.sdi&lt;/code&gt; and &lt;code&gt;winre.wim&lt;/code&gt;. A Trusted WIM Boot verifies the selected WIM&amp;#x2019;s integrity and permits BitLocker OS-volume access on the assumption that WinRE will start from that image.&lt;/p&gt;
 &lt;p&gt;After the BCD determines the recovery path, Boot Manager lays boot.sdi and winre.wim out in one RAM-disk buffer as follows:&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;RamDiskImageBuffer = AllocateMemory(SdiSize + WimSize);
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;RamDiskImageBuffer = AllocateMemory(SdiSize + WimSize);
 
-LoadFileToBuffer(SdiPath, RamDiskImageBuffer, SdiSize, NULL);
+LoadFileToBuffer(SdiPath, RamDiskImageBuffer, SdiSize, &lt;span class=&#34;hljs-literal&#34;&gt;NULL&lt;/span&gt;);
 
 LoadFileToBuffer(
     WimPath,
@@ -392,31 +391,30 @@ LoadFileToBuffer(
     WimSize,
     WimHash);
 
-WimAddress = RamDiskImageBuffer + SdiTrust-&amp;gt;WimOffset;
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;In this flow, WIM A is read at RamDiskImageBuffer + SdiSize and the WimHash is computed for precisely that WIM A. The actual WinRE start address, however, is determined by SdiTrust-&amp;gt;WimOffset. Normally, SdiTrust-&amp;gt;WimOffset should equal SdiSize, the real start offset of WIM A.&lt;/p&gt;
-&lt;p&gt;What if that relationship is not checked? WimHash could verify WIM A while SdiTrust-&amp;gt;WimOffset points to another WIM B in the buffer. That would make the verified recovery image differ from the recovery image that actually constructs WinRE.&lt;/p&gt;
-&lt;p&gt;There is a similar example: the target-volume-confusion vulnerability in Online PBR. It occurs after WinRE boots, when Online PBR finds its target OS. PBR uses the BCD&amp;#x2019;s osdevice to find the target volume and parses ResetSession.xml there. If it misidentifies the Recovery partition as the target OS, it can use that partition&amp;#x2019;s configuration for a PBR operation.&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;&amp;lt;WindowsRE version=&amp;quot;2.0&amp;quot;&amp;gt;
-  &amp;lt;WinreBCD id=&amp;quot;{WinRE-BCD-GUID}&amp;quot; /&amp;gt;
-  &amp;lt;WinreLocation
-      path=&amp;quot;\\Recovery\\WindowsRE&amp;quot;
-      id=&amp;quot;0&amp;quot;
-      offset=&amp;quot;...&amp;quot;
-      guid=&amp;quot;{RECOVERY-PARTITION-GUID}&amp;quot; /&amp;gt;
-  &amp;lt;ImageLocation path=&amp;quot;&amp;quot; id=&amp;quot;0&amp;quot; offset=&amp;quot;0&amp;quot; guid=&amp;quot;{...}&amp;quot; /&amp;gt;
-  &amp;lt;PBRImageLocation path=&amp;quot;&amp;quot; id=&amp;quot;0&amp;quot; offset=&amp;quot;0&amp;quot; guid=&amp;quot;{...}&amp;quot; index=&amp;quot;0&amp;quot; /&amp;gt;
-&amp;lt;/WindowsRE&amp;gt;
-
-&amp;lt;Operation OperationType=&amp;quot;DecryptVolumes&amp;quot; TargetVolume=&amp;quot;C:\&amp;quot; /&amp;gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;The core issue was that the configuration read from the Recovery partition was not verified as belonging to the real target OS. If its DecryptVolumes entry named a BitLocker-protected OS volume, PBR could process it as a normal recovery operation without restriction. In effect, it could remove protection from the OS volume by using PBR&amp;#x2019;s decryption authority even without the user entering a recovery key or disabling BitLocker protection.&lt;/p&gt;
+WimAddress = RamDiskImageBuffer + SdiTrust-&amp;gt;WimOffset;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;In this flow, WIM A is read at &lt;code&gt;RamDiskImageBuffer + SdiSize&lt;/code&gt; and the &lt;code&gt;WimHash&lt;/code&gt; is computed for precisely that WIM A. The actual WinRE start address, however, is determined by &lt;code&gt;SdiTrust-&amp;gt;WimOffset&lt;/code&gt;. Normally, &lt;code&gt;SdiTrust-&amp;gt;WimOffset&lt;/code&gt; should equal &lt;code&gt;SdiSize&lt;/code&gt;, the real start offset of WIM A.&lt;/p&gt;
+&lt;p&gt;What if that relationship is not checked? &lt;code&gt;WimHash&lt;/code&gt; could verify WIM A while &lt;code&gt;SdiTrust-&amp;gt;WimOffset&lt;/code&gt; points to another WIM B in the buffer. That would make the verified recovery image differ from the recovery image that actually constructs WinRE.&lt;/p&gt;
+&lt;p&gt;There is a similar example: the target-volume-confusion vulnerability in Online PBR. It occurs after WinRE boots, when Online PBR finds its target OS. PBR uses the &lt;code&gt;BCD&lt;/code&gt;&amp;#x2019;s &lt;code&gt;osdevice&lt;/code&gt; to find the target volume and parses &lt;code&gt;ResetSession.xml&lt;/code&gt; there. If it misidentifies the Recovery partition as the target OS, it can use that partition&amp;#x2019;s configuration for a PBR operation.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs xml&#34;&gt;&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;WindowsRE&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;version&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;2.0&amp;quot;&lt;/span&gt;&amp;gt;&lt;/span&gt;
+  &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;WinreBCD&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;id&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;{WinRE-BCD-GUID}&amp;quot;&lt;/span&gt; /&amp;gt;&lt;/span&gt;
+  &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;WinreLocation&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;      &lt;span class=&#34;hljs-attr&#34;&gt;path&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;\\Recovery\\WindowsRE&amp;quot;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;      &lt;span class=&#34;hljs-attr&#34;&gt;id&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;0&amp;quot;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;      &lt;span class=&#34;hljs-attr&#34;&gt;offset&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;...&amp;quot;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;      &lt;span class=&#34;hljs-attr&#34;&gt;guid&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;{RECOVERY-PARTITION-GUID}&amp;quot;&lt;/span&gt; /&amp;gt;&lt;/span&gt;
+  &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;ImageLocation&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;path&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;id&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;0&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;offset&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;0&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;guid&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;{...}&amp;quot;&lt;/span&gt; /&amp;gt;&lt;/span&gt;
+  &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;PBRImageLocation&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;path&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;id&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;0&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;offset&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;0&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;guid&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;{...}&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;index&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;0&amp;quot;&lt;/span&gt; /&amp;gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;WindowsRE&lt;/span&gt;&amp;gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs xml&#34;&gt;&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;Operation&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;OperationType&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;DecryptVolumes&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;TargetVolume&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;C:\&amp;quot;&lt;/span&gt; /&amp;gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The core issue was that the configuration read from the Recovery partition was not verified as belonging to the real target OS. If its &lt;code&gt;DecryptVolumes&lt;/code&gt; entry named a BitLocker-protected OS volume, PBR could process it as a normal recovery operation without restriction. In effect, it could remove protection from the OS volume by using PBR&amp;#x2019;s decryption authority even without the user entering a recovery key or disabling BitLocker protection.&lt;/p&gt;
 &lt;p&gt;Both patterns point to the same research question: throughout a boot transition, do the verified WIM, the selected WIM, and the OS volume being opened continue to refer to the same object?&lt;/p&gt;
 &lt;h2 id=&#34;3-2-Recovery-Access-Scope-Bypass&#34;&gt;&lt;a href=&#34;#3-2-Recovery-Access-Scope-Bypass&#34; class=&#34;headerlink&#34; title=&#34;3.2 Recovery Access Scope Bypass&#34;&gt;&lt;/a&gt;3.2 Recovery Access Scope Bypass&lt;/h2&gt;&lt;blockquote&gt;
 &lt;p&gt;&lt;em&gt;Recovery Access Scope Bypass&lt;/em&gt;&lt;/p&gt;
 &lt;/blockquote&gt;
 &lt;p&gt;&lt;img src=&#34;/2026/10/29/banda/Unlocking-Bitlocker/EN/image%208.png&#34; alt&gt;&lt;/p&gt;
 &lt;p&gt;Some boot-time operations, such as Offline Scan, need to read the OS volume. Because Offline Scan must inspect that volume, WinRE runs it with the BitLocker volume auto-unlocked.&lt;/p&gt;
-&lt;p&gt;For example, a published case described a vulnerable path in which a trusted scanning tool could launch an unintended child process through an Offline Scan setting in ReAgent.xml. The problem was not necessarily the scanner itself; it was the lack of validation that the same access level should extend to the next process created by that tool.&lt;/p&gt;
-&lt;p&gt;Normally, opening a dangerous tool such as cmd.exe should first relock the OS volume so it cannot be read without a recovery key. In the vulnerable path, however, the Offline Scanner-permitted tttracer.exe could receive cmd.exe as an argument. Since relock had not occurred, cmd.exe could inherit exposure to an OS volume that was already open.&lt;/p&gt;
+&lt;p&gt;For example, a published case described a vulnerable path in which a trusted scanning tool could launch an unintended child process through an Offline Scan setting in &lt;code&gt;ReAgent.xml&lt;/code&gt;. The problem was not necessarily the scanner itself; it was the lack of validation that the same access level should extend to the next process created by that tool.&lt;/p&gt;
+&lt;p&gt;Normally, opening a dangerous tool such as &lt;code&gt;cmd.exe&lt;/code&gt; should first relock the OS volume so it cannot be read without a recovery key. In the vulnerable path, however, the Offline Scanner-permitted &lt;code&gt;tttracer.exe&lt;/code&gt; could receive &lt;code&gt;cmd.exe&lt;/code&gt; as an argument. Since relock had not occurred, &lt;code&gt;cmd.exe&lt;/code&gt; could inherit exposure to an OS volume that was already open.&lt;/p&gt;
 &lt;p&gt;For boot-time research, it is therefore important to trace which configuration a scheduled tool reads, whether it can create child processes, and whether relock runs before the operation ends.&lt;/p&gt;
 &lt;p&gt;The implementations of these two WinRE issue types differ, but they ask the same question:&lt;/p&gt;
 &lt;blockquote&gt;
@@ -425,43 +423,43 @@ WimAddress = RamDiskImageBuffer + SdiTrust-&amp;gt;WimOffset;
 &lt;p&gt;The object may be a recovery image, a target OS volume, or a process to execute. The access scope is the unlocked state of the BitLocker OS volume and the point at which it is re-locked.&lt;/p&gt;
 &lt;p&gt;Let us apply that question to the following practical flow.&lt;/p&gt;
 &lt;h2 id=&#34;4-CVE-2026-45585&#34;&gt;&lt;a href=&#34;#4-CVE-2026-45585&#34; class=&#34;headerlink&#34; title=&#34;4. CVE-2026-45585&#34;&gt;&lt;/a&gt;4. &lt;strong&gt;CVE-2026-45585&lt;/strong&gt;&lt;/h2&gt;&lt;p&gt;Now we will trace the WinRE recovery-input and access-scope issues above as one execution chain. This case study targets the publicly disclosed FsTx recovery path in CVE-2026-45585.&lt;/p&gt;
-&lt;h3 id=&#34;4-1-Core-structure-and-research-question&#34;&gt;&lt;a href=&#34;#4-1-Core-structure-and-research-question&#34; class=&#34;headerlink&#34; title=&#34;4.1 Core structure and research question&#34;&gt;&lt;/a&gt;4.1 Core structure and research question&lt;/h3&gt;&lt;p&gt;Starting from the WinRE components autofstx.exe and Fstx.dll, the question is whether an FsTx artifact processed as recovery data during WinRE initialization can affect the BitLocker OS-volume access boundary. The controlled input in this study is an FsTx record on a USB volume.&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;USB: System Volume Information\FsTx
+&lt;h3 id=&#34;4-1-Core-structure-and-research-question&#34;&gt;&lt;a href=&#34;#4-1-Core-structure-and-research-question&#34; class=&#34;headerlink&#34; title=&#34;4.1 Core structure and research question&#34;&gt;&lt;/a&gt;4.1 Core structure and research question&lt;/h3&gt;&lt;p&gt;Starting from the WinRE components &lt;code&gt;autofstx.exe&lt;/code&gt; and &lt;code&gt;Fstx.dll&lt;/code&gt;, the question is whether an &lt;code&gt;FsTx&lt;/code&gt; artifact processed as recovery data during WinRE initialization can affect the BitLocker OS-volume access boundary. The controlled input in this study is an &lt;code&gt;FsTx&lt;/code&gt; record on a USB volume.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs routeros&#34;&gt;USB:&lt;span class=&#34;hljs-built_in&#34;&gt; System &lt;/span&gt;Volume Information\FsTx
 &amp;#x2192; WinRE BootExecute: autofstx.exe
 &amp;#x2192; FsTx.dll: in-doubt transaction rollback
 &amp;#x2192; delete X:\Windows\System32\winpeshl.ini
 &amp;#x2192; winpeshl.exe: cmd.exe /K startnet.cmd fallback
-&amp;#x2192; OS-volume access before RecEnv.exe / RelockVolumes()
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;As a preview: while an FsTx record is processed for rollback, a LinkPath pointing to X:\Windows\System32\winpeshl.ini causes the rollback result to prevent the current WinRE instance from finding RecEnv.exe. It launches the cmd.exe /K startnet.cmd fallback instead. Let us see why this Security Feature Bypass occurs.&lt;/p&gt;
+&amp;#x2192; OS-volume access before RecEnv.exe / RelockVolumes()&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;As a preview: while an &lt;code&gt;FsTx&lt;/code&gt; record is processed for rollback, a &lt;code&gt;LinkPath&lt;/code&gt; pointing to &lt;code&gt;X:\Windows\System32\winpeshl.ini&lt;/code&gt; causes the rollback result to prevent the current WinRE instance from finding &lt;code&gt;RecEnv.exe&lt;/code&gt;. It launches the &lt;code&gt;cmd.exe /K startnet.cmd&lt;/code&gt; fallback instead. Let us see why this Security Feature Bypass occurs.&lt;/p&gt;
 &lt;h3 id=&#34;4-2-Test-conditions-and-baseline-state&#34;&gt;&lt;a href=&#34;#4-2-Test-conditions-and-baseline-state&#34; class=&#34;headerlink&#34; title=&#34;4.2 Test conditions and baseline state&#34;&gt;&lt;/a&gt;4.2 Test conditions and baseline state&lt;/h3&gt;&lt;blockquote&gt;
 &lt;p&gt;Windows 11 Pro 24H2 VM&lt;br&gt;TPM enabled/ready, Secure Boot enabled&lt;br&gt;WinRE enabled&lt;br&gt;BitLocker OS volume C: enabled&lt;/p&gt;
 &lt;/blockquote&gt;
 &lt;p&gt;The reproduction environment was a Windows 11 Pro 24H2 VM with TPM and Secure Boot enabled, as well as WinRE and the BitLocker OS volume enabled. TPM and a Recovery Password were used together as key protectors.&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;PS C:\&amp;gt; manage-bde -status C:
-Volume C: [OS Volume]
-    Size:                 63.00 GB
-    BitLocker Version:    2.0
+&lt;pre&gt;&lt;code class=&#34;hljs powershell&#34;&gt;&lt;span class=&#34;hljs-built_in&#34;&gt;PS&lt;/span&gt; C:\&amp;gt; manage&lt;span class=&#34;hljs-literal&#34;&gt;-bde&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;-status&lt;/span&gt; C:
+Volume C: [&lt;span class=&#34;hljs-type&#34;&gt;OS&lt;/span&gt; &lt;span class=&#34;hljs-type&#34;&gt;Volume&lt;/span&gt;]
+    Size:                 &lt;span class=&#34;hljs-number&#34;&gt;63.00&lt;/span&gt; GB
+    BitLocker Version:    &lt;span class=&#34;hljs-number&#34;&gt;2.0&lt;/span&gt;
     Conversion Status:    Fully Encrypted
-    Percentage Encrypted: 100.0%
-    Encryption Method:    XTS-AES 128
+    Percentage Encrypted: &lt;span class=&#34;hljs-number&#34;&gt;100.0&lt;/span&gt;%
+    Encryption Method:    XTS&lt;span class=&#34;hljs-literal&#34;&gt;-AES&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;128&lt;/span&gt;
     Protection Status:    Protection On
     Lock Status:          Unlocked
     Key Protectors:
         TPM
         Numerical Password
 
-PS C:\&amp;gt; manage-bde -protectors -get C:
+&lt;span class=&#34;hljs-built_in&#34;&gt;PS&lt;/span&gt; C:\&amp;gt; manage&lt;span class=&#34;hljs-literal&#34;&gt;-bde&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;-protectors&lt;/span&gt; &lt;span class=&#34;hljs-literal&#34;&gt;-get&lt;/span&gt; C:
 
-Volume C: [OS Volume]
+Volume C: [&lt;span class=&#34;hljs-type&#34;&gt;OS&lt;/span&gt; &lt;span class=&#34;hljs-type&#34;&gt;Volume&lt;/span&gt;]
     TPM:
-      ID: {&amp;lt;TPM-PROTECTOR-GUID&amp;gt;}
+      ID: {&amp;lt;TPM&lt;span class=&#34;hljs-literal&#34;&gt;-PROTECTOR&lt;/span&gt;&lt;span class=&#34;hljs-literal&#34;&gt;-GUID&lt;/span&gt;&amp;gt;}
       PCR Validation Profile:
-        7, 11
+        &lt;span class=&#34;hljs-number&#34;&gt;7&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;11&lt;/span&gt;
 
     Numerical Password:
-      ID: {&amp;lt;RECOVERY-PROTECTOR-GUID&amp;gt;}
+      ID: {&amp;lt;RECOVERY&lt;span class=&#34;hljs-literal&#34;&gt;-PROTECTOR&lt;/span&gt;&lt;span class=&#34;hljs-literal&#34;&gt;-GUID&lt;/span&gt;&amp;gt;}
 
-PS C:\&amp;gt; reagentc /info
+&lt;span class=&#34;hljs-built_in&#34;&gt;PS&lt;/span&gt; C:\&amp;gt; reagentc /info
 
 Windows Recovery Environment (Windows RE)
 and system reset configuration
@@ -469,173 +467,173 @@ and system reset configuration
     Windows RE status:    Enabled
     Windows RE location:  \\?\GLOBALROOT\device\
                            harddisk0\partition&amp;lt;RECOVERY&amp;gt;\Recovery\WindowsRE
-    BCD identifier:       {&amp;lt;WINRE-BCD-GUID&amp;gt;}
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;One possible source of confusion is that &amp;#x201C;Lock Status: Unlocked&amp;#x201D; while booted normally simply means that Windows is using its own volume. It does not mean BitLocker protection is disabled.&lt;/p&gt;
+    BCD identifier:       {&amp;lt;WINRE&lt;span class=&#34;hljs-literal&#34;&gt;-BCD&lt;/span&gt;&lt;span class=&#34;hljs-literal&#34;&gt;-GUID&lt;/span&gt;&amp;gt;}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;One possible source of confusion is that &amp;#x201C;Lock Status: Unlocked&amp;#x201D; while booted normally simply means that Windows is using its own volume. It does not mean BitLocker protection is disabled.&lt;/p&gt;
 &lt;p&gt;For the reproduction check, I created a marker file on the OS volume:&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;mkdir C:\yk_lab
-echo YK_MARKER &amp;gt; C:\yk_lab\marker.txt
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;I also confirmed that the HKLM\SOFTWARE\Microsoft\RecoveryEnvironment\FailRelock value was absent.&lt;/p&gt;
-&lt;p&gt;According to Microsoft documentation, a TPM-only environment satisfying the PCR[7] supported-device condition can auto-unlock a BitLocker OS volume when started from trusted WinRE. Which execution paths can access that auto-unlocked volume before RecEnv.exe relocks it?&lt;/p&gt;
-&lt;h3 id=&#34;4-3-Normal-flow-and-the-relock-path-bypassed-by-FsTx&#34;&gt;&lt;a href=&#34;#4-3-Normal-flow-and-the-relock-path-bypassed-by-FsTx&#34; class=&#34;headerlink&#34; title=&#34;4.3 Normal flow and the relock path bypassed by FsTx&#34;&gt;&lt;/a&gt;4.3 Normal flow and the relock path bypassed by FsTx&lt;/h3&gt;&lt;p&gt;Once trusted WinRE begins initialization, the normal flow has winpeshl.exe read winpeshl.ini and launch RecEnv.exe. RecEnv.exe calls RelockVolume() before displaying the recovery UI.&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;CImmersiveRecoveryUi::Run
+&lt;pre&gt;&lt;code class=&#34;hljs powershell&#34;&gt;mkdir C:\yk_lab
+&lt;span class=&#34;hljs-built_in&#34;&gt;echo&lt;/span&gt; YK_MARKER &amp;gt; C:\yk_lab\marker.txt&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;I also confirmed that the &lt;code&gt;HKLM\SOFTWARE\Microsoft\RecoveryEnvironment\FailRelock&lt;/code&gt; value was absent.&lt;/p&gt;
+&lt;p&gt;According to Microsoft documentation, a TPM-only environment satisfying the &lt;code&gt;PCR[7]&lt;/code&gt; supported-device condition can auto-unlock a BitLocker OS volume when started from trusted WinRE. Which execution paths can access that auto-unlocked volume before &lt;code&gt;RecEnv.exe&lt;/code&gt; relocks it?&lt;/p&gt;
+&lt;h3 id=&#34;4-3-Normal-flow-and-the-relock-path-bypassed-by-FsTx&#34;&gt;&lt;a href=&#34;#4-3-Normal-flow-and-the-relock-path-bypassed-by-FsTx&#34; class=&#34;headerlink&#34; title=&#34;4.3 Normal flow and the relock path bypassed by FsTx&#34;&gt;&lt;/a&gt;4.3 Normal flow and the relock path bypassed by FsTx&lt;/h3&gt;&lt;p&gt;Once trusted WinRE begins initialization, the normal flow has &lt;code&gt;winpeshl.exe&lt;/code&gt; read &lt;code&gt;winpeshl.ini&lt;/code&gt; and launch &lt;code&gt;RecEnv.exe&lt;/code&gt;. &lt;code&gt;RecEnv.exe&lt;/code&gt; calls &lt;code&gt;RelockVolume()&lt;/code&gt; before displaying the recovery UI.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;CImmersiveRecoveryUi::Run
   &amp;#x2514;&amp;#x2500; CRecoveryEnvironment::RelockVolumes
       &amp;#x2514;&amp;#x2500; CFveUtil::RelockAllVolumes
-          &amp;#x2514;&amp;#x2500; CFveUtil::RelockVolume
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;CImmersiveRecoveryUi::Run is both the recovery-UI entry point and the relock trigger. Before drawing its UI, it calls CRecoveryEnvironment::RelockVolumes; if that fails, it logs &amp;#x201C;Failed to relock volumes. 0x%08x  Shutting down.&amp;#x201D; and exits.&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;// CImmersiveRecoveryUi::Run, summarized
-if (!relockHandled) {
-    HRESULT hr = CRecoveryEnvironment::RelockVolumes(*this);
-    if (FAILED(hr)) {
-        WdsSetupLogMessageW(..., &amp;quot;Failed to relock volumes. 0x%08x  Shutting down.&amp;quot;, hr);
-        goto shutdown;
+          &amp;#x2514;&amp;#x2500; CFveUtil::RelockVolume&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;CImmersiveRecoveryUi::Run&lt;/code&gt; is both the recovery-UI entry point and the relock trigger. Before drawing its UI, it calls &lt;code&gt;CRecoveryEnvironment::RelockVolumes&lt;/code&gt;; if that fails, it logs &amp;#x201C;Failed to relock volumes. 0x%08x  Shutting down.&amp;#x201D; and exits.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// CImmersiveRecoveryUi::Run, summarized&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (!relockHandled) {
+    HRESULT hr = CRecoveryEnvironment::RelockVolumes(*&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (FAILED(hr)) {
+        WdsSetupLogMessageW(..., &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Failed to relock volumes. 0x%08x  Shutting down.&amp;quot;&lt;/span&gt;, hr);
+        &lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; shutdown;
     }
-    CRecoveryEnvironment::UnlockVolumes(*this, 0);
-    relockHandled = 1;
+    CRecoveryEnvironment::UnlockVolumes(*&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+    relockHandled = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The internal &lt;code&gt;RelockVolumes&lt;/code&gt; dispatcher, &lt;code&gt;CFveUtil::RelockAllVolumes&lt;/code&gt;, iterates volumes with &lt;code&gt;FindFirstVolumeW&lt;/code&gt;/&lt;code&gt;FindNextVolumeW&lt;/code&gt; and calls &lt;code&gt;CFveUtil::RelockVolume&lt;/code&gt; for each volume.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// CFveUtil::RelockAllVolumes, summarized&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;while&lt;/span&gt; (FindNextVolume(...)) {
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (Utils::GetDriveLetterForVolumeMountPoint(szVolumeName, letter, MAX_PATH))
+        &lt;span class=&#34;hljs-keyword&#34;&gt;continue&lt;/span&gt;;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (!CFveUtil::RelockVolume(&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;, letter))
+        &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;;
 }
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;The internal RelockVolumes dispatcher, CFveUtil::RelockAllVolumes, iterates volumes with FindFirstVolumeW/FindNextVolumeW and calls CFveUtil::RelockVolume for each volume.&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;// CFveUtil::RelockAllVolumes, summarized
-while (FindNextVolume(...)) {
-    if (Utils::GetDriveLetterForVolumeMountPoint(szVolumeName, letter, MAX_PATH))
-        continue;
-    if (!CFveUtil::RelockVolume(this, letter))
-        break;
-}
-return 31; // relock failed
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;The normal path is:&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;winpeshl.exe &amp;#x2192; winpeshl.ini &amp;#x2192; RecEnv.exe &amp;#x2192; RelockVolumes() &amp;#x2192; recovery UI
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;This case study does not tamper with or make RelockVolume() fail. Instead, if winpeshl.ini disappears and winpeshl.exe selects a fallback shell rather than RecEnv.exe, the relock path is never reached.&lt;/p&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-number&#34;&gt;31&lt;/span&gt;; &lt;span class=&#34;hljs-comment&#34;&gt;// relock failed&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The normal path is:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs css&#34;&gt;&lt;span class=&#34;hljs-selector-tag&#34;&gt;winpeshl&lt;/span&gt;&lt;span class=&#34;hljs-selector-class&#34;&gt;.exe&lt;/span&gt; &amp;#x2192; &lt;span class=&#34;hljs-selector-tag&#34;&gt;winpeshl&lt;/span&gt;&lt;span class=&#34;hljs-selector-class&#34;&gt;.ini&lt;/span&gt; &amp;#x2192; &lt;span class=&#34;hljs-selector-tag&#34;&gt;RecEnv&lt;/span&gt;&lt;span class=&#34;hljs-selector-class&#34;&gt;.exe&lt;/span&gt; &amp;#x2192; &lt;span class=&#34;hljs-selector-tag&#34;&gt;RelockVolumes&lt;/span&gt;() &amp;#x2192; &lt;span class=&#34;hljs-selector-tag&#34;&gt;recovery&lt;/span&gt; &lt;span class=&#34;hljs-selector-tag&#34;&gt;UI&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This case study does not tamper with or make &lt;code&gt;RelockVolume()&lt;/code&gt; fail. Instead, if &lt;code&gt;winpeshl.ini&lt;/code&gt; disappears and &lt;code&gt;winpeshl.exe&lt;/code&gt; selects a fallback shell rather than &lt;code&gt;RecEnv.exe&lt;/code&gt;, the relock path is never reached.&lt;/p&gt;
 &lt;h3 id=&#34;4-4-FsTx-artifacts-and-the-root-cause&#34;&gt;&lt;a href=&#34;#4-4-FsTx-artifacts-and-the-root-cause&#34; class=&#34;headerlink&#34; title=&#34;4.4 FsTx artifacts and the root cause&#34;&gt;&lt;/a&gt;4.4 FsTx artifacts and the root cause&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2026/10/29/banda/Unlocking-Bitlocker/EN/image%209.png&#34; alt&gt;&lt;/p&gt;
 &lt;p&gt;FsTx is related to TxF (Transactional NTFS), an NTFS feature that groups file operations into one transaction. For example, creating a file, renaming it, and adding a hard link elsewhere can be started as a group. Once all work is finished, the transaction is committed and the changes remain. &lt;strong&gt;If power is lost or an error occurs midway, uncommitted work is rolled back to its prior state.&lt;/strong&gt;&lt;/p&gt;
-&lt;p&gt;FsTx metadata is the record needed for that rollback. It logs file operations that began and paths that were to be created or removed under System Volume Information\FsTx on a volume. WinRE&amp;#x2019;s autofstx.exe and FsTx.dll read those records and process the recorded operations to restore the file system to its pre-transaction state.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;FsTx&lt;/code&gt; metadata is the record needed for that rollback. It logs file operations that began and paths that were to be created or removed under &lt;code&gt;System Volume Information\FsTx&lt;/code&gt; on a volume. WinRE&amp;#x2019;s &lt;code&gt;autofstx.exe&lt;/code&gt; and &lt;code&gt;FsTx.dll&lt;/code&gt; read those records and process the recorded operations to restore the file system to its pre-transaction state.&lt;/p&gt;
 &lt;p&gt;For this test, I placed only an FsTx artifact on USB &amp;#x2014; not an executable.&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;FsTx\
-&amp;#x2514;&amp;#x2500; 95F62703B343F111A92A005056975458\
+&lt;pre&gt;&lt;code class=&#34;hljs dns&#34;&gt;FsTx\
+&amp;#x2514;&amp;#x2500; &lt;span class=&#34;hljs-number&#34;&gt;95&lt;/span&gt;F62703B343F111A92A0&lt;span class=&#34;hljs-number&#34;&gt;05056975458&lt;/span&gt;\
    &amp;#x251C;&amp;#x2500; FsTxLogs\
    &amp;#x2502;  &amp;#x251C;&amp;#x2500; FsTxKtmLog.blf
-   &amp;#x2502;  &amp;#x251C;&amp;#x2500; FsTxKtmLogContainer00000000000000000001
-   &amp;#x2502;  &amp;#x251C;&amp;#x2500; FsTxKtmLogContainer00000000000000000002
+   &amp;#x2502;  &amp;#x251C;&amp;#x2500; FsTxKtmLogContainer000000000&lt;span class=&#34;hljs-number&#34;&gt;00000000001&lt;/span&gt;
+   &amp;#x2502;  &amp;#x251C;&amp;#x2500; FsTxKtmLogContainer000000000&lt;span class=&#34;hljs-number&#34;&gt;00000000002&lt;/span&gt;
    &amp;#x2502;  &amp;#x251C;&amp;#x2500; FsTxLog.blf
-   &amp;#x2502;  &amp;#x251C;&amp;#x2500; FsTxLogContainer00000000000000000001
-   &amp;#x2502;  &amp;#x2514;&amp;#x2500; FsTxLogContainer00000000000000000002
+   &amp;#x2502;  &amp;#x251C;&amp;#x2500; FsTxLogContainer000000000&lt;span class=&#34;hljs-number&#34;&gt;00000000001&lt;/span&gt;
+   &amp;#x2502;  &amp;#x2514;&amp;#x2500; FsTxLogContainer000000000&lt;span class=&#34;hljs-number&#34;&gt;00000000002&lt;/span&gt;
    &amp;#x2514;&amp;#x2500; FsTxTemp\
-      &amp;#x2514;&amp;#x2500; 98F62703B343F111A92A005056975458
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;The root cause has two connected steps: autofstx.exe accepts an external volume as an FsTx recovery candidate, then FsTx.dll processes an absolute path in a rollback record.&lt;/p&gt;
-&lt;p&gt;The reason to place only an FsTx artifact on the USB was to determine whether WinRE finds it as a normal recovery log and rolls back the file operation left in the transaction record. If that record&amp;#x2019;s LinkPath points to X:\Windows\System32\winpeshl.ini, the rollback deletes that file.&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;TargetPath (source data) = \??\C:\Windows\win.ini
-LinkPath (new link)      = \??\X:\Windows\System32\winpeshl.ini
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;This represents creating a hard link named winpeshl.ini from win.ini. Critically, to trigger the issue, the creation operation must be left uncommitted, with only the log remaining.&lt;/p&gt;
+       &amp;#x2514;&amp;#x2500; &lt;span class=&#34;hljs-number&#34;&gt;98&lt;/span&gt;F62703B343F111A92A0&lt;span class=&#34;hljs-number&#34;&gt;05056975458&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The root cause has two connected steps: &lt;code&gt;autofstx.exe&lt;/code&gt; accepts an external volume as an &lt;code&gt;FsTx&lt;/code&gt; recovery candidate, then &lt;code&gt;FsTx.dll&lt;/code&gt; processes an absolute path in a rollback record.&lt;/p&gt;
+&lt;p&gt;The reason to place only an &lt;code&gt;FsTx&lt;/code&gt; artifact on the USB was to determine whether WinRE finds it as a normal recovery log and rolls back the file operation left in the transaction record. If that record&amp;#x2019;s &lt;code&gt;LinkPath&lt;/code&gt; points to &lt;code&gt;X:\Windows\System32\winpeshl.ini&lt;/code&gt;, the rollback deletes that file.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs latex&#34;&gt;TargetPath (source data) = &lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;?&lt;/span&gt;&lt;/span&gt;?&lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;C&lt;/span&gt;&lt;/span&gt;:&lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;Windows&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;win&lt;/span&gt;&lt;/span&gt;.ini
+LinkPath (new link)      = &lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;?&lt;/span&gt;&lt;/span&gt;?&lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;X&lt;/span&gt;&lt;/span&gt;:&lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;Windows&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;System&lt;/span&gt;&lt;/span&gt;32&lt;span class=&#34;hljs-tag&#34;&gt;\&lt;span class=&#34;hljs-name&#34;&gt;winpeshl&lt;/span&gt;&lt;/span&gt;.ini&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This represents creating a hard link named &lt;code&gt;winpeshl.ini&lt;/code&gt; from &lt;code&gt;win.ini&lt;/code&gt;. Critically, to trigger the issue, the creation operation must be left uncommitted, with only the log remaining.&lt;/p&gt;
 &lt;p&gt;When WinRE finds a stored but unfinished transaction, it rolls it back for file-system consistency. Reverting hard-link creation means deleting the new link:&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;File = DoCreateFile(..., LinkPath /* = X:\...\winpeshl.ini */, ...);
-dispositionFlags = 0x11;   // DELETE | POSIX
-SetFileInformationByHandle(File);   // &amp;#x2192; deletes LinkPath directly
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;The rollback code therefore means &amp;#x201C;delete the file at LinkPath.&amp;#x201D; There is no apparent verification that the link was truly created by this transaction. winpeshl.ini originally comes from winre.wim and is unrelated to the transaction, yet the rollback treats the file at LinkPath as its deletion target.&lt;/p&gt;
-&lt;h4 id=&#34;How-autofstx-exe-replays-FsTx-transactions&#34;&gt;&lt;a href=&#34;#How-autofstx-exe-replays-FsTx-transactions&#34; class=&#34;headerlink&#34; title=&#34;How autofstx.exe replays FsTx transactions&#34;&gt;&lt;/a&gt;How autofstx.exe replays FsTx transactions&lt;/h4&gt;&lt;p&gt;For autofstx.exe 26100.1, the OS version used in this reproduction, the PDB reveals this flow:&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;main
-  &amp;#x2192; AutoFsTxSession::Init
-      &amp;#x2192; LdrLoadDll(&amp;quot;FsTx.dll&amp;quot;)
-  &amp;#x2192; AutoFsTxSession::RunSession
-      &amp;#x2192; VolumeContext::FindFsTxVolumes
-      &amp;#x2192; FsTxSessionSet::ScanSessions
-      &amp;#x2192; FsTxCreateRecoverySession
-      &amp;#x2192; FsTxEnumTransactions
-      &amp;#x2192; FsTxPerformRecovery
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;autofstx.exe does not roll back FsTx logs itself. It first finds volumes containing System Volume Information\FsTx and passes them as recovery targets; the dynamically loaded FsTx.dll performs the log parsing and rollback.&lt;/p&gt;
-&lt;p&gt;The relevant points are therefore autofstx.exe&amp;#x2019;s volume selection and FsTx.dll&amp;#x2019;s LinkPath handling. The former passes the USB FsTx artifact to WinRE recovery code, while the latter deletes X:\Windows\System32\winpeshl.ini specified in the record.&lt;/p&gt;
-&lt;p&gt;VolumeContext::FindFsTxVolumes enumerates the volume-GUID namespace with FindFirstVolumeW/FindNextVolumeW, finds a mount path that is a drive-letter root (A:\ through Z:), and adds a volume to the recovery candidates if it contains a System Volume Information\FsTx directory.&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;// VolumeContext::FindFsTxVolumes, summarized
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;File = DoCreateFile(..., LinkPath &lt;span class=&#34;hljs-comment&#34;&gt;/* = X:\...\winpeshl.ini */&lt;/span&gt;, ...);
+dispositionFlags = &lt;span class=&#34;hljs-number&#34;&gt;0x11&lt;/span&gt;;   &lt;span class=&#34;hljs-comment&#34;&gt;// DELETE | POSIX&lt;/span&gt;
+SetFileInformationByHandle(File);   &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2192; deletes LinkPath directly&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The rollback code therefore means &amp;#x201C;delete the file at &lt;code&gt;LinkPath&lt;/code&gt;.&amp;#x201D; There is no apparent verification that the link was truly created by this transaction. &lt;code&gt;winpeshl.ini&lt;/code&gt; originally comes from &lt;code&gt;winre.wim&lt;/code&gt; and is unrelated to the transaction, yet the rollback treats the file at &lt;code&gt;LinkPath&lt;/code&gt; as its deletion target.&lt;/p&gt;
+&lt;h4 id=&#34;How-autofstx-exe-replays-FsTx-transactions&#34;&gt;&lt;a href=&#34;#How-autofstx-exe-replays-FsTx-transactions&#34; class=&#34;headerlink&#34; title=&#34;How autofstx.exe replays FsTx transactions&#34;&gt;&lt;/a&gt;How autofstx.exe replays FsTx transactions&lt;/h4&gt;&lt;p&gt;For &lt;code&gt;autofstx.exe&lt;/code&gt; 26100.1, the OS version used in this reproduction, the &lt;code&gt;PDB&lt;/code&gt; reveals this flow:&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs less&#34;&gt;&lt;span class=&#34;hljs-selector-tag&#34;&gt;main&lt;/span&gt;
+  &amp;#x2192; &lt;span class=&#34;hljs-selector-tag&#34;&gt;AutoFsTxSession&lt;/span&gt;&lt;span class=&#34;hljs-selector-pseudo&#34;&gt;::Init&lt;/span&gt;
+      &amp;#x2192; &lt;span class=&#34;hljs-selector-tag&#34;&gt;LdrLoadDll&lt;/span&gt;(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;FsTx.dll&amp;quot;&lt;/span&gt;)
+  &amp;#x2192; &lt;span class=&#34;hljs-selector-tag&#34;&gt;AutoFsTxSession&lt;/span&gt;&lt;span class=&#34;hljs-selector-pseudo&#34;&gt;::RunSession&lt;/span&gt;
+      &amp;#x2192; &lt;span class=&#34;hljs-selector-tag&#34;&gt;VolumeContext&lt;/span&gt;&lt;span class=&#34;hljs-selector-pseudo&#34;&gt;::FindFsTxVolumes&lt;/span&gt;
+      &amp;#x2192; &lt;span class=&#34;hljs-selector-tag&#34;&gt;FsTxSessionSet&lt;/span&gt;&lt;span class=&#34;hljs-selector-pseudo&#34;&gt;::ScanSessions&lt;/span&gt;
+      &amp;#x2192; &lt;span class=&#34;hljs-selector-tag&#34;&gt;FsTxCreateRecoverySession&lt;/span&gt;
+      &amp;#x2192; &lt;span class=&#34;hljs-selector-tag&#34;&gt;FsTxEnumTransactions&lt;/span&gt;
+      &amp;#x2192; &lt;span class=&#34;hljs-selector-tag&#34;&gt;FsTxPerformRecovery&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;autofstx.exe&lt;/code&gt; does not roll back &lt;code&gt;FsTx&lt;/code&gt; logs itself. It first finds volumes containing &lt;code&gt;System Volume Information\FsTx&lt;/code&gt; and passes them as recovery targets; the dynamically loaded &lt;code&gt;FsTx.dll&lt;/code&gt; performs the log parsing and rollback.&lt;/p&gt;
+&lt;p&gt;The relevant points are therefore &lt;code&gt;autofstx.exe&lt;/code&gt;&amp;#x2019;s volume selection and &lt;code&gt;FsTx.dll&lt;/code&gt;&amp;#x2019;s &lt;code&gt;LinkPath&lt;/code&gt; handling. The former passes the USB &lt;code&gt;FsTx&lt;/code&gt; artifact to WinRE recovery code, while the latter deletes &lt;code&gt;X:\Windows\System32\winpeshl.ini&lt;/code&gt; specified in the record.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;VolumeContext::FindFsTxVolumes&lt;/code&gt; enumerates the volume-GUID namespace with &lt;code&gt;FindFirstVolumeW&lt;/code&gt;/&lt;code&gt;FindNextVolumeW&lt;/code&gt;, finds a mount path that is a drive-letter root (&lt;code&gt;A:\${b} through&lt;/code&gt;Z:${b}), and adds a volume to the recovery candidates if it contains a &lt;code&gt;System Volume Information\FsTx&lt;/code&gt; directory.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// VolumeContext::FindFsTxVolumes, summarized&lt;/span&gt;
 GetVolumePathNamesForVolumeNameW(volumeGuid, mountPaths, ...);
 
-for (WCHAR *i = mountPaths; *i; i += wcslen(i) + 1) {
-    if (wcslen(i) == 3 &amp;amp;&amp;amp; i[1] == L&amp;apos;:&amp;apos; &amp;amp;&amp;amp; i[2] == L&amp;apos;\\&amp;apos;) {
+&lt;span class=&#34;hljs-keyword&#34;&gt;for&lt;/span&gt; (WCHAR *i = mountPaths; *i; i += wcslen(i) + &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;) {
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (wcslen(i) == &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt; &amp;amp;&amp;amp; i[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;] == &lt;span class=&#34;hljs-string&#34;&gt;L&amp;apos;:&amp;apos;&lt;/span&gt; &amp;amp;&amp;amp; i[&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;] == &lt;span class=&#34;hljs-string&#34;&gt;L&amp;apos;\\&amp;apos;&lt;/span&gt;) {
         driveLetter = *i;
-        break;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;break&lt;/span&gt;;
     }
 }
-if (!driveLetter) continue;
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (!driveLetter) &lt;span class=&#34;hljs-keyword&#34;&gt;continue&lt;/span&gt;;
 
-wcscat_s(path, MAX_PATH, L&amp;quot;System Volume Information\\FsTx&amp;quot;);
+wcscat_s(path, MAX_PATH, &lt;span class=&#34;hljs-string&#34;&gt;L&amp;quot;System Volume Information\\FsTx&amp;quot;&lt;/span&gt;);
 DWORD attrs = GetFileAttributesW(path);
-if (attrs == INVALID_FILE_ATTRIBUTES || !(attrs &amp;amp; FILE_ATTRIBUTE_DIRECTORY))
-    continue;
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (attrs == INVALID_FILE_ATTRIBUTES || !(attrs &amp;amp; FILE_ATTRIBUTE_DIRECTORY))
+    &lt;span class=&#34;hljs-keyword&#34;&gt;continue&lt;/span&gt;;
 
-candidates.push_back(volume);
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;Thus, the function selects recovery targets based on the presence of a drive letter and a System Volume Information\FsTx directory. An external USB with that structure is accepted as a recovery candidate, then AutoFsTxSession::RunSession finds its session and starts replay with FsTxPerformRecovery(handle, 0, 60000).&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;// Recovery handling for each candidate inside AutoFsTxSession::RunSession
-messageContext = (AutoFsTxSession *)((char *)session + 96);
-if (recoveryStatus &amp;gt;= 0) {
-    FsTxMessageContext::OutputMessage(messageContext, 2u, 0x3F4u, sessionIndex);
-    v50 = 1;
-} else {
-    FsTxMessageContext::OutputMessage(messageContext, 8u, 0x3F5u, sessionIndex, recoveryStatus);
-    v50 = 0;
+candidates.push_back(volume);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Thus, the function selects recovery targets based on the presence of a drive letter and a &lt;code&gt;System Volume Information\FsTx&lt;/code&gt; directory. An external USB with that structure is accepted as a recovery candidate, then &lt;code&gt;AutoFsTxSession::RunSession&lt;/code&gt; finds its session and starts replay with &lt;code&gt;FsTxPerformRecovery(handle, 0, 60000)&lt;/code&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-comment&#34;&gt;// Recovery handling for each candidate inside AutoFsTxSession::RunSession&lt;/span&gt;
+messageContext = (AutoFsTxSession *)((&lt;span class=&#34;hljs-keyword&#34;&gt;char&lt;/span&gt; *)session + &lt;span class=&#34;hljs-number&#34;&gt;96&lt;/span&gt;);
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (recoveryStatus &amp;gt;= &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;) {
+    FsTxMessageContext::OutputMessage(messageContext, &lt;span class=&#34;hljs-number&#34;&gt;2u&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x3F4&lt;/span&gt;u, sessionIndex);
+    v50 = &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;;
+} &lt;span class=&#34;hljs-keyword&#34;&gt;else&lt;/span&gt; {
+    FsTxMessageContext::OutputMessage(messageContext, &lt;span class=&#34;hljs-number&#34;&gt;8u&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;0x3F5&lt;/span&gt;u, sessionIndex, recoveryStatus);
+    v50 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
 }
-*(_BYTE *)(fsTxSession + 98) = v50;
+*(_BYTE *)(fsTxSession + &lt;span class=&#34;hljs-number&#34;&gt;98&lt;/span&gt;) = v50;
 FsTxSession::CloseSession((FsTxSession *)fsTxSession, closeReason);
 
-// Actual replay call (export of dynamically loaded FsTx.dll)
+&lt;span class=&#34;hljs-comment&#34;&gt;// Actual replay call (export of dynamically loaded FsTx.dll)&lt;/span&gt;
 pfnFsTxPerformRecovery = (int64 (*)(int64, QWORD, int64))g_FsTxPerformRecovery;
-FsTxVolumes = pfnFsTxPerformRecovery(sessionHandle, 0, 60000);
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;autofstx.exe does not process the work performed by FsTx.dll directly; it only receives the success or failure result and logs it. Deletion of winpeshl.ini happens in FsTx.dll&amp;#x2019;s replay stage.&lt;/p&gt;
-&lt;p&gt;Now let us look at the code where the USB volume becomes a recovery candidate and where rollback processes LinkPath.&lt;/p&gt;
-&lt;h4 id=&#34;Root-cause-code&#34;&gt;&lt;a href=&#34;#Root-cause-code&#34; class=&#34;headerlink&#34; title=&#34;Root-cause code&#34;&gt;&lt;/a&gt;Root-cause code&lt;/h4&gt;&lt;h4 id=&#34;1-VolumeContext-FindFsTxVolumes-&amp;#x2014;-accepting-an-untrusted-USB-as-a-recovery-candidate&#34;&gt;&lt;a href=&#34;#1-VolumeContext-FindFsTxVolumes-&amp;#x2014;-accepting-an-untrusted-USB-as-a-recovery-candidate&#34; class=&#34;headerlink&#34; title=&#34;1. VolumeContext::FindFsTxVolumes &amp;#x2014; accepting an untrusted USB as a recovery candidate&#34;&gt;&lt;/a&gt;&lt;strong&gt;1. VolumeContext::FindFsTxVolumes &amp;#x2014; accepting an untrusted USB as a recovery candidate&lt;/strong&gt;&lt;/h4&gt;&lt;pre&gt;&lt;code&gt;BaseAddress = FindFirstVolumeW(Str);
-// &amp;#x2190; Enumerates every volume; no fixed/removable/USB distinction
+FsTxVolumes = pfnFsTxPerformRecovery(sessionHandle, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, &lt;span class=&#34;hljs-number&#34;&gt;60000&lt;/span&gt;);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;autofstx.exe&lt;/code&gt; does not process the work performed by &lt;code&gt;FsTx.dll&lt;/code&gt; directly; it only receives the success or failure result and logs it. Deletion of &lt;code&gt;winpeshl.ini&lt;/code&gt; happens in &lt;code&gt;FsTx.dll&lt;/code&gt;&amp;#x2019;s replay stage.&lt;/p&gt;
+&lt;p&gt;Now let us look at the code where the USB volume becomes a recovery candidate and where rollback processes &lt;code&gt;LinkPath&lt;/code&gt;.&lt;/p&gt;
+&lt;h4 id=&#34;Root-cause-code&#34;&gt;&lt;a href=&#34;#Root-cause-code&#34; class=&#34;headerlink&#34; title=&#34;Root-cause code&#34;&gt;&lt;/a&gt;Root-cause code&lt;/h4&gt;&lt;h4 id=&#34;1-VolumeContext-FindFsTxVolumes-&amp;#x2014;-accepting-an-untrusted-USB-as-a-recovery-candidate&#34;&gt;&lt;a href=&#34;#1-VolumeContext-FindFsTxVolumes-&amp;#x2014;-accepting-an-untrusted-USB-as-a-recovery-candidate&#34; class=&#34;headerlink&#34; title=&#34;1. VolumeContext::FindFsTxVolumes &amp;#x2014; accepting an untrusted USB as a recovery candidate&#34;&gt;&lt;/a&gt;&lt;strong&gt;1. &lt;code&gt;VolumeContext::FindFsTxVolumes&lt;/code&gt; &amp;#x2014; accepting an untrusted USB as a recovery candidate&lt;/strong&gt;&lt;/h4&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;BaseAddress = FindFirstVolumeW(Str);
+&lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2190; Enumerates every volume; no fixed/removable/USB distinction&lt;/span&gt;
 
-// Is there a drive-letter root such as X:\?
-if ( v20 == 3 &amp;amp;&amp;amp; i[1] == 58 /* &amp;apos;:&amp;apos; */ &amp;amp;&amp;amp; i[2] == 92 /* &amp;apos;\&amp;apos; */ &amp;amp;&amp;amp; (letter a-z/A-Z) )
-    v17 = *i;                              // Obtain the drive letter
+&lt;span class=&#34;hljs-comment&#34;&gt;// Is there a drive-letter root such as X:\?&lt;/span&gt;
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( v20 == &lt;span class=&#34;hljs-number&#34;&gt;3&lt;/span&gt; &amp;amp;&amp;amp; i[&lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;] == &lt;span class=&#34;hljs-number&#34;&gt;58&lt;/span&gt; &lt;span class=&#34;hljs-comment&#34;&gt;/* &amp;apos;:&amp;apos; */&lt;/span&gt; &amp;amp;&amp;amp; i[&lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt;] == &lt;span class=&#34;hljs-number&#34;&gt;92&lt;/span&gt; &lt;span class=&#34;hljs-comment&#34;&gt;/* &amp;apos;\&amp;apos; */&lt;/span&gt; &amp;amp;&amp;amp; (letter a-z/A-Z) )
+    v17 = *i;                              &lt;span class=&#34;hljs-comment&#34;&gt;// Obtain the drive letter&lt;/span&gt;
 
-// Sole eligibility check: does &amp;quot;&amp;lt;drive&amp;gt;:\System Volume Information\FsTx&amp;quot; exist?
-wcscat_s(Str, 0x104u, L&amp;quot;System Volume Information\\FsTx&amp;quot;);
+&lt;span class=&#34;hljs-comment&#34;&gt;// Sole eligibility check: does &amp;quot;&amp;lt;drive&amp;gt;:\System Volume Information\FsTx&amp;quot; exist?&lt;/span&gt;
+wcscat_s(Str, &lt;span class=&#34;hljs-number&#34;&gt;0x104&lt;/span&gt;u, &lt;span class=&#34;hljs-string&#34;&gt;L&amp;quot;System Volume Information\\FsTx&amp;quot;&lt;/span&gt;);
 FileAttributesW = GetFileAttributesW(Str);
-if ( FileAttributesW == -1 || (FileAttributesW &amp;amp; 0x10) == 0 )
-    v7 = 0;                                // Reject if the directory is absent
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( FileAttributesW == &lt;span class=&#34;hljs-number&#34;&gt;-1&lt;/span&gt; || (FileAttributesW &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;0x10&lt;/span&gt;) == &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; )
+    v7 = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;                                &lt;span class=&#34;hljs-comment&#34;&gt;// Reject if the directory is absent&lt;/span&gt;
 LABEL_54:
-    v23 = AutoChkMalloc(0x48u);            // &amp;#x2605; This is where the volume becomes a recovery candidate
+    v23 = AutoChkMalloc(&lt;span class=&#34;hljs-number&#34;&gt;0x48&lt;/span&gt;u);            &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2605; This is where the volume becomes a recovery candidate&lt;/span&gt;
     ...
-    v24[66] = v7;                          // v7(+0x42): whether recovery runs; RunSession uses it
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;As introduced earlier, a volume with a drive letter and a System Volume Information\FsTx directory is handled as a recovery candidate.&lt;/p&gt;
-&lt;h4 id=&#34;2-PerformOperationRollbackRecovery-op-5-&amp;#x2014;-cross-volume-deletion-of-winpeshl-ini&#34;&gt;&lt;a href=&#34;#2-PerformOperationRollbackRecovery-op-5-&amp;#x2014;-cross-volume-deletion-of-winpeshl-ini&#34; class=&#34;headerlink&#34; title=&#34;2. PerformOperationRollbackRecovery (op==5) &amp;#x2014; cross-volume deletion of winpeshl.ini&#34;&gt;&lt;/a&gt;&lt;strong&gt;2. PerformOperationRollbackRecovery (op==5) &amp;#x2014; cross-volume deletion of winpeshl.ini&lt;/strong&gt;&lt;/h4&gt;&lt;pre&gt;&lt;code&gt;if ( opType == 5 )   // Roll back HARDLINK creation.
+    v24[&lt;span class=&#34;hljs-number&#34;&gt;66&lt;/span&gt;] = v7;                          &lt;span class=&#34;hljs-comment&#34;&gt;// v7(+0x42): whether recovery runs; RunSession uses it&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;As introduced earlier, a volume with a drive letter and a &lt;code&gt;System Volume Information\FsTx&lt;/code&gt; directory is handled as a recovery candidate.&lt;/p&gt;
+&lt;h4 id=&#34;2-PerformOperationRollbackRecovery-op-5-&amp;#x2014;-cross-volume-deletion-of-winpeshl-ini&#34;&gt;&lt;a href=&#34;#2-PerformOperationRollbackRecovery-op-5-&amp;#x2014;-cross-volume-deletion-of-winpeshl-ini&#34; class=&#34;headerlink&#34; title=&#34;2. PerformOperationRollbackRecovery (op == 5) &amp;#x2014; cross-volume deletion of winpeshl.ini&#34;&gt;&lt;/a&gt;&lt;strong&gt;2. &lt;code&gt;PerformOperationRollbackRecovery&lt;/code&gt; (&lt;code&gt;op == 5&lt;/code&gt;) &amp;#x2014; cross-volume deletion of &lt;code&gt;winpeshl.ini&lt;/code&gt;&lt;/strong&gt;&lt;/h4&gt;&lt;pre&gt;&lt;code class=&#34;hljs cpp&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( opType == &lt;span class=&#34;hljs-number&#34;&gt;5&lt;/span&gt; )   &lt;span class=&#34;hljs-comment&#34;&gt;// Roll back HARDLINK creation.&lt;/span&gt;
 {
-    TempRootPath = (wchar_t *)GetTempRootPath(recoveryCtx, linkPath, linkPath);
+    TempRootPath = (&lt;span class=&#34;hljs-keyword&#34;&gt;wchar_t&lt;/span&gt; *)GetTempRootPath(recoveryCtx, linkPath, linkPath);
     v30 = TempRootPath;
-    if ( TempRootPath )
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( TempRootPath )
     {
-        v43 = AddPathToPathSet((PRTL_DYNAMIC_HASH_TABLE)(recoveryCtx + 2152), TempRootPath);
+        v43 = AddPathToPathSet((PRTL_DYNAMIC_HASH_TABLE)(recoveryCtx + &lt;span class=&#34;hljs-number&#34;&gt;2152&lt;/span&gt;), TempRootPath);
         RtlNtStatusToDosError(v43);
     }
-    HIDWORD(v115) = 0;
+    HIDWORD(v115) = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
 
-    File = (HANDLE)DoCreateFile(recoveryCtx, 0, (_DWORD)Name, (unsigned int)&amp;amp;v135, *(_DWORD *)(opRecord + 12) &amp;amp; 8);
-    // &amp;#x2191; Opens Name, record path[1] = \??\X:\Windows\System32\winpeshl.ini,
-    //   directly as an absolute NT path. There is no check that its volume
-    //   matches the source volume of this transaction.
+    File = (HANDLE)DoCreateFile(recoveryCtx, &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;, (_DWORD)Name, (&lt;span class=&#34;hljs-keyword&#34;&gt;unsigned&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;)&amp;amp;v135, *(_DWORD *)(opRecord + &lt;span class=&#34;hljs-number&#34;&gt;12&lt;/span&gt;) &amp;amp; &lt;span class=&#34;hljs-number&#34;&gt;8&lt;/span&gt;);
+    &lt;span class=&#34;hljs-comment&#34;&gt;// &amp;#x2191; Opens Name, record path[1] = \??\X:\Windows\System32\winpeshl.ini,&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;//   directly as an absolute NT path. There is no check that its volume&lt;/span&gt;
+    &lt;span class=&#34;hljs-comment&#34;&gt;//   matches the source volume of this transaction.&lt;/span&gt;
 
-    if ( File != (HANDLE)-1LL || (LastWin32Error = RtlGetLastWin32Error()) != 0 )
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( File != (HANDLE)&lt;span class=&#34;hljs-number&#34;&gt;-1L&lt;/span&gt;L || (LastWin32Error = RtlGetLastWin32Error()) != &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt; )
     {
         v44 = LastWin32Error;
-        if ( LastWin32Error == 2 ) // No link: skip
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( LastWin32Error == &lt;span class=&#34;hljs-number&#34;&gt;2&lt;/span&gt; ) &lt;span class=&#34;hljs-comment&#34;&gt;// No link: skip&lt;/span&gt;
         {
-            LastWin32Error = 0;
-            goto LABEL_225;
+            LastWin32Error = &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;;
+            &lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; LABEL_225;
         }
-        if ( !LastWin32Error )
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; ( !LastWin32Error )
         {
-            dispositionFlags = 17;
-            // 0x11 = DELETE | POSIX &amp;#x2014; unvalidated cross-volume deletion
+            dispositionFlags = &lt;span class=&#34;hljs-number&#34;&gt;17&lt;/span&gt;;
+            &lt;span class=&#34;hljs-comment&#34;&gt;// 0x11 = DELETE | POSIX &amp;#x2014; unvalidated cross-volume deletion&lt;/span&gt;
             SetFileInformationByHandle(File);
-            goto LABEL_225;
+            &lt;span class=&#34;hljs-keyword&#34;&gt;goto&lt;/span&gt; LABEL_225;
         }
     }
-}
-&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;The problem is that DoCreateFile() opens the record&amp;#x2019;s Name directly as an absolute NT path and does not confirm that the file was the link created by this transaction. If a USB transaction record sets LinkPath to X:\Windows\System32\winpeshl.ini, FsTx.dll treats the existing file &amp;#x2014; unrelated to the USB source volume &amp;#x2014; as a link that must be reverted. With dispositionFlags = 0x11, that path is removed with a POSIX delete.&lt;/p&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The problem is that &lt;code&gt;DoCreateFile()&lt;/code&gt; opens the record&amp;#x2019;s &lt;code&gt;Name&lt;/code&gt; directly as an absolute NT path and does not confirm that the file was the link created by this transaction. If a USB transaction record sets &lt;code&gt;LinkPath&lt;/code&gt; to &lt;code&gt;X:\Windows\System32\winpeshl.ini&lt;/code&gt;, &lt;code&gt;FsTx.dll&lt;/code&gt; treats the existing file &amp;#x2014; unrelated to the USB source volume &amp;#x2014; as a link that must be reverted. With &lt;code&gt;dispositionFlags = 0x11&lt;/code&gt;, that path is removed with a POSIX delete.&lt;/p&gt;
 &lt;h3 id=&#34;4-5-Reproduction-result&#34;&gt;&lt;a href=&#34;#4-5-Reproduction-result&#34; class=&#34;headerlink&#34; title=&#34;4.5 Reproduction result&#34;&gt;&lt;/a&gt;4.5 Reproduction result&lt;/h3&gt;&lt;p&gt;&lt;img src=&#34;/2026/10/29/banda/Unlocking-Bitlocker/EN/image%2010.png&#34; alt&gt;&lt;/p&gt;
 &lt;p&gt;First, I placed the FsTx artifact on USB drive E:. A normal boot into WinRE would display the recovery UI. Let us look at the result after inserting the USB and booting into WinRE.&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2026/10/29/banda/Unlocking-Bitlocker/EN/image%2011.png&#34; alt&gt;&lt;/p&gt;
-&lt;p&gt;After connecting the USB containing the intended FsTx artifact and booting into WinRE, X:\Windows\System32\cmd.exe appears instead of the normal recovery UI. Files such as winpeshl.exe and winpeshl.log remain, but winpeshl.ini &amp;#x2014; which should be in the same directory &amp;#x2014; cannot be found. This indicates it was deleted by rollback.&lt;/p&gt;
+&lt;p&gt;After connecting the USB containing the intended &lt;code&gt;FsTx&lt;/code&gt; artifact and booting into WinRE, &lt;code&gt;X:\Windows\System32\cmd.exe&lt;/code&gt; appears instead of the normal recovery UI. Files such as &lt;code&gt;winpeshl.exe&lt;/code&gt; and &lt;code&gt;winpeshl.log&lt;/code&gt; remain, but &lt;code&gt;winpeshl.ini&lt;/code&gt; &amp;#x2014; which should be in the same directory &amp;#x2014; cannot be found. This indicates it was deleted by rollback.&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2026/10/29/banda/Unlocking-Bitlocker/EN/image%2012.png&#34; alt&gt;&lt;/p&gt;
-&lt;p&gt;winpeshl.log also records execution of X:\Windows\System32\cmd.exe /K startnet.cmd, confirming that the cmd.exe fallback ran.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;winpeshl.log&lt;/code&gt; also records execution of &lt;code&gt;X:\Windows\System32\cmd.exe /K startnet.cmd&lt;/code&gt;, confirming that the &lt;code&gt;cmd.exe&lt;/code&gt; fallback ran.&lt;/p&gt;
 &lt;p&gt;&lt;img src=&#34;/2026/10/29/banda/Unlocking-Bitlocker/EN/image%2013.png&#34; alt&gt;&lt;/p&gt;
-&lt;p&gt;winre_access_proof.txt contains WinRE_ACCESS_PROOF and a timestamp, and the marker file created from the WinRE session shows that writing to the file succeeded.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;winre_access_proof.txt&lt;/code&gt; contains &lt;code&gt;WinRE_ACCESS_PROOF&lt;/code&gt; and a timestamp, and the marker file created from the WinRE session shows that writing to the file succeeded.&lt;/p&gt;
 &lt;h2 id=&#34;Closing-thoughts&#34;&gt;&lt;a href=&#34;#Closing-thoughts&#34; class=&#34;headerlink&#34; title=&#34;Closing thoughts&#34;&gt;&lt;/a&gt;Closing thoughts&lt;/h2&gt;&lt;p&gt;In this article, we directly followed the WinRE boot process and recovery code, which are easy to overlook. The next time you accidentally enter Windows recovery mode, perhaps you will remember that behind the blue recovery screen, a separate WinRE environment has booted and is preparing and running recovery functions.&lt;/p&gt;
 &lt;p&gt;Did you enjoy the WinRE series? In the next article, we will go one step earlier than WinRE and return to Boot Manager to look at BitPixie: why an older signed Boot Manager can be run again, and what happens during the PXE transition that follows. Please look forward to it!&lt;/p&gt;
 &lt;h2 id=&#34;References&#34;&gt;&lt;a href=&#34;#References&#34; class=&#34;headerlink&#34; title=&#34;References&#34;&gt;&lt;/a&gt;References&lt;/h2&gt;&lt;ol&gt;
@@ -905,27 +903,27 @@ LABEL_54:
 <h2 id="2-WinRE-is-a-separate-trust-boundary"><a href="#2-WinRE-is-a-separate-trust-boundary" class="headerlink" title="2. WinRE is a separate trust boundary"></a>2. WinRE is a separate trust boundary</h2><p><img src="/2026/10/29/banda/Unlocking-Bitlocker/EN/image%203.png" srcset="/img/loading.gif" alt></p>
 <p>WinRE (Windows Recovery Environment) is a pre-OS environment that can perform Startup Repair, system reset, update removal, Command Prompt, and Defender Offline scanning. It is not always running: it boots from a separate recovery image. Crucially, it must still start when Windows has a problem or when the BitLocker OS volume cannot be read immediately, so WinRE is designed as a Recovery OS separate from the OS volume.</p>
 <p><img src="/2026/10/29/banda/Unlocking-Bitlocker/EN/image%204.png" srcset="/img/loading.gif" alt></p>
-<p>The Recovery OS executables, DLLs, drivers, and recovery tools are commonly contained in a compressed image named winre.wim. On a typical UEFI system, bootmgfw.efi on the EFI System Partition runs as Windows Boot Manager, reads the BCD in the same area, and decides whether to boot normal Windows or take a recovery path.</p>
+<p>The Recovery OS executables, DLLs, drivers, and recovery tools are commonly contained in a compressed image named <code>winre.wim</code>. On a typical UEFI system, <code>bootmgfw.efi</code> on the EFI System Partition runs as Windows Boot Manager, reads the <code>BCD</code> in the same area, and decides whether to boot normal Windows or take a recovery path.</p>
 <p><img src="/2026/10/29/banda/Unlocking-Bitlocker/EN/image%205.png" srcset="/img/loading.gif" alt></p>
-<p>When the BCD selects a WinRE RAM-disk boot, boot.sdi and winre.wim from the recovery partition are used.</p>
+<p>When the <code>BCD</code> selects a WinRE RAM-disk boot, <code>boot.sdi</code> and <code>winre.wim</code> from the recovery partition are used.</p>
 <ul>
-<li><strong>boot.sdi</strong>: An SDI image that builds the basic structure of a virtual NTFS disk in memory.</li>
-<li><strong>winre.wim</strong>: The compressed image expanded onto that RAM disk to build the actual Recovery OS, such as the R: drive shown in the screenshots.</li>
+<li><strong><code>boot.sdi</code></strong>: An SDI image that builds the basic structure of a virtual NTFS disk in memory.</li>
+<li><strong><code>winre.wim</code></strong>: The compressed image expanded onto that RAM disk to build the actual Recovery OS, such as the <code>R:</code> drive shown in the screenshots.</li>
 </ul>
-<p>In other words, bootmgfw.efi and the BCD decide the entry path &#x2014; which of normal Windows or WinRE, and which image, to use. The subsequently loaded boot.sdi and winre.wim provide the actual disk structure and operating tools in the selected WinRE environment.</p>
+<p>In other words, <code>bootmgfw.efi</code> and the <code>BCD</code> decide the entry path &#x2014; which of normal Windows or WinRE, and which image, to use. The subsequently loaded <code>boot.sdi</code> and <code>winre.wim</code> provide the actual disk structure and operating tools in the selected WinRE environment.</p>
 <p><img src="/2026/10/29/banda/Unlocking-Bitlocker/EN/image%206.png" srcset="/img/loading.gif" alt></p>
-<p>Input processing continues even after WinRE starts from R:. The SYSTEM hive and Boot Execute determine initial execution; winpeshl.ini, startnet.cmd, and wpeinit.exe construct the WinPE shell. Then ReAgent.xml, offline-OS information, recovery logs, and task-specific settings decide which OS is targeted and which recovery task and process run.</p>
+<p>Input processing continues even after WinRE starts from <code>R:</code>. The <code>SYSTEM</code> hive and <code>Boot Execute</code> determine initial execution; <code>winpeshl.ini</code>, <code>startnet.cmd</code>, and <code>wpeinit.exe</code> construct the WinPE shell. Then <code>ReAgent.xml</code>, offline-OS information, recovery logs, and task-specific settings decide which OS is targeted and which recovery task and process run.</p>
 <p>When analyzing WinRE, it is useful to follow each stage: which entry started the image, which volumes and drivers initialization prepared, and which settings the shell and recovery task use to launch the next process and change the FVE state.</p>
 <p>Before the case study, let us look at two classes of logic flaws previously observed in WinRE boot and recovery flows.</p>
 <h2 id="3-1-Boot-Recovery-Object-Binding-Failure"><a href="#3-1-Boot-Recovery-Object-Binding-Failure" class="headerlink" title="3.1 Boot / Recovery Object Binding Failure"></a>3.1 Boot / Recovery Object Binding Failure</h2><blockquote>
 <p><em>Trusted WIM and Target-Volume Binding Failures</em></p>
 </blockquote>
 <p><img src="/2026/10/29/banda/Unlocking-Bitlocker/EN/image%207.png" srcset="/img/loading.gif" alt></p>
-<p>During a WinRE boot, Boot Manager follows the RAM-disk device and path supplied by the BCD to find boot.sdi and winre.wim. A Trusted WIM Boot verifies the selected WIM&#x2019;s integrity and permits BitLocker OS-volume access on the assumption that WinRE will start from that image.</p>
+<p>During a WinRE boot, Boot Manager follows the RAM-disk device and path supplied by the <code>BCD</code> to find <code>boot.sdi</code> and <code>winre.wim</code>. A Trusted WIM Boot verifies the selected WIM&#x2019;s integrity and permits BitLocker OS-volume access on the assumption that WinRE will start from that image.</p>
 <p>After the BCD determines the recovery path, Boot Manager lays boot.sdi and winre.wim out in one RAM-disk buffer as follows:</p>
-<pre><code>RamDiskImageBuffer = AllocateMemory(SdiSize + WimSize);
+<pre><code class="hljs cpp">RamDiskImageBuffer = AllocateMemory(SdiSize + WimSize);
 
-LoadFileToBuffer(SdiPath, RamDiskImageBuffer, SdiSize, NULL);
+LoadFileToBuffer(SdiPath, RamDiskImageBuffer, SdiSize, <span class="hljs-literal">NULL</span>);
 
 LoadFileToBuffer(
     WimPath,
@@ -933,31 +931,30 @@ LoadFileToBuffer(
     WimSize,
     WimHash);
 
-WimAddress = RamDiskImageBuffer + SdiTrust-&gt;WimOffset;
-</code></pre><p>In this flow, WIM A is read at RamDiskImageBuffer + SdiSize and the WimHash is computed for precisely that WIM A. The actual WinRE start address, however, is determined by SdiTrust-&gt;WimOffset. Normally, SdiTrust-&gt;WimOffset should equal SdiSize, the real start offset of WIM A.</p>
-<p>What if that relationship is not checked? WimHash could verify WIM A while SdiTrust-&gt;WimOffset points to another WIM B in the buffer. That would make the verified recovery image differ from the recovery image that actually constructs WinRE.</p>
-<p>There is a similar example: the target-volume-confusion vulnerability in Online PBR. It occurs after WinRE boots, when Online PBR finds its target OS. PBR uses the BCD&#x2019;s osdevice to find the target volume and parses ResetSession.xml there. If it misidentifies the Recovery partition as the target OS, it can use that partition&#x2019;s configuration for a PBR operation.</p>
-<pre><code>&lt;WindowsRE version=&quot;2.0&quot;&gt;
-  &lt;WinreBCD id=&quot;{WinRE-BCD-GUID}&quot; /&gt;
-  &lt;WinreLocation
-      path=&quot;\\Recovery\\WindowsRE&quot;
-      id=&quot;0&quot;
-      offset=&quot;...&quot;
-      guid=&quot;{RECOVERY-PARTITION-GUID}&quot; /&gt;
-  &lt;ImageLocation path=&quot;&quot; id=&quot;0&quot; offset=&quot;0&quot; guid=&quot;{...}&quot; /&gt;
-  &lt;PBRImageLocation path=&quot;&quot; id=&quot;0&quot; offset=&quot;0&quot; guid=&quot;{...}&quot; index=&quot;0&quot; /&gt;
-&lt;/WindowsRE&gt;
-
-&lt;Operation OperationType=&quot;DecryptVolumes&quot; TargetVolume=&quot;C:\&quot; /&gt;
-</code></pre><p>The core issue was that the configuration read from the Recovery partition was not verified as belonging to the real target OS. If its DecryptVolumes entry named a BitLocker-protected OS volume, PBR could process it as a normal recovery operation without restriction. In effect, it could remove protection from the OS volume by using PBR&#x2019;s decryption authority even without the user entering a recovery key or disabling BitLocker protection.</p>
+WimAddress = RamDiskImageBuffer + SdiTrust-&gt;WimOffset;</code></pre>
+<p>In this flow, WIM A is read at <code>RamDiskImageBuffer + SdiSize</code> and the <code>WimHash</code> is computed for precisely that WIM A. The actual WinRE start address, however, is determined by <code>SdiTrust-&gt;WimOffset</code>. Normally, <code>SdiTrust-&gt;WimOffset</code> should equal <code>SdiSize</code>, the real start offset of WIM A.</p>
+<p>What if that relationship is not checked? <code>WimHash</code> could verify WIM A while <code>SdiTrust-&gt;WimOffset</code> points to another WIM B in the buffer. That would make the verified recovery image differ from the recovery image that actually constructs WinRE.</p>
+<p>There is a similar example: the target-volume-confusion vulnerability in Online PBR. It occurs after WinRE boots, when Online PBR finds its target OS. PBR uses the <code>BCD</code>&#x2019;s <code>osdevice</code> to find the target volume and parses <code>ResetSession.xml</code> there. If it misidentifies the Recovery partition as the target OS, it can use that partition&#x2019;s configuration for a PBR operation.</p>
+<pre><code class="hljs xml"><span class="hljs-tag">&lt;<span class="hljs-name">WindowsRE</span> <span class="hljs-attr">version</span>=<span class="hljs-string">&quot;2.0&quot;</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">WinreBCD</span> <span class="hljs-attr">id</span>=<span class="hljs-string">&quot;{WinRE-BCD-GUID}&quot;</span> /&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">WinreLocation</span></span>
+<span class="hljs-tag">      <span class="hljs-attr">path</span>=<span class="hljs-string">&quot;\\Recovery\\WindowsRE&quot;</span></span>
+<span class="hljs-tag">      <span class="hljs-attr">id</span>=<span class="hljs-string">&quot;0&quot;</span></span>
+<span class="hljs-tag">      <span class="hljs-attr">offset</span>=<span class="hljs-string">&quot;...&quot;</span></span>
+<span class="hljs-tag">      <span class="hljs-attr">guid</span>=<span class="hljs-string">&quot;{RECOVERY-PARTITION-GUID}&quot;</span> /&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">ImageLocation</span> <span class="hljs-attr">path</span>=<span class="hljs-string">&quot;&quot;</span> <span class="hljs-attr">id</span>=<span class="hljs-string">&quot;0&quot;</span> <span class="hljs-attr">offset</span>=<span class="hljs-string">&quot;0&quot;</span> <span class="hljs-attr">guid</span>=<span class="hljs-string">&quot;{...}&quot;</span> /&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">PBRImageLocation</span> <span class="hljs-attr">path</span>=<span class="hljs-string">&quot;&quot;</span> <span class="hljs-attr">id</span>=<span class="hljs-string">&quot;0&quot;</span> <span class="hljs-attr">offset</span>=<span class="hljs-string">&quot;0&quot;</span> <span class="hljs-attr">guid</span>=<span class="hljs-string">&quot;{...}&quot;</span> <span class="hljs-attr">index</span>=<span class="hljs-string">&quot;0&quot;</span> /&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">WindowsRE</span>&gt;</span></code></pre>
+<pre><code class="hljs xml"><span class="hljs-tag">&lt;<span class="hljs-name">Operation</span> <span class="hljs-attr">OperationType</span>=<span class="hljs-string">&quot;DecryptVolumes&quot;</span> <span class="hljs-attr">TargetVolume</span>=<span class="hljs-string">&quot;C:\&quot;</span> /&gt;</span></code></pre>
+<p>The core issue was that the configuration read from the Recovery partition was not verified as belonging to the real target OS. If its <code>DecryptVolumes</code> entry named a BitLocker-protected OS volume, PBR could process it as a normal recovery operation without restriction. In effect, it could remove protection from the OS volume by using PBR&#x2019;s decryption authority even without the user entering a recovery key or disabling BitLocker protection.</p>
 <p>Both patterns point to the same research question: throughout a boot transition, do the verified WIM, the selected WIM, and the OS volume being opened continue to refer to the same object?</p>
 <h2 id="3-2-Recovery-Access-Scope-Bypass"><a href="#3-2-Recovery-Access-Scope-Bypass" class="headerlink" title="3.2 Recovery Access Scope Bypass"></a>3.2 Recovery Access Scope Bypass</h2><blockquote>
 <p><em>Recovery Access Scope Bypass</em></p>
 </blockquote>
 <p><img src="/2026/10/29/banda/Unlocking-Bitlocker/EN/image%208.png" srcset="/img/loading.gif" alt></p>
 <p>Some boot-time operations, such as Offline Scan, need to read the OS volume. Because Offline Scan must inspect that volume, WinRE runs it with the BitLocker volume auto-unlocked.</p>
-<p>For example, a published case described a vulnerable path in which a trusted scanning tool could launch an unintended child process through an Offline Scan setting in ReAgent.xml. The problem was not necessarily the scanner itself; it was the lack of validation that the same access level should extend to the next process created by that tool.</p>
-<p>Normally, opening a dangerous tool such as cmd.exe should first relock the OS volume so it cannot be read without a recovery key. In the vulnerable path, however, the Offline Scanner-permitted tttracer.exe could receive cmd.exe as an argument. Since relock had not occurred, cmd.exe could inherit exposure to an OS volume that was already open.</p>
+<p>For example, a published case described a vulnerable path in which a trusted scanning tool could launch an unintended child process through an Offline Scan setting in <code>ReAgent.xml</code>. The problem was not necessarily the scanner itself; it was the lack of validation that the same access level should extend to the next process created by that tool.</p>
+<p>Normally, opening a dangerous tool such as <code>cmd.exe</code> should first relock the OS volume so it cannot be read without a recovery key. In the vulnerable path, however, the Offline Scanner-permitted <code>tttracer.exe</code> could receive <code>cmd.exe</code> as an argument. Since relock had not occurred, <code>cmd.exe</code> could inherit exposure to an OS volume that was already open.</p>
 <p>For boot-time research, it is therefore important to trace which configuration a scheduled tool reads, whether it can create child processes, and whether relock runs before the operation ends.</p>
 <p>The implementations of these two WinRE issue types differ, but they ask the same question:</p>
 <blockquote>
@@ -966,43 +963,43 @@ WimAddress = RamDiskImageBuffer + SdiTrust-&gt;WimOffset;
 <p>The object may be a recovery image, a target OS volume, or a process to execute. The access scope is the unlocked state of the BitLocker OS volume and the point at which it is re-locked.</p>
 <p>Let us apply that question to the following practical flow.</p>
 <h2 id="4-CVE-2026-45585"><a href="#4-CVE-2026-45585" class="headerlink" title="4. CVE-2026-45585"></a>4. <strong>CVE-2026-45585</strong></h2><p>Now we will trace the WinRE recovery-input and access-scope issues above as one execution chain. This case study targets the publicly disclosed FsTx recovery path in CVE-2026-45585.</p>
-<h3 id="4-1-Core-structure-and-research-question"><a href="#4-1-Core-structure-and-research-question" class="headerlink" title="4.1 Core structure and research question"></a>4.1 Core structure and research question</h3><p>Starting from the WinRE components autofstx.exe and Fstx.dll, the question is whether an FsTx artifact processed as recovery data during WinRE initialization can affect the BitLocker OS-volume access boundary. The controlled input in this study is an FsTx record on a USB volume.</p>
-<pre><code>USB: System Volume Information\FsTx
+<h3 id="4-1-Core-structure-and-research-question"><a href="#4-1-Core-structure-and-research-question" class="headerlink" title="4.1 Core structure and research question"></a>4.1 Core structure and research question</h3><p>Starting from the WinRE components <code>autofstx.exe</code> and <code>Fstx.dll</code>, the question is whether an <code>FsTx</code> artifact processed as recovery data during WinRE initialization can affect the BitLocker OS-volume access boundary. The controlled input in this study is an <code>FsTx</code> record on a USB volume.</p>
+<pre><code class="hljs routeros">USB:<span class="hljs-built_in"> System </span>Volume Information\FsTx
 &#x2192; WinRE BootExecute: autofstx.exe
 &#x2192; FsTx.dll: in-doubt transaction rollback
 &#x2192; delete X:\Windows\System32\winpeshl.ini
 &#x2192; winpeshl.exe: cmd.exe /K startnet.cmd fallback
-&#x2192; OS-volume access before RecEnv.exe / RelockVolumes()
-</code></pre><p>As a preview: while an FsTx record is processed for rollback, a LinkPath pointing to X:\Windows\System32\winpeshl.ini causes the rollback result to prevent the current WinRE instance from finding RecEnv.exe. It launches the cmd.exe /K startnet.cmd fallback instead. Let us see why this Security Feature Bypass occurs.</p>
+&#x2192; OS-volume access before RecEnv.exe / RelockVolumes()</code></pre>
+<p>As a preview: while an <code>FsTx</code> record is processed for rollback, a <code>LinkPath</code> pointing to <code>X:\Windows\System32\winpeshl.ini</code> causes the rollback result to prevent the current WinRE instance from finding <code>RecEnv.exe</code>. It launches the <code>cmd.exe /K startnet.cmd</code> fallback instead. Let us see why this Security Feature Bypass occurs.</p>
 <h3 id="4-2-Test-conditions-and-baseline-state"><a href="#4-2-Test-conditions-and-baseline-state" class="headerlink" title="4.2 Test conditions and baseline state"></a>4.2 Test conditions and baseline state</h3><blockquote>
 <p>Windows 11 Pro 24H2 VM<br>TPM enabled/ready, Secure Boot enabled<br>WinRE enabled<br>BitLocker OS volume C: enabled</p>
 </blockquote>
 <p>The reproduction environment was a Windows 11 Pro 24H2 VM with TPM and Secure Boot enabled, as well as WinRE and the BitLocker OS volume enabled. TPM and a Recovery Password were used together as key protectors.</p>
-<pre><code>PS C:\&gt; manage-bde -status C:
-Volume C: [OS Volume]
-    Size:                 63.00 GB
-    BitLocker Version:    2.0
+<pre><code class="hljs powershell"><span class="hljs-built_in">PS</span> C:\&gt; manage<span class="hljs-literal">-bde</span> <span class="hljs-literal">-status</span> C:
+Volume C: [<span class="hljs-type">OS</span> <span class="hljs-type">Volume</span>]
+    Size:                 <span class="hljs-number">63.00</span> GB
+    BitLocker Version:    <span class="hljs-number">2.0</span>
     Conversion Status:    Fully Encrypted
-    Percentage Encrypted: 100.0%
-    Encryption Method:    XTS-AES 128
+    Percentage Encrypted: <span class="hljs-number">100.0</span>%
+    Encryption Method:    XTS<span class="hljs-literal">-AES</span> <span class="hljs-number">128</span>
     Protection Status:    Protection On
     Lock Status:          Unlocked
     Key Protectors:
         TPM
         Numerical Password
 
-PS C:\&gt; manage-bde -protectors -get C:
+<span class="hljs-built_in">PS</span> C:\&gt; manage<span class="hljs-literal">-bde</span> <span class="hljs-literal">-protectors</span> <span class="hljs-literal">-get</span> C:
 
-Volume C: [OS Volume]
+Volume C: [<span class="hljs-type">OS</span> <span class="hljs-type">Volume</span>]
     TPM:
-      ID: {&lt;TPM-PROTECTOR-GUID&gt;}
+      ID: {&lt;TPM<span class="hljs-literal">-PROTECTOR</span><span class="hljs-literal">-GUID</span>&gt;}
       PCR Validation Profile:
-        7, 11
+        <span class="hljs-number">7</span>, <span class="hljs-number">11</span>
 
     Numerical Password:
-      ID: {&lt;RECOVERY-PROTECTOR-GUID&gt;}
+      ID: {&lt;RECOVERY<span class="hljs-literal">-PROTECTOR</span><span class="hljs-literal">-GUID</span>&gt;}
 
-PS C:\&gt; reagentc /info
+<span class="hljs-built_in">PS</span> C:\&gt; reagentc /info
 
 Windows Recovery Environment (Windows RE)
 and system reset configuration
@@ -1010,173 +1007,173 @@ and system reset configuration
     Windows RE status:    Enabled
     Windows RE location:  \\?\GLOBALROOT\device\
                            harddisk0\partition&lt;RECOVERY&gt;\Recovery\WindowsRE
-    BCD identifier:       {&lt;WINRE-BCD-GUID&gt;}
-</code></pre><p>One possible source of confusion is that &#x201C;Lock Status: Unlocked&#x201D; while booted normally simply means that Windows is using its own volume. It does not mean BitLocker protection is disabled.</p>
+    BCD identifier:       {&lt;WINRE<span class="hljs-literal">-BCD</span><span class="hljs-literal">-GUID</span>&gt;}</code></pre>
+<p>One possible source of confusion is that &#x201C;Lock Status: Unlocked&#x201D; while booted normally simply means that Windows is using its own volume. It does not mean BitLocker protection is disabled.</p>
 <p>For the reproduction check, I created a marker file on the OS volume:</p>
-<pre><code>mkdir C:\yk_lab
-echo YK_MARKER &gt; C:\yk_lab\marker.txt
-</code></pre><p>I also confirmed that the HKLM\SOFTWARE\Microsoft\RecoveryEnvironment\FailRelock value was absent.</p>
-<p>According to Microsoft documentation, a TPM-only environment satisfying the PCR[7] supported-device condition can auto-unlock a BitLocker OS volume when started from trusted WinRE. Which execution paths can access that auto-unlocked volume before RecEnv.exe relocks it?</p>
-<h3 id="4-3-Normal-flow-and-the-relock-path-bypassed-by-FsTx"><a href="#4-3-Normal-flow-and-the-relock-path-bypassed-by-FsTx" class="headerlink" title="4.3 Normal flow and the relock path bypassed by FsTx"></a>4.3 Normal flow and the relock path bypassed by FsTx</h3><p>Once trusted WinRE begins initialization, the normal flow has winpeshl.exe read winpeshl.ini and launch RecEnv.exe. RecEnv.exe calls RelockVolume() before displaying the recovery UI.</p>
-<pre><code>CImmersiveRecoveryUi::Run
+<pre><code class="hljs powershell">mkdir C:\yk_lab
+<span class="hljs-built_in">echo</span> YK_MARKER &gt; C:\yk_lab\marker.txt</code></pre>
+<p>I also confirmed that the <code>HKLM\SOFTWARE\Microsoft\RecoveryEnvironment\FailRelock</code> value was absent.</p>
+<p>According to Microsoft documentation, a TPM-only environment satisfying the <code>PCR[7]</code> supported-device condition can auto-unlock a BitLocker OS volume when started from trusted WinRE. Which execution paths can access that auto-unlocked volume before <code>RecEnv.exe</code> relocks it?</p>
+<h3 id="4-3-Normal-flow-and-the-relock-path-bypassed-by-FsTx"><a href="#4-3-Normal-flow-and-the-relock-path-bypassed-by-FsTx" class="headerlink" title="4.3 Normal flow and the relock path bypassed by FsTx"></a>4.3 Normal flow and the relock path bypassed by FsTx</h3><p>Once trusted WinRE begins initialization, the normal flow has <code>winpeshl.exe</code> read <code>winpeshl.ini</code> and launch <code>RecEnv.exe</code>. <code>RecEnv.exe</code> calls <code>RelockVolume()</code> before displaying the recovery UI.</p>
+<pre><code class="hljs cpp">CImmersiveRecoveryUi::Run
   &#x2514;&#x2500; CRecoveryEnvironment::RelockVolumes
       &#x2514;&#x2500; CFveUtil::RelockAllVolumes
-          &#x2514;&#x2500; CFveUtil::RelockVolume
-</code></pre><p>CImmersiveRecoveryUi::Run is both the recovery-UI entry point and the relock trigger. Before drawing its UI, it calls CRecoveryEnvironment::RelockVolumes; if that fails, it logs &#x201C;Failed to relock volumes. 0x%08x  Shutting down.&#x201D; and exits.</p>
-<pre><code>// CImmersiveRecoveryUi::Run, summarized
-if (!relockHandled) {
-    HRESULT hr = CRecoveryEnvironment::RelockVolumes(*this);
-    if (FAILED(hr)) {
-        WdsSetupLogMessageW(..., &quot;Failed to relock volumes. 0x%08x  Shutting down.&quot;, hr);
-        goto shutdown;
+          &#x2514;&#x2500; CFveUtil::RelockVolume</code></pre>
+<p><code>CImmersiveRecoveryUi::Run</code> is both the recovery-UI entry point and the relock trigger. Before drawing its UI, it calls <code>CRecoveryEnvironment::RelockVolumes</code>; if that fails, it logs &#x201C;Failed to relock volumes. 0x%08x  Shutting down.&#x201D; and exits.</p>
+<pre><code class="hljs cpp"><span class="hljs-comment">// CImmersiveRecoveryUi::Run, summarized</span>
+<span class="hljs-keyword">if</span> (!relockHandled) {
+    HRESULT hr = CRecoveryEnvironment::RelockVolumes(*<span class="hljs-keyword">this</span>);
+    <span class="hljs-keyword">if</span> (FAILED(hr)) {
+        WdsSetupLogMessageW(..., <span class="hljs-string">&quot;Failed to relock volumes. 0x%08x  Shutting down.&quot;</span>, hr);
+        <span class="hljs-keyword">goto</span> shutdown;
     }
-    CRecoveryEnvironment::UnlockVolumes(*this, 0);
-    relockHandled = 1;
+    CRecoveryEnvironment::UnlockVolumes(*<span class="hljs-keyword">this</span>, <span class="hljs-number">0</span>);
+    relockHandled = <span class="hljs-number">1</span>;
+}</code></pre>
+<p>The internal <code>RelockVolumes</code> dispatcher, <code>CFveUtil::RelockAllVolumes</code>, iterates volumes with <code>FindFirstVolumeW</code>/<code>FindNextVolumeW</code> and calls <code>CFveUtil::RelockVolume</code> for each volume.</p>
+<pre><code class="hljs cpp"><span class="hljs-comment">// CFveUtil::RelockAllVolumes, summarized</span>
+<span class="hljs-keyword">while</span> (FindNextVolume(...)) {
+    <span class="hljs-keyword">if</span> (Utils::GetDriveLetterForVolumeMountPoint(szVolumeName, letter, MAX_PATH))
+        <span class="hljs-keyword">continue</span>;
+    <span class="hljs-keyword">if</span> (!CFveUtil::RelockVolume(<span class="hljs-keyword">this</span>, letter))
+        <span class="hljs-keyword">break</span>;
 }
-</code></pre><p>The internal RelockVolumes dispatcher, CFveUtil::RelockAllVolumes, iterates volumes with FindFirstVolumeW/FindNextVolumeW and calls CFveUtil::RelockVolume for each volume.</p>
-<pre><code>// CFveUtil::RelockAllVolumes, summarized
-while (FindNextVolume(...)) {
-    if (Utils::GetDriveLetterForVolumeMountPoint(szVolumeName, letter, MAX_PATH))
-        continue;
-    if (!CFveUtil::RelockVolume(this, letter))
-        break;
-}
-return 31; // relock failed
-</code></pre><p>The normal path is:</p>
-<pre><code>winpeshl.exe &#x2192; winpeshl.ini &#x2192; RecEnv.exe &#x2192; RelockVolumes() &#x2192; recovery UI
-</code></pre><p>This case study does not tamper with or make RelockVolume() fail. Instead, if winpeshl.ini disappears and winpeshl.exe selects a fallback shell rather than RecEnv.exe, the relock path is never reached.</p>
+<span class="hljs-keyword">return</span> <span class="hljs-number">31</span>; <span class="hljs-comment">// relock failed</span></code></pre>
+<p>The normal path is:</p>
+<pre><code class="hljs css"><span class="hljs-selector-tag">winpeshl</span><span class="hljs-selector-class">.exe</span> &#x2192; <span class="hljs-selector-tag">winpeshl</span><span class="hljs-selector-class">.ini</span> &#x2192; <span class="hljs-selector-tag">RecEnv</span><span class="hljs-selector-class">.exe</span> &#x2192; <span class="hljs-selector-tag">RelockVolumes</span>() &#x2192; <span class="hljs-selector-tag">recovery</span> <span class="hljs-selector-tag">UI</span></code></pre>
+<p>This case study does not tamper with or make <code>RelockVolume()</code> fail. Instead, if <code>winpeshl.ini</code> disappears and <code>winpeshl.exe</code> selects a fallback shell rather than <code>RecEnv.exe</code>, the relock path is never reached.</p>
 <h3 id="4-4-FsTx-artifacts-and-the-root-cause"><a href="#4-4-FsTx-artifacts-and-the-root-cause" class="headerlink" title="4.4 FsTx artifacts and the root cause"></a>4.4 FsTx artifacts and the root cause</h3><p><img src="/2026/10/29/banda/Unlocking-Bitlocker/EN/image%209.png" srcset="/img/loading.gif" alt></p>
 <p>FsTx is related to TxF (Transactional NTFS), an NTFS feature that groups file operations into one transaction. For example, creating a file, renaming it, and adding a hard link elsewhere can be started as a group. Once all work is finished, the transaction is committed and the changes remain. <strong>If power is lost or an error occurs midway, uncommitted work is rolled back to its prior state.</strong></p>
-<p>FsTx metadata is the record needed for that rollback. It logs file operations that began and paths that were to be created or removed under System Volume Information\FsTx on a volume. WinRE&#x2019;s autofstx.exe and FsTx.dll read those records and process the recorded operations to restore the file system to its pre-transaction state.</p>
+<p><code>FsTx</code> metadata is the record needed for that rollback. It logs file operations that began and paths that were to be created or removed under <code>System Volume Information\FsTx</code> on a volume. WinRE&#x2019;s <code>autofstx.exe</code> and <code>FsTx.dll</code> read those records and process the recorded operations to restore the file system to its pre-transaction state.</p>
 <p>For this test, I placed only an FsTx artifact on USB &#x2014; not an executable.</p>
-<pre><code>FsTx\
-&#x2514;&#x2500; 95F62703B343F111A92A005056975458\
+<pre><code class="hljs dns">FsTx\
+&#x2514;&#x2500; <span class="hljs-number">95</span>F62703B343F111A92A0<span class="hljs-number">05056975458</span>\
    &#x251C;&#x2500; FsTxLogs\
    &#x2502;  &#x251C;&#x2500; FsTxKtmLog.blf
-   &#x2502;  &#x251C;&#x2500; FsTxKtmLogContainer00000000000000000001
-   &#x2502;  &#x251C;&#x2500; FsTxKtmLogContainer00000000000000000002
+   &#x2502;  &#x251C;&#x2500; FsTxKtmLogContainer000000000<span class="hljs-number">00000000001</span>
+   &#x2502;  &#x251C;&#x2500; FsTxKtmLogContainer000000000<span class="hljs-number">00000000002</span>
    &#x2502;  &#x251C;&#x2500; FsTxLog.blf
-   &#x2502;  &#x251C;&#x2500; FsTxLogContainer00000000000000000001
-   &#x2502;  &#x2514;&#x2500; FsTxLogContainer00000000000000000002
+   &#x2502;  &#x251C;&#x2500; FsTxLogContainer000000000<span class="hljs-number">00000000001</span>
+   &#x2502;  &#x2514;&#x2500; FsTxLogContainer000000000<span class="hljs-number">00000000002</span>
    &#x2514;&#x2500; FsTxTemp\
-      &#x2514;&#x2500; 98F62703B343F111A92A005056975458
-</code></pre><p>The root cause has two connected steps: autofstx.exe accepts an external volume as an FsTx recovery candidate, then FsTx.dll processes an absolute path in a rollback record.</p>
-<p>The reason to place only an FsTx artifact on the USB was to determine whether WinRE finds it as a normal recovery log and rolls back the file operation left in the transaction record. If that record&#x2019;s LinkPath points to X:\Windows\System32\winpeshl.ini, the rollback deletes that file.</p>
-<pre><code>TargetPath (source data) = \??\C:\Windows\win.ini
-LinkPath (new link)      = \??\X:\Windows\System32\winpeshl.ini
-</code></pre><p>This represents creating a hard link named winpeshl.ini from win.ini. Critically, to trigger the issue, the creation operation must be left uncommitted, with only the log remaining.</p>
+       &#x2514;&#x2500; <span class="hljs-number">98</span>F62703B343F111A92A0<span class="hljs-number">05056975458</span></code></pre>
+<p>The root cause has two connected steps: <code>autofstx.exe</code> accepts an external volume as an <code>FsTx</code> recovery candidate, then <code>FsTx.dll</code> processes an absolute path in a rollback record.</p>
+<p>The reason to place only an <code>FsTx</code> artifact on the USB was to determine whether WinRE finds it as a normal recovery log and rolls back the file operation left in the transaction record. If that record&#x2019;s <code>LinkPath</code> points to <code>X:\Windows\System32\winpeshl.ini</code>, the rollback deletes that file.</p>
+<pre><code class="hljs latex">TargetPath (source data) = <span class="hljs-tag">\<span class="hljs-name">?</span></span>?<span class="hljs-tag">\<span class="hljs-name">C</span></span>:<span class="hljs-tag">\<span class="hljs-name">Windows</span></span><span class="hljs-tag">\<span class="hljs-name">win</span></span>.ini
+LinkPath (new link)      = <span class="hljs-tag">\<span class="hljs-name">?</span></span>?<span class="hljs-tag">\<span class="hljs-name">X</span></span>:<span class="hljs-tag">\<span class="hljs-name">Windows</span></span><span class="hljs-tag">\<span class="hljs-name">System</span></span>32<span class="hljs-tag">\<span class="hljs-name">winpeshl</span></span>.ini</code></pre>
+<p>This represents creating a hard link named <code>winpeshl.ini</code> from <code>win.ini</code>. Critically, to trigger the issue, the creation operation must be left uncommitted, with only the log remaining.</p>
 <p>When WinRE finds a stored but unfinished transaction, it rolls it back for file-system consistency. Reverting hard-link creation means deleting the new link:</p>
-<pre><code>File = DoCreateFile(..., LinkPath /* = X:\...\winpeshl.ini */, ...);
-dispositionFlags = 0x11;   // DELETE | POSIX
-SetFileInformationByHandle(File);   // &#x2192; deletes LinkPath directly
-</code></pre><p>The rollback code therefore means &#x201C;delete the file at LinkPath.&#x201D; There is no apparent verification that the link was truly created by this transaction. winpeshl.ini originally comes from winre.wim and is unrelated to the transaction, yet the rollback treats the file at LinkPath as its deletion target.</p>
-<h4 id="How-autofstx-exe-replays-FsTx-transactions"><a href="#How-autofstx-exe-replays-FsTx-transactions" class="headerlink" title="How autofstx.exe replays FsTx transactions"></a>How autofstx.exe replays FsTx transactions</h4><p>For autofstx.exe 26100.1, the OS version used in this reproduction, the PDB reveals this flow:</p>
-<pre><code>main
-  &#x2192; AutoFsTxSession::Init
-      &#x2192; LdrLoadDll(&quot;FsTx.dll&quot;)
-  &#x2192; AutoFsTxSession::RunSession
-      &#x2192; VolumeContext::FindFsTxVolumes
-      &#x2192; FsTxSessionSet::ScanSessions
-      &#x2192; FsTxCreateRecoverySession
-      &#x2192; FsTxEnumTransactions
-      &#x2192; FsTxPerformRecovery
-</code></pre><p>autofstx.exe does not roll back FsTx logs itself. It first finds volumes containing System Volume Information\FsTx and passes them as recovery targets; the dynamically loaded FsTx.dll performs the log parsing and rollback.</p>
-<p>The relevant points are therefore autofstx.exe&#x2019;s volume selection and FsTx.dll&#x2019;s LinkPath handling. The former passes the USB FsTx artifact to WinRE recovery code, while the latter deletes X:\Windows\System32\winpeshl.ini specified in the record.</p>
-<p>VolumeContext::FindFsTxVolumes enumerates the volume-GUID namespace with FindFirstVolumeW/FindNextVolumeW, finds a mount path that is a drive-letter root (A:\ through Z:), and adds a volume to the recovery candidates if it contains a System Volume Information\FsTx directory.</p>
-<pre><code>// VolumeContext::FindFsTxVolumes, summarized
+<pre><code class="hljs cpp">File = DoCreateFile(..., LinkPath <span class="hljs-comment">/* = X:\...\winpeshl.ini */</span>, ...);
+dispositionFlags = <span class="hljs-number">0x11</span>;   <span class="hljs-comment">// DELETE | POSIX</span>
+SetFileInformationByHandle(File);   <span class="hljs-comment">// &#x2192; deletes LinkPath directly</span></code></pre>
+<p>The rollback code therefore means &#x201C;delete the file at <code>LinkPath</code>.&#x201D; There is no apparent verification that the link was truly created by this transaction. <code>winpeshl.ini</code> originally comes from <code>winre.wim</code> and is unrelated to the transaction, yet the rollback treats the file at <code>LinkPath</code> as its deletion target.</p>
+<h4 id="How-autofstx-exe-replays-FsTx-transactions"><a href="#How-autofstx-exe-replays-FsTx-transactions" class="headerlink" title="How autofstx.exe replays FsTx transactions"></a>How autofstx.exe replays FsTx transactions</h4><p>For <code>autofstx.exe</code> 26100.1, the OS version used in this reproduction, the <code>PDB</code> reveals this flow:</p>
+<pre><code class="hljs less"><span class="hljs-selector-tag">main</span>
+  &#x2192; <span class="hljs-selector-tag">AutoFsTxSession</span><span class="hljs-selector-pseudo">::Init</span>
+      &#x2192; <span class="hljs-selector-tag">LdrLoadDll</span>(<span class="hljs-string">&quot;FsTx.dll&quot;</span>)
+  &#x2192; <span class="hljs-selector-tag">AutoFsTxSession</span><span class="hljs-selector-pseudo">::RunSession</span>
+      &#x2192; <span class="hljs-selector-tag">VolumeContext</span><span class="hljs-selector-pseudo">::FindFsTxVolumes</span>
+      &#x2192; <span class="hljs-selector-tag">FsTxSessionSet</span><span class="hljs-selector-pseudo">::ScanSessions</span>
+      &#x2192; <span class="hljs-selector-tag">FsTxCreateRecoverySession</span>
+      &#x2192; <span class="hljs-selector-tag">FsTxEnumTransactions</span>
+      &#x2192; <span class="hljs-selector-tag">FsTxPerformRecovery</span></code></pre>
+<p><code>autofstx.exe</code> does not roll back <code>FsTx</code> logs itself. It first finds volumes containing <code>System Volume Information\FsTx</code> and passes them as recovery targets; the dynamically loaded <code>FsTx.dll</code> performs the log parsing and rollback.</p>
+<p>The relevant points are therefore <code>autofstx.exe</code>&#x2019;s volume selection and <code>FsTx.dll</code>&#x2019;s <code>LinkPath</code> handling. The former passes the USB <code>FsTx</code> artifact to WinRE recovery code, while the latter deletes <code>X:\Windows\System32\winpeshl.ini</code> specified in the record.</p>
+<p><code>VolumeContext::FindFsTxVolumes</code> enumerates the volume-GUID namespace with <code>FindFirstVolumeW</code>/<code>FindNextVolumeW</code>, finds a mount path that is a drive-letter root (<code>A:\${b} through</code>Z:${b}), and adds a volume to the recovery candidates if it contains a <code>System Volume Information\FsTx</code> directory.</p>
+<pre><code class="hljs cpp"><span class="hljs-comment">// VolumeContext::FindFsTxVolumes, summarized</span>
 GetVolumePathNamesForVolumeNameW(volumeGuid, mountPaths, ...);
 
-for (WCHAR *i = mountPaths; *i; i += wcslen(i) + 1) {
-    if (wcslen(i) == 3 &amp;&amp; i[1] == L&apos;:&apos; &amp;&amp; i[2] == L&apos;\\&apos;) {
+<span class="hljs-keyword">for</span> (WCHAR *i = mountPaths; *i; i += wcslen(i) + <span class="hljs-number">1</span>) {
+    <span class="hljs-keyword">if</span> (wcslen(i) == <span class="hljs-number">3</span> &amp;&amp; i[<span class="hljs-number">1</span>] == <span class="hljs-string">L&apos;:&apos;</span> &amp;&amp; i[<span class="hljs-number">2</span>] == <span class="hljs-string">L&apos;\\&apos;</span>) {
         driveLetter = *i;
-        break;
+        <span class="hljs-keyword">break</span>;
     }
 }
-if (!driveLetter) continue;
+<span class="hljs-keyword">if</span> (!driveLetter) <span class="hljs-keyword">continue</span>;
 
-wcscat_s(path, MAX_PATH, L&quot;System Volume Information\\FsTx&quot;);
+wcscat_s(path, MAX_PATH, <span class="hljs-string">L&quot;System Volume Information\\FsTx&quot;</span>);
 DWORD attrs = GetFileAttributesW(path);
-if (attrs == INVALID_FILE_ATTRIBUTES || !(attrs &amp; FILE_ATTRIBUTE_DIRECTORY))
-    continue;
+<span class="hljs-keyword">if</span> (attrs == INVALID_FILE_ATTRIBUTES || !(attrs &amp; FILE_ATTRIBUTE_DIRECTORY))
+    <span class="hljs-keyword">continue</span>;
 
-candidates.push_back(volume);
-</code></pre><p>Thus, the function selects recovery targets based on the presence of a drive letter and a System Volume Information\FsTx directory. An external USB with that structure is accepted as a recovery candidate, then AutoFsTxSession::RunSession finds its session and starts replay with FsTxPerformRecovery(handle, 0, 60000).</p>
-<pre><code>// Recovery handling for each candidate inside AutoFsTxSession::RunSession
-messageContext = (AutoFsTxSession *)((char *)session + 96);
-if (recoveryStatus &gt;= 0) {
-    FsTxMessageContext::OutputMessage(messageContext, 2u, 0x3F4u, sessionIndex);
-    v50 = 1;
-} else {
-    FsTxMessageContext::OutputMessage(messageContext, 8u, 0x3F5u, sessionIndex, recoveryStatus);
-    v50 = 0;
+candidates.push_back(volume);</code></pre>
+<p>Thus, the function selects recovery targets based on the presence of a drive letter and a <code>System Volume Information\FsTx</code> directory. An external USB with that structure is accepted as a recovery candidate, then <code>AutoFsTxSession::RunSession</code> finds its session and starts replay with <code>FsTxPerformRecovery(handle, 0, 60000)</code>.</p>
+<pre><code class="hljs cpp"><span class="hljs-comment">// Recovery handling for each candidate inside AutoFsTxSession::RunSession</span>
+messageContext = (AutoFsTxSession *)((<span class="hljs-keyword">char</span> *)session + <span class="hljs-number">96</span>);
+<span class="hljs-keyword">if</span> (recoveryStatus &gt;= <span class="hljs-number">0</span>) {
+    FsTxMessageContext::OutputMessage(messageContext, <span class="hljs-number">2u</span>, <span class="hljs-number">0x3F4</span>u, sessionIndex);
+    v50 = <span class="hljs-number">1</span>;
+} <span class="hljs-keyword">else</span> {
+    FsTxMessageContext::OutputMessage(messageContext, <span class="hljs-number">8u</span>, <span class="hljs-number">0x3F5</span>u, sessionIndex, recoveryStatus);
+    v50 = <span class="hljs-number">0</span>;
 }
-*(_BYTE *)(fsTxSession + 98) = v50;
+*(_BYTE *)(fsTxSession + <span class="hljs-number">98</span>) = v50;
 FsTxSession::CloseSession((FsTxSession *)fsTxSession, closeReason);
 
-// Actual replay call (export of dynamically loaded FsTx.dll)
+<span class="hljs-comment">// Actual replay call (export of dynamically loaded FsTx.dll)</span>
 pfnFsTxPerformRecovery = (int64 (*)(int64, QWORD, int64))g_FsTxPerformRecovery;
-FsTxVolumes = pfnFsTxPerformRecovery(sessionHandle, 0, 60000);
-</code></pre><p>autofstx.exe does not process the work performed by FsTx.dll directly; it only receives the success or failure result and logs it. Deletion of winpeshl.ini happens in FsTx.dll&#x2019;s replay stage.</p>
-<p>Now let us look at the code where the USB volume becomes a recovery candidate and where rollback processes LinkPath.</p>
-<h4 id="Root-cause-code"><a href="#Root-cause-code" class="headerlink" title="Root-cause code"></a>Root-cause code</h4><h4 id="1-VolumeContext-FindFsTxVolumes-&#x2014;-accepting-an-untrusted-USB-as-a-recovery-candidate"><a href="#1-VolumeContext-FindFsTxVolumes-&#x2014;-accepting-an-untrusted-USB-as-a-recovery-candidate" class="headerlink" title="1. VolumeContext::FindFsTxVolumes &#x2014; accepting an untrusted USB as a recovery candidate"></a><strong>1. VolumeContext::FindFsTxVolumes &#x2014; accepting an untrusted USB as a recovery candidate</strong></h4><pre><code>BaseAddress = FindFirstVolumeW(Str);
-// &#x2190; Enumerates every volume; no fixed/removable/USB distinction
+FsTxVolumes = pfnFsTxPerformRecovery(sessionHandle, <span class="hljs-number">0</span>, <span class="hljs-number">60000</span>);</code></pre>
+<p><code>autofstx.exe</code> does not process the work performed by <code>FsTx.dll</code> directly; it only receives the success or failure result and logs it. Deletion of <code>winpeshl.ini</code> happens in <code>FsTx.dll</code>&#x2019;s replay stage.</p>
+<p>Now let us look at the code where the USB volume becomes a recovery candidate and where rollback processes <code>LinkPath</code>.</p>
+<h4 id="Root-cause-code"><a href="#Root-cause-code" class="headerlink" title="Root-cause code"></a>Root-cause code</h4><h4 id="1-VolumeContext-FindFsTxVolumes-&#x2014;-accepting-an-untrusted-USB-as-a-recovery-candidate"><a href="#1-VolumeContext-FindFsTxVolumes-&#x2014;-accepting-an-untrusted-USB-as-a-recovery-candidate" class="headerlink" title="1. VolumeContext::FindFsTxVolumes &#x2014; accepting an untrusted USB as a recovery candidate"></a><strong>1. <code>VolumeContext::FindFsTxVolumes</code> &#x2014; accepting an untrusted USB as a recovery candidate</strong></h4><pre><code class="hljs cpp">BaseAddress = FindFirstVolumeW(Str);
+<span class="hljs-comment">// &#x2190; Enumerates every volume; no fixed/removable/USB distinction</span>
 
-// Is there a drive-letter root such as X:\?
-if ( v20 == 3 &amp;&amp; i[1] == 58 /* &apos;:&apos; */ &amp;&amp; i[2] == 92 /* &apos;\&apos; */ &amp;&amp; (letter a-z/A-Z) )
-    v17 = *i;                              // Obtain the drive letter
+<span class="hljs-comment">// Is there a drive-letter root such as X:\?</span>
+<span class="hljs-keyword">if</span> ( v20 == <span class="hljs-number">3</span> &amp;&amp; i[<span class="hljs-number">1</span>] == <span class="hljs-number">58</span> <span class="hljs-comment">/* &apos;:&apos; */</span> &amp;&amp; i[<span class="hljs-number">2</span>] == <span class="hljs-number">92</span> <span class="hljs-comment">/* &apos;\&apos; */</span> &amp;&amp; (letter a-z/A-Z) )
+    v17 = *i;                              <span class="hljs-comment">// Obtain the drive letter</span>
 
-// Sole eligibility check: does &quot;&lt;drive&gt;:\System Volume Information\FsTx&quot; exist?
-wcscat_s(Str, 0x104u, L&quot;System Volume Information\\FsTx&quot;);
+<span class="hljs-comment">// Sole eligibility check: does &quot;&lt;drive&gt;:\System Volume Information\FsTx&quot; exist?</span>
+wcscat_s(Str, <span class="hljs-number">0x104</span>u, <span class="hljs-string">L&quot;System Volume Information\\FsTx&quot;</span>);
 FileAttributesW = GetFileAttributesW(Str);
-if ( FileAttributesW == -1 || (FileAttributesW &amp; 0x10) == 0 )
-    v7 = 0;                                // Reject if the directory is absent
+<span class="hljs-keyword">if</span> ( FileAttributesW == <span class="hljs-number">-1</span> || (FileAttributesW &amp; <span class="hljs-number">0x10</span>) == <span class="hljs-number">0</span> )
+    v7 = <span class="hljs-number">0</span>;                                <span class="hljs-comment">// Reject if the directory is absent</span>
 LABEL_54:
-    v23 = AutoChkMalloc(0x48u);            // &#x2605; This is where the volume becomes a recovery candidate
+    v23 = AutoChkMalloc(<span class="hljs-number">0x48</span>u);            <span class="hljs-comment">// &#x2605; This is where the volume becomes a recovery candidate</span>
     ...
-    v24[66] = v7;                          // v7(+0x42): whether recovery runs; RunSession uses it
-</code></pre><p>As introduced earlier, a volume with a drive letter and a System Volume Information\FsTx directory is handled as a recovery candidate.</p>
-<h4 id="2-PerformOperationRollbackRecovery-op-5-&#x2014;-cross-volume-deletion-of-winpeshl-ini"><a href="#2-PerformOperationRollbackRecovery-op-5-&#x2014;-cross-volume-deletion-of-winpeshl-ini" class="headerlink" title="2. PerformOperationRollbackRecovery (op==5) &#x2014; cross-volume deletion of winpeshl.ini"></a><strong>2. PerformOperationRollbackRecovery (op==5) &#x2014; cross-volume deletion of winpeshl.ini</strong></h4><pre><code>if ( opType == 5 )   // Roll back HARDLINK creation.
+    v24[<span class="hljs-number">66</span>] = v7;                          <span class="hljs-comment">// v7(+0x42): whether recovery runs; RunSession uses it</span></code></pre>
+<p>As introduced earlier, a volume with a drive letter and a <code>System Volume Information\FsTx</code> directory is handled as a recovery candidate.</p>
+<h4 id="2-PerformOperationRollbackRecovery-op-5-&#x2014;-cross-volume-deletion-of-winpeshl-ini"><a href="#2-PerformOperationRollbackRecovery-op-5-&#x2014;-cross-volume-deletion-of-winpeshl-ini" class="headerlink" title="2. PerformOperationRollbackRecovery (op == 5) &#x2014; cross-volume deletion of winpeshl.ini"></a><strong>2. <code>PerformOperationRollbackRecovery</code> (<code>op == 5</code>) &#x2014; cross-volume deletion of <code>winpeshl.ini</code></strong></h4><pre><code class="hljs cpp"><span class="hljs-keyword">if</span> ( opType == <span class="hljs-number">5</span> )   <span class="hljs-comment">// Roll back HARDLINK creation.</span>
 {
-    TempRootPath = (wchar_t *)GetTempRootPath(recoveryCtx, linkPath, linkPath);
+    TempRootPath = (<span class="hljs-keyword">wchar_t</span> *)GetTempRootPath(recoveryCtx, linkPath, linkPath);
     v30 = TempRootPath;
-    if ( TempRootPath )
+    <span class="hljs-keyword">if</span> ( TempRootPath )
     {
-        v43 = AddPathToPathSet((PRTL_DYNAMIC_HASH_TABLE)(recoveryCtx + 2152), TempRootPath);
+        v43 = AddPathToPathSet((PRTL_DYNAMIC_HASH_TABLE)(recoveryCtx + <span class="hljs-number">2152</span>), TempRootPath);
         RtlNtStatusToDosError(v43);
     }
-    HIDWORD(v115) = 0;
+    HIDWORD(v115) = <span class="hljs-number">0</span>;
 
-    File = (HANDLE)DoCreateFile(recoveryCtx, 0, (_DWORD)Name, (unsigned int)&amp;v135, *(_DWORD *)(opRecord + 12) &amp; 8);
-    // &#x2191; Opens Name, record path[1] = \??\X:\Windows\System32\winpeshl.ini,
-    //   directly as an absolute NT path. There is no check that its volume
-    //   matches the source volume of this transaction.
+    File = (HANDLE)DoCreateFile(recoveryCtx, <span class="hljs-number">0</span>, (_DWORD)Name, (<span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span>)&amp;v135, *(_DWORD *)(opRecord + <span class="hljs-number">12</span>) &amp; <span class="hljs-number">8</span>);
+    <span class="hljs-comment">// &#x2191; Opens Name, record path[1] = \??\X:\Windows\System32\winpeshl.ini,</span>
+    <span class="hljs-comment">//   directly as an absolute NT path. There is no check that its volume</span>
+    <span class="hljs-comment">//   matches the source volume of this transaction.</span>
 
-    if ( File != (HANDLE)-1LL || (LastWin32Error = RtlGetLastWin32Error()) != 0 )
+    <span class="hljs-keyword">if</span> ( File != (HANDLE)<span class="hljs-number">-1L</span>L || (LastWin32Error = RtlGetLastWin32Error()) != <span class="hljs-number">0</span> )
     {
         v44 = LastWin32Error;
-        if ( LastWin32Error == 2 ) // No link: skip
+        <span class="hljs-keyword">if</span> ( LastWin32Error == <span class="hljs-number">2</span> ) <span class="hljs-comment">// No link: skip</span>
         {
-            LastWin32Error = 0;
-            goto LABEL_225;
+            LastWin32Error = <span class="hljs-number">0</span>;
+            <span class="hljs-keyword">goto</span> LABEL_225;
         }
-        if ( !LastWin32Error )
+        <span class="hljs-keyword">if</span> ( !LastWin32Error )
         {
-            dispositionFlags = 17;
-            // 0x11 = DELETE | POSIX &#x2014; unvalidated cross-volume deletion
+            dispositionFlags = <span class="hljs-number">17</span>;
+            <span class="hljs-comment">// 0x11 = DELETE | POSIX &#x2014; unvalidated cross-volume deletion</span>
             SetFileInformationByHandle(File);
-            goto LABEL_225;
+            <span class="hljs-keyword">goto</span> LABEL_225;
         }
     }
-}
-</code></pre><p>The problem is that DoCreateFile() opens the record&#x2019;s Name directly as an absolute NT path and does not confirm that the file was the link created by this transaction. If a USB transaction record sets LinkPath to X:\Windows\System32\winpeshl.ini, FsTx.dll treats the existing file &#x2014; unrelated to the USB source volume &#x2014; as a link that must be reverted. With dispositionFlags = 0x11, that path is removed with a POSIX delete.</p>
+}</code></pre>
+<p>The problem is that <code>DoCreateFile()</code> opens the record&#x2019;s <code>Name</code> directly as an absolute NT path and does not confirm that the file was the link created by this transaction. If a USB transaction record sets <code>LinkPath</code> to <code>X:\Windows\System32\winpeshl.ini</code>, <code>FsTx.dll</code> treats the existing file &#x2014; unrelated to the USB source volume &#x2014; as a link that must be reverted. With <code>dispositionFlags = 0x11</code>, that path is removed with a POSIX delete.</p>
 <h3 id="4-5-Reproduction-result"><a href="#4-5-Reproduction-result" class="headerlink" title="4.5 Reproduction result"></a>4.5 Reproduction result</h3><p><img src="/2026/10/29/banda/Unlocking-Bitlocker/EN/image%2010.png" srcset="/img/loading.gif" alt></p>
 <p>First, I placed the FsTx artifact on USB drive E:. A normal boot into WinRE would display the recovery UI. Let us look at the result after inserting the USB and booting into WinRE.</p>
 <p><img src="/2026/10/29/banda/Unlocking-Bitlocker/EN/image%2011.png" srcset="/img/loading.gif" alt></p>
-<p>After connecting the USB containing the intended FsTx artifact and booting into WinRE, X:\Windows\System32\cmd.exe appears instead of the normal recovery UI. Files such as winpeshl.exe and winpeshl.log remain, but winpeshl.ini &#x2014; which should be in the same directory &#x2014; cannot be found. This indicates it was deleted by rollback.</p>
+<p>After connecting the USB containing the intended <code>FsTx</code> artifact and booting into WinRE, <code>X:\Windows\System32\cmd.exe</code> appears instead of the normal recovery UI. Files such as <code>winpeshl.exe</code> and <code>winpeshl.log</code> remain, but <code>winpeshl.ini</code> &#x2014; which should be in the same directory &#x2014; cannot be found. This indicates it was deleted by rollback.</p>
 <p><img src="/2026/10/29/banda/Unlocking-Bitlocker/EN/image%2012.png" srcset="/img/loading.gif" alt></p>
-<p>winpeshl.log also records execution of X:\Windows\System32\cmd.exe /K startnet.cmd, confirming that the cmd.exe fallback ran.</p>
+<p><code>winpeshl.log</code> also records execution of <code>X:\Windows\System32\cmd.exe /K startnet.cmd</code>, confirming that the <code>cmd.exe</code> fallback ran.</p>
 <p><img src="/2026/10/29/banda/Unlocking-Bitlocker/EN/image%2013.png" srcset="/img/loading.gif" alt></p>
-<p>winre_access_proof.txt contains WinRE_ACCESS_PROOF and a timestamp, and the marker file created from the WinRE session shows that writing to the file succeeded.</p>
+<p><code>winre_access_proof.txt</code> contains <code>WinRE_ACCESS_PROOF</code> and a timestamp, and the marker file created from the WinRE session shows that writing to the file succeeded.</p>
 <h2 id="Closing-thoughts"><a href="#Closing-thoughts" class="headerlink" title="Closing thoughts"></a>Closing thoughts</h2><p>In this article, we directly followed the WinRE boot process and recovery code, which are easy to overlook. The next time you accidentally enter Windows recovery mode, perhaps you will remember that behind the blue recovery screen, a separate WinRE environment has booted and is preparing and running recovery functions.</p>
 <p>Did you enjoy the WinRE series? In the next article, we will go one step earlier than WinRE and return to Boot Manager to look at BitPixie: why an older signed Boot Manager can be run again, and what happens during the PXE transition that follows. Please look forward to it!</p>
 <h2 id="References"><a href="#References" class="headerlink" title="References"></a>References</h2><ol>
@@ -1206,9 +1203,9 @@ LABEL_54:
                 <div class="post-meta">
                   <i class="iconfont icon-tags"></i>
                   
-                  <a class="hover-with-bg" href="/tags/banda/">banda</a>
-                  
                   <a class="hover-with-bg" href="/tags/Windows/">Windows</a>
+                  
+                  <a class="hover-with-bg" href="/tags/banda/">banda</a>
                   
                   <a class="hover-with-bg" href="/tags/BitLocker/">BitLocker</a>
                   
